@@ -26,7 +26,7 @@ def post_act_block(in_channels, out_channels, kernel_size, indice_key=None, stri
     return m
 
 
-class SparseBasicBlock(spconv.SparseModule):
+class SparseBasicBlock(spconv.pytorch.modules.SparseModule):
     expansion = 1
 
     def __init__(self, inplanes, planes, stride=1, norm_fn=None, downsample=None, indice_key=None):
