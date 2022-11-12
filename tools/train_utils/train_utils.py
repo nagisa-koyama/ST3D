@@ -5,6 +5,7 @@ import torch
 import tqdm
 from torch.nn.utils import clip_grad_norm_
 
+import wandb
 
 def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, accumulated_iter, optim_cfg,
                     rank, tbar, total_it_each_epoch, dataloader_iter, tb_log=None, leave_pbar=False):
@@ -54,8 +55,12 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
             if tb_log is not None:
                 tb_log.add_scalar('train/loss', loss, accumulated_iter)
                 tb_log.add_scalar('meta_data/learning_rate', cur_lr, accumulated_iter)
+                wandb.log({'train/loss': loss})
+                wandb.log({'learning_rate': cur_lr})
                 for key, val in tb_dict.items():
                     tb_log.add_scalar('train/' + key, val, accumulated_iter)
+                    wandb.log({'train/' + key: val})
+
     if rank == 0:
         pbar.close()
     return accumulated_iter
@@ -108,6 +113,7 @@ def train_model(model, optimizer, train_loader, target_loader, model_func, lr_sc
                 save_checkpoint(
                     checkpoint_state(model, optimizer, trained_epoch, accumulated_iter), filename=ckpt_name,
                 )
+                
 
 
 def model_state_to_cpu(model_state):
@@ -145,3 +151,4 @@ def save_checkpoint(state, filename='checkpoint'):
 
     filename = '{}.pth'.format(filename)
     torch.save(state, filename)
+    wandb.save(filename)

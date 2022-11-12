@@ -4,6 +4,7 @@ import time
 import numpy as np
 import torch
 import tqdm
+import wandb
 
 from pcdet.models import load_data_to_gpu
 from pcdet.utils import common_utils
@@ -99,6 +100,8 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         cur_rcnn_recall = metric['recall_rcnn_%s' % str(cur_thresh)] / max(gt_num_cnt, 1)
         logger.info('recall_roi_%s: %f' % (cur_thresh, cur_roi_recall))
         logger.info('recall_rcnn_%s: %f' % (cur_thresh, cur_rcnn_recall))
+        wandb.log({'val/recall_roi_%s' % cur_thresh : cur_roi_recall})
+        wandb.log({'val/recall_rcnn_%s' % cur_thresh : cur_rcnn_recall})
         ret_dict['recall/roi_%s' % str(cur_thresh)] = cur_roi_recall
         ret_dict['recall/rcnn_%s' % str(cur_thresh)] = cur_rcnn_recall
 
@@ -107,6 +110,7 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         total_pred_objects += anno['name'].__len__()
     logger.info('Average predicted number of objects(%d samples): %.3f'
                 % (len(det_annos), total_pred_objects / max(1, len(det_annos))))
+    wandb.log({'val/num_of_avg_predictions': total_pred_objects / max(1, len(det_annos))})
 
     with open(result_dir / 'result.pkl', 'wb') as f:
         pickle.dump(det_annos, f)
@@ -116,6 +120,8 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         eval_metric=cfg.MODEL.POST_PROCESSING.EVAL_METRIC,
         output_path=final_output_dir
     )
+    for item in result_dict.items():
+        wandb.log({'val/' + item.key : item.val})
 
     logger.info(result_str)
     ret_dict.update(result_dict)

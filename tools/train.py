@@ -11,6 +11,8 @@ from tensorboardX import SummaryWriter
 import torch.distributed as dist
 from test import repeat_eval_ckpt
 
+import wandb
+
 from pcdet.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_file
 from pcdet.datasets import build_dataloader
 from pcdet.models.model_utils.dsnorm import DSNorm
@@ -93,6 +95,8 @@ def main():
     log_file = output_dir / ('log_train_%s.txt' % datetime.datetime.now().strftime('%Y%m%d-%H%M%S'))
     logger = common_utils.create_logger(log_file, rank=cfg.LOCAL_RANK)
 
+    wandb.init(config=vars(cfg), project="st3d")
+    
     # log to file
     logger.info('**********************Start logging**********************')
     gpu_list = os.environ['CUDA_VISIBLE_DEVICES'] if 'CUDA_VISIBLE_DEVICES' in os.environ.keys() else 'ALL'
@@ -136,6 +140,8 @@ def main():
         model = DSNorm.convert_dsnorm(model)
 
     model.cuda()
+
+    wandb.watch(model, log_freq=100)
 
     optimizer = build_optimizer(model, cfg.OPTIMIZATION)
     # load checkpoint if it is possible
