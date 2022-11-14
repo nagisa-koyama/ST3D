@@ -61,6 +61,8 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         with torch.no_grad():
             pred_dicts, ret_dict = model(batch_dict)
         disp_dict = {}
+        logger.info('len(pred_dicts): %d.' % len(pred_dicts))
+        logger.info('pred_dicts.keys: %s.' % pred_dicts.keys())
 
         statistics_info(cfg, ret_dict, metric, disp_dict)
         annos = dataset.generate_prediction_dicts(
