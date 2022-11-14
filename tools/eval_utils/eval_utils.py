@@ -95,6 +95,7 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         metric = metric[0]
 
     gt_num_cnt = metric['gt_num']
+    logger.info('gt_num_cnt: %.d).' % gt_num_cnt)
     for cur_thresh in cfg.MODEL.POST_PROCESSING.RECALL_THRESH_LIST:
         cur_roi_recall = metric['recall_roi_%s' % str(cur_thresh)] / max(gt_num_cnt, 1)
         cur_rcnn_recall = metric['recall_rcnn_%s' % str(cur_thresh)] / max(gt_num_cnt, 1)
@@ -106,6 +107,7 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         ret_dict['recall/rcnn_%s' % str(cur_thresh)] = cur_rcnn_recall
 
     total_pred_objects = 0
+    logger.info('len(det_annots): %.d).' % len(det_annos))
     for anno in det_annos:
         total_pred_objects += anno['name'].__len__()
     logger.info('Average predicted number of objects(%d samples): %.3f'

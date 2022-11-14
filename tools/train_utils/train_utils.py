@@ -56,7 +56,7 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
                 tb_log.add_scalar('train/loss', loss, accumulated_iter)
                 tb_log.add_scalar('meta_data/learning_rate', cur_lr, accumulated_iter)
                 wandb.log({'train/loss': loss})
-                wandb.log({'learning_rate': cur_lr})
+                wandb.log({'train/learning_rate': cur_lr})
                 for key, val in tb_dict.items():
                     tb_log.add_scalar('train/' + key, val, accumulated_iter)
                     wandb.log({'train/' + key: val})
