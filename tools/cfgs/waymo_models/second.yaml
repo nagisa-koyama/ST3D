@@ -86,7 +86,7 @@ MODEL:
 
     POST_PROCESSING:
         RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
-        SCORE_THRESH: 0.1
+        SCORE_THRESH: 0.25
         OUTPUT_RAW_SCORE: False
 
         EVAL_METRIC: waymo
@@ -101,8 +101,7 @@ MODEL:
 
 OPTIMIZATION:
     BATCH_SIZE_PER_GPU: 4
-    NUM_EPOCHS: 3
-
+    NUM_EPOCHS: 30
     OPTIMIZER: adam_onecycle
     LR: 0.003
     WEIGHT_DECAY: 0.01
