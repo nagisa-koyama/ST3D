@@ -63,12 +63,9 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         disp_dict = {}
         logger.info('len(pred_dicts): %d.' % len(pred_dicts))
         num_pred = 0
-        max_score = 0
         for pred in pred_dicts:
             num_pred += len(pred['pred_boxes'])
-            max_score = max([max_score, pred['pred_scores']])
         print("num_pred:", num_pred)
-        print("max_score:", max_score)
         statistics_info(cfg, ret_dict, metric, disp_dict)
         annos = dataset.generate_prediction_dicts(
             batch_dict, pred_dicts, class_names,

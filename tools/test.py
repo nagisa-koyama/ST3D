@@ -8,6 +8,7 @@ import re
 import datetime
 import argparse
 import numpy as np
+import wandb
 from pathlib import Path
 import torch.distributed as dist
 from pcdet.datasets import build_dataloader
@@ -171,6 +172,8 @@ def main():
     eval_output_dir.mkdir(parents=True, exist_ok=True)
     log_file = eval_output_dir / ('log_eval_%s.txt' % datetime.datetime.now().strftime('%Y%m%d-%H%M%S'))
     logger = common_utils.create_logger(log_file, rank=cfg.LOCAL_RANK)
+
+    wandb.init(config=vars(cfg), project="st3d")
 
     # log to file
     logger.info('**********************Start logging**********************')
