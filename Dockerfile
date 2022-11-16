@@ -114,12 +114,13 @@ RUN cd ./third_party/pybind11/ && git submodule update --init
 RUN python3 setup.py bdist_wheel
 RUN cd ./dist && pip3 install spconv*.whl
 
+ARG ST3D_BRANCH=v20221031 
 WORKDIR $WORK_DIR
 #RUN git clone https://github.com/CVMI-Lab/ST3D.git --recursive
 RUN git clone https://github.com/nagisa-koyama/ST3D.git --recursive
 WORKDIR $WORK_DIR/ST3D
 RUN git fetch --all -p #redo
-RUN git checkout v20221031
+RUN git checkout ${ST3D_BRANCH}
 #RUN cd ./pcdet && git submodule update --init
 #RUN git checkout st3d++
 #RUN git checkout st3d_v0.2
@@ -129,9 +130,15 @@ RUN python3 -m pip install -r requirements.txt
 RUN git branch
 RUN git log -n 1
 RUN python3 setup.py develop
+
+RUN python3 -m pip install waymo-open-dataset-tf-2-0-0==1.2.0 wandb
+ENV WANDB_API_KEY 8f252267771b0b737b6b5bcfce56c9e52dc50a99
+ENV WANDB_PROJECT st3d
+ENV CUDA_VISIBLE_DEVICES 0,1
+
+ADD "https://www.random.org/cgi-bin/randbyte?nbytes=10&format=h" /dev/null
+RUN git fetch --all\
+ && git reset --hard origin/${ST3D_BRANCH}\
+ && git log -n 1
 RUN mv data/waymo data/waymo_orig
 RUN ln -s /storage/waymo_open_dataset_v_1_4_0/pcdet_structure/ data/waymo
-
-RUN python3 -m pip install waymo-open-dataset-tf-2-0-0==1.2.0
-
-RUN export CUDA_VISIBLE_DEVICES=0,1
