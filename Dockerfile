@@ -142,3 +142,5 @@ RUN git fetch --all\
  && git log -n 1
 RUN mv data/waymo data/waymo_orig
 RUN ln -s /storage/waymo_open_dataset_v_1_4_0/pcdet_structure/ data/waymo
+
+RUN python3 -m pip install -U numpy==1.18.5

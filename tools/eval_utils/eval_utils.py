@@ -127,7 +127,7 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         output_path=final_output_dir
     )
     for item in result_dict.items():
-        wandb.log({'val/' + item.key : item.val})
+        wandb.log({'val/' + item[0] : item[1]})
 
     logger.info(result_str)
     ret_dict.update(result_dict)
