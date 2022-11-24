@@ -143,7 +143,8 @@ RUN git fetch --all\
 RUN mv data/waymo data/waymo_orig
 RUN mv data/kitti data/kitti_orig
 RUN ln -s /storage/waymo_open_dataset_v_1_4_0/pcdet_structure/ data/waymo
-RUN ln -s /storage/kitti/pcdet_structure/ data/kitti
+RUN ln -s /storage/kitti/ data/kitti
 
 
 RUN python3 -m pip install -U numpy==1.18.5
+RUN python3 -m pip install pyyaml==5.4.1
