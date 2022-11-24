@@ -8,6 +8,8 @@ from pcdet.utils import self_training_utils
 from pcdet.config import cfg
 from pcdet.models.model_utils.dsnorm import set_ds_source, set_ds_target
 
+import wandb
+
 from .train_utils import save_checkpoint, checkpoint_state
 
 
@@ -108,14 +110,20 @@ def train_one_epoch_st(model, optimizer, source_reader, target_loader, model_fun
 
             if tb_log is not None:
                 tb_log.add_scalar('meta_data/learning_rate', cur_lr, accumulated_iter)
+                wandb.log({'train/learning_rate': cur_lr})
                 if cfg.SELF_TRAIN.SRC.USE_DATA:
                     tb_log.add_scalar('train/loss', loss, accumulated_iter)
+                    wandb.log({'train/loss': loss})
                     for key, val in tb_dict.items():
                         tb_log.add_scalar('train/' + key, val, accumulated_iter)
+                        wandb.log({'train/' + key: val})
                 if cfg.SELF_TRAIN.TAR.USE_DATA:
                     tb_log.add_scalar('train/st_loss', st_loss, accumulated_iter)
+                    wandb.log({'train/st_loss': loss})
                     for key, val in st_tb_dict.items():
                         tb_log.add_scalar('train/' + key, val, accumulated_iter)
+                        wandb.log({'train/' + key: val})
+
     if rank == 0:
         pbar.close()
         for i, class_names in enumerate(target_loader.dataset.class_names):
@@ -211,3 +219,4 @@ def train_model_st(model, optimizer, source_loader, target_loader, model_func, l
                 state = checkpoint_state(model, optimizer, trained_epoch, accumulated_iter)
 
                 save_checkpoint(state, filename=ckpt_name)
+                wandb.save(ckpt-name)
