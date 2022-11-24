@@ -255,9 +255,9 @@ class DatasetTemplate(torch_data.Dataset):
             data_dict=data_dict
         )
 
-        if self.training and len(data_dict['gt_boxes']) == 0:
-            new_index = np.random.randint(self.__len__())
-            return self.__getitem__(new_index)
+        # if self.training and len(data_dict['gt_boxes']) == 0:
+        #     new_index = np.random.randint(self.__len__())
+        #     return self.__getitem__(new_index)
 
         data_dict.pop('gt_names', None)
         data_dict.pop('gt_classes', None)
