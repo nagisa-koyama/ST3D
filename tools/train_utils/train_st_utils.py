@@ -119,7 +119,7 @@ def train_one_epoch_st(model, optimizer, source_reader, target_loader, model_fun
                         wandb.log({'train/' + key: val})
                 if cfg.SELF_TRAIN.TAR.USE_DATA:
                     tb_log.add_scalar('train/st_loss', st_loss, accumulated_iter)
-                    wandb.log({'train/st_loss': loss})
+                    wandb.log({'train/st_loss': st_loss})
                     for key, val in st_tb_dict.items():
                         tb_log.add_scalar('train/' + key, val, accumulated_iter)
                         wandb.log({'train/' + key: val})
@@ -219,4 +219,3 @@ def train_model_st(model, optimizer, source_loader, target_loader, model_func, l
                 state = checkpoint_state(model, optimizer, trained_epoch, accumulated_iter)
 
                 save_checkpoint(state, filename=ckpt_name)
-                wandb.save(ckpt-name)
