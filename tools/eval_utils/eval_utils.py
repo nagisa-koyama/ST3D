@@ -65,7 +65,6 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         num_pred = 0
         for pred in pred_dicts:
             num_pred += len(pred['pred_boxes'])
-        print("num_pred:", num_pred)
         statistics_info(cfg, ret_dict, metric, disp_dict)
         annos = dataset.generate_prediction_dicts(
             batch_dict, pred_dicts, class_names,
@@ -126,8 +125,8 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         eval_metric=cfg.MODEL.POST_PROCESSING.EVAL_METRIC,
         output_path=final_output_dir
     )
-    for item in result_dict.items():
-        wandb.log({'val/' + item[0] : item[1]})
+    # for item in result_dict.items():
+    #     wandb.log({'val/' + item[0] : item[1]})
 
     logger.info(result_str)
     ret_dict.update(result_dict)
@@ -137,6 +136,10 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
 
     logger.info('Result is save to %s' % result_dir)
     logger.info('****************Evaluation done.*****************')
+
+    for item in ret_dict.items():
+        wandb.log({'val/' + item[0] : item[1]})
+
     return ret_dict
 
 
