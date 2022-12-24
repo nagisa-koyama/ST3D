@@ -155,6 +155,13 @@ class WaymoDataset(DatasetTemplate):
             # gt_boxes_mask = np.array([n in self.class_names for n in input_dict['gt_names']], dtype=np.bool_)
             # debug_dict = {'gt_boxes': copy.deepcopy(gt_boxes_lidar[gt_boxes_mask])}
 
+        # Based on order of LiDARs:
+        # https://github.com/waymo-research/waymo-open-dataset/blob/bae19fa0a36664da18b691349955b95b29402713/waymo_open_dataset/dataset.proto#L60
+        # TOP, FRONT, SIDE_LEFT, SIDE_RIGHT,  REAR
+        selected_lidar_index = self.dataset_cfg.get('SELECTED_LIDAR_INDEX', None)
+        if selected_lidar_index:            
+            input_dict['points'] = input_dict['points'].copy()[np.newaxis, selected_lidar_index]
+
         if self.dataset_cfg.get('FOV_POINTS_ONLY', None):
             input_dict['points'] = self.extract_fov_data(
                 input_dict['points'], self.dataset_cfg.FOV_DEGREE, self.dataset_cfg.FOV_ANGLE

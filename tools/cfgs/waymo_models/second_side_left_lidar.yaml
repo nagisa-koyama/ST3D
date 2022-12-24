@@ -2,6 +2,7 @@ CLASS_NAMES: ['Vehicle', 'Pedestrian', 'Cyclist']
 
 DATA_CONFIG:
     _BASE_CONFIG_: cfgs/dataset_configs/waymo_dataset.yaml
+    SELECTED_LIDAR_INDEX: 2
 
 MODEL:
     NAME: SECONDNet
