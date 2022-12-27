@@ -1,6 +1,7 @@
 
 import _init_path
 import os
+import pickle
 import torch
 import argparse
 import glob
@@ -33,6 +34,7 @@ class DemoDataset(DatasetTemplate):
 
         data_file_list.sort()
         self.sample_file_list = data_file_list
+        self.infos = []
 
     def __len__(self):
         return len(self.sample_file_list)
@@ -44,10 +46,22 @@ class DemoDataset(DatasetTemplate):
             points = np.load(self.sample_file_list[index])
         else:
             raise NotImplementedError
+        waymo_infos = []
 
+        num_skipped_infos = 0
+        sequence_name = os.path.basename(os.path.dirname(self.sample_file_list[index]))
+        info_path = os.path.join(os.path.dirname(self.sample_file_list[index]), ('%s.pkl' % sequence_name))
+        with open(info_path, 'rb') as f:
+            infos = pickle.load(f)
+            waymo_infos.extend(infos)
+        self.infos.extend(waymo_infos[:])
+        info = self.infos[index]
         input_dict = {
             'points': points,
             'frame_id': index,
+            'gt_boxes': info['annos']['gt_boxes_lidar'],
+            'gt_names': info['annos']['name'],
+            'num_points_of_each_lidar': info['num_points_of_each_lidar']
         }
 
         data_dict = self.prepare_data(data_dict=input_dict)
@@ -91,9 +105,15 @@ def main():
             data_dict = demo_dataset.collate_batch([data_dict])
             load_data_to_gpu(data_dict)
             pred_dicts, _ = model.forward(data_dict)
-
+            selected_lidar_head_index = None
+            if selected_lidar_head_index:
+                selected_lidar_begin = int(data_dict['num_points_of_each_lidar'][0, selected_lidar_head_index].item())
+                selected_lidar_end = int(data_dict['num_points_of_each_lidar'][0, selected_lidar_head_index + 1].item())
+            else:
+                selected_lidar_begin = selected_lidar_end = -1
             V.draw_scenes(
-                points=data_dict['points'][:, 1:], ref_boxes=pred_dicts[0]['pred_boxes'],
+                points=data_dict['points'][selected_lidar_begin:selected_lidar_end, 1:], gt_boxes=data_dict['gt_boxes'][0],
+                ref_boxes=pred_dicts[0]['pred_boxes'],
                 ref_scores=pred_dicts[0]['pred_scores'], ref_labels=pred_dicts[0]['pred_labels']
             )
             mlab.savefig(filename=os.path.join(args.out_path, 'scenes.png'))
