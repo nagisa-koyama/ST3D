@@ -142,7 +142,7 @@ RUN python3 -m pip install pyyaml==5.4.1
 
 # Configurations for saving image with mayavi.
 RUN python3 -m pip install mayavi pyqt5
-RUN apt update && apt install -y libxkb-* libxcb-* xvfb
+RUN apt update && apt install -y libxkbcommon-x11-0 libxkb-* libxcb-* xvfb
 ENV DISPLAY :1
 RUN nohup Xvfb -ac ${DISPLAY} -screen 0 1280x780x24 &
 
