@@ -142,7 +142,8 @@ class WaymoDataset(DatasetTemplate):
             input_dict.update({
                 'gt_names': annos['name'],
                 'gt_boxes': gt_boxes_lidar,
-                'num_points_in_gt': annos.get('num_points_in_gt', None)
+                'num_points_in_gt': annos.get('num_points_in_gt', None),
+                'num_points_of_each_lidar': info['num_points_of_each_lidar']
             })
 
             if self.dataset_cfg.get('USE_PSEUDO_LABEL', None) and self.training:
