@@ -131,10 +131,24 @@ RUN git branch
 RUN git log -n 1
 RUN python3 setup.py develop
 
+# Configurations for wandb and waymo open.
 RUN python3 -m pip install waymo-open-dataset-tf-2-0-0==1.2.0 wandb
 ENV WANDB_API_KEY 8f252267771b0b737b6b5bcfce56c9e52dc50a99
 ENV WANDB_PROJECT st3d
 ENV CUDA_VISIBLE_DEVICES 0,1
+
+RUN python3 -m pip install -U numpy==1.18.5
+RUN python3 -m pip install pyyaml==5.4.1
+
+# Configurations for saving image with mayavi.
+RUN python3 -m pip install mayavi pyqt5
+RUN apt update && apt install -y libxkb-* libxcb-* xvfb
+ENV DISPLAY :1
+RUN nohup Xvfb -ac ${DISPLAY} -screen 0 1280x780x24 &
+
+RUN git config --global user.email "nagisa.koyama@gmail.com"
+RUN git config --global user.name "Nagisa Koyama"
+RUN git config --global core.editor 'emacs -nw'
 
 ADD "https://www.random.org/cgi-bin/randbyte?nbytes=10&format=h" /dev/null
 RUN git fetch --all\
@@ -144,10 +158,3 @@ RUN mv data/waymo data/waymo_orig
 RUN mv data/kitti data/kitti_orig
 RUN ln -s /storage/waymo_open_dataset_v_1_4_0/pcdet_structure/ data/waymo
 RUN ln -s /storage/kitti/ data/kitti
-
-RUN python3 -m pip install -U numpy==1.18.5
-RUN python3 -m pip install pyyaml==5.4.1
-
-RUN git config --global user.email "nagisa.koyama@gmail.com"
-RUN git config --global user.name "Nagisa Koyama"
-RUN git config --global core.editor 'emacs -nw'
