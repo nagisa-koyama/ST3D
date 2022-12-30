@@ -2,6 +2,7 @@
 import _init_path
 import os
 import pickle
+import copy
 import torch
 import argparse
 import glob
@@ -121,22 +122,24 @@ def main():
         for idx, data_dict in enumerate(demo_dataset):
             logger.info(f'Visualized sample index: \t{idx + 1}')
             data_dict = demo_dataset.collate_batch([data_dict])
-            load_data_to_gpu(data_dict)
-            pred_dicts, _ = model.forward(data_dict)
-            selected_lidar_head_index = None
             if args.lidar_index:
                 selected_lidar_begin = 0
                 selected_lidar_end = 0
                 for index in range(args.lidar_index + 1): # Assumes 0-index.
-                    selected_lidar_begin += int(data_dict['num_points_of_each_lidar'][0, index].item())
-                    selected_lidar_end += int(data_dict['num_points_of_each_lidar'][0, index + 1].item())
+                    selected_lidar_begin = selected_lidar_end
+                    selected_lidar_end += int(data_dict['num_points_of_each_lidar'][0, index].item())
                 print("num_points_of_each_lidar:", data_dict['num_points_of_each_lidar'])
+                print("selected lidar index:", args.lidar_index)
                 print("selected lidar begin/end:", selected_lidar_begin, selected_lidar_end)
             else:
                 selected_lidar_begin = 0
-                selected_lidar_end = -1
+                selected_lidar_end = data_dict['points'].shape[0]
+            data_dict['points'] = copy.deepcopy(data_dict['points'][selected_lidar_begin:selected_lidar_end, :])
+            print("points.shape:", data_dict['points'].shape)
+            load_data_to_gpu(data_dict)
+            pred_dicts, _ = model.forward(data_dict)
             V.draw_scenes(
-                points=data_dict['points'][selected_lidar_begin:selected_lidar_end, 1:], gt_boxes=data_dict['gt_boxes'][0],
+                points=data_dict['points'][:, 1:], gt_boxes=data_dict['gt_boxes'][0],
                 ref_boxes=pred_dicts[0]['pred_boxes'],
                 ref_scores=pred_dicts[0]['pred_scores'], ref_labels=pred_dicts[0]['pred_labels']
             )
