@@ -114,7 +114,7 @@ RUN cd ./third_party/pybind11/ && git submodule update --init
 RUN python3 setup.py bdist_wheel
 RUN cd ./dist && pip3 install spconv*.whl
 
-ARG ST3D_BRANCH=v20221203
+ARG ST3D_BRANCH=v20230106
 WORKDIR $WORK_DIR
 #RUN git clone https://github.com/CVMI-Lab/ST3D.git --recursive
 RUN git clone https://github.com/nagisa-koyama/ST3D.git --recursive
