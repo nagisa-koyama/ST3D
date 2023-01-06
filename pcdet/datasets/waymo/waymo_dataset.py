@@ -160,8 +160,19 @@ class WaymoDataset(DatasetTemplate):
         # https://github.com/waymo-research/waymo-open-dataset/blob/bae19fa0a36664da18b691349955b95b29402713/waymo_open_dataset/dataset.proto#L60
         # TOP, FRONT, SIDE_LEFT, SIDE_RIGHT,  REAR
         selected_lidar_index = self.dataset_cfg.get('SELECTED_LIDAR_INDEX', None)
-        if selected_lidar_index:            
-            input_dict['points'] = input_dict['points'].copy()[np.newaxis, selected_lidar_index]
+        if selected_lidar_index:
+            selected_lidar_begin = 0
+            selected_lidar_end = 0
+            for index in range(selected_lidar_index + 1): # Assumes 0-index.
+                selected_lidar_begin = selected_lidar_end
+                print("len(input_dict['num_points_of_each_lidar']):", len(input_dict['num_points_of_each_lidar']))
+                print("index:", index)
+                print("input_dict['num_points_of_each_lidar']:", input_dict['num_points_of_each_lidar'])
+                selected_lidar_end += int(input_dict['num_points_of_each_lidar'][index])
+        else:
+            selected_lidar_begin = 0
+            selected_lidar_end = input_dict['points'].shape[0]
+        input_dict['points'] = copy.deepcopy(input_dict['points'][selected_lidar_begin:selected_lidar_end, :])
 
         if self.dataset_cfg.get('FOV_POINTS_ONLY', None):
             input_dict['points'] = self.extract_fov_data(
