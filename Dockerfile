@@ -132,7 +132,7 @@ RUN git log -n 1
 RUN python3 setup.py develop
 
 # Configurations for wandb and waymo open.
-RUN python3 -m pip install waymo-open-dataset-tf-2-0-0==1.2.0 wandb
+RUN python3 -m pip install waymo-open-dataset-tf-2-5-0 wandb
 ENV WANDB_API_KEY 8f252267771b0b737b6b5bcfce56c9e52dc50a99
 ENV WANDB_PROJECT st3d
 ENV CUDA_VISIBLE_DEVICES 0,1
