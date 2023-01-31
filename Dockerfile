@@ -114,7 +114,7 @@ RUN cd ./third_party/pybind11/ && git submodule update --init
 RUN python3 setup.py bdist_wheel
 RUN cd ./dist && pip3 install spconv*.whl
 
-ARG ST3D_BRANCH=v20230106
+ARG ST3D_BRANCH=v20230131_pcdet0.6
 WORKDIR $WORK_DIR
 #RUN git clone https://github.com/CVMI-Lab/ST3D.git --recursive
 RUN git clone https://github.com/nagisa-koyama/ST3D.git --recursive
@@ -158,3 +158,7 @@ RUN mv data/waymo data/waymo_orig
 RUN mv data/kitti data/kitti_orig
 RUN ln -s /storage/waymo_open_dataset_v_1_4_0/pcdet_structure/ data/waymo
 RUN ln -s /storage/kitti/ data/kitti
+
+RUN python3 -m pip install -U lyft_dataset_sdk==0.0.8
+RUN mv data/lyft data/lyft_orig
+RUN ln -s /mnt/disk3/koyama/level5-3d-object-detection data/lyft
