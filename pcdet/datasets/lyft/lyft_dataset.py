@@ -6,15 +6,15 @@ import numpy as np
 from tqdm import tqdm
 
 from ...ops.roiaware_pool3d import roiaware_pool3d_utils
-from ...utils import common_utils, box_utils, self_training_utils
+from ...utils import common_utils, box_utils
 from ..dataset import DatasetTemplate
 
 
 class LyftDataset(DatasetTemplate):
     def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None):
-        root_path = (root_path if root_path is not None else Path(dataset_cfg.DATA_PATH)) / dataset_cfg.VERSION
+        self.root_path = (root_path if root_path is not None else Path(dataset_cfg.DATA_PATH)) / dataset_cfg.VERSION
         super().__init__(
-            dataset_cfg=dataset_cfg, class_names=class_names, training=training, root_path=root_path, logger=logger
+            dataset_cfg=dataset_cfg, class_names=class_names, training=training, root_path=self.root_path, logger=logger
         )
         self.infos = []
         self.include_lyft_data(self.mode)
@@ -39,15 +39,42 @@ class LyftDataset(DatasetTemplate):
         mask = ~((np.abs(points[:, 0]) < center_radius*1.5) & (np.abs(points[:, 1]) < center_radius))
         return points[mask]
 
-    def get_lidar(self, index):
+    def get_sweep(self, sweep_info):
+        lidar_path = self.root_path / sweep_info['lidar_path']
+        points_sweep = np.fromfile(str(lidar_path), dtype=np.float32, count=-1)
+        if points_sweep.shape[0] % 5 != 0:
+            points_sweep = points_sweep[: points_sweep.shape[0] - (points_sweep.shape[0] % 5)]
+        points_sweep = points_sweep.reshape([-1, 5])[:, :4]
+
+        points_sweep = self.remove_ego_points(points_sweep).T
+        if sweep_info['transform_matrix'] is not None:
+            num_points = points_sweep.shape[1]
+            points_sweep[:3, :] = sweep_info['transform_matrix'].dot(
+                np.vstack((points_sweep[:3, :], np.ones(num_points))))[:3, :]
+
+        cur_times = sweep_info['time_lag'] * np.ones((1, points_sweep.shape[1]))
+        return points_sweep.T, cur_times.T
+
+    def get_lidar_with_sweeps(self, index, max_sweeps=1):
         info = self.infos[index]
-        lidar_path = self.root_path / info['ref_info']['LIDAR_TOP']['lidar_path']
+        lidar_path = self.root_path / info['lidar_path']
         points = np.fromfile(str(lidar_path), dtype=np.float32, count=-1)
         if points.shape[0] % 5 != 0:
             points = points[: points.shape[0] - (points.shape[0] % 5)]
         points = points.reshape([-1, 5])[:, :4]
-        points = self.remove_ego_points(points, center_radius=1.5)
 
+        sweep_points_list = [points]
+        sweep_times_list = [np.zeros((points.shape[0], 1))]
+
+        for k in np.random.choice(len(info['sweeps']), max_sweeps - 1, replace=False):
+            points_sweep, times_sweep = self.get_sweep(info['sweeps'][k])
+            sweep_points_list.append(points_sweep)
+            sweep_times_list.append(times_sweep)
+
+        points = np.concatenate(sweep_points_list, axis=0)
+        times = np.concatenate(sweep_times_list, axis=0).astype(points.dtype)
+
+        points = np.concatenate((points, times), axis=1)
         return points
 
     def __len__(self):
@@ -61,14 +88,11 @@ class LyftDataset(DatasetTemplate):
             index = index % len(self.infos)
 
         info = copy.deepcopy(self.infos[index])
-        points = self.get_lidar(index)
-
-        if self.dataset_cfg.get('SHIFT_COOR', None):
-            points[:, 0:3] += np.array(self.dataset_cfg.SHIFT_COOR, dtype=np.float32)
+        points = self.get_lidar_with_sweeps(index, max_sweeps=self.dataset_cfg.MAX_SWEEPS)
 
         input_dict = {
             'points': points,
-            'frame_id': Path(info['ref_info']['LIDAR_TOP']['lidar_path']).stem,
+            'frame_id': Path(info['lidar_path']).stem,
             'metadata': {'token': info['token']}
         }
 
@@ -78,177 +102,30 @@ class LyftDataset(DatasetTemplate):
                 'gt_names': info['gt_names']
             })
 
-            if self.dataset_cfg.get('SHIFT_COOR', None):
-                input_dict['gt_boxes'][:, 0:3] += self.dataset_cfg.SHIFT_COOR
-
-            if self.dataset_cfg.get('USE_PSEUDO_LABEL', None) and self.training:
-                input_dict['gt_boxes'] = None
-
-            # for debug only
-            # gt_boxes_mask = np.array([n in self.class_names for n in input_dict['gt_names']], dtype=np.bool_)
-            # debug_dict = {'gt_boxes': copy.deepcopy(input_dict['gt_boxes'][gt_boxes_mask])}
-
-        if self.dataset_cfg.get('FOV_POINTS_ONLY', None):
-            input_dict['points'] = self.extract_fov_data(
-                input_dict['points'], self.dataset_cfg.FOV_DEGREE, self.dataset_cfg.FOV_ANGLE
-            )
-            if input_dict['gt_boxes'] is not None:
-                fov_gt_flag = self.extract_fov_gt(
-                    input_dict['gt_boxes'], self.dataset_cfg.FOV_DEGREE, self.dataset_cfg.FOV_ANGLE
-                )
-                input_dict.update({
-                    'gt_names': input_dict['gt_names'][fov_gt_flag],
-                    'gt_boxes': input_dict['gt_boxes'][fov_gt_flag],
-                })
-
-        if self.dataset_cfg.get('USE_PSEUDO_LABEL', None) and self.training:
-            self.fill_pseudo_labels(input_dict)
-
         data_dict = self.prepare_data(data_dict=input_dict)
-
-        if self.dataset_cfg.get('SET_NAN_VELOCITY_TO_ZEROS', False):
-            gt_boxes = data_dict['gt_boxes']
-            gt_boxes[np.isnan(gt_boxes)] = 0
-            data_dict['gt_boxes'] = gt_boxes
-
-        if not self.dataset_cfg.PRED_VELOCITY and 'gt_boxes' in data_dict:
-            data_dict['gt_boxes'] = data_dict['gt_boxes'][:, [0, 1, 2, 3, 4, 5, 6, -1]]
 
         return data_dict
 
-    def generate_prediction_dicts(self, batch_dict, pred_dicts, class_names, output_path=None):
-        """
-        Args:
-            batch_dict:
-                frame_id:
-            pred_dicts: list of pred_dicts
-                pred_boxes: (N, 7), Tensor
-                pred_scores: (N), Tensor
-                pred_labels: (N), Tensor
-            class_names:
-            output_path:
-        Returns:
-        """
-        def get_template_prediction(num_samples):
-            ret_dict = {
-                'name': np.zeros(num_samples), 'score': np.zeros(num_samples),
-                'boxes_lidar': np.zeros([num_samples, 7]), 'pred_labels': np.zeros(num_samples)
-            }
-            return ret_dict
-
-        def generate_single_sample_dict(box_dict):
-            pred_scores = box_dict['pred_scores'].cpu().numpy()
-            pred_boxes = box_dict['pred_boxes'].cpu().numpy()
-            pred_labels = box_dict['pred_labels'].cpu().numpy()
-            pred_dict = get_template_prediction(pred_scores.shape[0])
-            if pred_scores.shape[0] == 0:
-                return pred_dict
-
-            if self.dataset_cfg.get('SHIFT_COOR', None):
-                pred_boxes[:, 0:3] -= self.dataset_cfg.SHIFT_COOR
-
-            pred_dict['name'] = np.array(class_names)[pred_labels - 1]
-            pred_dict['score'] = pred_scores
-            pred_dict['boxes_lidar'] = pred_boxes
-            pred_dict['pred_labels'] = pred_labels
-
-            return pred_dict
-
-        annos = []
-        for index, box_dict in enumerate(pred_dicts):
-            single_pred_dict = generate_single_sample_dict(box_dict)
-            single_pred_dict['frame_id'] = batch_dict['frame_id'][index]
-            single_pred_dict['metadata'] = batch_dict['metadata'][index]
-            annos.append(single_pred_dict)
-
-        return annos
-
     def kitti_eval(self, eval_det_annos, eval_gt_annos, class_names):
         from ..kitti.kitti_object_eval_python import eval as kitti_eval
+        from ..kitti import kitti_utils
 
         map_name_to_kitti = {
             'car': 'Car',
             'pedestrian': 'Pedestrian',
             'truck': 'Truck',
+            'bicycle': 'Cyclist',
+            'motorcycle': 'Cyclist'
         }
 
-        def transform_to_kitti_format(annos, info_with_fakelidar=False, is_gt=False):
-            for anno in annos:
-                if 'name' not in anno:
-                    anno['name'] = anno['gt_names']
-                    anno.pop('gt_names')
+        kitti_utils.transform_to_kitti_format(eval_det_annos, map_name_to_kitti=map_name_to_kitti)
+        kitti_utils.transform_to_kitti_format(
+            eval_gt_annos, map_name_to_kitti=map_name_to_kitti,
+            info_with_fakelidar=self.dataset_cfg.get('INFO_WITH_FAKELIDAR', False)
+        )
 
-                for k in range(anno['name'].shape[0]):
-                    if anno['name'][k] in map_name_to_kitti:
-                        anno['name'][k] = map_name_to_kitti[anno['name'][k]]
-                    else:
-                        anno['name'][k] = 'Person_sitting'
+        kitti_class_names = [map_name_to_kitti[x] for x in class_names]
 
-                if 'boxes_lidar' in anno:
-                    gt_boxes_lidar = anno['boxes_lidar'].copy()
-                else:
-                    gt_boxes_lidar = anno['gt_boxes'].copy()
-
-                # filter by range
-                if self.dataset_cfg.get('GT_FILTER', None) and \
-                        self.dataset_cfg.GT_FILTER.RANGE_FILTER:
-                    if self.dataset_cfg.GT_FILTER.get('RANGE', None):
-                        point_cloud_range = self.dataset_cfg.GT_FILTER.RANGE
-                    else:
-                        point_cloud_range = self.point_cloud_range
-                        point_cloud_range[2] = -10
-                        point_cloud_range[5] = 10
-
-                    mask = box_utils.mask_boxes_outside_range_numpy(gt_boxes_lidar,
-                                                                    point_cloud_range,
-                                                                    min_num_corners=1)
-                    gt_boxes_lidar = gt_boxes_lidar[mask]
-                    anno['name'] = anno['name'][mask]
-                    if not is_gt:
-                        anno['score'] = anno['score'][mask]
-                        anno['pred_labels'] = anno['pred_labels'][mask]
-
-                # filter by fov
-                if is_gt and self.dataset_cfg.get('GT_FILTER', None):
-                    if self.dataset_cfg.GT_FILTER.get('FOV_FILTER', None):
-                        fov_gt_flag = self.extract_fov_gt(
-                            gt_boxes_lidar, self.dataset_cfg['FOV_DEGREE'], self.dataset_cfg['FOV_ANGLE']
-                        )
-                        gt_boxes_lidar = gt_boxes_lidar[fov_gt_flag]
-                        anno['name'] = anno['name'][fov_gt_flag]
-
-                anno['bbox'] = np.zeros((len(anno['name']), 4))
-                anno['bbox'][:, 2:4] = 50  # [0, 0, 50, 50]
-                anno['truncated'] = np.zeros(len(anno['name']))
-                anno['occluded'] = np.zeros(len(anno['name']))
-
-                if len(gt_boxes_lidar) > 0:
-                    if info_with_fakelidar:
-                        gt_boxes_lidar = box_utils.boxes3d_kitti_fakelidar_to_lidar(gt_boxes_lidar)
-
-                    gt_boxes_lidar[:, 2] -= gt_boxes_lidar[:, 5] / 2
-                    anno['location'] = np.zeros((gt_boxes_lidar.shape[0], 3))
-                    anno['location'][:, 0] = -gt_boxes_lidar[:, 1]  # x = -y_lidar
-                    anno['location'][:, 1] = -gt_boxes_lidar[:, 2]  # y = -z_lidar
-                    anno['location'][:, 2] = gt_boxes_lidar[:, 0]  # z = x_lidar
-                    dxdydz = gt_boxes_lidar[:, 3:6]
-                    anno['dimensions'] = dxdydz[:, [0, 2, 1]]  # lwh ==> lhw
-                    anno['rotation_y'] = -gt_boxes_lidar[:, 6] - np.pi / 2.0
-                    anno['alpha'] = -np.arctan2(-gt_boxes_lidar[:, 1], gt_boxes_lidar[:, 0]) + anno['rotation_y']
-                else:
-                    anno['location'] = anno['dimensions'] = np.zeros((0, 3))
-                    anno['rotation_y'] = anno['alpha'] = np.zeros(0)
-
-        # self.filter_det_results(eval_det_annos, self.oracle_infos)
-        transform_to_kitti_format(eval_det_annos)
-        transform_to_kitti_format(eval_gt_annos, info_with_fakelidar=False, is_gt=True)
-
-        kitti_class_names = []
-        for x in class_names:
-            if x in map_name_to_kitti:
-                kitti_class_names.append(map_name_to_kitti[x])
-            else:
-                kitti_class_names.append('Person_sitting')
         ap_result_str, ap_dict = kitti_eval.get_official_eval_result(
             gt_annos=eval_gt_annos, dt_annos=eval_det_annos, current_classes=kitti_class_names
         )
@@ -259,14 +136,34 @@ class LyftDataset(DatasetTemplate):
             eval_det_annos = copy.deepcopy(det_annos)
             eval_gt_annos = copy.deepcopy(self.infos)
             return self.kitti_eval(eval_det_annos, eval_gt_annos, class_names)
+        elif kwargs['eval_metric'] == 'lyft':
+            return self.lyft_eval(det_annos, class_names, 
+                                  iou_thresholds=self.dataset_cfg.EVAL_LYFT_IOU_LIST)
         else:
             raise NotImplementedError
+    
+    def lyft_eval(self, det_annos, class_names, iou_thresholds=[0.5]):
+        from lyft_dataset_sdk.lyftdataset import LyftDataset as Lyft
+        from . import lyft_utils
+        # from lyft_dataset_sdk.eval.detection.mAP_evaluation import get_average_precisions
+        from .lyft_mAP_eval.lyft_eval import get_average_precisions
 
-    def create_groundtruth_database(self, used_classes=None):
+        lyft = Lyft(json_path=self.root_path / 'data', data_path=self.root_path, verbose=True)
+
+        det_lyft_boxes, sample_tokens = lyft_utils.convert_det_to_lyft_format(lyft, det_annos)
+        gt_lyft_boxes = lyft_utils.load_lyft_gt_by_tokens(lyft, sample_tokens)
+
+        average_precisions = get_average_precisions(gt_lyft_boxes, det_lyft_boxes, class_names, iou_thresholds)
+
+        ap_result_str, ap_dict = lyft_utils.format_lyft_results(average_precisions, class_names, iou_thresholds, version=self.dataset_cfg.VERSION)
+
+        return ap_result_str, ap_dict
+
+    def create_groundtruth_database(self, used_classes=None, max_sweeps=10):
         import torch
 
-        database_save_path = self.root_path / f'gt_database_withvelo'
-        db_info_save_path = self.root_path / f'lyft_dbinfos_withvelo.pkl'
+        database_save_path = self.root_path / f'gt_database'
+        db_info_save_path = self.root_path / f'lyft_dbinfos_{max_sweeps}sweeps.pkl'
 
         database_save_path.mkdir(parents=True, exist_ok=True)
         all_db_infos = {}
@@ -274,7 +171,7 @@ class LyftDataset(DatasetTemplate):
         for idx in tqdm(range(len(self.infos))):
             sample_idx = idx
             info = self.infos[idx]
-            points = self.get_lidar(idx)
+            points = self.get_lidar_with_sweeps(idx, max_sweeps=max_sweeps)
             gt_boxes = info['gt_boxes']
             gt_names = info['gt_names']
 
@@ -307,7 +204,7 @@ class LyftDataset(DatasetTemplate):
             pickle.dump(all_db_infos, f)
 
 
-def create_lyft_info(version, data_path, save_path, split):
+def create_lyft_info(version, data_path, save_path, split, max_sweeps=10):
     from lyft_dataset_sdk.lyftdataset import LyftDataset
     from . import lyft_utils
     data_path = data_path / version
@@ -350,7 +247,7 @@ def create_lyft_info(version, data_path, save_path, split):
 
     train_lyft_infos, val_lyft_infos = lyft_utils.fill_trainval_infos(
         data_path=data_path, lyft=lyft, train_scenes=train_scenes, val_scenes=val_scenes,
-        test='test' in version
+        test='test' in version, max_sweeps=max_sweeps
     )
 
     if version == 'test':
@@ -374,19 +271,26 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='arg parser')
     parser.add_argument('--cfg_file', type=str, default=None, help='specify the config of dataset')
     parser.add_argument('--func', type=str, default='create_lyft_infos', help='')
-    parser.add_argument('--version', type=str, default='train', help='')
+    parser.add_argument('--version', type=str, default='trainval', help='')
     parser.add_argument('--split', type=str, default=None, help='')
+    parser.add_argument('--max_sweeps', type=int, default=10, help='')
     args = parser.parse_args()
 
     if args.func == 'create_lyft_infos':
-        dataset_cfg = EasyDict(yaml.load(open(args.cfg_file)))
+        try:
+            yaml_config = yaml.safe_load(open(args.cfg_file), Loader=yaml.FullLoader)
+        except:
+            yaml_config = yaml.safe_load(open(args.cfg_file))
+        dataset_cfg = EasyDict(yaml_config)
         ROOT_DIR = (Path(__file__).resolve().parent / '../../../').resolve()
         dataset_cfg.VERSION = args.version
+        dataset_cfg.MAX_SWEEPS = args.max_sweeps 
         create_lyft_info(
             version=dataset_cfg.VERSION,
             data_path=ROOT_DIR / 'data' / 'lyft',
             save_path=ROOT_DIR / 'data' / 'lyft',
-            split=args.split
+            split=args.split,
+            max_sweeps=dataset_cfg.MAX_SWEEPS
         )
 
         lyft_dataset = LyftDataset(
@@ -394,5 +298,6 @@ if __name__ == '__main__':
             root_path=ROOT_DIR / 'data' / 'lyft',
             logger=common_utils.create_logger(), training=True
         )
+
         if args.version != 'test':
             lyft_dataset.create_groundtruth_database(max_sweeps=dataset_cfg.MAX_SWEEPS)
