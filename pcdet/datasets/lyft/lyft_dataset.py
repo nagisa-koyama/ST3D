@@ -335,7 +335,7 @@ def create_lyft_info(version, data_path, save_path, split):
         raise NotImplementedError
 
     train_scenes = [x.strip() for x in open(train_split_path).readlines()] if train_split_path.exists() else []
-    val_scenes = [x.strip() for x in open(val_split_path).readlines()] if val_sprint_path is not None and val_split_path.exists() else []
+    val_scenes = [x.strip() for x in open(val_split_path).readlines()] if val_split_path is not None and val_split_path.exists() else []
 
     lyft = LyftDataset(json_path=data_path / 'data', data_path=data_path, verbose=True)
 
