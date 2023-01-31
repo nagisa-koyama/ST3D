@@ -394,4 +394,5 @@ if __name__ == '__main__':
             root_path=ROOT_DIR / 'data' / 'lyft',
             logger=common_utils.create_logger(), training=True
         )
-        # lyft_dataset.create_groundtruth_database()
+        if args.version != 'test':
+            lyft_dataset.create_groundtruth_database(max_sweeps=dataset_cfg.MAX_SWEEPS)
