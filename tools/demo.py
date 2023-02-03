@@ -15,8 +15,14 @@ from pcdet.datasets.lyft.lyft_dataset import LyftDataset
 from pcdet.models import build_network, load_data_to_gpu
 from pcdet.config import cfg, cfg_from_yaml_file
 from pcdet.utils import common_utils
-from visual_utils import visualize_utils as V
+# try:
+#     import open3d
+#     from visual_utils import open3d_vis_utils as V
+#     OPEN3D_FLAG = True
+# except:
 import mayavi.mlab as mlab
+from visual_utils import visualize_utils as V
+OPEN3D_FLAG = False
 
 
 class DemoDataset(DatasetTemplate):
@@ -144,14 +150,20 @@ def main():
             print("points.shape:", data_dict['points'].shape)
             load_data_to_gpu(data_dict)
             pred_dicts, _ = model.forward(data_dict)
-            V.draw_scenes(
+            mlab.options.offscreen = True
+            vis = V.draw_scenes(
                 points=data_dict['points'][:, 1:], gt_boxes=data_dict['gt_boxes'][0],
                 ref_boxes=pred_dicts[0]['pred_boxes'],
                 ref_scores=pred_dicts[0]['pred_scores'], ref_labels=pred_dicts[0]['pred_labels']
             )
-            mlab.savefig(filename=os.path.join(args.out_path, 'scenes.png'))
+            if not OPEN3D_FLAG:
+                mlab.savefig(filename=os.path.join(args.out_path, 'scenes.png'))
+                #mlab.show(stop=True)
+            else:
+                img = vis.capture_screen_float_buffer(True)
+                opencd.io.write_image(os.path.join(args.out_path, 'scenes.png'), img)
             break
-            #mlab.show(stop=True)
+
 
     logger.info('Demo done.')
 

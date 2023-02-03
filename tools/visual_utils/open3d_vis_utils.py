@@ -69,8 +69,9 @@ def draw_scenes(points, gt_boxes=None, ref_boxes=None, ref_labels=None, ref_scor
     if ref_boxes is not None:
         vis = draw_box(vis, ref_boxes, (0, 1, 0), ref_labels, ref_scores)
 
-    vis.run()
-    vis.destroy_window()
+    #vis.run()
+    #vis.destroy_window()
+    return vis
 
 
 def translate_boxes_to_open3d_instance(gt_boxes):
