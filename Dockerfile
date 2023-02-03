@@ -161,4 +161,4 @@ RUN ln -s /storage/kitti/ data/kitti
 
 RUN python3 -m pip install -U lyft_dataset_sdk==0.0.8
 RUN mv data/lyft data/lyft_orig
-RUN ln -s /mnt/disk3/koyama/level5-3d-object-detection data/lyft
+RUN ln -s /storage/level5-3d-object-detection data/lyft
