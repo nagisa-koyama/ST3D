@@ -11,6 +11,7 @@ from pathlib import Path
 from pcdet.datasets import DatasetTemplate
 from pcdet.datasets.kitti.kitti_dataset import KittiDataset
 from pcdet.datasets.waymo.waymo_dataset import WaymoDataset
+from pcdet.datasets.lyft.lyft_dataset import LyftDataset
 from pcdet.models import build_network, load_data_to_gpu
 from pcdet.config import cfg, cfg_from_yaml_file
 from pcdet.utils import common_utils
@@ -81,7 +82,7 @@ def parse_config():
     parser.add_argument('--ext', type=str, default='.bin', help='specify the extension of your point cloud data file')
     parser.add_argument('--out_path', type=str, default='/storage', help='specify the output directory')
     parser.add_argument('--lidar_index', type=int, default=None, help='specify the lidar head index')
-    parser.add_argument('--dataset_type', choices=['waymo', 'kitti', 'demo'], default='demo', help='choose the dataset type from waymo, kitti or demo')
+    parser.add_argument('--dataset_type', choices=['waymo', 'kitti', 'lyft', 'demo'], default='demo', help='choose the dataset type from waymo, kitti, lyft or demo')
 
     args = parser.parse_args()
 
@@ -106,6 +107,11 @@ def main():
         )
     elif args.dataset_type == 'waymo':
         demo_dataset = WaymoDataset(
+            dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, training=False,
+            root_path=Path(args.data_path), logger=logger
+        )
+    elif args.dataset_type == 'lyft':
+        demo_dataset = LyftDataset(
             dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, training=False,
             root_path=Path(args.data_path), logger=logger
         )
