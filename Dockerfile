@@ -71,29 +71,29 @@ RUN python3 -m pip install mayavi pyqt5
 RUN apt update && apt install -y libxkbcommon-x11-0 libxkb-* libxcb-* xvfb
 
 # cmake, which is needed by spconv1.2
-# RUN apt-get install -y libboost-all-dev
-# RUN apt remove -y cmake
-# RUN wget https://cmake.org/files/v3.13/cmake-3.13.2-Linux-x86_64.sh
-# RUN sh cmake-3.13.2-Linux-x86_64.sh --skip-license --include-subdir
-# RUN export PATH=$PATH:/root/cmake-3.13.2-Linux-x86_64/bin
-# RUN ln -s /root/cmake-3.13.2-Linux-x86_64/bin/* /usr/bin/
-# RUN cmake --version
+RUN apt-get install -y libboost-all-dev
+RUN apt remove -y cmake
+RUN wget https://cmake.org/files/v3.13/cmake-3.13.2-Linux-x86_64.sh
+RUN sh cmake-3.13.2-Linux-x86_64.sh --skip-license --include-subdir
+RUN export PATH=$PATH:/root/cmake-3.13.2-Linux-x86_64/bin
+RUN ln -s /root/cmake-3.13.2-Linux-x86_64/bin/* /usr/bin/
+RUN cmake --version
 
 # spconv1.2
-# WORKDIR $WORK_DIR
-# RUN git clone https://github.com/nagisa-koyama/spconv.git --recursive
-# WORKDIR $WORK_DIR/spconv/
-# RUN git checkout v1.2.1_commentout
-# RUN cmake --version
-# RUN cd ./third_party/pybind11/ && git submodule update --init
-# RUN python3 setup.py bdist_wheel
-# RUN cd ./dist && pip3 install spconv*.whl
+WORKDIR $WORK_DIR
+RUN git clone https://github.com/nagisa-koyama/spconv.git --recursive
+WORKDIR $WORK_DIR/spconv/
+RUN git checkout v1.2.1_commentout
+RUN cmake --version
+RUN cd ./third_party/pybind11/ && git submodule update --init
+RUN python3 setup.py bdist_wheel
+RUN cd ./dist && pip3 install spconv*.whl
 
 # spconv2.0
-RUN python3 -m pip install spconv-cu116
+# RUN python3 -m pip install spconv-cu116
 
 # ST3D install
-ARG ST3D_BRANCH=v20230131_pcdet0.6
+ARG ST3D_BRANCH=v20230225_debug_spconv1p2
 WORKDIR $WORK_DIR
 #RUN git clone https://github.com/CVMI-Lab/ST3D.git --recursive
 RUN git clone https://github.com/nagisa-koyama/ST3D.git --recursive
