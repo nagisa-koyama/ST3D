@@ -112,7 +112,14 @@ RUN git fetch --all\
  && git reset --hard origin/${ST3D_BRANCH}\
  && git log -n 1
 
+# pandaset-devkit
+WORKDIR $WORK_DIR
+RUN git clone https://github.com/scaleapi/pandaset-devkit.git
+WORKDIR $WORK_DIR/pandaset-devkit/python
+RUN python3 -m pip install .
+
 # Storage linking
+WORKDIR $WORK_DIR/ST3D
 RUN mv data/waymo data/waymo_orig
 RUN mv data/kitti data/kitti_orig
 RUN mv data/lyft data/lyft_orig
