@@ -98,7 +98,7 @@ WORKDIR $WORK_DIR
 #RUN git clone https://github.com/CVMI-Lab/ST3D.git --recursive
 RUN git clone https://github.com/nagisa-koyama/ST3D.git --recursive
 WORKDIR $WORK_DIR/ST3D
-RUN git fetch --all -p #redo
+RUN git fetch --all -p
 RUN git checkout ${ST3D_BRANCH}
 #RUN cd ./pcdet && git submodule update --init
 RUN python3 -m pip install -r requirements.txt
