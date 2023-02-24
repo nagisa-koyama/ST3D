@@ -119,3 +119,4 @@ RUN mv data/lyft data/lyft_orig
 RUN ln -s /storage/waymo_open_dataset_v_1_4_0/pcdet_structure/ data/waymo
 RUN ln -s /storage/kitti/ data/kitti
 RUN ln -s /storage/level5-3d-object-detection data/lyft
+RUN ln -s /storage/pandaset data/pandaset
