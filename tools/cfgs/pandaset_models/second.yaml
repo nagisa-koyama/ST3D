@@ -1,5 +1,4 @@
-CLASS_NAMES: ['Car:20','Pedestrian:15', 'Bicycle:15']
-]
+CLASS_NAMES: ['Car','Pedestrian', 'Bicycle']
 
 DATA_CONFIG:
     _BASE_CONFIG_: cfgs/dataset_configs/pandaset_dataset.yaml
