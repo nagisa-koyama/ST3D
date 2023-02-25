@@ -62,15 +62,12 @@ RUN python3 -m pip install torch==1.12.0+cu116 --extra-index-url https://downloa
 # wandb
 RUN python3 -m pip install wandb
 
-# Waymo and lyft open dataset.
-RUN python3 -m pip install -U waymo-open-dataset-tf-2-5-0
-RUN python3 -m pip install -U lyft_dataset_sdk==0.0.8
-
 # Configurations for saving image with mayavi.
 RUN python3 -m pip install mayavi pyqt5
 RUN apt update && apt install -y libxkbcommon-x11-0 libxkb-* libxcb-* xvfb
 
 # cmake, which is needed by spconv1.2
+WORKDIR $WORK_DIR
 RUN apt-get install -y libboost-all-dev
 RUN apt remove -y cmake
 RUN wget https://cmake.org/files/v3.13/cmake-3.13.2-Linux-x86_64.sh
@@ -80,7 +77,6 @@ RUN ln -s /root/cmake-3.13.2-Linux-x86_64/bin/* /usr/bin/
 RUN cmake --version
 
 # spconv1.2
-WORKDIR $WORK_DIR
 RUN git clone https://github.com/nagisa-koyama/spconv.git --recursive
 WORKDIR $WORK_DIR/spconv/
 RUN git checkout v1.2.1_commentout
@@ -91,6 +87,10 @@ RUN cd ./dist && pip3 install spconv*.whl
 
 # spconv2.0
 # RUN python3 -m pip install spconv-cu116
+
+# Waymo and lyft open dataset.
+RUN python3 -m pip install -U waymo-open-dataset-tf-2-5-0
+RUN python3 -m pip install -U lyft_dataset_sdk==0.0.8
 
 # ST3D install
 ARG ST3D_BRANCH=v20230225_debug_spconv1p2
@@ -112,12 +112,6 @@ RUN git fetch --all\
  && git reset --hard origin/${ST3D_BRANCH}\
  && git log -n 1
 
-# pandaset-devkit
-WORKDIR $WORK_DIR
-RUN git clone https://github.com/scaleapi/pandaset-devkit.git
-WORKDIR $WORK_DIR/pandaset-devkit/python
-RUN python3 -m pip install .
-
 # Storage linking
 WORKDIR $WORK_DIR/ST3D
 RUN mv data/waymo data/waymo_orig
@@ -127,3 +121,14 @@ RUN ln -s /storage/waymo_open_dataset_v_1_4_0/pcdet_structure/ data/waymo
 RUN ln -s /storage/kitti/ data/kitti
 RUN ln -s /storage/level5-3d-object-detection data/lyft
 RUN ln -s /storage/pandaset data/pandaset
+
+# pandaset-devkit
+WORKDIR $WORK_DIR
+# RUN git clone https://github.com/scaleapi/pandaset-devkit.git
+RUN git clone https://github.com/lea-v/pandaset-devkit.git
+WORKDIR $WORK_DIR/pandaset-devkit
+RUN git checkout feature/addPointCloudTransformations
+WORKDIR $WORK_DIR/pandaset-devkit/python
+RUN python3 -m pip install .
+
+WORKDIR $WORK_DIR/ST3D
