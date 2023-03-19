@@ -182,6 +182,8 @@ def draw_corners3d(corners3d, fig, color=(1, 1, 1), line_width=2, cls=None, tag=
     :return:
     """
     import mayavi.mlab as mlab
+    mlab.options.offscreen = True
+
     num = min(max_num, len(corners3d))
     for n in range(num):
         b = corners3d[n]  # (8, 3)
