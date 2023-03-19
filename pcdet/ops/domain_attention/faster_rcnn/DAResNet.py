@@ -2,8 +2,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from model.utils.config import cfg
-from model.faster_rcnn.faster_rcnn_uni import _fasterRCNN
+from ..utils.config import cfg
+# from ..faster_rcnn.faster_rcnn_uni import _fasterRCNN
 
 import torch
 import torch.nn as nn
@@ -12,8 +12,8 @@ from torch.autograd import Variable
 import math
 import torch.utils.model_zoo as model_zoo
 import pdb
-import torchvision
-from model.faster_rcnn.domain_attention_module import DomainAttention
+#import torchvision
+from ..faster_rcnn.domain_attention_module import DomainAttention
 
 __all__ = ['DAResNet', 'da_resnet18', 'da_resnet34', 'da_resnet50', 'da_resnet101',
        'da_resnet152']
@@ -257,90 +257,90 @@ def da_resnet152(pretrained=False):
   model = DAResNet(DABottleneck, [3, 8, 36, 3])
   return model
 
-class Domain_Attention(_fasterRCNN):
-  def __init__(self, classes, num_layers=101, pretrained=False, class_agnostic=False, rpn_batchsize_list=None):
-    extension = '_less.pth.tar' if cfg.less_blocks else '_full.pth.tar'
-    self.model_path = 'data/pretrained_model/da_resnet' + str(num_layers) + '_' + str(cfg.num_adapters) + extension
-    if num_layers == 18:
-      self.dout_base_model = 256
-    else:
-      self.dout_base_model = 1024
+# class Domain_Attention(_fasterRCNN):
+#   def __init__(self, classes, num_layers=101, pretrained=False, class_agnostic=False, rpn_batchsize_list=None):
+#     extension = '_less.pth.tar' if cfg.less_blocks else '_full.pth.tar'
+#     self.model_path = 'data/pretrained_model/da_resnet' + str(num_layers) + '_' + str(cfg.num_adapters) + extension
+#     if num_layers == 18:
+#       self.dout_base_model = 256
+#     else:
+#       self.dout_base_model = 1024
 
-    self.pretrained = pretrained
-    self.class_agnostic = class_agnostic
-    self.rpn_batchsize_list = rpn_batchsize_list
-    self.num_layers = num_layers
+#     self.pretrained = pretrained
+#     self.class_agnostic = class_agnostic
+#     self.rpn_batchsize_list = rpn_batchsize_list
+#     self.num_layers = num_layers
 
-    _fasterRCNN.__init__(self, classes, class_agnostic,rpn_batchsize_list)
+#     _fasterRCNN.__init__(self, classes, class_agnostic,rpn_batchsize_list)
 
-  def _init_modules(self):
-    resnet = eval('da_resnet' + str(self.num_layers))()
+#   def _init_modules(self):
+#     resnet = eval('da_resnet' + str(self.num_layers))()
 
-    if self.pretrained == True:
-      state_dict = torch.load(self.model_path)['state_dict']     
-      print("Loading pretrained weights from %s" %(self.model_path))
-      resnet.load_state_dict(state_dict)
-    # Build resnet.
-    # RCNN_base[0]: resnet.conv1, RCNN_base[1]: resnet.bn1 ......
-    self.RCNN_base = nn.Sequential(resnet.conv1, resnet.bn1,resnet.relu,
-      resnet.maxpool,resnet.layer1,resnet.layer2,resnet.layer3)
+#     if self.pretrained == True:
+#       state_dict = torch.load(self.model_path)['state_dict']     
+#       print("Loading pretrained weights from %s" %(self.model_path))
+#       resnet.load_state_dict(state_dict)
+#     # Build resnet.
+#     # RCNN_base[0]: resnet.conv1, RCNN_base[1]: resnet.bn1 ......
+#     self.RCNN_base = nn.Sequential(resnet.conv1, resnet.bn1,resnet.relu,
+#       resnet.maxpool,resnet.layer1,resnet.layer2,resnet.layer3)
 
-    self.RCNN_top = nn.Sequential(resnet.layer4)
-    if self.num_layers == 18:
-      self.RCNN_cls_score_layers = nn.ModuleList([nn.Linear(512, n_classes) for n_classes in cfg.num_classes])
-    else:
-      self.RCNN_cls_score_layers = nn.ModuleList([nn.Linear(2048, n_classes) for n_classes in cfg.num_classes])
-    if self.class_agnostic:
-      if self.num_layers == 18:
-        self.RCNN_bbox_pred_layers = nn.ModuleList([nn.Linear(512,  4) for n_classes in cfg.num_classes])
-      else:
-        self.RCNN_bbox_pred_layers = nn.ModuleList([nn.Linear(2048, 4) for n_classes in cfg.num_classes])
-    else:
-      if self.num_layers == 18:
-        self.RCNN_bbox_pred_layers = nn.ModuleList([nn.Linear(512,  4 * n_classes) for n_classes in cfg.num_classes])
-      else:
-        self.RCNN_bbox_pred_layers = nn.ModuleList([nn.Linear(2048, 4 * n_classes) for n_classes in cfg.num_classes])
+#     self.RCNN_top = nn.Sequential(resnet.layer4)
+#     if self.num_layers == 18:
+#       self.RCNN_cls_score_layers = nn.ModuleList([nn.Linear(512, n_classes) for n_classes in cfg.num_classes])
+#     else:
+#       self.RCNN_cls_score_layers = nn.ModuleList([nn.Linear(2048, n_classes) for n_classes in cfg.num_classes])
+#     if self.class_agnostic:
+#       if self.num_layers == 18:
+#         self.RCNN_bbox_pred_layers = nn.ModuleList([nn.Linear(512,  4) for n_classes in cfg.num_classes])
+#       else:
+#         self.RCNN_bbox_pred_layers = nn.ModuleList([nn.Linear(2048, 4) for n_classes in cfg.num_classes])
+#     else:
+#       if self.num_layers == 18:
+#         self.RCNN_bbox_pred_layers = nn.ModuleList([nn.Linear(512,  4 * n_classes) for n_classes in cfg.num_classes])
+#       else:
+#         self.RCNN_bbox_pred_layers = nn.ModuleList([nn.Linear(2048, 4 * n_classes) for n_classes in cfg.num_classes])
 
-    # Fix blocks
-    for p in self.RCNN_base[0].parameters(): p.requires_grad=False
-    for p in self.RCNN_base[1].parameters(): p.requires_grad=False
+#     # Fix blocks
+#     for p in self.RCNN_base[0].parameters(): p.requires_grad=False
+#     for p in self.RCNN_base[1].parameters(): p.requires_grad=False
     
-    assert (0 <= cfg.RESNET.FIXED_BLOCKS < 4)
-    if cfg.RESNET.FIXED_BLOCKS >= 3:
-      for p in self.RCNN_base[6].parameters(): p.requires_grad=False
-    if cfg.RESNET.FIXED_BLOCKS >= 2:
-      for p in self.RCNN_base[5].parameters(): p.requires_grad=False
-    if cfg.RESNET.FIXED_BLOCKS >= 1:
-      for p in self.RCNN_base[4].parameters(): p.requires_grad=False
+#     assert (0 <= cfg.RESNET.FIXED_BLOCKS < 4)
+#     if cfg.RESNET.FIXED_BLOCKS >= 3:
+#       for p in self.RCNN_base[6].parameters(): p.requires_grad=False
+#     if cfg.RESNET.FIXED_BLOCKS >= 2:
+#       for p in self.RCNN_base[5].parameters(): p.requires_grad=False
+#     if cfg.RESNET.FIXED_BLOCKS >= 1:
+#       for p in self.RCNN_base[4].parameters(): p.requires_grad=False
 
-    def set_bn_fix(m):
-      classname = m.__class__.__name__
-      if classname.find('BatchNorm') != -1:
-        for p in m.parameters(): p.requires_grad=False
+#     def set_bn_fix(m):
+#       classname = m.__class__.__name__
+#       if classname.find('BatchNorm') != -1:
+#         for p in m.parameters(): p.requires_grad=False
           
-    if cfg.fix_bn:
-      self.RCNN_base.apply(set_bn_fix)
-      self.RCNN_top.apply(set_bn_fix)
+#     if cfg.fix_bn:
+#       self.RCNN_base.apply(set_bn_fix)
+#       self.RCNN_top.apply(set_bn_fix)
 
-  def train(self, mode=True):
-    # Override train so that the training mode is set as we want
-    nn.Module.train(self, mode)
-    if mode:
-      print('traing in process')
-      # Set fixed blocks to be in eval mode
-      self.RCNN_base.eval()
-      self.RCNN_base[5].train()
-      self.RCNN_base[6].train()
+#   def train(self, mode=True):
+#     # Override train so that the training mode is set as we want
+#     nn.Module.train(self, mode)
+#     if mode:
+#       print('traing in process')
+#       # Set fixed blocks to be in eval mode
+#       self.RCNN_base.eval()
+#       self.RCNN_base[5].train()
+#       self.RCNN_base[6].train()
 
-      def set_bn_eval(m):
-        classname = m.__class__.__name__
-        if classname.find('BatchNorm') != -1:
-          m.eval()
+#       def set_bn_eval(m):
+#         classname = m.__class__.__name__
+#         if classname.find('BatchNorm') != -1:
+#           m.eval()
 
-      if cfg.fix_bn:
-        self.RCNN_base.apply(set_bn_eval)
-        self.RCNN_top.apply(set_bn_eval)
+#       if cfg.fix_bn:
+#         self.RCNN_base.apply(set_bn_eval)
+#         self.RCNN_top.apply(set_bn_eval)
 
-  def _head_to_tail(self, pool5):
-    fc7 = self.RCNN_top(pool5).mean(3).mean(2)
-    return fc7
+#   def _head_to_tail(self, pool5):
+#     fc7 = self.RCNN_top(pool5).mean(3).mean(2)
+#     return fc7

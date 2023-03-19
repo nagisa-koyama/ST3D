@@ -3,9 +3,9 @@ import torch
 import numpy as np
 from torch import nn
 import torch.nn.functional as F
-from model.utils.config import cfg
+from ..utils.config import cfg
 import torch
-from model.faster_rcnn.se_module_vector import SELayer
+from ..faster_rcnn.se_module_vector import SELayer
 
 class DomainAttention(nn.Module):
     def __init__(self, planes, reduction=16, nclass_list=None, fixed_block=False):

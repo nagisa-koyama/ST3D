@@ -12,7 +12,10 @@ __C = edict()
 # Consumers can get config by:
 #   from fast_rcnn_config import cfg
 cfg = __C
-
+__C.use_mux = False
+__C.num_classes = 3
+__C.num_adapters = 11
+__C.less_blocks = False
 #
 # Training options
 #
