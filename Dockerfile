@@ -92,25 +92,33 @@ RUN cd ./dist && pip3 install spconv*.whl
 RUN python3 -m pip install -U waymo-open-dataset-tf-2-5-0
 RUN python3 -m pip install -U lyft_dataset_sdk==0.0.8
 
+# pandaset-devkit
+WORKDIR $WORK_DIR
+# RUN git clone https://github.com/scaleapi/pandaset-devkit.git
+RUN git clone https://github.com/lea-v/pandaset-devkit.git
+WORKDIR $WORK_DIR/pandaset-devkit
+RUN git checkout feature/addPointCloudTransformations
+WORKDIR $WORK_DIR/pandaset-devkit/python
+RUN python3 -m pip install .
+
 # ST3D install
-ARG ST3D_BRANCH=v20230225_debug_spconv1p2
+ARG ST3D_INSTALLABLE_BRANCH=v20221031
 WORKDIR $WORK_DIR
 #RUN git clone https://github.com/CVMI-Lab/ST3D.git --recursive
 RUN git clone https://github.com/nagisa-koyama/ST3D.git --recursive
 WORKDIR $WORK_DIR/ST3D
 RUN git fetch --all -p
-RUN git checkout ${ST3D_BRANCH}
+RUN git checkout ${ST3D_INSTALLABLE_BRANCH}
 #RUN cd ./pcdet && git submodule update --init
 RUN python3 -m pip install -r requirements.txt
-RUN git branch
-RUN git log -n 1
 RUN python3 setup.py develop
 
 # ST3D branch update
 ADD "https://www.random.org/cgi-bin/randbyte?nbytes=10&format=h" /dev/null
+ARG ST3D_DEV_BRANCH=v20230319_port_DA_module
 RUN git fetch --all\
- && git reset --hard origin/${ST3D_BRANCH}\
- && git log -n 1
+  && git reset --hard origin/${ST3D_DEV_BRANCH}\
+  && git log -n 1
 
 # Storage linking
 WORKDIR $WORK_DIR/ST3D
@@ -122,13 +130,6 @@ RUN ln -s /storage/kitti/ data/kitti
 RUN ln -s /storage/level5-3d-object-detection data/lyft
 RUN ln -s /storage/pandaset data/pandaset
 
-# pandaset-devkit
-WORKDIR $WORK_DIR
-# RUN git clone https://github.com/scaleapi/pandaset-devkit.git
-RUN git clone https://github.com/lea-v/pandaset-devkit.git
-WORKDIR $WORK_DIR/pandaset-devkit
-RUN git checkout feature/addPointCloudTransformations
-WORKDIR $WORK_DIR/pandaset-devkit/python
-RUN python3 -m pip install .
+
 
 WORKDIR $WORK_DIR/ST3D
