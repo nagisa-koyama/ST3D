@@ -101,8 +101,8 @@ RUN git checkout feature/addPointCloudTransformations
 WORKDIR $WORK_DIR/pandaset-devkit/python
 RUN python3 -m pip install .
 
-# ST3D install
-ARG ST3D_INSTALLABLE_BRANCH=v20221031
+# ST3D dependency install
+ARG ST3D_INSTALLABLE_BRANCH=v20230204_refactor
 WORKDIR $WORK_DIR
 #RUN git clone https://github.com/CVMI-Lab/ST3D.git --recursive
 RUN git clone https://github.com/nagisa-koyama/ST3D.git --recursive
@@ -113,12 +113,16 @@ RUN git checkout ${ST3D_INSTALLABLE_BRANCH}
 RUN python3 -m pip install -r requirements.txt
 RUN python3 setup.py develop
 
+# Additional pips
+RUN python3 -m pip install torchinfo
+
 # ST3D branch update
-ADD "https://www.random.org/cgi-bin/randbyte?nbytes=10&format=h" /dev/null
-ARG ST3D_DEV_BRANCH=v20230319_port_DA_module
-RUN git fetch --all\
-  && git reset --hard origin/${ST3D_DEV_BRANCH}\
-  && git log -n 1
+# WORKDIR $WORK_DIR/ST3D
+# ADD "https://www.random.org/cgi-bin/randbyte?nbytes=10&format=h" /dev/null
+# ARG ST3D_DEV_BRANCH=v20230319_port_DA_module
+# RUN git fetch --all\
+#   && git reset --hard origin/${ST3D_DEV_BRANCH}\
+#   && git log -n 1
 
 # Storage linking
 WORKDIR $WORK_DIR/ST3D
@@ -130,6 +134,13 @@ RUN ln -s /storage/kitti/ data/kitti
 RUN ln -s /storage/level5-3d-object-detection data/lyft
 RUN ln -s /storage/pandaset data/pandaset
 
+# Add alias for test command
+RUN echo 'alias train_for_dev="python train.py --cfg_file cfgs/waymo_models/second.yaml"' >> /root/.bashrc
 
-
+# Copy latest ST3D source from local storage except folders in .dockerignore.
+# Assuming that directory structure is kept.
+COPY . $WORK_DIR/ST3D
 WORKDIR $WORK_DIR/ST3D
+RUN git log -n 1
+
+WORKDIR $WORK_DIR/ST3D/tools
