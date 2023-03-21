@@ -13,6 +13,8 @@ from test import repeat_eval_ckpt
 
 import wandb
 
+from torchinfo import summary
+
 from pcdet.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_file
 from pcdet.datasets import build_dataloader
 from pcdet.models.model_utils.dsnorm import DSNorm
@@ -140,6 +142,20 @@ def main():
         model = DSNorm.convert_dsnorm(model)
 
     model.cuda()
+
+    # dataloader_iter_tmp = iter(source_loader)
+    # input_shape = next(dataloader_iter_tmp)['points'].shape
+    # print("input_shape:", input_shape)
+    # voxels = transform_points_to_voxels(next(dataloader_iter_tmp), cfg.DATA_PROCESSOR. )
+    # model_decorator = model_fn_decorator()
+    # loss, tb_dict, disp_dict = model_decorator(model, next(dataloader_iter_tmp))
+    # print(loss, tb_dict, disp_dict)
+    for processor_cfg in cfg.DATA_CONFIG.DATA_PROCESSOR:
+        if processor_cfg.NAME == "transform_points_to_voxels":
+            max_num_of_voxels = processor_cfg.MAX_NUMBER_OF_VOXELS.train
+            max_points_per_voxel = processor_cfg.MAX_POINTS_PER_VOXEL
+            print(max_num_of_voxels, max_points_per_voxel)
+            # summary(model, input_size=(max_num_of_voxels, max_points_per_voxel, max_points_per_voxel, max_num_of_voxels))
 
     wandb.watch(model, log_freq=100)
 
