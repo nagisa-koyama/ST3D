@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from ...ops.domain_attention.faster_rcnn.DAResNet import da_resnet18
+from ...ops.domain_attention.faster_rcnn.DAResNet import DAResNet, DABasicBlock
 
 
 class BaseBEVBackbone(nn.Module):
@@ -81,7 +81,7 @@ class BaseBEVBackbone(nn.Module):
         self.num_bev_features = c_in
 
         if self.model_cfg.get('DA_BLOCK', None) is None:
-            self.da_block = da_resnet18()
+            self.da_block = DABasicBlock(512, 512)
 
 
     def forward(self, data_dict):
@@ -117,5 +117,6 @@ class BaseBEVBackbone(nn.Module):
             x = self.da_block(x)
 
         data_dict['spatial_features_2d'] = x
+        print("x.shape:", x.shape)
 
         return data_dict
