@@ -44,6 +44,5 @@ class DomainAttentionBEVBackbone(BaseBEVBackbone):
         x = self.da_block(x)
 
         data_dict['spatial_features_2d'] = x
-        print("x.shape:", x.shape)
 
         return data_dict
