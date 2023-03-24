@@ -118,8 +118,8 @@ class LyftDataset(DatasetTemplate):
             'motorcycle': 'Cyclist'
         }
 
-        kitti_utils.transform_to_kitti_format(eval_det_annos, map_name_to_kitti=map_name_to_kitti)
-        kitti_utils.transform_to_kitti_format(
+        kitti_utils.transform_annotations_to_kitti_format(eval_det_annos, map_name_to_kitti=map_name_to_kitti)
+        kitti_utils.transform_annotations_to_kitti_format(
             eval_gt_annos, map_name_to_kitti=map_name_to_kitti,
             info_with_fakelidar=self.dataset_cfg.get('INFO_WITH_FAKELIDAR', False)
         )
