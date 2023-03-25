@@ -7,21 +7,29 @@ from torch.nn.utils import clip_grad_norm_
 
 import wandb
 
-def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, accumulated_iter, optim_cfg,
-                    rank, tbar, total_it_each_epoch, dataloader_iters, tb_log=None, leave_pbar=False):
-    dataloader_iter = dataloader_iters[0]
-    if total_it_each_epoch == len(train_loader):
-        dataloader_iter = iter(train_loader)
+def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, accumulated_iter, optim_cfg,
+                    rank, tbar, total_it_each_epochs, dataloader_iters, tb_log=None, leave_pbar=False):
+    # dataloader_iter = dataloader_iters[0]
+    assert(len(dataloader_iters) == len(train_loaders))
+    assert(len(total_it_each_epochs) == len(train_loaders))
+    for index in range(len(total_it_each_epochs)):
+        if total_it_each_epochs[index] == len(train_loaders[index]):
+            dataloader_iters[index] = iter(train_loaders[index])
 
+    total_it_each_epochs_aggregated = max(total_it_each_epochs)*len(total_it_each_epochs)
+    print("total_it_each_epochs:", total_it_each_epochs)
+    print("total_it_each_epochs_aggregated:", total_it_each_epochs_aggregated)
     if rank == 0:
-        pbar = tqdm.tqdm(total=total_it_each_epoch, leave=leave_pbar, desc='train', dynamic_ncols=True)
+        pbar = tqdm.tqdm(total=total_it_each_epochs_aggregated, leave=leave_pbar, desc='train', dynamic_ncols=True)
 
-    for cur_it in range(total_it_each_epoch):
+    for cur_it in range(total_it_each_epochs_aggregated):
+        dataset_index = cur_it % len(dataloader_iters)
+        print("dataset_index", dataset_index)
         try:
-            batch = next(dataloader_iter)
+            batch = next(dataloader_iters[dataset_index])
         except StopIteration:
-            dataloader_iter = iter(train_loader)
-            batch = next(dataloader_iter)
+            dataloader_iters[dataset_index] = iter(train_loaders[dataset_index])
+            batch = next(dataloader_iters[dataset_index])
             print('new iters')
 
         lr_scheduler.step(accumulated_iter)
@@ -73,14 +81,14 @@ def train_model(model, optimizer, train_loaders, target_loader, model_func, lr_s
                 max_ckpt_save_num=50, merge_all_iters_to_one_epoch=False, logger=None, ema_model=None):
     accumulated_iter = start_iter
     with tqdm.trange(start_epoch, total_epochs, desc='epochs', dynamic_ncols=True, leave=(rank == 0)) as tbar:
-        total_it_each_epoch = 0
+        total_it_each_epochs = list()
         for train_loader in train_loaders:
-            it_each_epoch = len(train_loader)
+            total_it_each_epoch = len(train_loader)
             if merge_all_iters_to_one_epoch:
                 assert hasattr(train_loader.dataset, 'merge_all_iters_to_one_epoch')
                 train_loader.dataset.merge_all_iters_to_one_epoch(merge=True, epochs=total_epochs)
-                it_each_epoch = len(train_loader) // max(total_epochs, 1)
-            total_it_each_epoch += it_each_epoch
+                total_it_each_epoch = len(train_loader) // max(total_epochs, 1)
+            total_it_each_epochs.append(total_it_each_epoch)
 
         dataloader_iters = [iter(train_loader) for train_loader in train_loaders]
         for cur_epoch in tbar:
@@ -95,12 +103,12 @@ def train_model(model, optimizer, train_loaders, target_loader, model_func, lr_s
             else:
                 cur_scheduler = lr_scheduler
             accumulated_iter = train_one_epoch(
-                model, optimizer, train_loader, model_func,
+                model, optimizer, train_loaders, model_func,
                 lr_scheduler=cur_scheduler,
                 accumulated_iter=accumulated_iter, optim_cfg=optim_cfg,
                 rank=rank, tbar=tbar, tb_log=tb_log,
                 leave_pbar=(cur_epoch + 1 == total_epochs),
-                total_it_each_epoch=total_it_each_epoch,
+                total_it_each_epochs=total_it_each_epochs,
                 dataloader_iters=dataloader_iters
             )
 
