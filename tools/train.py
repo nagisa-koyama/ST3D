@@ -116,7 +116,7 @@ def main():
 
     # -----------------------create dataloader & network & optimizer---------------------------
     if cfg.get('DATA_CONFIG', None):
-        data_configs = [cfg.DATA_CONFIG]
+        data_configs = {'DATA_CONFIG': cfg.DATA_CONFIG}
     if cfg.get('DATA_CONFIGS', None):
         data_configs = cfg.DATA_CONFIGS
     source_datasets = list()
@@ -131,7 +131,7 @@ def main():
             merge_all_iters_to_one_epoch=args.merge_all_iters_to_one_epoch,
             total_epochs=args.epochs
         )
-        dataset = dict(set=source_set, loader=source_loader, sampler=source_sampler)
+        dataset = dict(dataset_class=source_set, loader=source_loader, sampler=source_sampler)
         source_datasets.append(dataset)
     if cfg.get('SELF_TRAIN', None):
         target_set, target_loader, target_sampler = build_dataloader(
@@ -142,7 +142,7 @@ def main():
         target_set = target_loader = target_sampler = None
     for source_dataset in source_datasets:
         model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES),
-                              dataset=source_dataset['set'])
+                              dataset=source_dataset['dataset_class'])
         break
 
     if args.sync_bn:
@@ -181,8 +181,12 @@ def main():
         total_iters_each_epoch = len(target_loader) if not args.merge_all_iters_to_one_epoch \
                                             else len(target_loader) // args.epochs
     else:
-        total_iters_each_epoch = len(source_loader) if not args.merge_all_iters_to_one_epoch \
-            else len(source_loader) // args.epochs
+        iters_each_epoch_list = list()
+        for source_dataset in source_datasets:
+            iters_each_epoch = len(source_dataset['loader']) if not args.merge_all_iters_to_one_epoch \
+                else len(source_dataset['source_loader']) // args.epochs
+            iters_each_epoch_list.append(iters_each_epoch)
+        total_iters_each_epoch = max(iters_each_epoch_list)*len(iters_each_epoch_list)
 
     lr_scheduler, lr_warmup_scheduler = build_scheduler(
         optimizer, total_iters_each_epoch=total_iters_each_epoch, total_epochs=args.epochs,
@@ -195,10 +199,13 @@ def main():
     # -----------------------start training---------------------------
     logger.info('**********************Start training %s/%s(%s)**********************'
                 % (cfg.EXP_GROUP_PATH, cfg.TAG, args.extra_tag))
+
+    source_loaders = [dataset['loader'] for dataset in source_datasets]
+    source_samplers = [dataset['sampler'] for dataset in source_datasets]
     train_func(
         model,
         optimizer,
-        source_loader,
+        source_loaders,
         target_loader,
         model_func=model_fn_decorator(),
         lr_scheduler=lr_scheduler,
@@ -210,7 +217,7 @@ def main():
         tb_log=tb_log,
         ckpt_save_dir=ckpt_dir,
         ps_label_dir=ps_label_dir,
-        source_sampler=source_sampler,
+        source_samplers=source_samplers,
         target_sampler=target_sampler,
         lr_warmup_scheduler=lr_warmup_scheduler,
         ckpt_save_interval=args.ckpt_save_interval,

@@ -8,7 +8,8 @@ from torch.nn.utils import clip_grad_norm_
 import wandb
 
 def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, accumulated_iter, optim_cfg,
-                    rank, tbar, total_it_each_epoch, dataloader_iter, tb_log=None, leave_pbar=False):
+                    rank, tbar, total_it_each_epoch, dataloader_iters, tb_log=None, leave_pbar=False):
+    dataloader_iter = dataloader_iters[0]
     if total_it_each_epoch == len(train_loader):
         dataloader_iter = iter(train_loader)
 
@@ -66,22 +67,27 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
     return accumulated_iter
 
 
-def train_model(model, optimizer, train_loader, target_loader, model_func, lr_scheduler, optim_cfg,
+def train_model(model, optimizer, train_loaders, target_loader, model_func, lr_scheduler, optim_cfg,
                 start_epoch, total_epochs, start_iter, rank, tb_log, ckpt_save_dir, ps_label_dir,
-                source_sampler=None, target_sampler=None, lr_warmup_scheduler=None, ckpt_save_interval=1,
+                source_samplers=None, target_sampler=None, lr_warmup_scheduler=None, ckpt_save_interval=1,
                 max_ckpt_save_num=50, merge_all_iters_to_one_epoch=False, logger=None, ema_model=None):
     accumulated_iter = start_iter
     with tqdm.trange(start_epoch, total_epochs, desc='epochs', dynamic_ncols=True, leave=(rank == 0)) as tbar:
-        total_it_each_epoch = len(train_loader)
-        if merge_all_iters_to_one_epoch:
-            assert hasattr(train_loader.dataset, 'merge_all_iters_to_one_epoch')
-            train_loader.dataset.merge_all_iters_to_one_epoch(merge=True, epochs=total_epochs)
-            total_it_each_epoch = len(train_loader) // max(total_epochs, 1)
+        total_it_each_epoch = 0
+        for train_loader in train_loaders:
+            it_each_epoch = len(train_loader)
+            if merge_all_iters_to_one_epoch:
+                assert hasattr(train_loader.dataset, 'merge_all_iters_to_one_epoch')
+                train_loader.dataset.merge_all_iters_to_one_epoch(merge=True, epochs=total_epochs)
+                it_each_epoch = len(train_loader) // max(total_epochs, 1)
+            total_it_each_epoch += it_each_epoch
 
-        dataloader_iter = iter(train_loader)
+        dataloader_iters = [iter(train_loader) for train_loader in train_loaders]
         for cur_epoch in tbar:
-            if source_sampler is not None:
-                source_sampler.set_epoch(cur_epoch)
+            if source_samplers is not None:
+                for index in range(len(source_samplers)):
+                    if source_samplers[index] is not None:
+                        source_samplers[index].set_epoch(cur_epoch)
 
             # train one epoch
             if lr_warmup_scheduler is not None and cur_epoch < optim_cfg.WARMUP_EPOCH:
@@ -95,7 +101,7 @@ def train_model(model, optimizer, train_loader, target_loader, model_func, lr_sc
                 rank=rank, tbar=tbar, tb_log=tb_log,
                 leave_pbar=(cur_epoch + 1 == total_epochs),
                 total_it_each_epoch=total_it_each_epoch,
-                dataloader_iter=dataloader_iter
+                dataloader_iters=dataloader_iters
             )
 
             # save trained model
