@@ -137,6 +137,7 @@ RUN ln -s /storage/pandaset data/pandaset
 # Add alias for test command
 RUN echo 'alias train_dev="python train.py --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/secondiou_old_anchor.yaml"' >> /root/.bashrc
 RUN echo 'alias train_kitti="python train.py --cfg_file cfgs/kitti_models/second.yaml"' >> /root/.bashrc
+RUN echo 'alias train_pandaset="python train.py --cfg_file cfgs/pandaset_models/second.yaml"' >> /root/.bashrc
 
 # Copy latest ST3D source from local storage except folders in .dockerignore.
 # Assuming that directory structure is kept.
