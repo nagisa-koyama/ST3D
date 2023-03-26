@@ -4,6 +4,7 @@ from pathlib import Path
 import argparse
 import datetime
 import glob
+import subprocess
 
 import torch
 import torch.nn as nn
@@ -226,6 +227,16 @@ def main():
         logger=logger,
         ema_model=None
     )
+
+    # Exclude pth files from wandb upload.
+    # TODO: Make this work.
+    pth_list = glob.glob(str(cfg.ROOT_DIR / '**/*.pth'), recursive=True)
+    pth_list_str = ','.join(pth_list)
+    os.environ['WANDB_IGNORE_GLOBS'] = pth_list_str
+
+    # Copy wandb folder to storage.
+    copy_cmd = "cp -Lr wandb /storage/"
+    subprocess.call(copy_cmd.split())
 
     logger.info('**********************End training %s/%s(%s)**********************\n\n\n'
                 % (cfg.EXP_GROUP_PATH, cfg.TAG, args.extra_tag))

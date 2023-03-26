@@ -124,6 +124,7 @@ def train_model(model, optimizer, train_loaders, target_loader, model_func, lr_s
                         os.remove(ckpt_list[cur_file_idx])
 
                 ckpt_name = ckpt_save_dir / ('checkpoint_epoch_%d' % trained_epoch)
+                print("ckpt_name:", ckpt_name)
                 save_checkpoint(
                     checkpoint_state(model, optimizer, trained_epoch, accumulated_iter), filename=ckpt_name,
                 )
@@ -165,4 +166,5 @@ def save_checkpoint(state, filename='checkpoint'):
 
     filename = '{}.pth'.format(filename)
     torch.save(state, filename)
-    wandb.save(filename)
+    # Save to local storage to reduce wandb strorage usage.
+    # wandb.save(filename)
