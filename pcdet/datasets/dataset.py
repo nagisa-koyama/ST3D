@@ -9,15 +9,21 @@ from .processor.data_processor import DataProcessor
 from .processor.point_feature_encoder import PointFeatureEncoder
 from ..utils import common_utils, box_utils, self_training_utils
 from ..ops.roiaware_pool3d import roiaware_pool3d_utils
-
+from ..utils.ontology_mapping import get_ontology_mapping
 
 class DatasetTemplate(torch_data.Dataset):
     def __init__(self, dataset_cfg=None, class_names=None, training=True, root_path=None, logger=None,
-                 model_ontology=None, dataset_ontology=None):
+                 model_ontology=None):
         super().__init__()
         self.dataset_cfg = dataset_cfg
         self.training = training
-        self.class_names = class_names
+        self.dataset_ontology = dataset_cfg.get('ONTOLOGY', None)
+        if model_ontology is not None and self.dataset_ontology is not None and model_ontology != self.dataset_ontology:
+            self.map_ontology_dataset_to_model = get_ontology_mapping(self.dataset_ontology, model_ontology)
+            self.class_names = [self.map_ontology_dataset_to_model[label] for label in class_names]
+        else:
+            self.map_ontology_dataset_to_model = None
+            self.class_names = class_names
         self.logger = logger
         self.root_path = root_path if root_path is not None else Path(self.dataset_cfg.DATA_PATH)
         self.logger = logger
@@ -36,18 +42,11 @@ class DatasetTemplate(torch_data.Dataset):
             self.dataset_cfg.DATA_PROCESSOR, point_cloud_range=self.point_cloud_range,
             training=self.training, num_point_features=self.point_feature_encoder.num_point_features
         )
-
         self.grid_size = self.data_processor.grid_size
         self.voxel_size = self.data_processor.voxel_size
         self.total_epochs = 0
         self._merge_all_iters_to_one_epoch = False
-        if model_ontology is not None and dataset_ontology is not None:
-            self.map_ontology_dataset_to_model = self.get_ontology_mapping(dataset_ontology, model_ontology)
-            self.map_ontology_model_to_dataset = self.get_ontology_mapping(model_ontology, dataset_ontology)
-            self.model_class_names = [self.map_ontology_dataset_to_model[label] for label in self.class_names]
-        else:
-            self.map_ontology_dataset_to_model = None
-            self.map_ontology_model_to_dataset = None
+
 
 
     @property
@@ -213,112 +212,6 @@ class DatasetTemplate(torch_data.Dataset):
         else:
             self._merge_all_iters_to_one_epoch = False
 
-    def get_ontology_mapping(self, input_ontology, output_ontology):
-        # KITTI ontology
-        # https://github.com/NVIDIA/DIGITS/blob/v4.0.0-rc.3/digits/extensions/data/objectDetection/README.md
-        # Waymo ontology
-        # https://github.com/waymo-research/waymo-open-dataset/blob/master/docs/labeling_specifications.md
-        # Lyft ontology
-        # https://wandb.ai/wandb/lyft/reports/An-Exploration-of-Lyft-s-Self-Driving-Car-Dataset--Vmlldzo0MzcyNw#the-9-classes-in-the-lyft-dataset
-        # Pandaset ontology 
-        # https://github.com/scaleapi/pandaset-devkit/blob/master/docs/annotation_instructions_cuboids.pdf
-        map_lyft_to_kitti = {
-            'car': 'Car',
-            'pedestrian': 'Pedestrian',
-            'truck': 'Truck',
-            'bicycle': 'Cyclist',
-            'motorcycle': 'Cyclist',
-            'bus': 'Misc',
-            'emergency_vehicle': 'Misc',
-            'other_vehicle': 'Misc',
-            'animal': 'Misc'
-        }
-        map_waymo_to_kitti = {
-            'Vehicle': 'Car',
-            'Pedestrian': 'Pedestrian',
-            'Cyclist': 'Cyclist',
-            'Sign': 'Misc'
-        }
-        map_pandaset_to_kitti = {
-            'Car': 'Car',
-            'Pickup Truck': 'Truck',
-            'Medium-sized Truck': 'Truck',
-            'Semi-truck': 'Truck',
-            'Towed Object': 'Misc',
-            'Motorcycle': 'Cyclist',
-            'Other Vehicle - Construction Vehicle': 'Misc',
-            'Other Vehicle - Uncommon': 'Misc',
-            'Other Vehicle - Pedicab': 'Misc',
-            'Emergency Vehicle': 'Misc',
-            'Bus': 'Misc',
-            'Personal Mobility Device': 'Misc',
-            'Motorized Scooter': 'Cyclist',
-            'Bicycle': 'Cyclist',
-            'Train': 'Tram',
-            'Trolley': 'Tram',
-            'Tram / Subway': 'Tram',
-            'Pedestrian': 'Pedestrian',
-            'Pedestrian with Object': 'Pedestrian',
-            'Animals - Bird': 'Misc',
-            'Animals - Other Animals': 'Misc',
-            'Pylons': 'Misc',
-            'Sign': 'Misc',
-            'Cones': 'Misc',
-            'Construction Sign': 'Misc',
-            'Temporary Construction Barriers': 'Misc',
-            'Rolling Containers': 'Misc'
-        }
-        map_kitti_to_lyft = {
-            'Car': 'car',
-            'Pedestrian': 'pedestrian',
-            'Truck': 'truck',
-            'Cyclist': 'bicycle',
-            'Van': 'other_vehicle',
-            'Misc': 'other_vehicle',
-            'Person_sitting': 'pedestrian',
-            'Tram': 'other_vehicle',
-            'Misc': 'other_vehicle',
-            'DontCare': 'other_vehicle',
-        }
-        map_kitti_to_waymo = {
-            'Car': 'Vehicle',
-            'Pedestrian': 'Pedestrian',
-            'Truck': 'Vehicle',
-            'Cyclist': 'Cyclist',
-            'Van': 'Vehicle',
-            'Misc': 'Sign',
-            'Person_sitting': 'Pedestrian',
-            'Tram': 'Sign',
-            'Misc': 'Sign',
-            'DontCare': 'Sign',
-        }
-        map_kitti_to_pandaset = {
-            'Car': 'Car',
-            'Pedestrian': 'Pedestrian',
-            'Truck': 'Medium-sized Truck',
-            'Cyclist': 'Bicycle',
-            'Van': 'Medium-sized Truck',
-            'Misc': '',
-            'Person_sitting': 'Pedestrian',
-            'Tram': 'Sign',
-            'Misc': 'Sign',
-            'DontCare': 'Sign',
-        }
-        if input_ontology == 'lyft' and output_ontology == 'kitti':
-            return map_lyft_to_kitti
-        elif input_ontology == 'waymo' and output_ontology == 'kitti':
-            return map_waymo_to_kitti
-        elif input_ontology == 'pandaset' and output_ontology == 'kitti':
-            return map_pandaset_to_kitti
-        elif input_ontology == 'kitti' and output_ontology == 'lyft':
-            return map_kitti_to_lyft
-        elif input_ontology == 'kitti' and output_ontology == 'waymo':
-            return map_kitti_to_waymo
-        elif input_ontology == 'kitti' and output_ontology == 'pandaset':
-            return map_kitti_to_pandaset
-        else:
-            assert False, input_ontology + ' to ' + output_ontology + ' is not supported'
-
     def __len__(self):
         raise NotImplementedError
 
@@ -357,6 +250,11 @@ class DatasetTemplate(torch_data.Dataset):
                 voxel_num_points: optional (num_voxels)
                 ...
         """
+        # ontology remapping
+        if self.map_ontology_dataset_to_model is not None:
+            for key, label in data_dict['gt_boxes'].items():
+                data_dict['gt_boxes'][key] = self.map_ontology_dataset_to_model[label]
+
         if self.training:
             # filter gt_boxes without points
             num_points_in_gt = data_dict.get('num_points_in_gt', None)
@@ -364,7 +262,6 @@ class DatasetTemplate(torch_data.Dataset):
                 num_points_in_gt = roiaware_pool3d_utils.points_in_boxes_cpu(
                     torch.from_numpy(data_dict['points'][:, :3]),
                     torch.from_numpy(data_dict['gt_boxes'][:, :7])).numpy().sum(axis=1)
-
             mask = (num_points_in_gt >= self.dataset_cfg.get('MIN_POINTS_OF_GT', 1))
             data_dict['gt_boxes'] = data_dict['gt_boxes'][mask]
             data_dict['gt_names'] = data_dict['gt_names'][mask]
