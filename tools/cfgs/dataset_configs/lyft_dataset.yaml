@@ -1,5 +1,6 @@
 DATASET: 'LyftDataset'
 DATA_PATH: '../data/lyft'
+ONTOLOGY: 'lyft'
 
 VERSION: 'trainval'
 SET_NAN_VELOCITY_TO_ZEROS: True

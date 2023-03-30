@@ -1,6 +1,7 @@
 DATASET: 'WaymoDataset'
 DATA_PATH: '../data/waymo'
 PROCESSED_DATA_TAG: 'processed_data'
+ONTOLOGY: 'waymo'
 
 POINT_CLOUD_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
 

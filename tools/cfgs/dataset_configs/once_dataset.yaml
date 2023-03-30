@@ -1,6 +1,7 @@
 DATASET: 'ONCEDataset'
 DATA_PATH: '../data/once'
 CLOUD_DATA_PATH: '/cache/once'
+ONTOLOGY: 'once'
 
 POINT_CLOUD_RANGE: [-75.2, -75.2, -5.0, 75.2, 75.2, 3.0]
 
