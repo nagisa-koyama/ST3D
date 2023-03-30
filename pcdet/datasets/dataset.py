@@ -17,13 +17,18 @@ class DatasetTemplate(torch_data.Dataset):
         super().__init__()
         self.dataset_cfg = dataset_cfg
         self.training = training
+        self.class_names = class_names
         self.dataset_ontology = dataset_cfg.get('ONTOLOGY', None)
+        print("dataset ontology:", self.dataset_ontology)
+        print("model ontology:", model_ontology)
         if model_ontology is not None and self.dataset_ontology is not None and model_ontology != self.dataset_ontology:
             self.map_ontology_dataset_to_model = get_ontology_mapping(self.dataset_ontology, model_ontology)
-            self.class_names = [self.map_ontology_dataset_to_model[label] for label in class_names]
+            self.map_ontology_model_to_dataset = get_ontology_mapping(model_ontology, self.dataset_ontology)
+            self.dataset_class_names = [self.map_ontology_model_to_dataset[label] for label in class_names]
         else:
             self.map_ontology_dataset_to_model = None
-            self.class_names = class_names
+            self.map_ontology_model_to_dataset = None
+            self.dataset_class_names = class_names
         self.logger = logger
         self.root_path = root_path if root_path is not None else Path(self.dataset_cfg.DATA_PATH)
         self.logger = logger
@@ -36,7 +41,8 @@ class DatasetTemplate(torch_data.Dataset):
             point_cloud_range=self.point_cloud_range
         )
         self.data_augmentor = DataAugmentor(
-            self.root_path, self.dataset_cfg.DATA_AUGMENTOR, self.class_names, logger=self.logger
+            self.root_path, self.dataset_cfg.DATA_AUGMENTOR, self.dataset_class_names, logger=self.logger,
+            ontology_mapping=self.map_ontology_dataset_to_model
         ) if self.training else None
         self.data_processor = DataProcessor(
             self.dataset_cfg.DATA_PROCESSOR, point_cloud_range=self.point_cloud_range,
@@ -252,8 +258,8 @@ class DatasetTemplate(torch_data.Dataset):
         """
         # ontology remapping
         if self.map_ontology_dataset_to_model is not None:
-            for key, label in data_dict['gt_boxes'].items():
-                data_dict['gt_boxes'][key] = self.map_ontology_dataset_to_model[label]
+            for index in range(data_dict['gt_names'].size):
+                data_dict['gt_names'][index] = self.map_ontology_dataset_to_model[data_dict['gt_names'][index]]
 
         if self.training:
             # filter gt_boxes without points

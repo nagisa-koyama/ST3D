@@ -5,21 +5,26 @@ from ...ops.iou3d_nms import iou3d_nms_utils
 
 
 class DataBaseSampler(object):
-    def __init__(self, root_path, sampler_cfg, class_names, logger=None):
+    def __init__(self, root_path, sampler_cfg, class_names, logger=None, ontology_mapping=None):
         self.root_path = root_path
-        self.class_names = class_names
+        if ontology_mapping is not None:
+            self.class_names = [ontology_mapping[label] for label in class_names]
+        else:
+            self.class_names = class_names
         self.sampler_cfg = sampler_cfg
         self.logger = logger
         self.db_infos = {}
-        for class_name in class_names:
+        for class_name in self.class_names:
             self.db_infos[class_name] = []
 
         for db_info_path in sampler_cfg.DB_INFO_PATH:
             db_info_path = self.root_path.resolve() / db_info_path
             with open(str(db_info_path), 'rb') as f:
                 infos = pickle.load(f)
-                [self.db_infos[cur_class].extend(infos[cur_class]) for cur_class in class_names]
-
+                if ontology_mapping is not None:
+                    [self.db_infos[ontology_mapping[cur_class]].extend(infos[cur_class]) for cur_class in class_names]
+                else:
+                    [self.db_infos[cur_class].extend(infos[cur_class]) for cur_class in class_names]
         for func_name, val in sampler_cfg.PREPARE.items():
             self.db_infos = getattr(self, func_name)(self.db_infos, val)
 
@@ -30,11 +35,15 @@ class DataBaseSampler(object):
             class_name, sample_num = x.split(':')
             if class_name not in class_names:
                 continue
-            self.sample_class_num[class_name] = sample_num
-            self.sample_groups[class_name] = {
+            if ontology_mapping is not None:
+                mapped_class_name = ontology_mapping[class_name]
+            else:
+                mapped_class_name = class_name
+            self.sample_class_num[mapped_class_name] = sample_num
+            self.sample_groups[mapped_class_name] = {
                 'sample_num': sample_num,
-                'pointer': len(self.db_infos[class_name]),
-                'indices': np.arange(len(self.db_infos[class_name]))
+                'pointer': len(self.db_infos[mapped_class_name]),
+                'indices': np.arange(len(self.db_infos[mapped_class_name]))
             }
 
     def __getstate__(self):

@@ -126,20 +126,22 @@ def main():
     for data_config in data_configs.values():
         source_set, source_loader, source_sampler = build_dataloader(
             dataset_cfg=data_config,
-            class_names=cfg.CLASS_NAMES if cfg.get('DATA_CONFIG', None) else data_config.CLASS_NAMES,
+            class_names=cfg.CLASS_NAMES,
             batch_size=args.batch_size,
             dist=dist_train, workers=args.workers,
             logger=logger,
             training=True,
             merge_all_iters_to_one_epoch=args.merge_all_iters_to_one_epoch,
-            total_epochs=args.epochs
+            total_epochs=args.epochs,
+            model_ontology=cfg.get('ONTOLOGY', None)
         )
         dataset = dict(dataset_class=source_set, loader=source_loader, sampler=source_sampler)
         source_datasets.append(dataset)
     if cfg.get('SELF_TRAIN', None):
         target_set, target_loader, target_sampler = build_dataloader(
-            cfg.DATA_CONFIG_TAR, cfg.DATA_CONFIG_TAR.CLASS_NAMES, args.batch_size,
-            dist_train, workers=args.workers, logger=logger, training=True
+            cfg.DATA_CONFIG_TAR, cfg.CLASS_NAMES, args.batch_size,
+            dist_train, workers=args.workers, logger=logger, training=True,
+            model_ontology=cfg.get('ONTOLOGY', None)
         )
     else:
         target_set = target_loader = target_sampler = None
@@ -252,16 +254,18 @@ def main():
     if cfg.get('DATA_CONFIG_TAR', None) and not args.eval_src:
         test_set, test_loader, sampler = build_dataloader(
             dataset_cfg=cfg.DATA_CONFIG_TAR,
-            class_names=cfg.DATA_CONFIG_TAR.CLASS_NAMES,
+            class_names=cfg.CLASS_NAMES,
             batch_size=args.batch_size,
-            dist=dist_train, workers=args.workers, logger=logger, training=False
+            dist=dist_train, workers=args.workers, logger=logger, training=False,
+            model_ontology=cfg.get('ONTOLOGY', None)
         )
     else:
         test_set, test_loader, sampler = build_dataloader(
             dataset_cfg=cfg.DATA_CONFIG,
             class_names=cfg.CLASS_NAMES,
             batch_size=args.batch_size,
-            dist=dist_train, workers=args.workers, logger=logger, training=False
+            dist=dist_train, workers=args.workers, logger=logger, training=False,
+            model_ontology=cfg.get('ONTOLOGY', None)
         )
 
     eval_output_dir = output_dir / 'eval' / 'eval_with_train'

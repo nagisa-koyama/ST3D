@@ -50,7 +50,7 @@ def pose_numpy_to_dict(pose):
 
 
 class PandasetDataset(DatasetTemplate):
-    def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None):
+    def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None, model_ontology=None):
         """
         Args:
             root_path:
@@ -60,7 +60,8 @@ class PandasetDataset(DatasetTemplate):
             logger:
         """
         super().__init__(
-            dataset_cfg=dataset_cfg, class_names=class_names, training=training, root_path=root_path, logger=logger
+            dataset_cfg=dataset_cfg, class_names=class_names, training=training, root_path=root_path, logger=logger,
+            model_ontology=model_ontology
         )
         if root_path is None:
             root_path = self.dataset_cfg.DATA_PATH

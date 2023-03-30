@@ -1,4 +1,4 @@
-def get_ontology_mapping(self, input_ontology, output_ontology):
+def get_ontology_mapping(input_ontology, output_ontology):
     # KITTI ontology
     # https://github.com/NVIDIA/DIGITS/blob/v4.0.0-rc.3/digits/extensions/data/objectDetection/README.md
     # Waymo ontology
