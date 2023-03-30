@@ -118,8 +118,10 @@ def main():
     # -----------------------create dataloader & network & optimizer---------------------------
     if cfg.get('DATA_CONFIG', None):
         data_configs = {'DATA_CONFIG': cfg.DATA_CONFIG}
-    if cfg.get('DATA_CONFIGS', None):
+    elif cfg.get('DATA_CONFIGS', None):
         data_configs = cfg.DATA_CONFIGS
+    else:
+        assert False, "Eigher DATA_CONFIG or DATA_CONFIGS should be defined"
     source_datasets = list()
     for data_config in data_configs.values():
         source_set, source_loader, source_sampler = build_dataloader(
