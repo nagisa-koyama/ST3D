@@ -1,5 +1,6 @@
 DATASET: 'KittiDataset'
 DATA_PATH: '../data/kitti'
+ONTOLOGY: 'kitti'
 
 POINT_CLOUD_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
 

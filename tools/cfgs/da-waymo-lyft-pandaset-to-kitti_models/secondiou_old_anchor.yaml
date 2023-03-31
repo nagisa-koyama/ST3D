@@ -2,22 +2,25 @@ CLASS_NAMES: ['Car']
 ONTOLOGY: 'kitti'
 
 DATA_CONFIGS:
+    KITTI_CONFIG:
+        _BASE_CONFIG_: cfgs/dataset_configs/da_kitti_dataset.yaml
+        FOV_POINTS_ONLY: True
+        CLASS_NAMES: ['Car']
+        SHIFT_COOR: [0.0, 0.0, 1.6]
+    LYFT_CONFIG:
+        _BASE_CONFIG_: cfgs/dataset_configs/da_lyft_dataset.yaml
+        CLASS_NAMES: ['car']
     WAYMO_CONFIG:
-        _BASE_CONFIG_: cfgs/dataset_configs/waymo_dataset.yaml
-        PROCESSED_DATA_TAG: 'waymo_processed_data'
+        _BASE_CONFIG_: cfgs/dataset_configs/da_waymo_dataset.yaml
         INFO_WITH_FAKELIDAR: False
         CLASS_NAMES: ['Vehicle']
-    LYFT_CONFIG:
-        _BASE_CONFIG_: cfgs/dataset_configs/lyft_dataset.yaml
-        CLASS_NAMES: ['car']
-    # PANDASET_CONFIG:
-    #     _BASE_CONFIG_: cfgs/dataset_configs/pandaset_dataset.yaml
-    #     CLASS_NAMES: ['Car']
+    PANDASET_CONFIG:
+        _BASE_CONFIG_: cfgs/dataset_configs/da_pandaset_dataset.yaml
+        CLASS_NAMES: ['Car']
 
 DATA_CONFIG_TAR:
-    _BASE_CONFIG_: cfgs/dataset_configs/kitti_dataset.yaml
-    TARGET: True
-    FOV_POINTS_ONLY: False
+    _BASE_CONFIG_: cfgs/dataset_configs/da_kitti_dataset.yaml
+    FOV_POINTS_ONLY: True
     CLASS_NAMES: ['Car']
     SHIFT_COOR: [0.0, 0.0, 1.6]
 
@@ -54,7 +57,7 @@ MODEL:
 
         ANCHOR_GENERATOR_CONFIG: [
             {
-                'class_name': 'Vehicle',
+                'class_name': 'Car',
                 'anchor_sizes': [[4.2, 2.0, 1.6]],
                 'anchor_rotations': [0, 1.57],
                 'anchor_bottom_heights': [0],
