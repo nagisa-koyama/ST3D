@@ -86,15 +86,20 @@ def get_no_evaluated_ckpt(ckpt_dir, ckpt_record_file, args):
     return -1, None
 
 
-def repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir, dist_test=False):
-    # evaluated ckpt record
+def get_eval_config():
     if cfg.get('DATA_CONFIG_TAR', None):
-        data_config_eval = cfg.DATA_CONFIG_TAR
+        return cfg.DATA_CONFIG_TAR
     elif cfg.get('DATA_CONFIG', None):
-        data_config_eval = cfg.DATA_CONFIG
+        return cfg.DATA_CONFIG
     else:
         assert(0)
 
+
+def repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir, dist_test=False):
+
+    data_config_eval = get_eval_config()
+
+    # evaluated ckpt record
     ckpt_record_file = eval_output_dir / ('eval_list_%s.txt' % data_config_eval.DATA_SPLIT['test'])
     with open(ckpt_record_file, 'a'):
         pass
@@ -170,7 +175,7 @@ def main():
     if not args.eval_all:
         num_list = re.findall(r'\d+', args.ckpt) if args.ckpt is not None else []
         epoch_id = num_list[-1] if num_list.__len__() > 0 else 'no_number'
-        eval_output_dir = eval_output_dir / ('epoch_%s' % epoch_id) / cfg.DATA_CONFIG.DATA_SPLIT['test']
+        eval_output_dir = eval_output_dir / ('epoch_%s' % epoch_id) / get_eval_config().DATA_SPLIT['test']
     else:
         eval_output_dir = eval_output_dir / 'eval_all_default'
 
