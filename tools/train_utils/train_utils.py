@@ -167,4 +167,4 @@ def save_checkpoint(state, filename='checkpoint'):
     filename = '{}.pth'.format(filename)
     torch.save(state, filename)
     # Save to local storage to reduce wandb strorage usage.
-    # wandb.save(filename)
+    wandb.save(filename)

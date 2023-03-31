@@ -138,7 +138,7 @@ RUN ln -s /storage/pandaset data/pandaset
 RUN echo 'alias train_dev="python train.py --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/secondiou_old_anchor.yaml"' >> /root/.bashrc
 RUN echo 'alias train_kitti="python train.py --cfg_file cfgs/kitti_models/second.yaml"' >> /root/.bashrc
 RUN echo 'alias train_pandaset="python train.py --cfg_file cfgs/pandaset_models/second.yaml"' >> /root/.bashrc
-
+RUN echo 'alias test_dev="python test.py --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/secondiou_old_anchor.yaml --ckpt /storage/wandb/run-20230330_182640-c55h0bcg/files/secondiou_old_anchor/default/ckpt/checkpoint_epoch_5.pth"' >> /root/.bashrc
 # Copy latest ST3D source from local storage except folders in .dockerignore.
 # Assuming that directory structure is kept.
 COPY . $WORK_DIR/ST3D
