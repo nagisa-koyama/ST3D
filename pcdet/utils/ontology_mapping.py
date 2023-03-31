@@ -45,13 +45,15 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'Pedestrian': 'Pedestrian',
         'Pedestrian with Object': 'Pedestrian',
         'Animals - Bird': 'Misc',
-        'Animals - Other Animals': 'Misc',
+        'Animals - Other': 'Misc',
         'Pylons': 'Misc',
-        'Sign': 'Misc',
+        'Road Barriers': 'Misc',
+        'Signs': 'Misc',
         'Cones': 'Misc',
-        'Construction Sign': 'Misc',
+        'Construction Signs': 'Misc',
         'Temporary Construction Barriers': 'Misc',
         'Rolling Containers': 'Misc'
+
     }
     map_kitti_to_lyft = {
         'Car': 'car',
