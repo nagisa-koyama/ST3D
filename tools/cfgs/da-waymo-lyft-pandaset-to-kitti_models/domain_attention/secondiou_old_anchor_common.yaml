@@ -1,28 +1,28 @@
 CLASS_NAMES: ['Car']
 ONTOLOGY: 'kitti'
 
-DATA_CONFIGS:
-    KITTI_CONFIG:
-        _BASE_CONFIG_: cfgs/dataset_configs/da_kitti_dataset.yaml
-        FOV_POINTS_ONLY: True
-        CLASS_NAMES: ['Car']
-        SHIFT_COOR: [0.0, 0.0, 1.6]
-    LYFT_CONFIG:
-        _BASE_CONFIG_: cfgs/dataset_configs/da_lyft_dataset.yaml
-        CLASS_NAMES: ['car']
-    WAYMO_CONFIG:
-        _BASE_CONFIG_: cfgs/dataset_configs/da_waymo_dataset.yaml
-        INFO_WITH_FAKELIDAR: False
-        CLASS_NAMES: ['Vehicle']
-    PANDASET_CONFIG:
-        _BASE_CONFIG_: cfgs/dataset_configs/da_pandaset_dataset.yaml
-        CLASS_NAMES: ['Car']
+# DATA_CONFIGS:
+#     KITTI_CONFIG:
+#         _BASE_CONFIG_: cfgs/dataset_configs/da_kitti_dataset.yaml
+#         FOV_POINTS_ONLY: True
+#         CLASS_NAMES: ['Car']
+#         SHIFT_COOR: [0.0, 0.0, 1.6]
+#     WAYMO_CONFIG:
+#         _BASE_CONFIG_: cfgs/dataset_configs/da_waymo_dataset.yaml
+#         INFO_WITH_FAKELIDAR: False
+#         CLASS_NAMES: ['Vehicle']
+#     LYFT_CONFIG:
+#         _BASE_CONFIG_: cfgs/dataset_configs/da_lyft_dataset.yaml
+#         CLASS_NAMES: ['car']
+#     PANDASET_CONFIG:
+#         _BASE_CONFIG_: cfgs/dataset_configs/da_pandaset_dataset.yaml
+#         CLASS_NAMES: ['Car']
 
-DATA_CONFIG_TAR:
-    _BASE_CONFIG_: cfgs/dataset_configs/da_kitti_dataset.yaml
-    FOV_POINTS_ONLY: True
-    CLASS_NAMES: ['Car']
-    SHIFT_COOR: [0.0, 0.0, 1.6]
+# DATA_CONFIG_TAR:
+#     _BASE_CONFIG_: cfgs/dataset_configs/da_kitti_dataset.yaml
+#     FOV_POINTS_ONLY: True
+#     CLASS_NAMES: ['Car']
+#     SHIFT_COOR: [0.0, 0.0, 1.6]
 
 MODEL:
     NAME: SECONDNetIoU
@@ -38,7 +38,7 @@ MODEL:
         NUM_BEV_FEATURES: 256
 
     BACKBONE_2D:
-        NAME: BaseBEVBackbone
+        NAME: DomainAttentionBEVBackbone
 
         LAYER_NUMS: [5, 5]
         LAYER_STRIDES: [1, 2]
