@@ -400,6 +400,7 @@ class KittiDataset(DatasetTemplate):
                 input_dict['gt_boxes'] = input_dict['gt_boxes'][mask]
                 input_dict['gt_names'] = input_dict['gt_names'][mask]
 
+            # delete default label
             if self.dataset_cfg.get('USE_PSEUDO_LABEL', None) and self.training:
                 input_dict['gt_boxes'] = None
 

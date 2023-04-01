@@ -132,6 +132,14 @@ class PandasetDataset(DatasetTemplate):
         # zrot_world_to_ego is propagated in order to be able to transform the
         # predicted yaws back to world coordinates
 
+        # delete default label
+        if self.dataset_cfg.get('USE_PSEUDO_LABEL', None) and self.training:
+            input_dict['gt_boxes'] = None
+
+        # load saved pseudo label for unlabel data
+        if self.dataset_cfg.get('USE_PSEUDO_LABEL', None) and self.training:
+            self.fill_pseudo_labels(input_dict)
+
         data_dict = self.prepare_data(data_dict=input_dict)
 
         return data_dict

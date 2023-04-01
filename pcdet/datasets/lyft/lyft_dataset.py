@@ -103,6 +103,14 @@ class LyftDataset(DatasetTemplate):
                 'gt_names': info['gt_names']
             })
 
+        # delete default label
+        if self.dataset_cfg.get('USE_PSEUDO_LABEL', None) and self.training:
+            input_dict['gt_boxes'] = None
+
+        # load saved pseudo label for unlabel data
+        if self.dataset_cfg.get('USE_PSEUDO_LABEL', None) and self.training:
+            self.fill_pseudo_labels(input_dict)
+
         data_dict = self.prepare_data(data_dict=input_dict)
 
         return data_dict
