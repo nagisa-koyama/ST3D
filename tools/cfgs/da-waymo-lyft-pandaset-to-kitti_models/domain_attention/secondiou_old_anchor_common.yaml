@@ -39,6 +39,7 @@ MODEL:
 
     BACKBONE_2D:
         NAME: DomainAttentionBEVBackbone
+        NUM_ADAPTERS: 1
 
         LAYER_NUMS: [5, 5]
         LAYER_STRIDES: [1, 2]

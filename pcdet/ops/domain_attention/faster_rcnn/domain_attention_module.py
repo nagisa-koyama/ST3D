@@ -3,28 +3,20 @@ import torch
 import numpy as np
 from torch import nn
 import torch.nn.functional as F
-from ..utils.config import cfg
 import torch
 from ..faster_rcnn.se_module_vector import SELayer
 
 class DomainAttention(nn.Module):
-    def __init__(self, planes, reduction=16, nclass_list=None, fixed_block=False):
+    def __init__(self, planes, reduction=16, nclass_list=None, fixed_block=False, num_adapters=None):
         super(DomainAttention, self).__init__()
+        assert num_adapters is not None
         self.planes = planes
-        num_adapters = cfg.num_adapters
         if num_adapters == 0:
             self.n_datasets = len(nclass_list)
         else:
             self.n_datasets = num_adapters
         self.fixed_block = fixed_block
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        if not self.fixed_block and cfg.less_blocks:
-            if cfg.block_id != 4:
-                if cfg.layer_index % 2 == 0:
-                    self.fixed_block = True
-            else:
-                if cfg.layer_index % 2 != 0:
-                    self.fixed_block = True
         if self.fixed_block or num_adapters == 1:
             self.SE_Layers = nn.ModuleList([SELayer(planes, reduction, with_sigmoid=False) for num_class in range(1)])
         elif num_adapters == 0:
