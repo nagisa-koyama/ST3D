@@ -137,12 +137,14 @@ def train_one_epoch_st(model, optimizer, source_reader, target_loader, model_fun
 
 def train_model_st(model, optimizer, source_loaders, target_loader, model_func, lr_scheduler, optim_cfg,
                    start_epoch, total_epochs, start_iter, rank, tb_log, ckpt_save_dir, ps_label_dir,
-                   source_sampler=None, target_samplers=None, lr_warmup_scheduler=None, ckpt_save_interval=1,
+                   source_samplers=None, target_sampler=None, lr_warmup_scheduler=None, ckpt_save_interval=1,
                    max_ckpt_save_num=50, merge_all_iters_to_one_epoch=False, logger=None, ema_model=None):
+    accumulated_iter = start_iter
+
+    # Basically do not support self training with muliple sources data. Just remains to keep interface
+    # compatible with train_model.
     source_loader = source_loaders[0]
     source_sampler = source_samplers[0]
-
-    accumulated_iter = start_iter
     source_reader = common_utils.DataReader(source_loader, source_sampler)
     source_reader.construct_iter()
 

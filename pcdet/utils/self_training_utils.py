@@ -239,6 +239,7 @@ def load_ps_label(frame_id):
     if frame_id in PSEUDO_LABELS:
         gt_box = PSEUDO_LABELS[frame_id]['gt_boxes']
     else:
+        print('PSEUDO_LABELS.keys()', PSEUDO_LABELS.keys())
         raise ValueError('Cannot find pseudo label for frame: %s' % frame_id)
 
     return gt_box
