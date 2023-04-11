@@ -1,0 +1,29 @@
+_BASE_CONFIG_: cfgs/da-waymo-lyft-pandaset-to-kitti_models/domain_attention/secondiou_old_anchor_st3d_car_common.yaml
+
+CLASS_NAMES: ['Car']
+ONTOLOGY: 'kitti'
+
+# Defined for build_model but not used for self training.
+DATA_CONFIGS:
+    WAYMO_CONFIG:
+        _BASE_CONFIG_: cfgs/dataset_configs/da_waymo_dataset.yaml
+        INFO_WITH_FAKELIDAR: False
+        CLASS_NAMES: ['Vehicle']
+    LYFT_CONFIG:
+        _BASE_CONFIG_: cfgs/dataset_configs/da_lyft_dataset.yaml
+        CLASS_NAMES: ['car']
+    PANDASET_CONFIG:
+        _BASE_CONFIG_: cfgs/dataset_configs/da_pandaset_dataset.yaml
+        CLASS_NAMES: ['Car']
+
+# Used for self-training
+DATA_CONFIG_TAR:
+    _BASE_CONFIG_: cfgs/dataset_configs/da_kitti_dataset.yaml
+    FOV_POINTS_ONLY: True
+    CLASS_NAMES: ['Car']
+    SHIFT_COOR: [0.0, 0.0, 1.6]
+
+MODEL:
+    BACKBONE_2D:
+        NAME: DomainAttentionBEVBackbone
+        NUM_DATASETS: 4
