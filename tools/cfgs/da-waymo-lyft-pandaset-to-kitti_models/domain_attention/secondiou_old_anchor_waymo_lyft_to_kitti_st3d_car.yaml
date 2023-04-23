@@ -23,4 +23,4 @@ DATA_CONFIG_TAR:
 MODEL:
     BACKBONE_2D:
         NAME: DomainAttentionBEVBackbone
-        NUM_DATASETS: 2
+        NUM_ADAPTERS: 2

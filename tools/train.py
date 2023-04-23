@@ -115,7 +115,7 @@ def main():
 
     tb_log = SummaryWriter(log_dir=str(output_dir / 'tensorboard')) if cfg.LOCAL_RANK == 0 else None
 
-    # -----------------------create dataloader & network & optimizer---------------------------
+    # -----------------------create dataloaders---------------------------
     if cfg.get('DATA_CONFIG', None):
         data_configs = {'DATA_CONFIG': cfg.DATA_CONFIG}
     elif cfg.get('DATA_CONFIGS', None):
@@ -137,6 +137,7 @@ def main():
         )
         dataset = dict(dataset_class=source_set, loader=source_loader, sampler=source_sampler)
         source_datasets.append(dataset)
+
     if cfg.get('SELF_TRAIN', None):
         target_set, target_loader, target_sampler = build_dataloader(
             cfg.DATA_CONFIG_TAR, cfg.CLASS_NAMES, args.batch_size,
@@ -145,6 +146,14 @@ def main():
         )
     else:
         target_set = target_loader = target_sampler = None
+
+    # log datasets
+    for index, source in enumerate(source_datasets):
+        logger.info('source dataset %d: %s', index, source['dataset_class'].__class__.__name__)
+    if target_set is not None:
+        logger.info('target dataset: %s', target_set.__class__.__name__)
+
+    # -----------------------create networks---------------------------
     for source_dataset in source_datasets:
         model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES),
                               dataset=source_dataset['dataset_class'])
@@ -169,14 +178,19 @@ def main():
         model_teacher.cuda()
     wandb.watch(model, log_freq=100)
 
+    # -----------------------create optimizer---------------------------
     optimizer = build_optimizer(model, cfg.OPTIMIZATION)
-    # load checkpoint if it is possible
+
+    # -----------------------load pretrained weights---------------------------
     start_epoch = it = 0
     last_epoch = -1
     if args.pretrained_model is not None and model_teacher is None:
         model.load_params_from_file(filename=args.pretrained_model, to_cpu=dist, logger=logger)
+        logger.info('pretrained_model is loaded to model %s', model.__class__.__name__)
     elif args.pretrained_model is not None and model_teacher is not None:
         model_teacher.load_params_from_file(filename=args.pretrained_model, to_cpu=dist, logger=logger)
+        logger.info('pretrained_model is loaded to model_teacher %s', model_teacher.__class__.__name__)
+
     if args.ckpt is not None:
         it, start_epoch = model.load_params_with_optimizer(args.ckpt, to_cpu=dist, optimizer=optimizer, logger=logger)
         last_epoch = start_epoch + 1
@@ -190,12 +204,19 @@ def main():
             last_epoch = start_epoch + 1
 
     model.train()  # before wrap to DistributedDataParallel to support fixed some parameters
-    if model_teacher:
+    if model_teacher is not None:
         model_teacher.eval() # model_teacher should not be updated
     if dist_train:
         model = nn.parallel.DistributedDataParallel(model, device_ids=[cfg.LOCAL_RANK % torch.cuda.device_count()])
-    logger.info(model)
 
+    # log models
+    logger.info('****** model: %s ******', model.__class__.__name__)
+    logger.info(model)
+    if model_teacher is not None:
+        logger.info('****** model_teacher: %s ******', model_teacher.__class__.__name__)
+        logger.info(model_teacher)
+
+    # -----------------------create scheduler---------------------------
     if cfg.get('SELF_TRAIN', None):
         total_iters_each_epoch = len(target_loader) if not args.merge_all_iters_to_one_epoch \
                                             else len(target_loader) // args.epochs

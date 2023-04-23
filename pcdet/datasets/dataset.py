@@ -19,8 +19,8 @@ class DatasetTemplate(torch_data.Dataset):
         self.training = training
         self.class_names = class_names
         self.dataset_ontology = dataset_cfg.get('ONTOLOGY', None)
-        print("dataset ontology:", self.dataset_ontology)
-        print("model ontology:", model_ontology)
+        logger.info("Dataset ontology: %s", self.dataset_ontology)
+        logger.info("Model ontology: %s", model_ontology)
         if model_ontology is not None and self.dataset_ontology is not None and model_ontology != self.dataset_ontology:
             self.map_ontology_dataset_to_model = get_ontology_mapping(self.dataset_ontology, model_ontology)
             self.map_ontology_model_to_dataset = get_ontology_mapping(model_ontology, self.dataset_ontology)

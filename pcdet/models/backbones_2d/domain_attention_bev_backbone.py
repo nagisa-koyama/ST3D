@@ -9,8 +9,8 @@ from ..backbones_2d.base_bev_backbone import BaseBEVBackbone
 class DomainAttentionBEVBackbone(BaseBEVBackbone):
     def __init__(self, model_cfg, input_channels):
         super().__init__(model_cfg, input_channels)
-        num_datasets = model_cfg.get('NUM_DATASETS', None)
-        assert num_datasets is not None, "NUM_DATASETS should be set in config"
+        num_datasets = model_cfg.get('NUM_ADAPTERS', None)
+        assert num_datasets is not None, "NUM_ADAPTERS should be set in config"
 
         self.da_block = DABasicBlock(self.num_bev_features, self.num_bev_features, num_datasets = num_datasets)
 
