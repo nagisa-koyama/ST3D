@@ -148,23 +148,35 @@ def main():
     for source_dataset in source_datasets:
         model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES),
                               dataset=source_dataset['dataset_class'])
+        if cfg.get('SELF_TRAIN', None) and cfg.SELF_TRAIN.get('MODEL_TEACHER', None):
+            model_teacher = build_network(model_cfg=cfg.SELF_TRAIN.MODEL_TEACHER, num_class=len(cfg.CLASS_NAMES),
+                            dataset=source_dataset['dataset_class'])
+        else:
+            model_teacher = None
         break
 
     if args.sync_bn:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+        if model_teacher is not None:
+            model_teacher = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model_teacher)
     elif cfg.get('SELF_TRAIN', None) and cfg.SELF_TRAIN.get('DSNORM', None):
         model = DSNorm.convert_dsnorm(model)
+        if model_teacher is not None:
+            model_teacher = DSNorm.convert_dsnorm(model_teacher)
 
     model.cuda()
+    if model_teacher is not None:
+        model_teacher.cuda()
     wandb.watch(model, log_freq=100)
 
     optimizer = build_optimizer(model, cfg.OPTIMIZATION)
     # load checkpoint if it is possible
     start_epoch = it = 0
     last_epoch = -1
-    if args.pretrained_model is not None:
+    if args.pretrained_model is not None and model_teacher is None:
         model.load_params_from_file(filename=args.pretrained_model, to_cpu=dist, logger=logger)
-
+    elif args.pretrained_model is not None and model_teacher is not None:
+        model_teacher.load_params_from_file(filename=args.pretrained_model, to_cpu=dist, logger=logger)
     if args.ckpt is not None:
         it, start_epoch = model.load_params_with_optimizer(args.ckpt, to_cpu=dist, optimizer=optimizer, logger=logger)
         last_epoch = start_epoch + 1
@@ -178,6 +190,8 @@ def main():
             last_epoch = start_epoch + 1
 
     model.train()  # before wrap to DistributedDataParallel to support fixed some parameters
+    if model_teacher:
+        model_teacher.eval() # model_teacher should not be updated
     if dist_train:
         model = nn.parallel.DistributedDataParallel(model, device_ids=[cfg.LOCAL_RANK % torch.cuda.device_count()])
     logger.info(model)
@@ -209,6 +223,7 @@ def main():
     source_samplers = [dataset['sampler'] for dataset in source_datasets]
     train_func(
         model,
+        model_teacher,
         optimizer,
         source_loaders,
         target_loader,

@@ -135,11 +135,14 @@ def train_one_epoch_st(model, optimizer, source_reader, target_loader, model_fun
     return accumulated_iter
 
 
-def train_model_st(model, optimizer, source_loaders, target_loader, model_func, lr_scheduler, optim_cfg,
+def train_model_st(model, model_teacher, optimizer, source_loaders, target_loader, model_func, lr_scheduler, optim_cfg,
                    start_epoch, total_epochs, start_iter, rank, tb_log, ckpt_save_dir, ps_label_dir,
                    source_samplers=None, target_sampler=None, lr_warmup_scheduler=None, ckpt_save_interval=1,
                    max_ckpt_save_num=50, merge_all_iters_to_one_epoch=False, logger=None, ema_model=None):
     accumulated_iter = start_iter
+
+    if model_teacher is None:
+        model_teacher = model # Sharrow copy to share the memory.
 
     # Basically do not support self training with muliple sources data. Just remains to keep interface
     # compatible with train_model.
@@ -188,7 +191,7 @@ def train_model_st(model, optimizer, source_loaders, target_loader, model_func, 
                      and cur_epoch != 0):
                 target_loader.dataset.eval()
                 self_training_utils.save_pseudo_label_epoch(
-                    model, target_loader, rank,
+                    model_teacher, target_loader, rank,
                     leave_pbar=True, ps_label_dir=ps_label_dir, cur_epoch=cur_epoch
                 )
                 target_loader.dataset.train()
