@@ -36,6 +36,7 @@ def parse_config():
     parser.add_argument('--extra_tag', type=str, default='default', help='extra tag for this experiment')
     parser.add_argument('--ckpt', type=str, default=None, help='checkpoint to start from')
     parser.add_argument('--pretrained_model', type=str, default=None, help='pretrained_model')
+    parser.add_argument('--pretrained_model_teacher', type=str, default=None, help='pretrained_model for teacher model')
     parser.add_argument('--launcher', choices=['none', 'pytorch', 'slurm'], default='none')
     parser.add_argument('--tcp_port', type=int, default=18888, help='tcp port for distrbuted training')
     parser.add_argument('--sync_bn', action='store_true', default=False, help='whether to use sync bn')
@@ -184,12 +185,13 @@ def main():
     # -----------------------load pretrained weights---------------------------
     start_epoch = it = 0
     last_epoch = -1
-    if args.pretrained_model is not None and model_teacher is None:
+    if args.pretrained_model is not None:
         model.load_params_from_file(filename=args.pretrained_model, to_cpu=dist, logger=logger)
-        logger.info('pretrained_model is loaded to model %s', model.__class__.__name__)
-    elif args.pretrained_model is not None and model_teacher is not None:
-        model_teacher.load_params_from_file(filename=args.pretrained_model, to_cpu=dist, logger=logger)
-        logger.info('pretrained_model is loaded to model_teacher %s', model_teacher.__class__.__name__)
+        logger.info('pretrained_model %s is loaded to model %s', args.pretrained_model, model.__class__.__name__)
+    if args.pretrained_model_teacher is not None and model_teacher is not None:
+        model_teacher.load_params_from_file(filename=args.pretrained_model_teacher, to_cpu=dist, logger=logger)
+        logger.info('pretrained_model_teacher %s is loaded to model_teacher %s', args.pretrained_model_teacher,
+                    model_teacher.__class__.__name__)
 
     if args.ckpt is not None:
         it, start_epoch = model.load_params_with_optimizer(args.ckpt, to_cpu=dist, optimizer=optimizer, logger=logger)
