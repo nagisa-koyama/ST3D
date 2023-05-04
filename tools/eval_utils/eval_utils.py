@@ -61,7 +61,6 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         with torch.no_grad():
             pred_dicts, ret_dict = model(batch_dict)
         disp_dict = {}
-        logger.info('len(pred_dicts): %d.' % len(pred_dicts))
         num_pred = 0
         for pred in pred_dicts:
             num_pred += len(pred['pred_boxes'])

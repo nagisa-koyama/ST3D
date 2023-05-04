@@ -2,6 +2,7 @@
     Dataset from Pandaset (Hesai)
 """
 
+import copy
 import pickle
 import os
 try:
@@ -123,7 +124,7 @@ class PandasetDataset(DatasetTemplate):
                       'gt_boxes': boxes,
                       'gt_names': labels,
                       'sequence': int(seq_idx),
-                      'frame_idx': info['frame_idx'],
+                      'frame_id': info['frame_idx'],
                       'zrot_world_to_ego': zrot_world_to_ego,
                       'pose': pose_dict_to_numpy(pose)
                      }
@@ -255,113 +256,8 @@ class PandasetDataset(DatasetTemplate):
         ego_dxs = dys
         ego_dys = dxs  # stays >= 0
         ego_dzs = dzs
-
         ego_boxes = np.vstack([ego_xs, ego_ys, ego_zs, ego_dxs, ego_dys, ego_dzs, ego_yaws]).T
-
         return ego_boxes.astype(np.float32), labels, zrot_world_to_ego
-
-
-    @staticmethod
-    def generate_prediction_dicts(batch_dict, pred_dicts, class_names, output_path=None):
-        """
-        To support a custom dataset, implement this function to receive the predicted results from the model, and then
-        transform the unified normative coordinate to your required coordinate, and optionally save them to disk.
-
-        Args:
-            batch_dict: dict of original data from the dataloader
-            pred_dicts: dict of predicted results from the model
-                pred_boxes: (N, 7), Tensor
-                pred_scores: (N), Tensor
-                pred_labels: (N), Tensor
-            class_names:
-            output_path: if it is not None, save the results to this path
-        Returns:
-
-        """
-
-        def generate_single_sample_dataframe(batch_index, box_dict, zrot_world_to_ego, pose):
-            pred_boxes = box_dict["pred_boxes"].cpu().numpy()
-            pred_scores = box_dict["pred_scores"].cpu().numpy()
-            pred_labels = box_dict["pred_labels"].cpu().numpy()
-            zrot = zrot_world_to_ego.cpu().numpy()
-            pose_dict = pose_numpy_to_dict(pose.cpu().numpy())
-
-            xs = pred_boxes[:, 0]
-            ys = pred_boxes[:, 1]
-            zs = pred_boxes[:, 2]
-            dxs = pred_boxes[:, 3]
-            dys = pred_boxes[:, 4]
-            dzs = pred_boxes[:, 5]
-            yaws = pred_boxes[:, 6]
-            names = np.array(class_names)[pred_labels - 1]  # Predicted labels start on 1
-
-            # convert from normative coordinates to pandaset ego coordinates
-            ego_xs = - ys
-            ego_ys = xs
-            ego_zs = zs
-            ego_dxs = dys
-            ego_dys = dxs
-            ego_dzs = dzs
-            ego_yaws = yaws
-
-            # convert from pandaset ego coordinates to world coordinates
-            # for the moment, an simplified estimation of the ego yaw is computed in __getitem__
-            # which sets ego_yaw = world_yaw + zrot_world_to_ego
-            world_yaws = ego_yaws - zrot
-
-            ego_centers = np.vstack([ego_xs, ego_ys, ego_zs]).T
-            world_centers = ps.geometry.ego_to_lidar_points(ego_centers, pose_dict)
-            world_xs = world_centers[:, 0]
-            world_ys = world_centers[:, 1]
-            world_zs = world_centers[:, 2]
-            # dx, dy, dz remain unchanged as the bbox orientation is handled by
-            # the yaw information
-
-            data_dict = {'position.x': world_xs,
-                         'position.y': world_ys,
-                         'position.z': world_zs,
-                         'dimensions.x': ego_dxs,
-                         'dimensions.y': ego_dys,
-                         'dimensions.z': ego_dzs,
-                         'yaw': world_yaws % (2 * np.pi),
-                         'label': names,
-                         'score': pred_scores
-            }
-
-            return pd.DataFrame(data_dict)
-
-
-        annos = []
-        for index, box_dict in enumerate(pred_dicts):
-            frame_idx = batch_dict['frame_idx'][index]
-            seq_idx = batch_dict['sequence'][index]
-            zrot = batch_dict['zrot_world_to_ego'][index]
-            pose = batch_dict['pose'][index]
-
-            single_pred_df = generate_single_sample_dataframe(index, box_dict, zrot, pose)
-
-
-            single_pred_dict = {'preds' : single_pred_df,
-                                # 'name 'ensures testing the number of detections in a compatible format as kitti
-                                'name' : single_pred_df['label'].tolist(),
-                                'frame_idx': frame_idx,
-                                'sequence': str(seq_idx).zfill(3)}
-            # seq_idx was converted to int in self.__getitem__` because strings
-            # can't be passed to the gpu in pytorch.
-            # To convert it back to a string, we assume that the sequence is
-            # provided in pandaset format with 3 digits
-
-            if output_path is not None:
-                frame_id = str(int(frame_idx)).zfill(2)
-                seq_id = str(int(seq_idx)).zfill(3)
-                cur_det_file = os.path.join(output_path, seq_id, 'predictions',
-                                            'cuboids', ("{}.pkl.gz".format(frame_id)))
-                os.makedirs(os.path.dirname(cur_det_file), exist_ok=True)
-                single_pred_df.to_pickle(cur_det_file)
-
-            annos.append(single_pred_dict)
-
-        return annos
 
 
     def get_infos(self):
@@ -443,13 +339,55 @@ class PandasetDataset(DatasetTemplate):
             pickle.dump(all_db_infos, f)
 
 
-    def evaluation(self, det_annos, class_names, **kwargs):
-        self.logger.warning('Evaluation is not implemented for Pandaset as there is no official one. ' +
-                            'Returning an empty evaluation result.')
-        ap_result_str = ''
-        ap_dict = {}
+    def kitti_eval(self, eval_det_annos, eval_gt_annos, class_names):
+        from ..kitti.kitti_object_eval_python import eval as kitti_eval
+        from ..kitti import kitti_utils
 
+        map_name_to_kitti = {
+            'Car': 'Car',
+            'Pedestrian': 'Pedestrian',
+            'Pedestrian with Object': 'Pedestrian',
+            'Pickup Truck': 'Truck',
+            'Medium-sized Truck': 'Truck',
+            'Semi-truck': 'Truck',
+            'Motorized Scooter': 'Cyclist',
+            'Bicycle': 'Cyclist',
+        }
+        self.logger.info("len(eval_det_annos): {}".format(len(eval_det_annos)))
+        # self.logger.info("len(eval_det_annos[name]): {}".format(len(eval_det_annos['name'])))
+        kitti_utils.transform_annotations_to_kitti_format(eval_det_annos, map_name_to_kitti=map_name_to_kitti)
+        # self.logger.info("kitti eval_det_annos.shape: {}".format(eval_det_annos.shape))
+        kitti_utils.transform_annotations_to_kitti_format(
+            eval_gt_annos, map_name_to_kitti=map_name_to_kitti,
+            info_with_fakelidar=self.dataset_cfg.get('INFO_WITH_FAKELIDAR', False)
+        )
+        kitti_class_names = [map_name_to_kitti[x] for x in class_names]
+
+        ap_result_str, ap_dict = kitti_eval.get_official_eval_result(
+            gt_annos=eval_gt_annos, dt_annos=eval_det_annos, current_classes=kitti_class_names
+        )
         return ap_result_str, ap_dict
+
+
+    def evaluation(self, det_annos, class_names, **kwargs):
+        if kwargs['eval_metric'] == 'kitti':
+            eval_det_annos = copy.deepcopy(det_annos)
+            eval_gt_annos = []
+            for info in self.pandaset_infos:
+                seq_idx = info['sequence']
+                pose = self._get_pose(info)
+                boxes, labels, zrot_world_to_ego = self._get_annotations(info, pose)
+                gt_dict = {'gt_boxes': boxes,
+                           'gt_names': labels,
+                           'sequence': int(seq_idx),
+                           'frame_id': info['frame_idx'],
+                           'zrot_world_to_ego': zrot_world_to_ego,
+                           'pose': pose_dict_to_numpy(pose)
+                           }
+                eval_gt_annos.append(gt_dict)
+            return self.kitti_eval(eval_det_annos, eval_gt_annos, class_names)
+        else:
+            raise NotImplementedError
 
 
 def create_pandaset_infos(dataset_cfg, class_names, data_path, save_path):
