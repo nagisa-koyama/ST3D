@@ -116,6 +116,9 @@ RUN python3 setup.py develop
 # Additional pips
 RUN python3 -m pip install torchinfo
 
+# Additional apt
+RUN apt install -y slurm-client iproute2 netcat
+
 # ST3D branch update
 # WORKDIR $WORK_DIR/ST3D
 # ADD "https://www.random.org/cgi-bin/randbyte?nbytes=10&format=h" /dev/null

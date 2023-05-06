@@ -2,13 +2,18 @@
 
 set -x
 NGPUS=$1
+echo ${@}
 PY_ARGS=${@:2}
-MASTER_ADDR=4000
-MASTER_PORT=4000
-WORLD_SIZE=2
-RANK=0
-LOCAL_RANK=0
-NODE_RANK=0
 
-python -m torch.distributed.launch --nproc_per_node=${NGPUS} train.py --launcher pytorch ${PY_ARGS}
+while true
+do
+    PORT=$(( ((RANDOM<<15)|RANDOM) % 49152 + 10000 ))
+    status="$(nc -z 127.0.0.1 $PORT < /dev/null &>/dev/null; echo $?)"
+    if [ "${status}" != "0" ]; then
+        break;
+    fi
+done
+echo $PORT
+
+python -m torch.distributed.launch --nproc_per_node=${NGPUS} --rdzv_endpoint=localhost:${PORT} train.py --launcher pytorch --tcp_port ${PORT} ${PY_ARGS}
 
