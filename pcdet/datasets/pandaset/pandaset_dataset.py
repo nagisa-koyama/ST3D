@@ -70,6 +70,7 @@ class PandasetDataset(DatasetTemplate):
         self.split = self.dataset_cfg.DATA_SPLIT[self.mode]
         self.pandaset_infos = []
         self.include_pandaset_infos(self.mode)
+        self.logger=logger
 
 
     def include_pandaset_infos(self, mode):
@@ -232,10 +233,10 @@ class PandasetDataset(DatasetTemplate):
         yaxis_points_from_pose = ps.geometry.lidar_points_to_ego(np.array([[0, 0, 0], [0, 1., 0]]), pose)
         yaxis_from_pose = yaxis_points_from_pose[1, :] - yaxis_points_from_pose[0, :]
 
-        if yaxis_from_pose[-1] >= 10**-1:
-            if self.logger is not None:
-                self.logger.warning("The car's pitch is supposed to be negligible " +
-                                    "sin(pitch) is >= 10**-1 ({})".format(yaxis_from_pose[-1]))
+        # if yaxis_from_pose[-1] >= 10**-1:
+        #     if self.logger is not None:
+        #         self.logger.warning("The car's pitch is supposed to be negligible " +
+        #                             "sin(pitch) is >= 10**-1 ({})".format(yaxis_from_pose[-1]))
 
         # rotation angle in rads of the y axis around thz z axis
         zrot_world_to_ego = np.arctan2(-yaxis_from_pose[0], yaxis_from_pose[1])
