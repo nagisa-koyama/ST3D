@@ -138,11 +138,12 @@ RUN ln -s /storage/level5-3d-object-detection data/lyft
 RUN ln -s /storage/pandaset data/pandaset
 
 # Add alias for test command
-RUN echo 'alias train_dev="python train.py --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/secondiou_old_anchor.yaml"' >> /root/.bashrc
 RUN echo 'alias train_kitti="python train.py --cfg_file cfgs/kitti_models/second.yaml"' >> /root/.bashrc
+RUN echo 'alias train_lyft_multihead="python train.py --cfg_file cfgs/lyft_models/cbgs_second_multihead.yaml"' >> /root/.bashrc
 RUN echo 'alias train_pandaset="python train.py --cfg_file cfgs/pandaset_models/second.yaml"' >> /root/.bashrc
 RUN echo 'alias test_pandaset="python test.py --cfg_file cfgs/pandaset_models/secondiou_old_anchor.yaml --ckpt /storage/wandb/run-20230501_071704-iko5g53r/files/checkpoint_epoch_5.pth --batch_size 1"' >> /root/.bashrc
-RUN echo 'alias test_dev="python test.py --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/secondiou_old_anchor.yaml --ckpt /storage/wandb/run-20230330_182640-c55h0bcg/files/secondiou_old_anchor/default/ckpt/checkpoint_epoch_5.pth"' >> /root/.bashrc
+RUN echo 'alias train_dev="python train.py --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/domain_attention_head_per_dataset/second_old_anchor_kitti_waymo_lyft_pandaset_to_kitti.yaml"' >> /root/.bashrc
+RUN echo 'alias test_dev="python test.py --ckpt /storage/wandb/run-20230617_165237-ynybp1v7/files/checkpoint_epoch_5.pth --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/domain_attention_head_per_dataset/second_old_anchor_kitti_waymo_lyft_pandaset_to_kitti.yaml"' >> /root/.bashrc
 # Copy latest ST3D source from local storage except folders in .dockerignore.
 # Assuming that directory structure is kept.
 COPY . $WORK_DIR/ST3D
