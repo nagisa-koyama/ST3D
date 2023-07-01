@@ -5,14 +5,16 @@ from ...ops.iou3d_nms import iou3d_nms_utils
 
 
 class DataBaseSampler(object):
-    def __init__(self, root_path, sampler_cfg, class_names, logger=None, ontology_mapping=None):
+    def __init__(self, root_path, sampler_cfg, dataset_class_names, logger=None, map_ontology_dataset_to_model=None, dataset_ontology=None):
         self.root_path = root_path
-        if ontology_mapping is not None:
-            self.class_names = [ontology_mapping[label] for label in class_names]
+        if map_ontology_dataset_to_model is not None:
+            # Converts class_names to model ontology.
+            self.class_names = [map_ontology_dataset_to_model[label] for label in dataset_class_names]
         else:
-            self.class_names = class_names
+            self.class_names = dataset_class_names
         self.sampler_cfg = sampler_cfg
         self.logger = logger
+        self.dataset_ontology = dataset_ontology
         self.db_infos = {}
         for class_name in self.class_names:
             self.db_infos[class_name] = []
@@ -20,23 +22,39 @@ class DataBaseSampler(object):
         for db_info_path in sampler_cfg.DB_INFO_PATH:
             db_info_path = self.root_path.resolve() / db_info_path
             with open(str(db_info_path), 'rb') as f:
+                # infos is loaded from file whose label is in dataset ontology.
                 infos = pickle.load(f)
-                if ontology_mapping is not None:
-                    [self.db_infos[ontology_mapping[cur_class]].extend(infos[cur_class]) for cur_class in class_names]
+                if map_ontology_dataset_to_model is not None:
+                    # self.db_info is managed as model ontology.
+                    [self.db_infos[map_ontology_dataset_to_model[cur_class]].extend(infos[cur_class]) for cur_class in dataset_class_names]
+                elif ":" in dataset_class_names[0]:
+                    # Multihead configuration. Only wants to handle dataset-specific labels.
+                    for cls in dataset_class_names:
+                        ontology, label = cls.split(":")
+                        # TODO: Revisit here.
+                        if ontology == self.dataset_ontology:
+                            self.db_infos[cls].extend(infos[label])
                 else:
-                    [self.db_infos[cur_class].extend(infos[cur_class]) for cur_class in class_names]
+                    # Handles dataset labels as they are.
+                    [self.db_infos[cur_class].extend(infos[cur_class]) for cur_class in dataset_class_names]
         for func_name, val in sampler_cfg.PREPARE.items():
+            # Here, one of vals is a list of "label:num_points" defined in dataset ontology.
             self.db_infos = getattr(self, func_name)(self.db_infos, val)
 
         self.sample_groups = {}
         self.sample_class_num = {}
         self.limit_whole_scene = sampler_cfg.get('LIMIT_WHOLE_SCENE', False)
         for x in sampler_cfg.SAMPLE_GROUPS:
+            # class_name is in dataset ontology.
             class_name, sample_num = x.split(':')
-            if class_name not in class_names:
+            # Multi-head handling.
+            if ":" in dataset_class_names[0]:
+                class_name = dataset_ontology + ":" + class_name
+            if class_name not in dataset_class_names:
                 continue
-            if ontology_mapping is not None:
-                mapped_class_name = ontology_mapping[class_name]
+            if map_ontology_dataset_to_model is not None:
+                # mapped_class_name is in model ontology.
+                mapped_class_name = map_ontology_dataset_to_model[class_name]
             else:
                 mapped_class_name = class_name
             self.sample_class_num[mapped_class_name] = sample_num
@@ -68,8 +86,11 @@ class DataBaseSampler(object):
 
     def filter_by_min_points(self, db_infos, min_gt_points_list):
         for name_num in min_gt_points_list:
+            # name is in dataset ontology.
             name, min_num = name_num.split(':')
             min_num = int(min_num)
+            if ':' in self.class_names[0]:
+                name = self.dataset_ontology + ':' + name
             if min_num > 0 and name in db_infos.keys():
                 filtered_infos = []
                 for info in db_infos[name]:

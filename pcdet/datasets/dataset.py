@@ -21,14 +21,22 @@ class DatasetTemplate(torch_data.Dataset):
         self.dataset_ontology = dataset_cfg.get('ONTOLOGY', None)
         logger.info("Dataset ontology: %s", self.dataset_ontology)
         logger.info("Model ontology: %s", model_ontology)
+
+        self.dataset_class_names = class_names
+        self.map_ontology_dataset_to_model = None
+        self.map_ontology_model_to_dataset = None
         if model_ontology is not None and self.dataset_ontology is not None and model_ontology != self.dataset_ontology:
             self.map_ontology_dataset_to_model = get_ontology_mapping(self.dataset_ontology, model_ontology)
             self.map_ontology_model_to_dataset = get_ontology_mapping(model_ontology, self.dataset_ontology)
             self.dataset_class_names = [self.map_ontology_model_to_dataset[label] for label in class_names]
-        else:
-            self.map_ontology_dataset_to_model = None
-            self.map_ontology_model_to_dataset = None
-            self.dataset_class_names = class_names
+        elif ":" in class_names[0]:
+            # Multi-head setup. Handles only associated labels.
+            self.dataset_class_names = []
+            for cls in class_names:
+                ontology, label = cls.split(":")
+                if ontology == self.dataset_ontology:
+                    self.dataset_class_names.append(cls)
+
         self.logger = logger
         self.root_path = root_path if root_path is not None else Path(self.dataset_cfg.DATA_PATH)
         self.logger = logger
@@ -42,7 +50,7 @@ class DatasetTemplate(torch_data.Dataset):
         )
         self.data_augmentor = DataAugmentor(
             self.root_path, self.dataset_cfg.DATA_AUGMENTOR, self.dataset_class_names, logger=self.logger,
-            ontology_mapping=self.map_ontology_dataset_to_model
+            map_ontology_dataset_to_model=self.map_ontology_dataset_to_model
         ) if self.training else None
         self.data_processor = DataProcessor(
             self.dataset_cfg.DATA_PROCESSOR, point_cloud_range=self.point_cloud_range,
@@ -260,6 +268,11 @@ class DatasetTemplate(torch_data.Dataset):
         if self.map_ontology_dataset_to_model is not None:
             for index in range(data_dict['gt_names'].size):
                 data_dict['gt_names'][index] = self.map_ontology_dataset_to_model[data_dict['gt_names'][index]]
+
+        # Multi-head handling
+        if ':' in self.dataset_class_names[0]:
+            for index in range(data_dict['gt_names'].size):
+                data_dict['gt_names'][index] = self.dataset_ontology + ":" + data_dict['gt_names'][index]
 
         if self.training:
             # filter gt_boxes without points

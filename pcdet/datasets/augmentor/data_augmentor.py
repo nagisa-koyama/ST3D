@@ -5,12 +5,13 @@ from ...utils import common_utils
 
 
 class DataAugmentor(object):
-    def __init__(self, root_path, augmentor_configs, class_names, logger=None, ontology_mapping=None):
+    def __init__(self, root_path, augmentor_configs, dataset_class_names, logger=None, map_ontology_dataset_to_model=None, dataset_ontology=None):
         self.root_path = root_path
-        self.class_names = class_names
+        self.class_names = dataset_class_names
         self.logger = logger
         self.augmentor_configs = augmentor_configs
-        self.ontology_mapping = ontology_mapping
+        self.map_ontology_dataset_to_model = map_ontology_dataset_to_model
+        self.dataset_ontology = dataset_ontology
 
         self.data_augmentor_queue = []
         aug_config_list = augmentor_configs if isinstance(augmentor_configs, list) \
@@ -27,9 +28,10 @@ class DataAugmentor(object):
         db_sampler = database_sampler.DataBaseSampler(
             root_path=self.root_path,
             sampler_cfg=config,
-            class_names=self.class_names,
+            dataset_class_names=self.class_names,
             logger=self.logger,
-            ontology_mapping=self.ontology_mapping
+            map_ontology_dataset_to_model=self.map_ontology_dataset_to_model,
+            dataset_ontology = self.dataset_ontology
         )
         return db_sampler
 

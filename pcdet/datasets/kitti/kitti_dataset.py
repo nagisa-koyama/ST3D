@@ -338,8 +338,10 @@ class KittiDataset(DatasetTemplate):
 
         from .kitti_object_eval_python import eval as kitti_eval
 
-        eval_det_annos = copy.deepcopy(det_annos)
+        # eval_det_annos = copy.deepcopy(det_annos)
+        eval_det_annos = det_annos
         eval_gt_annos = [copy.deepcopy(info['annos']) for info in self.kitti_infos]
+        print("eval_gt_annos[0][name]:", eval_gt_annos[0]['name'])
         ap_result_str, ap_dict = kitti_eval.get_official_eval_result(eval_gt_annos, eval_det_annos, class_names)
 
         return ap_result_str, ap_dict

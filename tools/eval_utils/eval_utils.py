@@ -1,3 +1,4 @@
+import copy
 import pickle
 import time
 
@@ -36,7 +37,14 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         metric['recall_rcnn_%s' % str(cur_thresh)] = 0
 
     dataset = dataloader.dataset
+    # class_names_tmp = dataset.class_names
+    # print("dataset.class_names:", class_names_tmp)
     class_names = dataset.class_names
+    # for cls in class_names_tmp:
+    #     # Multihead-type handling assuming "ontology:label" type.
+    #     if dataset.dataset_ontology in cls:
+    #         # class_names.append(class_name_in_dataset)
+    #         class_names.append(cls)
     det_annos = []
 
     logger.info('*************** EPOCH %s EVALUATION *****************' % epoch_id)
@@ -119,8 +127,31 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
     with open(result_dir / 'result.pkl', 'wb') as f:
         pickle.dump(det_annos, f)
 
+    class_names_for_evaluation = class_names
+    eval_det_annos = copy.deepcopy(det_annos)
+
+    # Multi-dataset setup.
+    if ":" in class_names[0]:
+        class_names_for_evaluation = []
+        for cls in class_names:
+            ontology, label = cls.split(":")
+            if ontology == dataset.dataset_ontology:
+                class_names_for_evaluation.append(label)
+        print("eval_det_annos[-1][name]:", eval_det_annos[-1]['name'])
+        for index in range(len(eval_det_annos)):
+            new_names = []
+            for index2 in range(len(eval_det_annos[index]['name'])):
+                # Remap dataset-specific inferences to be evaluated.
+                if dataset.dataset_ontology in eval_det_annos[index]['name'][index2]:
+                    new_names.append(eval_det_annos[index]['name'][index2].split(":")[-1])
+            eval_det_annos[index]['name'] = new_names
+        print("eval_det_annos[-1][name]:", eval_det_annos[-1]['name'])
+
+    print("class_names in eval_utils", class_names)
+    print("class_names_for_evaluation in eval_utils", class_names_for_evaluation)
+
     result_str, result_dict = dataset.evaluation(
-        det_annos, class_names,
+        eval_det_annos, class_names_for_evaluation,
         eval_metric=cfg.MODEL.POST_PROCESSING.EVAL_METRIC,
         output_path=final_output_dir
     )
@@ -137,7 +168,7 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
     logger.info('****************Evaluation done.*****************')
 
     for item in ret_dict.items():
-        wandb.log({'val/' + item[0] : item[1]})
+        wandb.log({'val/' + dataset.dataset_ontology + '/' + item[0] : item[1]})
 
     return ret_dict
 

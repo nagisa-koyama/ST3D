@@ -2,6 +2,7 @@ import io as sysio
 
 import numba
 import numpy as np
+from collections import OrderedDict
 
 from .rotate_iou import rotate_iou_gpu_eval
 
@@ -28,6 +29,7 @@ def get_thresholds(scores: np.ndarray, num_gt, num_sample_pts=41):
 
 
 def clean_data(gt_anno, dt_anno, current_class, difficulty):
+    # Pre-defined KITTI-specific class definition.
     CLASS_NAMES = ['car', 'pedestrian', 'cyclist', 'van', 'person_sitting', 'truck']
     MIN_HEIGHT = [40, 25, 25]
     MAX_OCCLUSION = [0, 1, 2]
@@ -645,6 +647,7 @@ def get_official_eval_result(gt_annos, dt_annos, current_classes, PR_detail_dict
                              0.5, 0.5], [0.5, 0.25, 0.25, 0.5, 0.25, 0.5],
                             [0.5, 0.25, 0.25, 0.5, 0.25, 0.5]])
     min_overlaps = np.stack([overlap_0_7, overlap_0_5], axis=0)  # [2, 3, 5]
+    # This is "fixed" because following eval implicitly assume this definition.
     class_to_name = {
         0: 'Car',
         1: 'Pedestrian',
@@ -653,6 +656,11 @@ def get_official_eval_result(gt_annos, dt_annos, current_classes, PR_detail_dict
         4: 'Person_sitting',
         5: 'Truck'
     }
+    # class_to_name = OrderedDict()
+    # for index, cls in enumerate(current_classes):
+    #     class_to_name[index] = cls
+    # print("current_classes in official_eval_result:", current_classes)
+    # print("calss_to_name in official_eval_result:", class_to_name)
     name_to_class = {v: n for n, v in class_to_name.items()}
     if not isinstance(current_classes, (list, tuple)):
         current_classes = [current_classes]
@@ -755,6 +763,8 @@ def get_coco_eval_result(gt_annos, dt_annos, current_classes):
         3: 'Van',
         4: 'Person_sitting',
     }
+    print("calss_to_name:", class_to_name)
+
     class_to_range = {
         0: [0.5, 0.95, 10],
         1: [0.25, 0.7, 10],

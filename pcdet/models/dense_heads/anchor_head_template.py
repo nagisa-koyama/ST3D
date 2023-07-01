@@ -240,6 +240,7 @@ class AnchorHeadTemplate(nn.Module):
 
         """
         if isinstance(self.anchors, list):
+            # anchor: [z, y, x, num_size, num_rot, 7] -> [num_size, num_rot, z, y, x, 7]
             if self.use_multihead:
                 anchors = torch.cat([anchor.permute(3, 4, 0, 1, 2, 5).contiguous().view(-1, anchor.shape[-1])
                                      for anchor in self.anchors], dim=0)

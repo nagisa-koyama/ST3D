@@ -176,11 +176,14 @@ class AnchorHeadMulti(AnchorHeadTemplate):
         rpn_heads = []
         class_names = []
         for rpn_head_cfg in rpn_head_cfgs:
+            # All class names in rpn_head_cfgs are merged to one list. It assumes unique classes.
             class_names.extend(rpn_head_cfg['HEAD_CLS_NAME'])
 
         for rpn_head_cfg in rpn_head_cfgs:
             num_anchors_per_location = sum([self.num_anchors_per_location[class_names.index(head_cls)]
                                             for head_cls in rpn_head_cfg['HEAD_CLS_NAME']])
+            print("HEAD_CLS_NAME:", rpn_head_cfg['HEAD_CLS_NAME'])
+            print("self.class_names", self.class_names)
             head_label_indices = torch.from_numpy(np.array([
                 self.class_names.index(cur_name) + 1 for cur_name in rpn_head_cfg['HEAD_CLS_NAME']
             ]))
@@ -193,6 +196,7 @@ class AnchorHeadMulti(AnchorHeadTemplate):
                 separate_reg_config=self.model_cfg.get('SEPARATE_REG_CONFIG', None)
             )
             rpn_heads.append(rpn_head)
+        # rpn head per rpn_head_cfg.
         self.rpn_heads = nn.ModuleList(rpn_heads)
 
     def forward(self, data_dict):
