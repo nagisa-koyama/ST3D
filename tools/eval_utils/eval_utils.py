@@ -37,14 +37,7 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         metric['recall_rcnn_%s' % str(cur_thresh)] = 0
 
     dataset = dataloader.dataset
-    # class_names_tmp = dataset.class_names
-    # print("dataset.class_names:", class_names_tmp)
     class_names = dataset.class_names
-    # for cls in class_names_tmp:
-    #     # Multihead-type handling assuming "ontology:label" type.
-    #     if dataset.dataset_ontology in cls:
-    #         # class_names.append(class_name_in_dataset)
-    #         class_names.append(cls)
     det_annos = []
 
     logger.info('*************** EPOCH %s EVALUATION *****************' % epoch_id)
@@ -135,39 +128,16 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
             ontology, label = cls.split(":")
             if ontology == dataset.dataset_ontology:
                 class_names_for_evaluation.append(label)
-        # print("eval_det_annos[-1][name]:", eval_det_annos[-1]['name'])
         for index in range(len(eval_det_annos)):
-            new_names = []
-            new_boxes = []
-            new_pred_labels = []
-            new_scores = []
-            # print("name, boxes_lidar, frame_id:", len(eval_det_annos[index]['name']), len(eval_det_annos[index]['boxes_lidar']), eval_det_annos[index]['frame_id'])
-            eval_det_annos[index]['ignored'] = np.zeros(eval_det_annos[index]['name'].shape)
-            # print("eval_det_annos[index].keys():", eval_det_annos[index].keys())
             for index2 in range(len(eval_det_annos[index]['name'])):
                 # Remap only dataset-specific inferences to be evaluated. Oher inferences will be ignored for metrics computation.
                 if dataset.dataset_ontology in eval_det_annos[index]['name'][index2]:
-                    # new_names.append(eval_det_annos[index]['name'][index2].split(":")[-1])
-                    # new_boxes.append(eval_det_annos[index]['boxes_lidar'][index2])
-                    # if 'pred_labels' in eval_det_annos[index].keys():
-                    #     new_pred_labels.append(eval_det_annos[index]['pred_labels'][index2])
-                    # if 'score' in eval_det_annos[index].keys():
-                    #     new_scores.append(eval_det_annos[index]['score'][index2])
                     eval_det_annos[index]['name'][index2] = eval_det_annos[index]['name'][index2].split(":")[-1]
-                # else:
-                #     eval_det_annos[index]['ignored'][index2] = 1
-            # eval_det_annos[index]['name'] = np.array(new_names)
-            # eval_det_annos[index]['boxes_lidar'] = np.array(new_boxes)
-            # if 'pred_labels' in eval_det_annos[index].keys():
-            #     eval_det_annos[index]['pred_labels'] = np.array(new_pred_labels)
-            # if 'score' in eval_det_annos[index].keys():
-            #     eval_det_annos[index]['score'] = np.array(new_scores)
             assert len(eval_det_annos[index]['boxes_lidar']) == len(eval_det_annos[index]['score'])
-        # print("eval_det_annos[-1][name]:", eval_det_annos[-1]['name'])
 
-    print("datset.dataset_ontology in eval_utils", dataset.dataset_ontology)
-    print("class_names in eval_utils", class_names)
-    print("class_names_for_evaluation in eval_utils", class_names_for_evaluation)
+    logger.info('datset.dataset_ontology in eval_utils is %s' % dataset.dataset_ontology)
+    logger.info('class_names in eval_utils is %s' % class_names)
+    logger.info('class_names_for_evaluation in eval_utils is %s' % class_names_for_evaluation)
 
     result_str, result_dict = dataset.evaluation(
         eval_det_annos, class_names_for_evaluation,
