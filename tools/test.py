@@ -55,16 +55,17 @@ def parse_config():
     return args, cfg
 
 
-def eval_single_ckpt(model, test_loader, args, eval_output_dir, logger, epoch_id, dist_test=False):
+def eval_single_ckpt(model, test_loaders, args, eval_output_dir, logger, epoch_id, dist_test=False):
     # load checkpoint
     model.load_params_from_file(filename=args.ckpt, logger=logger, to_cpu=dist_test)
     model.cuda()
 
     # start evaluation
-    eval_utils.eval_one_epoch(
-        cfg, model, test_loader, epoch_id, logger, dist_test=dist_test,
-        result_dir=eval_output_dir, save_to_file=args.save_to_file, args=args
-    )
+    for test_loader in test_loaders:
+        eval_utils.eval_one_epoch(
+            cfg, model, test_loader, epoch_id, logger, dist_test=dist_test,
+            result_dir=eval_output_dir, save_to_file=args.save_to_file, args=args
+        )
 
 
 def get_no_evaluated_ckpt(ckpt_dir, ckpt_record_file, args):
@@ -85,27 +86,30 @@ def get_no_evaluated_ckpt(ckpt_dir, ckpt_record_file, args):
     return -1, None
 
 
-def get_eval_config():
+def get_eval_configs():
     if cfg.get('DATA_CONFIG_TAR', None):
-        return cfg.DATA_CONFIG_TAR
+        return {'DATA_CONFIG_TAR': cfg.dATA_CONFIG_TAR}
     elif cfg.get('DATA_CONFIG', None):
-        return cfg.DATA_CONFIG
+        return {'DATA_CONFIG': cfg.DATA_CONFIG}
+    elif cfg.get('DATA_CONFIGS', None):
+        return cfg.DATA_CONFIGS
     else:
-        assert(0)
+        assert False, "One of DATA_CONFIG_TAR, DATA_CONFIG or DATA_CONFIGS should be defined"
 
 
-def repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir, dist_test=False):
+def repeat_eval_ckpt(model, test_loaders, args, eval_output_dir, logger, ckpt_dir, dist_test=False):
 
-    data_config_eval = get_eval_config()
+    data_config_evals = get_eval_configs()
+    data_config_eval_rep = list(data_config_evals.values())[0]
 
-    # evaluated ckpt record
-    ckpt_record_file = eval_output_dir / ('eval_list_%s.txt' % data_config_eval.DATA_SPLIT['test'])
+    # evaluated ckpt record. Tentatively use first dataset.
+    ckpt_record_file = eval_output_dir / ('eval_list_%s.txt' % data_config_eval_rep.DATA_SPLIT['test'])
     with open(ckpt_record_file, 'a'):
         pass
 
     # tensorboard log
     if cfg.LOCAL_RANK == 0:
-        tb_log = SummaryWriter(log_dir=str(eval_output_dir / ('tensorboard_%s' % data_config_eval.DATA_SPLIT['test'])))
+        tb_log = SummaryWriter(log_dir=str(eval_output_dir / ('tensorboard_%s' % data_config_eval_rep.DATA_SPLIT['test'])))
     total_time = 0
     first_eval = True
 
@@ -133,11 +137,12 @@ def repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir
         model.cuda()
 
         # start evaluation
-        cur_result_dir = eval_output_dir / ('epoch_%s' % cur_epoch_id) / data_config_eval.DATA_SPLIT['test']
-        tb_dict = eval_utils.eval_one_epoch(
-            cfg, model, test_loader, cur_epoch_id, logger, dist_test=dist_test,
-            result_dir=cur_result_dir, save_to_file=args.save_to_file, args=args
-        )
+        for test_loader, data_config_eval in zip(test_loaders, data_config_evals):
+            cur_result_dir = eval_output_dir / ('epoch_%s' % cur_epoch_id) / data_config_eval.DATA_SPLIT['test']
+            tb_dict = eval_utils.eval_one_epoch(
+                cfg, model, test_loader, cur_epoch_id, logger, dist_test=dist_test,
+                result_dir=cur_result_dir, save_to_file=args.save_to_file, args=args
+            )
 
         if cfg.LOCAL_RANK == 0:
             for key, val in tb_dict.items():
@@ -171,10 +176,13 @@ def main():
 
     eval_output_dir = output_dir / 'eval'
 
+    eval_configs = get_eval_configs()
+    eval_config_rep = list(eval_configs.values())[0]
+
     if not args.eval_all:
         num_list = re.findall(r'\d+', args.ckpt) if args.ckpt is not None else []
         epoch_id = num_list[-1] if num_list.__len__() > 0 else 'no_number'
-        eval_output_dir = eval_output_dir / ('epoch_%s' % epoch_id) / get_eval_config().DATA_SPLIT['test']
+        eval_output_dir = eval_output_dir / ('epoch_%s' % epoch_id) / eval_config_rep.DATA_SPLIT['test']
     else:
         eval_output_dir = eval_output_dir / 'eval_all_default'
 
@@ -200,36 +208,36 @@ def main():
 
     ckpt_dir = args.ckpt_dir if args.ckpt_dir is not None else output_dir / 'ckpt'
 
-    if cfg.get('DATA_CONFIG_TAR', None):
-        test_set, test_loader, sampler = build_dataloader(
-            dataset_cfg=cfg.DATA_CONFIG_TAR,
-            class_names=cfg.DATA_CONFIG_TAR.CLASS_NAMES,
-            batch_size=args.batch_size,
-            dist=dist_test, workers=args.workers, logger=logger, training=False,
-            model_ontology=cfg.get('ONTOLOGY', None)
-        )
-    else:
-        test_set, test_loader, sampler = build_dataloader(
-            dataset_cfg=cfg.DATA_CONFIG,
+    eval_configs = get_eval_configs()
+    test_datasets = list()
+    for eval_config in eval_configs.values():
+        test_set, test_loader, test_sampler = build_dataloader(
+            dataset_cfg=eval_config,
             class_names=cfg.CLASS_NAMES,
             batch_size=args.batch_size,
-            dist=dist_test, workers=args.workers, logger=logger, training=False,
+            dist=dist_test, workers=args.workers,
+            logger=logger, training=False,
             model_ontology=cfg.get('ONTOLOGY', None)
         )
+        test_dataset = dict(dataset_class=test_set, loader=test_loader, sampler=test_sampler)
+        test_datasets.append(test_dataset)
 
-    model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=test_set)
+    test_dataset_rep = test_datasets[0]
+    model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=test_dataset_rep['dataset_class'])
 
     if cfg.get('SELF_TRAIN', None) and cfg.SELF_TRAIN.get('DSNORM', None):
         model = DSNorm.convert_dsnorm(model)
 
     state_name = 'model_state'
 
+    test_loaders = [dataset['loader'] for dataset in test_datasets]
+
     with torch.no_grad():
         if args.eval_all:
-            repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger,
+            repeat_eval_ckpt(model, test_loaders, args, eval_output_dir, logger,
                              ckpt_dir, dist_test=dist_test)
         else:
-            eval_single_ckpt(model, test_loader, args, eval_output_dir, logger,
+            eval_single_ckpt(model, test_loaders, args, eval_output_dir, logger,
                              epoch_id, dist_test=dist_test)
 
 

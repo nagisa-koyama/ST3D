@@ -19,6 +19,7 @@ def transform_annotations_to_kitti_format(annos, map_name_to_kitti=None, info_wi
             anno.pop('gt_names')
 
         for k in range(anno['name'].shape[0]):
+        # for k in range(len(anno['name'])):
             if anno['name'][k] in map_name_to_kitti:
                 anno['name'][k] = map_name_to_kitti[anno['name'][k]]
             else:
@@ -31,6 +32,7 @@ def transform_annotations_to_kitti_format(annos, map_name_to_kitti=None, info_wi
         else:
             gt_boxes_lidar = anno['gt_boxes'].copy()
 
+        # print("anno.keys():", anno.keys())
         # filter by fov
         if kwargs.get('is_gt', None) and kwargs.get('GT_FILTER', None):
             if kwargs.get('FOV_FILTER', None):
@@ -49,6 +51,7 @@ def transform_annotations_to_kitti_format(annos, map_name_to_kitti=None, info_wi
         anno['truncated'] = np.zeros(len(anno['name']))
         anno['occluded'] = np.zeros(len(anno['name']))
 
+        # print("len(gt_boxes_lidar):", len(gt_boxes_lidar))
         if len(gt_boxes_lidar) > 0:
             if info_with_fakelidar:
                 gt_boxes_lidar = box_utils.boxes3d_kitti_fakelidar_to_lidar(gt_boxes_lidar)
@@ -65,6 +68,10 @@ def transform_annotations_to_kitti_format(annos, map_name_to_kitti=None, info_wi
         else:
             anno['location'] = anno['dimensions'] = np.zeros((0, 3))
             anno['rotation_y'] = anno['alpha'] = np.zeros(0)
+        # print("len(gt_boxes_lidar), len(anno[rotation_y]):", len(gt_boxes_lidar), len(anno['rotation_y']))
+        # print("len(anno[name]), len(anno[bbox]), len(anno[alpha]):", len(anno['name']), len(anno['bbox']), len(anno['alpha']))
+        assert(len(anno['bbox']) == len(anno['alpha']))
+        assert(len(gt_boxes_lidar) == len(anno['rotation_y']))
 
     return annos
 

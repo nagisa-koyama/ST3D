@@ -75,6 +75,8 @@ def clean_data(gt_anno, dt_anno, current_class, difficulty):
             valid_class = 1
         else:
             valid_class = -1
+        # if dt_anno["ignored"][i] == 1:
+        #     valid_class = -1
         height = abs(dt_anno["bbox"][i, 3] - dt_anno["bbox"][i, 1])
         if height < MIN_HEIGHT[difficulty]:
             ignored_dt.append(1)
@@ -82,7 +84,8 @@ def clean_data(gt_anno, dt_anno, current_class, difficulty):
             ignored_dt.append(0)
         else:
             ignored_dt.append(-1)
-
+    # print("num_gt, num_dt:", num_gt, num_dt)
+    # print("num_valid_gt, sum(ignored_gt), sum(ignored_dt), len(dc_bboxes):", num_valid_gt, sum(ignored_gt), sum(ignored_dt), len(dc_bboxes))
     return num_valid_gt, ignored_gt, ignored_dt, dc_bboxes
 
 
@@ -435,6 +438,9 @@ def _prepare_data(gt_annos, dt_annos, current_class, difficulty):
         total_dc_num.append(dc_bboxes.shape[0])
         dontcares.append(dc_bboxes)
         total_num_valid_gt += num_valid_gt
+        print("dt_annos[i][bbox].shape:", dt_annos[i]["bbox"].shape)
+        print("dt_annos[i][alpha].shape:", dt_annos[i]["alpha"].shape)
+        print("dt_annos[i][score].shape:", dt_annos[i]["score"].shape)
         gt_datas = np.concatenate(
             [gt_annos[i]["bbox"], gt_annos[i]["alpha"][..., np.newaxis]], 1)
         dt_datas = np.concatenate([

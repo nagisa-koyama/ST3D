@@ -111,8 +111,6 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         cur_rcnn_recall = metric['recall_rcnn_%s' % str(cur_thresh)] / max(gt_num_cnt, 1)
         logger.info('recall_roi_%s: %f' % (cur_thresh, cur_roi_recall))
         logger.info('recall_rcnn_%s: %f' % (cur_thresh, cur_rcnn_recall))
-        wandb.log({'val/recall_roi_%s' % cur_thresh : cur_roi_recall})
-        wandb.log({'val/recall_rcnn_%s' % cur_thresh : cur_rcnn_recall})
         ret_dict['recall/roi_%s' % str(cur_thresh)] = cur_roi_recall
         ret_dict['recall/rcnn_%s' % str(cur_thresh)] = cur_rcnn_recall
 
@@ -122,7 +120,7 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         total_pred_objects += anno['name'].__len__()
     logger.info('Average predicted number of objects(%d samples): %.3f'
                 % (len(det_annos), total_pred_objects / max(1, len(det_annos))))
-    wandb.log({'val/num_of_avg_predictions': total_pred_objects / max(1, len(det_annos))})
+    ret_dict['num_of_avg_predictions'] = total_pred_objects / max(1, len(det_annos))
 
     with open(result_dir / 'result.pkl', 'wb') as f:
         pickle.dump(det_annos, f)
@@ -137,16 +135,37 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
             ontology, label = cls.split(":")
             if ontology == dataset.dataset_ontology:
                 class_names_for_evaluation.append(label)
-        print("eval_det_annos[-1][name]:", eval_det_annos[-1]['name'])
+        # print("eval_det_annos[-1][name]:", eval_det_annos[-1]['name'])
         for index in range(len(eval_det_annos)):
             new_names = []
+            new_boxes = []
+            new_pred_labels = []
+            new_scores = []
+            # print("name, boxes_lidar, frame_id:", len(eval_det_annos[index]['name']), len(eval_det_annos[index]['boxes_lidar']), eval_det_annos[index]['frame_id'])
+            eval_det_annos[index]['ignored'] = np.zeros(eval_det_annos[index]['name'].shape)
+            # print("eval_det_annos[index].keys():", eval_det_annos[index].keys())
             for index2 in range(len(eval_det_annos[index]['name'])):
-                # Remap dataset-specific inferences to be evaluated.
+                # Remap only dataset-specific inferences to be evaluated. Oher inferences will be ignored for metrics computation.
                 if dataset.dataset_ontology in eval_det_annos[index]['name'][index2]:
-                    new_names.append(eval_det_annos[index]['name'][index2].split(":")[-1])
-            eval_det_annos[index]['name'] = new_names
-        print("eval_det_annos[-1][name]:", eval_det_annos[-1]['name'])
+                    # new_names.append(eval_det_annos[index]['name'][index2].split(":")[-1])
+                    # new_boxes.append(eval_det_annos[index]['boxes_lidar'][index2])
+                    # if 'pred_labels' in eval_det_annos[index].keys():
+                    #     new_pred_labels.append(eval_det_annos[index]['pred_labels'][index2])
+                    # if 'score' in eval_det_annos[index].keys():
+                    #     new_scores.append(eval_det_annos[index]['score'][index2])
+                    eval_det_annos[index]['name'][index2] = eval_det_annos[index]['name'][index2].split(":")[-1]
+                # else:
+                #     eval_det_annos[index]['ignored'][index2] = 1
+            # eval_det_annos[index]['name'] = np.array(new_names)
+            # eval_det_annos[index]['boxes_lidar'] = np.array(new_boxes)
+            # if 'pred_labels' in eval_det_annos[index].keys():
+            #     eval_det_annos[index]['pred_labels'] = np.array(new_pred_labels)
+            # if 'score' in eval_det_annos[index].keys():
+            #     eval_det_annos[index]['score'] = np.array(new_scores)
+            assert len(eval_det_annos[index]['boxes_lidar']) == len(eval_det_annos[index]['score'])
+        # print("eval_det_annos[-1][name]:", eval_det_annos[-1]['name'])
 
+    print("datset.dataset_ontology in eval_utils", dataset.dataset_ontology)
     print("class_names in eval_utils", class_names)
     print("class_names_for_evaluation in eval_utils", class_names_for_evaluation)
 
@@ -155,8 +174,6 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         eval_metric=cfg.MODEL.POST_PROCESSING.EVAL_METRIC,
         output_path=final_output_dir
     )
-    # for item in result_dict.items():
-    #     wandb.log({'val/' + item[0] : item[1]})
 
     logger.info(result_str)
     ret_dict.update(result_dict)

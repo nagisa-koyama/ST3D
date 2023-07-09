@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 from tensorboardX import SummaryWriter
 import torch.distributed as dist
-from test import repeat_eval_ckpt
+from test import repeat_eval_ckpt, get_eval_configs
 
 import wandb
 
@@ -298,31 +298,30 @@ def main():
     if args.eval_fov_only:
         cfg.DATA_CONFIG_TAR.FOV_POINTS_ONLY = True
 
-    if cfg.get('DATA_CONFIG_TAR', None) and not args.eval_src:
-        test_set, test_loader, sampler = build_dataloader(
-            dataset_cfg=cfg.DATA_CONFIG_TAR,
+    test_data_configs = get_eval_configs()
+    test_datasets = list()
+    for test_data_config in test_data_configs.values():
+        test_set, test_loader, test_sampler = build_dataloader(
+            dataset_cfg=test_data_config,
             class_names=cfg.CLASS_NAMES,
             batch_size=args.batch_size,
-            dist=dist_train, workers=args.workers, logger=logger, training=False,
+            dist=dist_train, workers=args.workers,
+            logger=logger, training=False,
             model_ontology=cfg.get('ONTOLOGY', None)
         )
-    else:
-        test_set, test_loader, sampler = build_dataloader(
-            dataset_cfg=cfg.DATA_CONFIG,
-            class_names=cfg.CLASS_NAMES,
-            batch_size=args.batch_size,
-            dist=dist_train, workers=args.workers, logger=logger, training=False,
-            model_ontology=cfg.get('ONTOLOGY', None)
-        )
+        test_dataset = dict(dataset_class=test_set, loader=test_loader, sampler=test_sampler)
+        test_datasets.append(test_dataset)
 
     eval_output_dir = output_dir / 'eval' / 'eval_with_train'
     eval_output_dir.mkdir(parents=True, exist_ok=True)
     # Only evaluate the last args.num_epochs_to_eval epochs
     args.start_epoch = max(args.epochs - args.num_epochs_to_eval, 0)
 
+    test_loaders = [dataset['loader'] for dataset in test_datasets]
+
     repeat_eval_ckpt(
         model.module if dist_train else model,
-        test_loader, args, eval_output_dir, logger, ckpt_dir,
+        test_loaders, args, eval_output_dir, logger, ckpt_dir,
         dist_test=dist_train
     )
     logger.info('**********************End evaluation %s/%s(%s)**********************' %
