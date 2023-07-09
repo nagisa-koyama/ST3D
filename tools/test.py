@@ -99,8 +99,8 @@ def get_eval_configs():
 
 def repeat_eval_ckpt(model, test_loaders, args, eval_output_dir, logger, ckpt_dir, dist_test=False):
 
-    data_config_evals = get_eval_configs()
-    data_config_eval_rep = list(data_config_evals.values())[0]
+    data_config_evals = get_eval_configs().values()
+    data_config_eval_rep = list(data_config_evals)[0]
 
     # evaluated ckpt record. Tentatively use first dataset.
     ckpt_record_file = eval_output_dir / ('eval_list_%s.txt' % data_config_eval_rep.DATA_SPLIT['test'])
