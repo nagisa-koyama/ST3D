@@ -22,9 +22,10 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
     if rank == 0:
         pbar = tqdm.tqdm(total=total_it_each_epochs_aggregated, leave=leave_pbar, desc='train', dynamic_ncols=True)
 
+    loss_total = None
     for cur_it in range(total_it_each_epochs_aggregated):
         dataset_index = cur_it % len(dataloader_iters)
-        print("dataset_index", dataset_index)
+        dataset_ontology = train_loaders[dataset_index].dataset.dataset_ontology
         try:
             batch = next(dataloader_iters[dataset_index])
         except StopIteration:
@@ -43,16 +44,33 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
             tb_log.add_scalar('meta_data/learning_rate', cur_lr, accumulated_iter)
 
         model.train()
-        optimizer.zero_grad()
 
         loss, tb_dict, disp_dict = model_func(model, batch)
 
-        loss.backward()
-        clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
-        optimizer.step()
+        backward_together = optim_cfg.get('BACKWORD_TOGETHER', None)
+        if backward_together:
+            if dataset_index == 0:
+                # Reset grad only when first dataset is pulled in.
+                # This will behave as grad accumulation.
+                optimizer.zero_grad()
+                loss_total = loss
+            else:
+                loss_total += loss
+            loss.backward()
+            if dataset_index == len(dataloader_iters) - 1:
+                # Update params only when final dataset is pulled in.
+                clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
+                optimizer.step()
+            disp_dict.update({'loss total': loss_total.item(), 'lr': cur_lr})
+        else:
+            optimizer.zero_grad()
+            loss_total = loss
+            loss.backward()
+            clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
+            optimizer.step()
+            disp_dict.update({'loss ' + dataset_ontology: loss.item(), 'lr': cur_lr})
 
         accumulated_iter += 1
-        disp_dict.update({'loss': loss.item(), 'lr': cur_lr})
 
         # log to console and tensorboard
         if rank == 0:
@@ -64,11 +82,17 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
             if tb_log is not None:
                 tb_log.add_scalar('train/loss', loss, accumulated_iter)
                 tb_log.add_scalar('meta_data/learning_rate', cur_lr, accumulated_iter)
-                wandb.log({'train/loss': loss})
-                wandb.log({'train/learning_rate': cur_lr})
+                wandb.log({'train/' +  dataset_ontology + '/loss': loss})
+                wandb.log({'train/' + dataset_ontology + '/learning_rate': cur_lr})
+                if backward_together == True:
+                    if dataset_index ==  len(dataloader_iters) - 1:
+                        wandb.log({'train/loss': loss_total})
+                else:
+                    wandb.log({'train/loss': loss})
+
                 for key, val in tb_dict.items():
-                    tb_log.add_scalar('train/' + key, val, accumulated_iter)
-                    wandb.log({'train/' + key: val})
+                    tb_log.add_scalar('train/' + dataset_ontology + '/' + key, val, accumulated_iter)
+                    wandb.log({'train/' + dataset_ontology + '/' + key: val})
 
     if rank == 0:
         pbar.close()
