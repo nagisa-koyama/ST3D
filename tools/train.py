@@ -172,6 +172,11 @@ def main():
         model = DSNorm.convert_dsnorm(model)
         if model_teacher is not None:
             model_teacher = DSNorm.convert_dsnorm(model_teacher)
+    # uplaod to GPU
+    model.cuda()
+    if model_teacher is not None:
+        model_teacher.cuda()
+    wandb.watch(model, log_freq=100)
 
     # log networks
     logger.info('****** model: %s ******', model.__class__.__name__)
@@ -180,40 +185,34 @@ def main():
         logger.info('****** model_teacher: %s ******', model_teacher.__class__.__name__)
         logger.info(model_teacher)
 
-    # load pretrained weights
-    if args.pretrained_model is not None:
-        model.load_params_from_file(filename=args.pretrained_model, to_cpu=dist, logger=logger)
-        logger.info('pretrained_model %s is loaded to model %s', args.pretrained_model, model.__class__.__name__)
-    if args.pretrained_model_teacher is not None and model_teacher is not None:
-        model_teacher.load_params_from_file(filename=args.pretrained_model_teacher, to_cpu=dist, logger=logger)
-        logger.info('pretrained_model_teacher %s is loaded to model_teacher %s', args.pretrained_model_teacher,
-                    model_teacher.__class__.__name__)
-
     # -----------------------create optimizer---------------------------
     optimizer = build_optimizer(model, cfg.OPTIMIZATION)
+
+    # -----------------------load pretrained model if specified---------------------------
+    if args.pretrained_model is not None:
+        model.load_params_from_file(filename=args.pretrained_model, to_cpu=dist_train, logger=logger)
+        logger.info('pretrained_model %s is loaded to model %s', args.pretrained_model, model.__class__.__name__)
+    if args.pretrained_model_teacher is not None and model_teacher is not None:
+        model_teacher.load_params_from_file(filename=args.pretrained_model_teacher, to_cpu=dist_train, logger=logger)
+        logger.info('pretrained_model_teacher %s is loaded to model_teacher %s', args.pretrained_model_teacher,
+                    model_teacher.__class__.__name__)
 
     # -----------------------load checkpoint if specified---------------------------
     start_epoch = it = 0
     last_epoch = -1
     if args.ckpt is not None:
-        it, start_epoch = model.load_params_with_optimizer(args.ckpt, to_cpu=dist, optimizer=optimizer, logger=logger)
+        it, start_epoch = model.load_params_with_optimizer(args.ckpt, to_cpu=dist_train, optimizer=optimizer, logger=logger)
         last_epoch = start_epoch + 1
     else:
         ckpt_list = glob.glob(str(ckpt_dir / '*checkpoint_epoch_*.pth'))
         if len(ckpt_list) > 0:
             ckpt_list.sort(key=os.path.getmtime)
             it, start_epoch = model.load_params_with_optimizer(
-                ckpt_list[-1], to_cpu=dist, optimizer=optimizer, logger=logger
+                ckpt_list[-1], to_cpu=dist_train, optimizer=optimizer, logger=logger
             )
             last_epoch = start_epoch + 1
 
     # -----------------------configure networks---------------------------
-    # uplaod to GPU
-    model.cuda()
-    if model_teacher is not None:
-        model_teacher.cuda()
-    wandb.watch(model, log_freq=100)
-
     # configurte distributed run
     model.train()  # before wrap to DistributedDataParallel to support fixed some parameters
     if model_teacher is not None:
