@@ -98,7 +98,8 @@ def main():
     log_file = output_dir / ('log_train_%s.txt' % datetime.datetime.now().strftime('%Y%m%d-%H%M%S'))
     logger = common_utils.create_logger(log_file, rank=cfg.LOCAL_RANK)
 
-    wandb.init(config=vars(cfg), project="st3d")
+    if cfg.LOCAL_RANK == 0:
+        wandb.init(config=vars(cfg), project="st3d")
     
     # log to file
     logger.info('**********************Start logging**********************')
@@ -176,7 +177,9 @@ def main():
     model.cuda()
     if model_teacher is not None:
         model_teacher.cuda()
-    wandb.watch(model, log_freq=100)
+
+    if cfg.LOCAL_RANK == 0:
+        wandb.watch(model, log_freq=100)
 
     # log networks
     logger.info('****** model: %s ******', model.__class__.__name__)

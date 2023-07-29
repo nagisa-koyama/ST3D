@@ -193,7 +193,8 @@ def main():
     log_file = eval_output_dir / ('log_eval_%s.txt' % datetime.datetime.now().strftime('%Y%m%d-%H%M%S'))
     logger = common_utils.create_logger(log_file, rank=cfg.LOCAL_RANK)
 
-    wandb.init(config=vars(cfg), project="st3d")
+    if cfg.LOCAL_RANK == 0:
+        wandb.init(config=vars(cfg), project="st3d")
 
     # log to file
     logger.info('**********************Start logging**********************')
