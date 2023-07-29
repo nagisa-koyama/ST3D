@@ -285,8 +285,14 @@ def main():
     # os.environ['WANDB_IGNORE_GLOBS'] = pth_list_str
 
     # Copy wandb folder to storage here in case following evaluation fails.
-    copy_cmd = "cp -Lr wandb /storage/"
-    subprocess.call(copy_cmd.split())
+    if cfg.LOCAL_RANK == 0:
+        copy_cmd = "cp -Lr wandb /storage/"
+        try:
+            subprocess.check_call(copy_cmd.split())
+        except subprocess.CalledProcessError:
+            print("copy command showed error")
+
+        subprocess.call(copy_cmd.split())
 
     logger.info('**********************End training %s/%s(%s)**********************\n\n\n'
                 % (cfg.EXP_GROUP_PATH, cfg.TAG, args.extra_tag))
@@ -327,8 +333,12 @@ def main():
                 (cfg.EXP_GROUP_PATH, cfg.TAG, args.extra_tag))
 
     # Copy wandb folder to storage again.
-    copy_cmd = "cp -Lr wandb /storage/"
-    subprocess.call(copy_cmd.split())
+    if cfg.LOCAL_RANK == 0:
+        copy_cmd = "cp -Lr wandb /storage/"
+        try:
+            subprocess.check_call(copy_cmd.split())
+        except subprocess.CalledProcessError:
+            print("copy command showed error")
 
 
 if __name__ == '__main__':
