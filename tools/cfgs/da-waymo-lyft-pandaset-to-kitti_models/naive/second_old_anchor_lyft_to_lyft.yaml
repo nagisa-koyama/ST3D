@@ -1,0 +1,12 @@
+_BASE_CONFIG_: cfgs/da-waymo-lyft-pandaset-to-kitti_models/naive/second_old_anchor_common.yaml
+
+CLASS_NAMES: ['car']
+ONTOLOGY: null
+
+DATA_CONFIGS:
+    LYFT_CONFIG:
+        _BASE_CONFIG_: cfgs/dataset_configs/da_lyft_dataset.yaml
+        CLASS_NAMES: ['car']
+
+OPTIMIZATION:
+    NUM_EPOCHS: 20

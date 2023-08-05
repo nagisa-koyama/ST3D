@@ -143,8 +143,18 @@ RUN echo 'alias train_lyft_multihead="python train.py --cfg_file cfgs/lyft_model
 RUN echo 'alias train_pandaset="python train.py --cfg_file cfgs/pandaset_models/second.yaml"' >> /root/.bashrc
 RUN echo 'alias test_pandaset="python test.py --cfg_file cfgs/pandaset_models/secondiou_old_anchor.yaml --ckpt /storage/wandb/run-20230501_071704-iko5g53r/files/checkpoint_epoch_5.pth --batch_size 1"' >> /root/.bashrc
 RUN echo 'alias train_dev="bash scripts/dist_train.sh 2 --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/domain_attention_head_per_dataset/second_old_anchor_kitti_waymo_lyft_pandaset_to_kitti.yaml"' >> /root/.bashrc
-RUN echo 'alias test_dev="bash scripts/dist_test.sh 2 --ckpt /storage/wandb/run-20230628_152333-84k9sy71/files/checkpoint_epoch_10.pth --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/domain_attention_head_per_dataset/second_old_anchor_kitti_waymo_lyft_pandaset_to_kitti.yaml"' >> /root/.bashrc
-RUN echo 'alias test_all_dev="bash scripts/dist_test.sh 2 --ckpt_dir /storage/wandb/run-20230628_152333-84k9sy71/files/ --eval_all --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/domain_attention_head_per_dataset/second_old_anchor_kitti_waymo_lyft_pandaset_to_kitti.yaml"' >> /root/.bashrc
+RUN echo 'alias train_lyft_naive="bash scripts/dist_train.sh 2 --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/naive/second_old_anchor_lyft_to_lyft.yaml --batch_size 40 --sync_bn"' >> /root/.bashrc
+RUN echo 'alias train_pandaset_naive="bash scripts/dist_train.sh 2 --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/naive/second_old_anchor_pandaset_to_pandaset.yaml --batch_size 40 --sync_bn"' >> /root/.bashrc
+RUN echo 'alias train_waymo_naive="bash scripts/dist_train.sh 2 --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/naive/second_old_anchor_waymo_to_waymo.yaml --batch_size 40 --sync_bn"' >> /root/.bashrc
+RUN echo 'alias train_kitti_naive="bash scripts/dist_train.sh 2 --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/naive/second_old_anchor_kitti_to_kitti.yaml --batch_size 40 --sync_bn"' >> /root/.bashrc
+RUN echo 'alias test_dev="bash scripts/dist_test.sh 2 --ckpt /storage/wandb/run-20230628_152333-84k9sy71/files/checkpoint_epoch_0.pth --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/domain_attention_head_per_dataset/second_old_anchor_kitti_waymo_lyft_pandaset_to_kitti.yaml"' >> /root/.bashrc
+RUN echo 'alias test_all_dev="bash scripts/dist_test.sh 2 --ckpt_dir /storage/wandb/run-20230709_151045-x2rugf8v/files/ --eval_all --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/domain_attention_head_per_dataset/second_old_anchor_kitti_waymo_lyft_pandaset_to_kitti.yaml"' >> /root/.bashrc
+RUN echo 'alias test_all_dev_single="python test.py --ckpt_dir /storage/wandb/run-20230718_164733-mez7767c/files/ --eval_all --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/domain_attention_head_per_dataset/second_old_anchor_kitti_waymo_lyft_pandaset_to_kitti.yaml"' >> /root/.bashrc
+RUN echo 'alias train_dev_ckpt="bash scripts/dist_train.sh 2 --ckpt /storage/wandb/run-20230709_151045-x2rugf8v/files/checkpoint_epoch_10.pth --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/domain_attention_head_per_dataset/second_old_anchor_kitti_waymo_lyft_pandaset_to_kitti.yaml --batch_size 40"' >> /root/.bashrc
+RUN echo 'alias train_dev_ckpt_single="python train.py --ckpt /storage/wandb/run-20230709_151045-x2rugf8v/files/checkpoint_epoch_10.pth --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/domain_attention_head_per_dataset/second_old_anchor_kitti_waymo_lyft_pandaset_to_kitti.yaml --batch_size 20"' >> /root/.bashrc
+RUN echo 'alias test_lyft="python test.py --ckpt /storage/wandb/run-20230723_221713-2c94wfva/files/checkpoint_epoch_20.pth --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/naive/secondiou_old_anchor_lyft_to_lyft.yaml"' >> /root/.bashrc
+
+
 # Copy latest ST3D source from local storage except folders in .dockerignore.
 # Assuming that directory structure is kept.
 COPY . $WORK_DIR/ST3D

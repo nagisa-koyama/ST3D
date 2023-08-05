@@ -1,0 +1,19 @@
+_BASE_CONFIG_: cfgs/da-waymo-lyft-pandaset-to-kitti_models/naive/second_old_anchor_common.yaml
+
+CLASS_NAMES: ['Vehicle']
+ONTOLOGY: null
+
+DATA_CONFIGS:
+    WAYMO_CONFIG:
+        _BASE_CONFIG_: cfgs/dataset_configs/da_waymo_dataset.yaml
+        INFO_WITH_FAKELIDAR: False
+        CLASS_NAMES: ['Vehicle']
+
+# DATA_CONFIG_TAR:
+#     _BASE_CONFIG_: cfgs/dataset_configs/da_kitti_dataset.yaml
+#     FOV_POINTS_ONLY: True
+#     CLASS_NAMES: ['Car']
+#     SHIFT_COOR: [0.0, 0.0, 1.6]
+
+OPTIMIZATION:
+    NUM_EPOCHS: 20
