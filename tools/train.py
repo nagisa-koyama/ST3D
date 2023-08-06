@@ -292,7 +292,7 @@ def main():
         copy_cmd = "cp -Lr wandb /storage/"
         try:
             subprocess.check_call(copy_cmd.split())
-        except subprocess.CalledProcessError:
+        except Exception as e:
             print("copy command showed error")
 
         subprocess.call(copy_cmd.split())
@@ -340,7 +340,7 @@ def main():
         copy_cmd = "cp -Lr wandb /storage/"
         try:
             subprocess.check_call(copy_cmd.split())
-        except subprocess.CalledProcessError:
+        except Exception as e:
             print("copy command showed error")
 
 
