@@ -341,7 +341,7 @@ class KittiDataset(DatasetTemplate):
         # eval_det_annos = copy.deepcopy(det_annos)
         eval_det_annos = det_annos
         eval_gt_annos = [copy.deepcopy(info['annos']) for info in self.kitti_infos]
-        print("eval_gt_annos[0][name]:", eval_gt_annos[0]['name'])
+        # print("eval_gt_annos[0][name]:", eval_gt_annos[0]['name'])
         ap_result_str, ap_dict = kitti_eval.get_official_eval_result(eval_gt_annos, eval_det_annos, class_names)
 
         return ap_result_str, ap_dict
@@ -395,6 +395,7 @@ class KittiDataset(DatasetTemplate):
                 'gt_names': gt_names,
                 'gt_boxes': gt_boxes_lidar
             })
+            # print("gt_names in __getitem__:", gt_names)
 
             if self.dataset_cfg.get('REMOVE_ORIGIN_GTS', None) and self.training:
                 input_dict['points'] = box_utils.remove_points_in_boxes3d(input_dict['points'], input_dict['gt_boxes'])

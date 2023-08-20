@@ -264,15 +264,28 @@ class DatasetTemplate(torch_data.Dataset):
                 voxel_num_points: optional (num_voxels)
                 ...
         """
+        # print("data_dict[gt_names] in the beginning of prepare_data", data_dict['gt_names'])
+
         # ontology remapping
         if self.map_ontology_dataset_to_model is not None:
+            updated_gt_names = []
             for index in range(data_dict['gt_names'].size):
-                data_dict['gt_names'][index] = self.map_ontology_dataset_to_model[data_dict['gt_names'][index]]
+                # Note: previously updated name is trancated due to initially allocated smaller memory size.
+                # Resolved by newly creating numpy.array instead of updating existing element.
+                updated_gt_names.append(self.map_ontology_dataset_to_model[data_dict['gt_names'][index]])
+            assert len(updated_gt_names) == len(data_dict['gt_names'])
+            data_dict['gt_names'] = np.array(updated_gt_names)
+            # print("data_dict[gt_names] in prepare_data after ontology remap", data_dict['gt_names'])
 
         # Multi-head handling
-        if ':' in self.dataset_class_names[0]:
+        if ":" in self.dataset_class_names[0]:
+            updated_gt_names = []
             for index in range(data_dict['gt_names'].size):
-                data_dict['gt_names'][index] = self.dataset_ontology + ":" + data_dict['gt_names'][index]
+                # Note: previously updated name is trancated due to initially allocated smaller memory size.
+                # Resolved by newly creating numpy.array instead of updating existing element.
+                updated_gt_names.append(self.dataset_ontology + ":" + data_dict['gt_names'][index])
+            data_dict['gt_names'] = np.array(updated_gt_names)
+            # print("data_dict[gt_names] in prepare_data after multi-head label update", data_dict['gt_names'])
 
         if self.training:
             # filter gt_boxes without points
