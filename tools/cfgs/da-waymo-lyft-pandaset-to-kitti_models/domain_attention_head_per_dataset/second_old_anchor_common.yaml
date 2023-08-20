@@ -39,6 +39,7 @@ MODEL:
 
     BACKBONE_2D:
         NAME: DomainAttentionBEVBackbone
+        # NAME: BaseBEVBackbone
         NUM_ADAPTERS: 1
 
         LAYER_NUMS: [5, 5]
@@ -101,7 +102,7 @@ MODEL:
             },
         ]
 
-        SHARED_CONV_NUM_FILTER: 64
+        SHARED_CONV_NUM_FILTER: null
         RPN_HEAD_CFGS: [
             {
                 'HEAD_CLS_NAME': ['kitti:Car'],
