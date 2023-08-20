@@ -47,14 +47,14 @@ class DataBaseSampler(object):
         for x in sampler_cfg.SAMPLE_GROUPS:
             # class_name is in dataset ontology.
             class_name, sample_num = x.split(':')
-            # Multi-head handling.
-            if ":" in dataset_class_names[0]:
-                class_name = dataset_ontology + ":" + class_name
-            if class_name not in dataset_class_names:
-                continue
             if map_ontology_dataset_to_model is not None:
                 # mapped_class_name is in model ontology.
                 mapped_class_name = map_ontology_dataset_to_model[class_name]
+            elif ":" in dataset_class_names[0]:
+                # Multi-head handling. Skip class_name for other dataset.
+                mapped_class_name = dataset_ontology + ":" + class_name
+                if mapped_class_name not in dataset_class_names:
+                    continue
             else:
                 mapped_class_name = class_name
             self.sample_class_num[mapped_class_name] = sample_num
@@ -63,6 +63,8 @@ class DataBaseSampler(object):
                 'pointer': len(self.db_infos[mapped_class_name]),
                 'indices': np.arange(len(self.db_infos[mapped_class_name]))
             }
+        # print("dataset_class_names:", dataset_class_names)
+        # print("self.db_infos.keys():", self.db_infos.keys())
 
     def __getstate__(self):
         d = dict(self.__dict__)
@@ -89,8 +91,8 @@ class DataBaseSampler(object):
             # name is in dataset ontology.
             name, min_num = name_num.split(':')
             min_num = int(min_num)
-            if ':' in self.class_names[0]:
-                name = self.dataset_ontology + ':' + name
+            if ":" in self.class_names[0]:
+                name = self.dataset_ontology + ":" + name
             if min_num > 0 and name in db_infos.keys():
                 filtered_infos = []
                 for info in db_infos[name]:
