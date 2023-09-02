@@ -145,7 +145,11 @@ def d3_box_overlap_kernel(boxes, qboxes, rinc, criterion=-1):
                         ua = area2
                     else:
                         ua = inc
-                    rinc[i, j] = inc / ua
+                    # Added to avoid zero division.
+                    if ua > 0.0:
+                        rinc[i, j] = inc / ua
+                    else:
+                        rinc[i, j] = 0.0
                 else:
                     rinc[i, j] = 0.0
 
