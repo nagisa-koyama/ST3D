@@ -120,6 +120,7 @@ class LyftDataset(DatasetTemplate):
         from ..kitti import kitti_utils
 
         map_name_to_kitti = {
+            'Car': 'Car', # TODO: remove this once proper head-per-dataset eval is set up.
             'car': 'Car',
             'pedestrian': 'Pedestrian',
             'truck': 'Truck',
@@ -132,7 +133,8 @@ class LyftDataset(DatasetTemplate):
             eval_gt_annos, map_name_to_kitti=map_name_to_kitti,
             info_with_fakelidar=self.dataset_cfg.get('INFO_WITH_FAKELIDAR', False)
         )
-
+        print("class_namesin lyft_datsaet:", class_names)
+        print("map_name_to_kitti in lyft_dataset:", map_name_to_kitti)
         kitti_class_names = [map_name_to_kitti[x] for x in class_names]
 
         ap_result_str, ap_dict = kitti_eval.get_official_eval_result(
