@@ -3,6 +3,7 @@ _BASE_CONFIG_: cfgs/da-waymo-lyft-pandaset-to-kitti_models/domain_attention_head
 CLASS_NAMES: ['kitti:Car', 'waymo:Vehicle', 'lyft:car', 'pandaset:Car']
 # CLASS_NAMES: ['kitti:Car', 'pandaset:Car']
 # CLASS_NAMES: ['kitti:Car']
+# CLASS_NAMES: ['Car']
 
 # ONTOLOGY: not specified
 
