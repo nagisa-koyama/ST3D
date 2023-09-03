@@ -235,7 +235,7 @@ def main():
 
     with torch.no_grad():
         if args.eval_all:
-            repeat_eval_ckpt(model.module, test_loaders, args, eval_output_dir, logger,
+            repeat_eval_ckpt(model, test_loaders, args, eval_output_dir, logger,
                              ckpt_dir, dist_test=dist_test)
         else:
             eval_single_ckpt(model, test_loaders, args, eval_output_dir, logger,
