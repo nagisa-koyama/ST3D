@@ -157,7 +157,7 @@ RUN echo 'alias test_all_dev_single5="python test.py --ckpt_dir /storage/wandb/r
 RUN echo 'alias train_dev_ckpt="bash scripts/dist_train.sh 2 --ckpt /storage/wandb/run-20230709_151045-x2rugf8v/files/checkpoint_epoch_10.pth --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/domain_attention_head_per_dataset/second_old_anchor_kitti_waymo_lyft_pandaset_to_kitti.yaml --batch_size 40"' >> /root/.bashrc
 RUN echo 'alias train_dev_ckpt_single="python train.py --ckpt /storage/wandb/run-20230709_151045-x2rugf8v/files/checkpoint_epoch_10.pth --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/domain_attention_head_per_dataset/second_old_anchor_kitti_waymo_lyft_pandaset_to_kitti.yaml --batch_size 20"' >> /root/.bashrc
 RUN echo 'alias test_lyft="python test.py --ckpt /storage/wandb/run-20230723_221713-2c94wfva/files/checkpoint_epoch_20.pth --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/naive/secondiou_old_anchor_lyft_to_lyft.yaml"' >> /root/.bashrc
-
+RUN echo 'alias self_train_single="python train.py --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/domain_attention_head_per_dataset/second_old_anchor_waymo_lyft_pandaset_to_kitti_st3d_car_basebev.yaml --pretrained_model_teacher /storage/wandb/run-20230821_222115-469by94p/files/checkpoint_epoch_5.pth"' >> /root/.bashrc
 
 # Copy latest ST3D source from local storage except folders in .dockerignore.
 # Assuming that directory structure is kept.

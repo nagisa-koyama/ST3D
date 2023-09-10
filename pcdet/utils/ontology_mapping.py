@@ -91,6 +91,16 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'Misc': 'Sign',
         'DontCare': 'Sign',
     }
+    map_head_per_dataset_to_kitti = {
+        'kitti:Car': 'kitti:Car',
+        'waymo:Vehicle': 'kitti:Car',
+        'lyft:car': 'kitti:Car',
+        'pandaset:Car': 'kitti:Car',
+        'kitti:Pedestrian': 'kitti:Pedestrian',
+        'waymo:Pedestrian': 'kitti:Pedestrian',
+        'lyft:pedestrian': 'kitti:Pedestrian',
+        'pandaset:Pedestrian': 'kitti:Pedestrian',
+    }
     if input_ontology == 'lyft' and output_ontology == 'kitti':
         return map_lyft_to_kitti
     elif input_ontology == 'waymo' and output_ontology == 'kitti':
@@ -103,5 +113,7 @@ def get_ontology_mapping(input_ontology, output_ontology):
         return map_kitti_to_waymo
     elif input_ontology == 'kitti' and output_ontology == 'pandaset':
         return map_kitti_to_pandaset
+    elif input_ontology == 'head_per_dataset' and output_ontology == 'kitti':
+        return map_head_per_dataset_to_kitti
     else:
         assert False, input_ontology + ' to ' + output_ontology + ' is not supported'

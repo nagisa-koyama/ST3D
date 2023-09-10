@@ -2,6 +2,7 @@ import _init_path
 import os
 from pathlib import Path
 import argparse
+import copy
 import datetime
 import glob
 import subprocess
@@ -124,17 +125,29 @@ def main():
     else:
         assert False, "Eigher DATA_CONFIG or DATA_CONFIGS should be defined"
     source_datasets = list()
+    source_class_names = cfg.CLASS_NAMES
+    if cfg.get('SELF_TRAIN', None) and cfg.SELF_TRAIN.get('MODEL_TEACHER', None):
+        teacher_class_names = cfg.SELF_TRAIN.MODEL_TEACHER.get('CLASS_NAMES', None)
+        if teacher_class_names is not None:
+            source_class_names = copy.deepcopy(teacher_class_names)
+
+    # Set None to model_ontology of source dataset if teacher model is head_per_dataset.
+    source_model_ontology = cfg.get('ONTOLOGY', None)
+    if cfg.get('SELF_TRAIN', None):
+        if cfg.SELF_TRAIN.get('MODEL_TEACHER', None):
+            if cfg.SELF_TRAIN.MODEL_TEACHER.get('ONTOLOGY', None):
+                source_model_ontology = None
     for data_config in data_configs.values():
         source_set, source_loader, source_sampler = build_dataloader(
             dataset_cfg=data_config,
-            class_names=cfg.CLASS_NAMES,
+            class_names=source_class_names,
             batch_size=args.batch_size,
             dist=dist_train, workers=args.workers,
             logger=logger,
             training=True,
             merge_all_iters_to_one_epoch=args.merge_all_iters_to_one_epoch,
             total_epochs=args.epochs,
-            model_ontology=cfg.get('ONTOLOGY', None)
+            model_ontology=source_model_ontology
         )
         dataset = dict(dataset_class=source_set, loader=source_loader, sampler=source_sampler)
         source_datasets.append(dataset)
@@ -159,7 +172,7 @@ def main():
         model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES),
                               dataset=source_dataset['dataset_class'])
         if cfg.get('SELF_TRAIN', None) and cfg.SELF_TRAIN.get('MODEL_TEACHER', None):
-            model_teacher = build_network(model_cfg=cfg.SELF_TRAIN.MODEL_TEACHER, num_class=len(cfg.CLASS_NAMES),
+            model_teacher = build_network(model_cfg=cfg.SELF_TRAIN.MODEL_TEACHER, num_class=len(source_class_names),
                             dataset=source_dataset['dataset_class'])
         else:
             model_teacher = None

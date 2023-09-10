@@ -10,7 +10,7 @@ from pcdet.utils import common_utils, commu_utils, memory_ensemble_utils
 import pickle as pkl
 import re
 from pcdet.models.model_utils.dsnorm import set_ds_target
-
+from ..utils.ontology_mapping import get_ontology_mapping
 
 PSEUDO_LABELS = {}
 NEW_PSEUDO_LABELS = {}
@@ -100,11 +100,13 @@ def save_pseudo_label_epoch(model, val_loader, rank, leave_pbar, ps_label_dir, c
             load_data_to_gpu(target_batch)
             pred_dicts, ret_dict = model(target_batch)
 
+        student_ontology = cfg.get('ONTOLOGY', None)
         pos_ps_batch_nmeters, ign_ps_batch_nmeters = save_pseudo_label_batch(
             target_batch, pred_dicts=pred_dicts,
             need_update=(cfg.SELF_TRAIN.get('MEMORY_ENSEMBLE', None) and
                          cfg.SELF_TRAIN.MEMORY_ENSEMBLE.ENABLED and
-                         cur_epoch > 0)
+                         cur_epoch > 0),
+            student_ontology=student_ontology
         )
 
         # log to console and tensorboard
@@ -152,7 +154,8 @@ def gather_and_dump_pseudo_label_result(rank, ps_label_dir, cur_epoch):
 
 def save_pseudo_label_batch(input_dict,
                             pred_dicts=None,
-                            need_update=True):
+                            need_update=True,
+                            student_ontology=None):
     """
     Save pseudo label for give batch.
     If model is given, use model to inference pred_dicts,
@@ -168,6 +171,15 @@ def save_pseudo_label_batch(input_dict,
     pos_ps_nmeter = common_utils.NAverageMeter(len(cfg.CLASS_NAMES))
     ign_ps_nmeter = common_utils.NAverageMeter(len(cfg.CLASS_NAMES))
 
+    teacher_class_names = cfg.SELF_TRAIN.MODEL_TEACHER.get('CLASS_NAMES', None)
+    teacher_ontology = cfg.SELF_TRAIN.MODEL_TEACHER.get('ONTOLOGY', None)
+    student_class_names = cfg.get('CLASS_NAMES', None)
+
+    ontology_mapping_teacher_to_student = None
+    if teacher_ontology:
+        print('teacher_ontology, student_ontology:', teacher_ontology, student_ontology)
+        ontology_mapping_teacher_to_student = get_ontology_mapping(teacher_ontology, student_ontology)
+
     batch_size = len(pred_dicts)
     for b_idx in range(batch_size):
         pred_cls_scores = pred_iou_scores = None
@@ -175,6 +187,21 @@ def save_pseudo_label_batch(input_dict,
             # Exist predicted boxes passing self-training score threshold
             pred_boxes = pred_dicts[b_idx]['pred_boxes'].detach().cpu().numpy()
             pred_labels = pred_dicts[b_idx]['pred_labels'].detach().cpu().numpy()
+
+            # print("pred_labels:", pred_labels)
+            # print("type(pred_labels):", type(pred_labels))
+            # print("type(pred_labels - 1):", type(pred_labels - 1))
+            # print("teacher_class_names:", teacher_class_names)
+            # print("type(teacher_class_names):", type(teacher_class_names))
+            pred_teacher_classes = np.array(teacher_class_names)[pred_labels - 1]
+            # print("pred_teacher_classes:", pred_teacher_classes)
+            pred_student_classes = [ontology_mapping_teacher_to_student[teacher_class] for teacher_class in pred_teacher_classes]
+            pred_student_labels = [student_class_names.index(student_class) + 1 for student_class in pred_student_classes]
+            # print("pred_student_classes:", pred_student_classes)
+            # print("pred_student_labels:", pred_student_labels)
+            pred_labels = np.array(pred_student_labels)
+
+            # print('pred_dicts[b_idx].keys():', pred_dicts[b_idx].keys())
             pred_scores = pred_dicts[b_idx]['pred_scores'].detach().cpu().numpy()
             if 'pred_cls_scores' in pred_dicts[b_idx]:
                 pred_cls_scores = pred_dicts[b_idx]['pred_cls_scores'].detach().cpu().numpy()
