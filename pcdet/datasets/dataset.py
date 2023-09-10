@@ -17,12 +17,12 @@ class DatasetTemplate(torch_data.Dataset):
         super().__init__()
         self.dataset_cfg = dataset_cfg
         self.training = training
-        self.class_names = class_names
+        self.class_names = copy.deepcopy(class_names)
         self.dataset_ontology = dataset_cfg.get('ONTOLOGY', None)
         logger.info("Dataset ontology: %s", self.dataset_ontology)
         logger.info("Model ontology: %s", model_ontology)
 
-        self.dataset_class_names = class_names
+        self.dataset_class_names = copy.deepcopy(class_names)
         self.map_ontology_dataset_to_model = None
         self.map_ontology_model_to_dataset = None
         if model_ontology is not None and self.dataset_ontology is not None and model_ontology != self.dataset_ontology:
@@ -31,7 +31,7 @@ class DatasetTemplate(torch_data.Dataset):
             self.dataset_class_names = [self.map_ontology_model_to_dataset[label] for label in class_names]
         elif ":" in class_names[0]:
             # Multi-head setup. Handles only associated labels.
-            self.dataset_class_names = []
+            self.dataset_class_names = copy.deepcopy([])
             for cls in class_names:
                 ontology, label = cls.split(":")
                 if ontology == self.dataset_ontology:
