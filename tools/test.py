@@ -10,7 +10,7 @@ import argparse
 import numpy as np
 import wandb
 from pathlib import Path
-import torch.distributed as dist
+import torch.distriuted as dist
 from pcdet.datasets import build_dataloader
 from pcdet.models import build_network
 from pcdet.utils import common_utils
@@ -88,7 +88,7 @@ def get_no_evaluated_ckpt(ckpt_dir, ckpt_record_file, args):
 
 def get_eval_configs():
     if cfg.get('DATA_CONFIG_TAR', None):
-        return {'DATA_CONFIG_TAR': cfg.dATA_CONFIG_TAR}
+        return {'DATA_CONFIG_TAR': cfg.DATA_CONFIG_TAR}
     elif cfg.get('DATA_CONFIG', None):
         return {'DATA_CONFIG': cfg.DATA_CONFIG}
     elif cfg.get('DATA_CONFIGS', None):
