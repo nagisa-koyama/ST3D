@@ -139,7 +139,7 @@ class DatasetTemplate(torch_data.Dataset):
                 ref_boxes = box_utils.boxes3d_kitti_lidar_to_fakelidar(ref_boxes)
 
         vis.draw_scenes(points, gt_boxes, ref_boxes=ref_boxes, ref_scores=scores)
-        mlab.show(stop=True)
+        # mlab.show(stop=True)
 
     @staticmethod
     def __vis_fake__(points, gt_boxes, ref_boxes=None, scores=None, use_fakelidar=True):
@@ -155,7 +155,7 @@ class DatasetTemplate(torch_data.Dataset):
                 ref_boxes = box_utils.boxes3d_kitti_lidar_to_fakelidar(ref_boxes)
 
         vis.draw_scenes(points, gt_boxes, ref_boxes=ref_boxes, ref_scores=scores)
-        mlab.show(stop=True)
+        # mlab.show(stop=True)
 
     @staticmethod
     def extract_fov_data(points, fov_degree, heading_angle):
