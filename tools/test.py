@@ -10,7 +10,7 @@ import argparse
 import numpy as np
 import wandb
 from pathlib import Path
-import torch.distriuted as dist
+import torch.distributed as dist
 from pcdet.datasets import build_dataloader
 from pcdet.models import build_network
 from pcdet.utils import common_utils
