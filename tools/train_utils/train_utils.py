@@ -1,6 +1,7 @@
 import glob
 import os
 
+import mayavi.mlab as mlab
 import torch
 import tqdm
 from torch.nn.utils import clip_grad_norm_
@@ -8,7 +9,7 @@ from torch.nn.utils import clip_grad_norm_
 import wandb
 
 def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, accumulated_iter, optim_cfg,
-                    rank, tbar, total_it_each_epochs, dataloader_iters, tb_log=None, leave_pbar=False):
+                    rank, tbar, total_it_each_epochs, dataloader_iters, tb_log=None, leave_pbar=False, epoch_id=None):
     # dataloader_iter = dataloader_iters[0]
     assert(len(dataloader_iters) == len(train_loaders))
     assert(len(total_it_each_epochs) == len(train_loaders))
@@ -23,6 +24,7 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
         pbar = tqdm.tqdm(total=total_it_each_epochs_aggregated, leave=leave_pbar, desc='train', dynamic_ncols=True)
 
     loss_total = None
+    draw_scene = False
     for cur_it in range(total_it_each_epochs_aggregated):
         dataset_index = cur_it % len(dataloader_iters)
         dataset_ontology = train_loaders[dataset_index].dataset.dataset_ontology
@@ -93,6 +95,20 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
                 for key, val in tb_dict.items():
                     tb_log.add_scalar('train/' + dataset_ontology + '/' + key, val, accumulated_iter)
                     wandb.log({'train/' + dataset_ontology + '/' + key: val})
+
+            if draw_scene == False:
+                mlab.options.offscreen = True
+                first_elem_index = 0
+                first_elem_mask = batch['points'][:, 0] == first_elem_index
+                train_loaders[dataset_index].dataset.__vis__(
+                    points=batch['points'][first_elem_mask, 1:], gt_boxes=batch['gt_boxes'][first_elem_index],
+                    ref_boxes=tb_dict[first_elem_index]['pred_boxes'],
+                    ref_scores=tb_dict[first_elem_index]['pred_scores']
+                )
+                filename = "scene_epoch{}_{}.png".format(epoch_id, dataset_ontology)
+                mlab.savefig(filename=filename)
+                wandb.save(filename)
+                wandb.log({'train/{}/scene'.format(dataset_ontology): wandb.Image(filename)})
 
     if rank == 0:
         pbar.close()

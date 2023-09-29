@@ -1,7 +1,9 @@
 import copy
+import os
 import pickle
 import time
 
+import mayavi.mlab as mlab
 import numpy as np
 import torch
 import tqdm
@@ -72,6 +74,20 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         )
         det_annos += annos
         if cfg.LOCAL_RANK == 0:
+            if i == 0:
+                mlab.options.offscreen = True
+                first_elem_index = 0
+                first_elem_mask = batch_dict['points'][:, 0] == first_elem_index
+                dataset.__vis__(
+                    points=batch_dict['points'][first_elem_mask, 1:], gt_boxes=batch_dict['gt_boxes'][first_elem_index],
+                    ref_boxes=annos[first_elem_index]['boxes_lidar'],
+                    scores=annos[first_elem_index]['score']
+                )
+                filename = "scene_val_epoch{}_{}.png".format(epoch_id, dataset.dataset_ontology)
+                mlab.savefig(filename=filename)
+                wandb.save(filename)
+                wandb.log({'val/{}/scene'.format(dataset.dataset_ontology): wandb.Image(filename)})
+
             progress_bar.set_postfix(disp_dict)
             progress_bar.update()
 

@@ -1,11 +1,13 @@
 import torch
 import os
 import glob
+import mayavi.mlab as mlab
 import tqdm
 from torch.nn.utils import clip_grad_norm_
 from pcdet.utils import common_utils
 from pcdet.utils import self_training_utils
 from pcdet.config import cfg
+from pcdet.models import load_data_to_gpu
 from pcdet.models.model_utils.dsnorm import set_ds_source, set_ds_target
 
 import wandb
@@ -29,6 +31,7 @@ def train_one_epoch_st(model, optimizer, source_reader, target_loader, model_fun
 
     disp_dict = {}
 
+    draw_scene = False
     for cur_it in range(total_it_each_epoch):
         lr_scheduler.step(accumulated_iter)
 
@@ -95,6 +98,28 @@ def train_one_epoch_st(model, optimizer, source_reader, target_loader, model_fun
             disp_dict.update({'st_loss': "{:.3f}({:.3f})".format(st_loss_meter.val, st_loss_meter.avg),
                               'pos_ps_box': pos_ps_result,
                               'ign_ps_box': ign_ps_result})
+            
+
+            if rank == 0 and draw_scene == False:
+                with torch.no_grad():
+                    model.eval()
+                    # load_data_to_gpu(target_batch)
+                    pred_dicts, _ = model.forward(target_batch)
+                    # print("pred_dicts in train_st_utils:", pred_dicts)
+
+                    mlab.options.offscreen = True
+                    first_elem_index = 0
+                    first_elem_mask = target_batch['points'][:, 0] == first_elem_index
+                    target_loader.dataset.__vis__(
+                        points=target_batch['points'][first_elem_mask, 1:], gt_boxes=target_batch['gt_boxes'][first_elem_index],
+                        ref_boxes=pred_dicts[0]['pred_boxes'], scores=pred_dicts[0]['pred_scores']
+                    )
+                    filename = "scene_self_train_epoch{}_{}.png".format(cur_epoch, target_loader.dataset.dataset_ontology)
+                    mlab.savefig(filename=filename)
+                    wandb.save(filename)
+                    wandb.log({'train/{}/self_train_scene'.format(target_loader.dataset.dataset_ontology): wandb.Image(filename)})
+                    model.train()
+                    draw_scene = True
 
         clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
         optimizer.step()

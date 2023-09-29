@@ -151,7 +151,7 @@ def draw_scenes(points, gt_boxes=None, ref_boxes=None, ref_scores=None, ref_labe
     if ref_labels is not None and not isinstance(ref_labels, np.ndarray):
         ref_labels = ref_labels.cpu().numpy()
 
-    fig = visualize_pts(points)
+    fig = visualize_pts(points, show_intensity=False)
     fig = draw_multi_grid_range(fig, grid_size=10, bv_range=(-50, -75, 100, 75))
     if gt_boxes is not None:
         corners3d = boxes_to_corners_3d(gt_boxes)
