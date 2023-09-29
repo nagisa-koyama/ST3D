@@ -1,0 +1,87 @@
+# _BASE_CONFIG_: cfgs/da-waymo-lyft-pandaset-to-kitti_models/domain_attention_head_per_dataset/second_old_anchor_common.yaml
+
+# CLASS_NAMES: ['Car']
+# ONTOLOGY: 'kitti'
+
+DATA_CONFIG_TAR:
+    TARGET: True
+    USE_PSEUDO_LABEL: True
+
+    DATA_AUGMENTOR:
+        DISABLE_AUG_LIST: [ 'placeholder' ]
+        AUG_CONFIG_LIST:
+            - NAME: random_object_scaling
+              SCALE_UNIFORM_NOISE: [ 0.95, 1.05 ]
+
+            - NAME: random_object_rotation
+              ROT_PROB: 0.8
+              ROT_UNIFORM_NOISE: [ -0.38539816, 0.38539816 ]
+
+            - NAME: random_world_flip
+              ALONG_AXIS_LIST: [ 'x', 'y' ]
+
+            - NAME: random_world_rotation
+              WORLD_ROT_ANGLE: [ -0.78539816, 0.78539816 ]
+
+            - NAME: random_world_scaling
+              WORLD_SCALE_RANGE: [ 0.97, 1.03 ]
+
+OPTIMIZATION:
+    NUM_EPOCHS: 100
+    BATCH_SIZE_PER_GPU: 4
+    OPTIMIZER: adam_onecycle
+    LR: 0.0015
+    WEIGHT_DECAY: 0.01
+    MOMENTUM: 0.9
+
+    MOMS: [0.95, 0.85]
+    PCT_START: 0.4
+    DIV_FACTOR: 10
+    DECAY_STEP_LIST: [35, 45]
+    LR_DECAY: 0.1
+    LR_CLIP: 0.0000001
+
+    LR_WARMUP: False
+    WARMUP_EPOCH: 1
+
+    GRAD_NORM_CLIP: 10
+
+SELF_TRAIN:
+    SCORE_THRESH: [0.6]
+    # SCORE_THRESH: [0.2]
+    # SCORE_THRESH: [0.05]
+    NEG_THRESH: [0.2]
+    # NEG_THRESH: [0.0001]
+    # NEG_THRESH: [0.005]
+    UPDATE_PSEUDO_LABEL: [0]
+    UPDATE_PSEUDO_LABEL_INTERVAL: 2
+    INIT_PS: None
+    SRC:
+        USE_DATA: False
+        USE_GRAD: False
+        LOSS_WEIGHT: 1.0
+    TAR:
+        USE_DATA: True
+        LOSS_WEIGHT: 1.0
+
+    PROG_AUG:
+        ENABLED: True
+        UPDATE_AUG: [5, 10, 20, 25]
+        SCALE: 1.1
+
+    MEMORY_ENSEMBLE:
+        ENABLED: True
+        NAME: consistency_ensemble
+        IOU_THRESH: 0.1
+
+        NMS_CONFIG:
+            NMS_TYPE: nms_gpu
+            MULTI_CLASSES_NMS: False
+            NMS_PRE_MAXSIZE: 512
+            NMS_POST_MAXSIZE: 100
+            NMS_THRESH: 0.1
+
+        MEMORY_VOTING:
+            ENABLED: True
+            IGNORE_THRESH: 2
+            RM_THRESH: 3
