@@ -64,7 +64,9 @@ class AxisAlignedTargetAssigner(object):
                 else:
                     mask = torch.tensor([self.class_names[torch.abs(c) - 1] == anchor_class_name
                                          for c in cur_gt_classes], dtype=torch.bool)
-
+                # print("anchor_class_name: ", anchor_class_name)
+                # print("class_names: ", self.class_names)
+                # print("mask:", mask)
                 if self.use_multihead:
                     anchors = anchors.permute(3, 4, 0, 1, 2, 5).contiguous().view(-1, anchors.shape[-1])
                     # if self.seperate_multihead:

@@ -112,6 +112,7 @@ class DatasetTemplate(torch_data.Dataset):
             pred_dict['boxes_lidar'] = pred_boxes
             pred_dict['pred_labels'] = pred_labels
 
+            # print("name in generate_single_sample_dict:", pred_dict['name'])
             return pred_dict
 
         annos = []
@@ -283,7 +284,10 @@ class DatasetTemplate(torch_data.Dataset):
             for index in range(data_dict['gt_names'].size):
                 # Note: previously updated name is trancated due to initially allocated smaller memory size.
                 # Resolved by newly creating numpy.array instead of updating existing element.
-                updated_gt_names.append(self.dataset_ontology + ":" + data_dict['gt_names'][index])
+                if ":" in data_dict['gt_names'][index]:
+                    updated_gt_names.append(data_dict['gt_names'][index])
+                else:
+                    updated_gt_names.append(self.dataset_ontology + ":" + data_dict['gt_names'][index])
             data_dict['gt_names'] = np.array(updated_gt_names)
             # print("data_dict[gt_names] in prepare_data after multi-head label update", data_dict['gt_names'])
 
@@ -333,7 +337,8 @@ class DatasetTemplate(torch_data.Dataset):
         # if self.training and len(data_dict['gt_boxes']) == 0:
         #     new_index = np.random.randint(self.__len__())
         #     return self.__getitem__(new_index)
-
+        # print("selected gt_names at prepare_data:", data_dict['gt_names'])
+        # print("gt_classes at prepare_data:", gt_classes)
         data_dict.pop('gt_names', None)
         data_dict.pop('gt_classes', None)
 

@@ -193,6 +193,7 @@ def save_pseudo_label_batch(input_dict,
             # print("type(pred_labels - 1):", type(pred_labels - 1))
             # print("teacher_class_names:", teacher_class_names)
             # print("type(teacher_class_names):", type(teacher_class_names))
+            # print("pred_teacher_labels:", pred_labels)
             pred_teacher_classes = np.array(teacher_class_names)[pred_labels - 1]
             # print("pred_teacher_classes:", pred_teacher_classes)
             pred_student_classes = [ontology_mapping_teacher_to_student[teacher_class] for teacher_class in pred_teacher_classes]
@@ -200,6 +201,7 @@ def save_pseudo_label_batch(input_dict,
             # print("pred_student_classes:", pred_student_classes)
             # print("pred_student_labels:", pred_student_labels)
             pred_labels = np.array(pred_student_labels)
+            # print("pred_student_labels:", pred_labels)
 
             # print('pred_dicts[b_idx].keys():', pred_dicts[b_idx].keys())
             pred_scores = pred_dicts[b_idx]['pred_scores'].detach().cpu().numpy()
@@ -209,24 +211,38 @@ def save_pseudo_label_batch(input_dict,
                 pred_iou_scores = pred_dicts[b_idx]['pred_iou_scores'].detach().cpu().numpy()
 
             # remove boxes under negative threshold
-            if cfg.SELF_TRAIN.get('NEG_THRESH', None):
+            if cfg.SELF_TRAIN.get('NEG_THRESH', None) and len(pred_labels) > 0:
                 labels_remove_scores = np.array(cfg.SELF_TRAIN.NEG_THRESH)[pred_labels - 1]
                 remain_mask = pred_scores >= labels_remove_scores
+                # print("labels_remove_scores:", labels_remove_scores)
+                # print("pred_scores:", pred_scores)
+                # print("remain_mask:", remain_mask)
                 pred_labels = pred_labels[remain_mask]
                 pred_scores = pred_scores[remain_mask]
                 pred_boxes = pred_boxes[remain_mask]
                 if 'pred_cls_scores' in pred_dicts[b_idx]:
                     pred_cls_scores = pred_cls_scores[remain_mask]
+                else:
+                    pred_cls_scores = pred_scores
                 if 'pred_iou_scores' in pred_dicts[b_idx]:
                     pred_iou_scores = pred_iou_scores[remain_mask]
+                else:
+                    pred_iou_scores = pred_scores
 
-            labels_ignore_scores = np.array(cfg.SELF_TRAIN.SCORE_THRESH)[pred_labels - 1]
-            ignore_mask = pred_scores < labels_ignore_scores
-            pred_labels[ignore_mask] = -pred_labels[ignore_mask]
+
+            if len(pred_labels) > 0:
+                labels_ignore_scores = np.array(cfg.SELF_TRAIN.SCORE_THRESH)[pred_labels - 1]
+                ignore_mask = pred_scores < labels_ignore_scores
+                pred_labels[ignore_mask] = -pred_labels[ignore_mask]
 
             gt_box = np.concatenate((pred_boxes,
                                      pred_labels.reshape(-1, 1),
                                      pred_scores.reshape(-1, 1)), axis=1)
+            # print("pred_boxes:", pred_boxes)
+            # print("pred_labels:", pred_labels)
+            # print("pred_scores:", pred_scores)
+            # print("pred_iou_scores:", pred_iou_scores)
+            # print("pred_cls_scores:", pred_cls_scores)
 
         else:
             # no predicted boxes passes self-training score threshold

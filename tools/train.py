@@ -170,7 +170,7 @@ def main():
     # -----------------------create networks---------------------------
     for source_dataset in source_datasets:
         model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES),
-                              dataset=source_dataset['dataset_class'])
+                              dataset=target_set if cfg.get('SELF_TRAIN', None) else source_dataset['dataset_class'])
         if cfg.get('SELF_TRAIN', None) and cfg.SELF_TRAIN.get('MODEL_TEACHER', None):
             model_teacher = build_network(model_cfg=cfg.SELF_TRAIN.MODEL_TEACHER, num_class=len(source_class_names),
                             dataset=source_dataset['dataset_class'])
