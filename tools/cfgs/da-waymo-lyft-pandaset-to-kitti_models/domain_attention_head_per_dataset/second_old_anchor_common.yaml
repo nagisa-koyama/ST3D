@@ -60,16 +60,16 @@ MODEL:
         USE_MULTIHEAD: True
         SEPARATE_MULTIHEAD: True
         ANCHOR_GENERATOR_CONFIG: [
-            {
-                'class_name': 'kitti:Car',
-                'anchor_sizes': [[4.2, 2.0, 1.6]],
-                'anchor_rotations': [0, 1.57],
-                'anchor_bottom_heights': [0],
-                'align_center': False,
-                'feature_map_stride': 8,
-                'matched_threshold': 0.55,
-                'unmatched_threshold': 0.4
-            },
+            # {
+            #     'class_name': 'kitti:Car',
+            #     'anchor_sizes': [[4.2, 2.0, 1.6]],
+            #     'anchor_rotations': [0, 1.57],
+            #     'anchor_bottom_heights': [0],
+            #     'align_center': False,
+            #     'feature_map_stride': 8,
+            #     'matched_threshold': 0.55,
+            #     'unmatched_threshold': 0.4
+            # },
             {
                 'class_name': 'waymo:Vehicle',
                 'anchor_sizes': [[4.2, 2.0, 1.6]],
@@ -104,9 +104,9 @@ MODEL:
 
         SHARED_CONV_NUM_FILTER: null
         RPN_HEAD_CFGS: [
-            {
-                'HEAD_CLS_NAME': ['kitti:Car'],
-            },
+            # {
+            #     'HEAD_CLS_NAME': ['kitti:Car'],
+            # },
             {
                 'HEAD_CLS_NAME': ['waymo:Vehicle'],
             },
