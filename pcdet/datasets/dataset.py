@@ -33,9 +33,11 @@ class DatasetTemplate(torch_data.Dataset):
             # Multi-head setup. Handles only associated labels.
             self.dataset_class_names = copy.deepcopy([])
             for cls in class_names:
+                assert(cls.count(":") == 1)
                 ontology, label = cls.split(":")
                 if ontology == self.dataset_ontology:
                     self.dataset_class_names.append(cls)
+                assert(self.dataset_class_names[-1].count(":") == 1)
 
         self.logger = logger
         self.root_path = root_path if root_path is not None else Path(self.dataset_cfg.DATA_PATH)
@@ -288,6 +290,7 @@ class DatasetTemplate(torch_data.Dataset):
                     updated_gt_names.append(data_dict['gt_names'][index])
                 else:
                     updated_gt_names.append(self.dataset_ontology + ":" + data_dict['gt_names'][index])
+                assert(updated_gt_names[-1].count(":") == 1)
             data_dict['gt_names'] = np.array(updated_gt_names)
             # print("data_dict[gt_names] in prepare_data after multi-head label update", data_dict['gt_names'])
 
