@@ -125,10 +125,10 @@ def draw_sphere_pts(pts, color=(0, 1, 0), fig=None, bgcolor=(0, 0, 0), scale_fac
 
 
 def draw_grid(x1, y1, x2, y2, fig, tube_radius=None, color=(0.5, 0.5, 0.5)):
-    mlab.plot3d([x1, x1], [y1, y2], [0, 0], color=color, tube_radius=tube_radius, line_width=1, figure=fig)
-    mlab.plot3d([x2, x2], [y1, y2], [0, 0], color=color, tube_radius=tube_radius, line_width=1, figure=fig)
-    mlab.plot3d([x1, x2], [y1, y1], [0, 0], color=color, tube_radius=tube_radius, line_width=1, figure=fig)
-    mlab.plot3d([x1, x2], [y2, y2], [0, 0], color=color, tube_radius=tube_radius, line_width=1, figure=fig)
+    x_list = [x1, x1, x2, x2, x1]
+    y_list = [y1, y2, y2, y1, y1]
+    z_list = [0] * len(y_list)
+    mlab.plot3d(x_list, y_list, z_list, color=color, tube_radius=tube_radius, line_width=1, figure=fig)
     return fig
 
 
@@ -169,12 +169,14 @@ def draw_scenes(points, gt_boxes=None, ref_boxes=None, ref_scores=None, ref_labe
     if ref_boxes is not None and len(ref_boxes) > 0:
         ref_corners3d = boxes_to_corners_3d(ref_boxes)
         if ref_labels is None:
-            fig = draw_corners3d(ref_corners3d, fig=fig, color=(0, 1, 0), cls=ref_scores, max_num=100)
+            # fig = draw_corners3d(ref_corners3d, fig=fig, color=(0, 1, 0), cls=ref_scores, max_num=100)
+            fig = draw_corners3d(ref_corners3d, fig=fig, color=(0, 1, 0), max_num=100)
         else:
             for k in range(ref_labels.min(), ref_labels.max() + 1):
                 cur_color = tuple(box_colormap[k % len(box_colormap)])
                 mask = (ref_labels == k)
-                fig = draw_corners3d(ref_corners3d[mask], fig=fig, color=cur_color, cls=ref_scores[mask], max_num=100)
+                # fig = draw_corners3d(ref_corners3d[mask], fig=fig, color=cur_color, cls=ref_scores[mask], max_num=100)
+                fig = draw_corners3d(ref_corners3d[mask], fig=fig, color=cur_color, max_num=100)
 
     draw_corners_3d_ref_boxes_duration = time.time()
     print("draw_corners3d_ref_boxes_duration for {} boxes: {}".format(len(ref_boxes), draw_corners_3d_ref_boxes_duration - draw_corners3d_gt_boxes_duration))
