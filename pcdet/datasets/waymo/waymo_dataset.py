@@ -233,6 +233,7 @@ class WaymoDataset(DatasetTemplate):
             pred_dict['name'] = np.array(class_names)[pred_labels - 1]
             pred_dict['score'] = pred_scores
             pred_dict['boxes_lidar'] = pred_boxes
+            pred_dict['pred_labels'] = pred_labels
 
             return pred_dict
 
