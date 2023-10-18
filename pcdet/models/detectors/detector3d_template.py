@@ -240,12 +240,23 @@ class Detector3DTemplate(nn.Module):
                 final_labels = torch.cat(pred_labels, dim=0)
                 final_boxes = torch.cat(pred_boxes, dim=0)
             else:
-                cls_preds, label_preds = torch.max(cls_preds, dim=-1)
-                if batch_dict.get('has_class_labels', False):
-                    label_key = 'roi_labels' if 'roi_labels' in batch_dict else 'batch_pred_labels'
-                    label_preds = batch_dict[label_key][index]
+                # Multihead setup for class-agnostic NMS.
+                if isinstance(cls_preds, list):
+                    cls_preds_list, label_preds_list = [], []
+                    for cur_cls_pred, cur_label_mapping in zip(cls_preds, batch_dict['multihead_label_mapping']):
+                        cur_cls_pred, cur_label_pred = torch.max(cur_cls_pred, dim=-1)
+                        cls_preds_list.append(cur_cls_pred)
+                        label_preds_list.append(cur_label_mapping[cur_label_pred])
+                    cls_preds = torch.cat(cls_preds_list, dim=0)
+                    label_preds = torch.cat(label_preds_list, dim=0)
                 else:
-                    label_preds = label_preds + 1
+                    cls_preds, label_preds = torch.max(cls_preds, dim=-1)
+                    # Following if-else is only applied here because it causes out-of-index error in multihead setup.
+                    if batch_dict.get('has_class_labels', False):
+                        label_key = 'roi_labels' if 'roi_labels' in batch_dict else 'batch_pred_labels'
+                        label_preds = batch_dict[label_key][index]
+                    else:
+                        label_preds = label_preds + 1
                 selected, selected_scores = model_nms_utils.class_agnostic_nms(
                     box_scores=cls_preds, box_preds=box_preds,
                     nms_config=post_process_cfg.NMS_CONFIG,
