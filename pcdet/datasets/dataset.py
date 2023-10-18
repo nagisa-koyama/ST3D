@@ -37,7 +37,7 @@ class DatasetTemplate(torch_data.Dataset):
                 ontology, label = cls.split(":")
                 if ontology == self.dataset_ontology:
                     self.dataset_class_names.append(cls)
-                assert(self.dataset_class_names[-1].count(":") == 1)
+            assert(self.dataset_class_names[-1].count(":") == 1)
 
         self.logger = logger
         self.root_path = root_path if root_path is not None else Path(self.dataset_cfg.DATA_PATH)
