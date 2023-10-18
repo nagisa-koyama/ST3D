@@ -1,6 +1,7 @@
 import _init_path
 import os
 import torch
+import time
 import argparse
 from pcdet.datasets import build_dataloader
 from pcdet.models import build_network, load_data_to_gpu
@@ -69,22 +70,32 @@ def main():
     logger.info("Model loaded")
     with torch.no_grad():
         for idx, data_dict in enumerate(loader):
+            start_time = time.time()
             if idx != args.sample_index:
                 continue
             logger.info(f'Visualized sample index: \t{idx}')
             load_data_to_gpu(data_dict)
+            load_data_to_gpu_duration = time.time()
+            print("load_data_to_gpu_duration:", load_data_to_gpu_duration - start_time)
             pred_dicts, _ = model.forward(data_dict)
+            forward_duration = time.time()
+            print("forward_duration:", forward_duration - load_data_to_gpu_duration)
             annos = dataset.generate_prediction_dicts(
                 data_dict, pred_dicts, cfg.CLASS_NAMES,
             )
+            generate_prediction_dicts_duration = time.time()
+            print("generate_prediction_dicts_duration:", generate_prediction_dicts_duration - forward_duration)
             mlab.options.offscreen = True
-            first_elem_mask = data_dict['points'][:, 0] == 0
+            first_elem_index = 0
+            first_elem_mask = data_dict['points'][:, 0] == first_elem_index
             dataset.__vis__(
-                points=data_dict['points'][first_elem_mask, 1:], gt_boxes=data_dict['gt_boxes'][0],
-                ref_boxes=annos[0]['boxes_lidar'],
-                scores=annos[0]['score']
+                points=data_dict['points'][first_elem_mask, 1:], gt_boxes=data_dict['gt_boxes'][first_elem_index],
+                ref_boxes=annos[first_elem_index]['boxes_lidar'],
+                scores=annos[first_elem_index]['score'],
+                labels=annos[first_elem_index]['pred_labels']
             )
-
+            vis_duration = time.time()
+            print("__vis__duration:", vis_duration - generate_prediction_dicts_duration)
             filename = os.path.join(args.out_dir, args.out_filename)
             if not OPEN3D_FLAG:
                 mlab.savefig(filename=filename)

@@ -1,6 +1,7 @@
 import mayavi.mlab as mlab
 import numpy as np
 import torch
+import time
 
 box_colormap = [
     [1, 1, 1],
@@ -140,6 +141,7 @@ def draw_multi_grid_range(fig, grid_size=10, bv_range=(-50, -75, 100, 75)):
 
 
 def draw_scenes(points, gt_boxes=None, ref_boxes=None, ref_scores=None, ref_labels=None):
+    start_time = time.time()
     if not isinstance(points, np.ndarray):
         points = points.cpu().numpy()
     if ref_boxes is not None and not isinstance(ref_boxes, np.ndarray):
@@ -150,12 +152,19 @@ def draw_scenes(points, gt_boxes=None, ref_boxes=None, ref_scores=None, ref_labe
         ref_scores = ref_scores.cpu().numpy()
     if ref_labels is not None and not isinstance(ref_labels, np.ndarray):
         ref_labels = ref_labels.cpu().numpy()
-
+    copy_to_cpu_duration = time.time()
+    print("copy_to_cpu_duration:", copy_to_cpu_duration - start_time)
     fig = visualize_pts(points, show_intensity=False)
-    fig = draw_multi_grid_range(fig, grid_size=10, bv_range=(-50, -75, 100, 75))
+    draw_pts_duration = time.time()
+    print("draw_pts_duration:", draw_pts_duration - copy_to_cpu_duration)
+    fig = draw_multi_grid_range(fig, grid_size=25, bv_range=(-50, -75, 100, 75))
+    draw_multi_grid_range_duration = time.time()
+    print("draw_multi_grid_range_duration:", draw_multi_grid_range_duration - draw_pts_duration)
     if gt_boxes is not None:
         corners3d = boxes_to_corners_3d(gt_boxes)
         fig = draw_corners3d(corners3d, fig=fig, color=(0, 0, 1), max_num=100)
+    draw_corners3d_gt_boxes_duration = time.time()    
+    print("draw_corners3d_gt_boxes_duration for {} boxes: {}".format(len(gt_boxes), draw_corners3d_gt_boxes_duration - draw_multi_grid_range_duration))
 
     if ref_boxes is not None and len(ref_boxes) > 0:
         ref_corners3d = boxes_to_corners_3d(ref_boxes)
@@ -166,8 +175,12 @@ def draw_scenes(points, gt_boxes=None, ref_boxes=None, ref_scores=None, ref_labe
                 cur_color = tuple(box_colormap[k % len(box_colormap)])
                 mask = (ref_labels == k)
                 fig = draw_corners3d(ref_corners3d[mask], fig=fig, color=cur_color, cls=ref_scores[mask], max_num=100)
+
+    draw_corners_3d_ref_boxes_duration = time.time()
+    print("draw_corners3d_ref_boxes_duration for {} boxes: {}".format(len(ref_boxes), draw_corners_3d_ref_boxes_duration - draw_corners3d_gt_boxes_duration))
     # mlab.view(azimuth=-179, elevation=54.0, distance=104.0, roll=90.0)
     mlab.view(azimuth=90.0, elevation=0.0, distance=150.0)
+    print("view_duration:", time.time() - draw_corners_3d_ref_boxes_duration)
     return fig
 
 
@@ -195,24 +208,35 @@ def draw_corners3d(corners3d, fig, color=(1, 1, 1), line_width=2, cls=None, tag=
             else:
                 mlab.text3d(b[6, 0], b[6, 1], b[6, 2], '%s' % cls[n], scale=(0.3, 0.3, 0.3), color=color, figure=fig)
 
+        x_list = []
+        y_list = []
+        z_list = []
         for k in range(0, 4):
             i, j = k, (k + 1) % 4
-            mlab.plot3d([b[i, 0], b[j, 0]], [b[i, 1], b[j, 1]], [b[i, 2], b[j, 2]], color=color, tube_radius=tube_radius,
-                        line_width=line_width, figure=fig)
+            x_list.extend([b[i, 0], b[j, 0]])
+            y_list.extend([b[i, 1], b[j, 1]])
+            z_list.extend([b[i, 2], b[j, 2]])
 
             i, j = k + 4, (k + 1) % 4 + 4
-            mlab.plot3d([b[i, 0], b[j, 0]], [b[i, 1], b[j, 1]], [b[i, 2], b[j, 2]], color=color, tube_radius=tube_radius,
-                        line_width=line_width, figure=fig)
+            x_list.extend([b[i, 0], b[j, 0]])
+            y_list.extend([b[i, 1], b[j, 1]])
+            z_list.extend([b[i, 2], b[j, 2]])
 
             i, j = k, k + 4
-            mlab.plot3d([b[i, 0], b[j, 0]], [b[i, 1], b[j, 1]], [b[i, 2], b[j, 2]], color=color, tube_radius=tube_radius,
-                        line_width=line_width, figure=fig)
+            x_list.extend([b[i, 0], b[j, 0]])
+            y_list.extend([b[i, 1], b[j, 1]])
+            z_list.extend([b[i, 2], b[j, 2]])
 
         i, j = 0, 5
-        mlab.plot3d([b[i, 0], b[j, 0]], [b[i, 1], b[j, 1]], [b[i, 2], b[j, 2]], color=color, tube_radius=tube_radius,
-                    line_width=line_width, figure=fig)
+        x_list.extend([b[i, 0], b[j, 0]])
+        y_list.extend([b[i, 1], b[j, 1]])
+        z_list.extend([b[i, 2], b[j, 2]])
+
         i, j = 1, 4
-        mlab.plot3d([b[i, 0], b[j, 0]], [b[i, 1], b[j, 1]], [b[i, 2], b[j, 2]], color=color, tube_radius=tube_radius,
+        x_list.extend([b[i, 0], b[j, 0]])
+        y_list.extend([b[i, 1], b[j, 1]])
+        z_list.extend([b[i, 2], b[j, 2]])
+        mlab.plot3d(x_list, y_list, z_list, color=color, tube_radius=tube_radius,
                     line_width=line_width, figure=fig)
 
     return fig
