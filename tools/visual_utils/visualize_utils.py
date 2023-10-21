@@ -154,9 +154,14 @@ def draw_scenes(points, gt_boxes=None, ref_boxes=None, ref_scores=None, ref_labe
         ref_labels = ref_labels.cpu().numpy()
     copy_to_cpu_duration = time.time()
     print("copy_to_cpu_duration:", copy_to_cpu_duration - start_time)
+
     fig = visualize_pts(points, show_intensity=False)
     draw_pts_duration = time.time()
+    # Disable rendering.
+    fig.scene.disable_render = True
     print("draw_pts_duration:", draw_pts_duration - copy_to_cpu_duration)
+
+
     fig = draw_multi_grid_range(fig, grid_size=25, bv_range=(-50, -75, 100, 75))
     draw_multi_grid_range_duration = time.time()
     print("draw_multi_grid_range_duration:", draw_multi_grid_range_duration - draw_pts_duration)
@@ -169,24 +174,27 @@ def draw_scenes(points, gt_boxes=None, ref_boxes=None, ref_scores=None, ref_labe
     if ref_boxes is not None and len(ref_boxes) > 0:
         ref_corners3d = boxes_to_corners_3d(ref_boxes)
         if ref_labels is None:
-            # fig = draw_corners3d(ref_corners3d, fig=fig, color=(0, 1, 0), cls=ref_scores, max_num=100)
-            fig = draw_corners3d(ref_corners3d, fig=fig, color=(0, 1, 0), max_num=100)
+            fig = draw_corners3d(ref_corners3d, fig=fig, color=(0, 1, 0), cls=ref_scores, max_num=100)
+            # fig = draw_corners3d(ref_corners3d, fig=fig, color=(0, 1, 0), max_num=100)
         else:
             for k in range(ref_labels.min(), ref_labels.max() + 1):
                 cur_color = tuple(box_colormap[k % len(box_colormap)])
                 mask = (ref_labels == k)
-                # fig = draw_corners3d(ref_corners3d[mask], fig=fig, color=cur_color, cls=ref_scores[mask], max_num=100)
-                fig = draw_corners3d(ref_corners3d[mask], fig=fig, color=cur_color, max_num=100)
+                fig = draw_corners3d(ref_corners3d[mask], fig=fig, color=cur_color, cls=ref_scores[mask], max_num=100)
+                # fig = draw_corners3d(ref_corners3d[mask], fig=fig, color=cur_color, max_num=100)
 
     draw_corners_3d_ref_boxes_duration = time.time()
     print("draw_corners3d_ref_boxes_duration for {} boxes: {}".format(len(ref_boxes), draw_corners_3d_ref_boxes_duration - draw_corners3d_gt_boxes_duration))
     # mlab.view(azimuth=-179, elevation=54.0, distance=104.0, roll=90.0)
     mlab.view(azimuth=90.0, elevation=0.0, distance=150.0)
     print("view_duration:", time.time() - draw_corners_3d_ref_boxes_duration)
+
+    # Enable rendering.
+    fig.scene.disable_render = False
     return fig
 
 
-def draw_corners3d(corners3d, fig, color=(1, 1, 1), line_width=2, cls=None, tag='', max_num=500, tube_radius=None):
+def draw_corners3d(corners3d, fig, color=(1, 1, 1), line_width=2, cls=None, tag='', max_num=500, tube_radius=None, opacity=1.0):
     """
     :param corners3d: (N, 8, 3)
     :param fig:
@@ -206,9 +214,9 @@ def draw_corners3d(corners3d, fig, color=(1, 1, 1), line_width=2, cls=None, tag=
 
         if cls is not None:
             if isinstance(cls, np.ndarray):
-                mlab.text3d(b[6, 0], b[6, 1], b[6, 2], '%.2f' % cls[n], scale=(0.3, 0.3, 0.3), color=color, figure=fig)
+                mlab.text3d(b[6, 0], b[6, 1], b[6, 2], '%.2f' % cls[n], scale=(2, 2, 2), color=color, figure=fig)
             else:
-                mlab.text3d(b[6, 0], b[6, 1], b[6, 2], '%s' % cls[n], scale=(0.3, 0.3, 0.3), color=color, figure=fig)
+                mlab.text3d(b[6, 0], b[6, 1], b[6, 2], '%s' % cls[n], scale=(2, 2, 2), color=color, figure=fig)
 
         x_list = []
         y_list = []
@@ -239,6 +247,6 @@ def draw_corners3d(corners3d, fig, color=(1, 1, 1), line_width=2, cls=None, tag=
         y_list.extend([b[i, 1], b[j, 1]])
         z_list.extend([b[i, 2], b[j, 2]])
         mlab.plot3d(x_list, y_list, z_list, color=color, tube_radius=tube_radius,
-                    line_width=line_width, figure=fig)
+                    line_width=line_width, figure=fig, opacity=opacity)
 
     return fig
