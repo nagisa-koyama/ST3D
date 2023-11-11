@@ -33,7 +33,7 @@ class AxisAlignedTargetAssigner(object):
         #         for idx, name in enumerate(rpn_head_cfg['HEAD_CLS_NAME']):
         #             self.gt_remapping[name] = idx + 1
 
-    def assign_targets(self, all_anchors, gt_boxes_with_classes):
+    def assign_targets(self, all_anchors, gt_boxes_with_classes, gt_scores = None):
         """
         Args:
             all_anchors: [(N, 7), ...]
@@ -44,6 +44,7 @@ class AxisAlignedTargetAssigner(object):
 
         bbox_targets = []
         cls_labels = []
+        cls_scores = []
         reg_weights = []
 
         batch_size = gt_boxes_with_classes.shape[0]
@@ -56,6 +57,10 @@ class AxisAlignedTargetAssigner(object):
                 cnt -= 1
             cur_gt = cur_gt[:cnt + 1]
             cur_gt_classes = gt_classes[k][:cnt + 1].int()
+            if gt_scores is not None:
+                cur_gt_scores = gt_scores[k][:cnt + 1]
+            else:
+                cur_gt_scores = None
 
             target_list = []
             for anchor_class_name, anchors in zip(self.anchor_class_names, all_anchors):
@@ -86,6 +91,7 @@ class AxisAlignedTargetAssigner(object):
                     anchors,
                     cur_gt[mask],
                     gt_classes=selected_classes,
+                    gt_scores = cur_gt_scores[mask] if cur_gt_scores is not None else None,
                     matched_threshold=self.matched_thresholds[anchor_class_name],
                     unmatched_threshold=self.unmatched_thresholds[anchor_class_name]
                 )
@@ -94,15 +100,18 @@ class AxisAlignedTargetAssigner(object):
             if self.use_multihead:
                 target_dict = {
                     'box_cls_labels': [t['box_cls_labels'].view(-1) for t in target_list],
+                    'box_cls_scores': [t['box_cls_scores'].view(-1) for t in target_list] if gt_scores is not None else None,
                     'box_reg_targets': [t['box_reg_targets'].view(-1, self.box_coder.code_size) for t in target_list],
                     'reg_weights': [t['reg_weights'].view(-1) for t in target_list]
                 }
                 target_dict['box_reg_targets'] = torch.cat(target_dict['box_reg_targets'], dim=0)
                 target_dict['box_cls_labels'] = torch.cat(target_dict['box_cls_labels'], dim=0).view(-1)
+                target_dict['box_cls_scores'] = torch.cat(target_dict['box_cls_scores'], dim=0).view(-1) if gt_scores is not None else None
                 target_dict['reg_weights'] = torch.cat(target_dict['reg_weights'], dim=0).view(-1)
             else:
                 target_dict = {
                     'box_cls_labels': [t['box_cls_labels'].view(*feature_map_size, -1) for t in target_list],
+                    'box_cls_scores': [t['box_cls_scores'].view(*feature_map_size, -1) for t in target_list] if gt_scores is not None else None,
                     'box_reg_targets': [t['box_reg_targets'].view(*feature_map_size, -1, self.box_coder.code_size)
                                         for t in target_list],
                     'reg_weights': [t['reg_weights'].view(*feature_map_size, -1) for t in target_list]
@@ -112,31 +121,37 @@ class AxisAlignedTargetAssigner(object):
                 ).view(-1, self.box_coder.code_size)
 
                 target_dict['box_cls_labels'] = torch.cat(target_dict['box_cls_labels'], dim=-1).view(-1)
+                target_dict['box_cls_scores'] = torch.cat(target_dict['box_cls_scores'], dim=-1).view(-1) if gt_scores is not None else None
                 target_dict['reg_weights'] = torch.cat(target_dict['reg_weights'], dim=-1).view(-1)
 
             bbox_targets.append(target_dict['box_reg_targets'])
             cls_labels.append(target_dict['box_cls_labels'])
+            cls_scores.append(target_dict['box_cls_scores'])
             reg_weights.append(target_dict['reg_weights'])
 
         bbox_targets = torch.stack(bbox_targets, dim=0)
 
         cls_labels = torch.stack(cls_labels, dim=0)
+        cls_scores = torch.stack(cls_scores, dim=0) if gt_scores is not None else None
         reg_weights = torch.stack(reg_weights, dim=0)
         all_targets_dict = {
             'box_cls_labels': cls_labels,
+            'box_cls_scores': cls_scores,
             'box_reg_targets': bbox_targets,
             'reg_weights': reg_weights
 
         }
         return all_targets_dict
 
-    def assign_targets_single(self, anchors, gt_boxes, gt_classes, matched_threshold=0.6, unmatched_threshold=0.45):
+    def assign_targets_single(self, anchors, gt_boxes, gt_classes, gt_scores=None, matched_threshold=0.6, unmatched_threshold=0.45):
 
         num_anchors = anchors.shape[0]
         num_gt = gt_boxes.shape[0]
 
         labels = torch.ones((num_anchors,), dtype=torch.int32, device=anchors.device) * -1
         gt_ids = torch.ones((num_anchors,), dtype=torch.int32, device=anchors.device) * -1
+        if gt_scores is not None:
+            label_scores = torch.ones((num_anchors,), dtype=torch.float, device=anchors.device) * -1
 
         if len(gt_boxes) > 0 and anchors.shape[0] > 0:
             anchor_by_gt_overlap = iou3d_nms_utils.boxes_iou3d_gpu(anchors[:, 0:7], gt_boxes[:, 0:7]) \
@@ -155,11 +170,15 @@ class AxisAlignedTargetAssigner(object):
             anchors_with_max_overlap = (anchor_by_gt_overlap == gt_to_anchor_max).nonzero()[:, 0]
             gt_inds_force = anchor_to_gt_argmax[anchors_with_max_overlap]
             labels[anchors_with_max_overlap] = gt_classes[gt_inds_force]
+            if gt_scores is not None:
+                label_scores[anchors_with_max_overlap] = gt_scores[gt_inds_force]
             gt_ids[anchors_with_max_overlap] = gt_inds_force.int()
 
             pos_inds = anchor_to_gt_max >= matched_threshold
             gt_inds_over_thresh = anchor_to_gt_argmax[pos_inds]
             labels[pos_inds] = gt_classes[gt_inds_over_thresh]
+            if gt_scores is not None:
+                label_scores[pos_inds] = gt_scores[gt_inds_over_thresh]
             gt_ids[pos_inds] = gt_inds_over_thresh.int()
             bg_inds = (anchor_to_gt_max < unmatched_threshold).nonzero()[:, 0]
         else:
@@ -173,19 +192,25 @@ class AxisAlignedTargetAssigner(object):
                 num_disabled = len(fg_inds) - num_fg
                 disable_inds = torch.randperm(len(fg_inds))[:num_disabled]
                 labels[disable_inds] = -1
+                # TODO: check whether updating label_scores is necessary or not.
                 fg_inds = (labels > 0).nonzero()[:, 0]
 
             num_bg = self.sample_size - (labels > 0).sum()
             if len(bg_inds) > num_bg:
                 enable_inds = bg_inds[torch.randint(0, len(bg_inds), size=(num_bg,))]
                 labels[enable_inds] = 0
+                # TODO: check whether updating label_scores is necessary or not.
             # bg_inds = torch.nonzero(labels == 0)[:, 0]
         else:
             if len(gt_boxes) == 0 or anchors.shape[0] == 0:
                 labels[:] = 0
+                # TODO: check whether updating label_scores is necessary or not.
             else:
                 labels[bg_inds] = 0
                 labels[anchors_with_max_overlap] = gt_classes[gt_inds_force]
+                if gt_scores is not None:
+                    # TODO: check whether updating label_scores for bg_inds is necessary or not.
+                    label_scores[anchors_with_max_overlap] = gt_scores[gt_inds_force]
 
         bbox_targets = anchors.new_zeros((num_anchors, self.box_coder.code_size))
         if len(gt_boxes) > 0 and anchors.shape[0] > 0:
@@ -203,6 +228,7 @@ class AxisAlignedTargetAssigner(object):
 
         ret_dict = {
             'box_cls_labels': labels,
+            'box_cls_scores': label_scores if gt_scores is not None else None,
             'box_reg_targets': bbox_targets,
             'reg_weights': reg_weights,
         }

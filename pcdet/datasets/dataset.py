@@ -328,6 +328,7 @@ class DatasetTemplate(torch_data.Dataset):
             else:
                 gt_classes = data_dict['gt_classes'][selected]
                 data_dict['gt_scores'] = data_dict['gt_scores'][selected]
+            # Concatenates gt_classes to gt_boxes and expands the dimension from 7 to 8.
             gt_boxes = np.concatenate((data_dict['gt_boxes'], gt_classes.reshape(-1, 1).astype(np.float32)), axis=1)
             data_dict['gt_boxes'] = gt_boxes
 

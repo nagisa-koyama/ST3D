@@ -58,7 +58,8 @@ class AnchorHeadSingle(AnchorHeadTemplate):
 
         if self.training:
             targets_dict = self.assign_targets(
-                gt_boxes=data_dict['gt_boxes']
+                gt_boxes=data_dict['gt_boxes'],
+                gt_scores=data_dict['gt_scores'] if 'gt_scores' in data_dict else None,
             )
             self.forward_ret_dict.update(targets_dict)
             # print(self.forward_ret_dict.keys())

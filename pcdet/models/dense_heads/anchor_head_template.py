@@ -86,7 +86,7 @@ class AnchorHeadTemplate(nn.Module):
             loss_utils.WeightedCrossEntropyLoss()
         )
 
-    def assign_targets(self, gt_boxes):
+    def assign_targets(self, gt_boxes, gt_scores=None):
         """
         Args:
             gt_boxes: (B, M, 8)
@@ -94,25 +94,32 @@ class AnchorHeadTemplate(nn.Module):
 
         """
         targets_dict = self.target_assigner.assign_targets(
-            self.anchors, gt_boxes
+            self.anchors, gt_boxes, gt_scores
         )
         return targets_dict
 
     def get_cls_layer_loss(self):
         cls_preds = self.forward_ret_dict['cls_preds']
         box_cls_labels = self.forward_ret_dict['box_cls_labels']
+        box_cls_scores = self.forward_ret_dict['box_cls_scores'] if self.forward_ret_dict['box_cls_scores'] is not None else None
         batch_size = int(cls_preds.shape[0])
         cared = box_cls_labels >= 0  # [N, num_anchors]
         positives = box_cls_labels > 0
         negatives = box_cls_labels == 0
         negative_cls_weights = negatives * 1.0
-        cls_weights = (negative_cls_weights + 1.0 * positives).float()
+
+        score_weighting = self.model_cfg.LOSS_CONFIG.get('SCORE_WEIGHTING', False)
+        if score_weighting is True:
+            cls_weights = (negative_cls_weights + 1.0 * positives * box_cls_scores).float()
+            pos_normalizer = (1.0 * positives * box_cls_scores).sum(1, keepdim=True).float()
+        else:
+            cls_weights = (negative_cls_weights + 1.0 * positives).float()
+            pos_normalizer = positives.sum(1, keepdim=True).float()
+
         reg_weights = positives.float()
         if self.num_class == 1:
             # class agnostic
             box_cls_labels[positives] = 1
-
-        pos_normalizer = positives.sum(1, keepdim=True).float()
         reg_weights /= torch.clamp(pos_normalizer, min=1.0)
         cls_weights /= torch.clamp(pos_normalizer, min=1.0)
         cls_targets = box_cls_labels * cared.type_as(box_cls_labels)

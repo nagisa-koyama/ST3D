@@ -223,7 +223,8 @@ class AnchorHeadMulti(AnchorHeadTemplate):
 
         if self.training:
             targets_dict = self.assign_targets(
-                gt_boxes=data_dict['gt_boxes']
+                gt_boxes=data_dict['gt_boxes'],
+                gt_scores=data_dict['gt_scores'] if 'gt_scores' in data_dict else None,
             )
             self.forward_ret_dict.update(targets_dict)
 
@@ -256,6 +257,8 @@ class AnchorHeadMulti(AnchorHeadTemplate):
 
         cls_preds = self.forward_ret_dict['cls_preds']
         box_cls_labels = self.forward_ret_dict['box_cls_labels']
+        box_cls_scores = self.forward_ret_dict['box_cls_scores'] if self.forward_ret_dict['box_cls_scores'] is not None else None
+
         if not isinstance(cls_preds, list):
             cls_preds = [cls_preds]
         batch_size = int(cls_preds[0].shape[0])
@@ -264,13 +267,19 @@ class AnchorHeadMulti(AnchorHeadTemplate):
         negatives = box_cls_labels == 0
         negative_cls_weights = negatives * 1.0 * neg_cls_weight
 
-        cls_weights = (negative_cls_weights + pos_cls_weight * positives).float()
+        score_weighting = self.model_cfg.LOSS_CONFIG.get('SCORE_WEIGHTING', False)
+        if score_weighting is True:
+            cls_weights = (negative_cls_weights + 1.0 * positives * box_cls_scores).float()
+            pos_normalizer = (1.0 * positives * box_cls_scores).sum(1, keepdim=True).float()
+        else:
+            cls_weights = (negative_cls_weights + 1.0 * positives).float()
+            pos_normalizer = positives.sum(1, keepdim=True).float()
+        cls_weights = (negative_cls_weights + pos_cls_weight * positives).float() * self.forward_ret_dict['box_cls_scores']
 
         reg_weights = positives.float()
         if self.num_class == 1:
             # class agnostic
             box_cls_labels[positives] = 1
-        pos_normalizer = positives.sum(1, keepdim=True).float()
 
         reg_weights /= torch.clamp(pos_normalizer, min=1.0)
         cls_weights /= torch.clamp(pos_normalizer, min=1.0)

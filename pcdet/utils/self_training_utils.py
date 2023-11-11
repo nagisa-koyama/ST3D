@@ -177,7 +177,7 @@ def save_pseudo_label_batch(input_dict,
 
     ontology_mapping_teacher_to_student = None
     if teacher_ontology:
-        print('teacher_ontology, student_ontology:', teacher_ontology, student_ontology)
+        # print('teacher_ontology, student_ontology:', teacher_ontology, student_ontology)
         ontology_mapping_teacher_to_student = get_ontology_mapping(teacher_ontology, student_ontology)
 
     batch_size = len(pred_dicts)
