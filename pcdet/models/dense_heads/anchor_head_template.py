@@ -134,7 +134,11 @@ class AnchorHeadTemplate(nn.Module):
         one_hot_targets = one_hot_targets[..., 1:]
         num_repeat_anchor = one_hot_targets.shape[1] // cls_preds.shape[1]
         cls_loss_src = self.cls_loss_func(cls_preds.repeat(1, num_repeat_anchor, 1), one_hot_targets, weights=cls_weights)  # [N, M]
-        cls_loss = cls_loss_src.sum() / batch_size
+        cls_loss = cls_loss_src.sum() / batch_size / num_repeat_anchor
+        # print("cls_preds.shape:", cls_preds.shape)
+        # print("cls_target.shape:", cls_targets.shape)
+        # print("one_hot_targets.shape:", one_hot_targets.shape)
+        # print("num_repeat_anchors in cls_loss:", num_repeat_anchor)
 
         cls_loss = cls_loss * self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['cls_weight']
         tb_dict = {
@@ -160,6 +164,11 @@ class AnchorHeadTemplate(nn.Module):
         offset_rot = common_utils.limit_period(rot_gt - dir_offset, 0, 2 * np.pi)
         dir_cls_targets = torch.floor(offset_rot / (2 * np.pi / num_bins)).long()
         dir_cls_targets = torch.clamp(dir_cls_targets, min=0, max=num_bins - 1)
+
+        # print("reg_targets.shape:", reg_targets.shape)
+        # print("anchors.shape:", anchors.shape)
+        # print("dir_cls_targets.shape:", dir_cls_targets.shape)
+        # print("num_repeat_anchors in direction target:", num_repeat_anchors)
 
         if one_hot:
             dir_targets = torch.zeros(*list(dir_cls_targets.shape), num_bins, dtype=anchors.dtype,
@@ -197,7 +206,10 @@ class AnchorHeadTemplate(nn.Module):
         num_repeat_anchor = box_reg_targets.shape[1] // box_preds.shape[1]
         box_preds_sin, reg_targets_sin = self.add_sin_difference(box_preds.repeat(1, num_repeat_anchor, 1), box_reg_targets)
         loc_loss_src = self.reg_loss_func(box_preds_sin, reg_targets_sin, weights=reg_weights)  # [N, M]
-        loc_loss = loc_loss_src.sum() / batch_size
+        loc_loss = loc_loss_src.sum() / batch_size / num_repeat_anchor
+        # print("box_preds.shape", box_preds.shape)
+        # print("box_reg_targets.shape:", box_reg_targets.shape)
+        # print("num_repeat_anchor in reg loss:", num_repeat_anchor)
 
         loc_loss = loc_loss * self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['loc_weight']
         box_loss = loc_loss
@@ -217,7 +229,7 @@ class AnchorHeadTemplate(nn.Module):
             weights /= torch.clamp(weights.sum(-1, keepdim=True), min=1.0)
             num_repeat_anchor = dir_targets.shape[1] // dir_logits.shape[1]
             dir_loss = self.dir_loss_func(dir_logits.repeat(1, num_repeat_anchor, 1), dir_targets, weights=weights)
-            dir_loss = dir_loss.sum() / batch_size
+            dir_loss = dir_loss.sum() / batch_size / num_repeat_anchor
             dir_loss = dir_loss * self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['dir_weight']
             box_loss += dir_loss
             tb_dict['rpn_loss_dir'] = dir_loss.item()
