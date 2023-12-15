@@ -133,8 +133,13 @@ class AnchorHeadTemplate(nn.Module):
         cls_preds = cls_preds.view(batch_size, -1, self.num_class)
         one_hot_targets = one_hot_targets[..., 1:]
         num_repeat_anchor = one_hot_targets.shape[1] // cls_preds.shape[1]
-        cls_loss_src = self.cls_loss_func(cls_preds.repeat(1, num_repeat_anchor, 1), one_hot_targets, weights=cls_weights)  # [N, M]
+        cls_loss_src = self.cls_loss_func(cls_preds.repeat(
+            1, 1, num_repeat_anchor).view(batch_size, -1, cls_preds.shape[-1]), one_hot_targets, weights=cls_weights)  # [N, M]
+        # cls_loss_src = self.cls_loss_func(cls_preds.repeat(1, num_repeat_anchor, 1), one_hot_targets, weights=cls_weights)  # [N, M]
         cls_loss = cls_loss_src.sum() / batch_size / num_repeat_anchor
+
+        # print("pos_normalizer:", pos_normalizer)
+        # print("box_cls_labels.shape:", box_cls_labels.shape)
         # print("cls_preds.shape:", cls_preds.shape)
         # print("cls_target.shape:", cls_targets.shape)
         # print("one_hot_targets.shape:", one_hot_targets.shape)
@@ -204,7 +209,9 @@ class AnchorHeadTemplate(nn.Module):
                                    box_preds.shape[-1])
         # sin(a - b) = sinacosb-cosasinb
         num_repeat_anchor = box_reg_targets.shape[1] // box_preds.shape[1]
-        box_preds_sin, reg_targets_sin = self.add_sin_difference(box_preds.repeat(1, num_repeat_anchor, 1), box_reg_targets)
+        box_preds_sin, reg_targets_sin = self.add_sin_difference(box_preds.repeat(
+            1, 1, num_repeat_anchor).view(batch_size, -1, box_preds.shape[-1]), box_reg_targets)
+        # box_preds_sin, reg_targets_sin = self.add_sin_difference(box_preds.repeat(1, num_repeat_anchor, 1), box_reg_targets)
         loc_loss_src = self.reg_loss_func(box_preds_sin, reg_targets_sin, weights=reg_weights)  # [N, M]
         loc_loss = loc_loss_src.sum() / batch_size / num_repeat_anchor
         # print("box_preds.shape", box_preds.shape)
@@ -228,7 +235,9 @@ class AnchorHeadTemplate(nn.Module):
             weights = positives.type_as(dir_logits)
             weights /= torch.clamp(weights.sum(-1, keepdim=True), min=1.0)
             num_repeat_anchor = dir_targets.shape[1] // dir_logits.shape[1]
-            dir_loss = self.dir_loss_func(dir_logits.repeat(1, num_repeat_anchor, 1), dir_targets, weights=weights)
+            dir_loss = self.dir_loss_func(dir_logits.repeat(1, 1, num_repeat_anchor).view(batch_size, -1,
+                                          dir_logits.shape[-1]), dir_targets, weights=weights)
+            # dir_loss = self.dir_loss_func(dir_logits.repeat(1, num_repeat_anchor, 1), dir_targets, weights=weights)
             dir_loss = dir_loss.sum() / batch_size / num_repeat_anchor
             dir_loss = dir_loss * self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['dir_weight']
             box_loss += dir_loss

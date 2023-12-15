@@ -84,10 +84,15 @@ class AxisAlignedTargetAssigner(object):
                     selected_classes = cur_gt_classes[mask]
                 else:
                     feature_map_size = anchors.shape[:3]
+                    # print("orig anchors.shape: ", anchors.shape)
                     anchors = anchors.view(-1, anchors.shape[-1])
                     selected_classes = cur_gt_classes[mask]
 
+                # print("anchors.shape: ", anchors.shape)
+                # print("feature_map_size: ", feature_map_size)
+
                 single_target = self.assign_targets_multi(
+                # single_target = self.assign_targets_single(
                     anchors,
                     cur_gt[mask],
                     gt_classes=selected_classes,
@@ -242,6 +247,10 @@ class AxisAlignedTargetAssigner(object):
         num_anchors = anchors.shape[0]
         num_gt = gt_boxes.shape[0]
 
+        # print("orig gt_boxes.shape: ", gt_boxes.shape)
+        # print("orig gt_classes.shape: ", gt_classes.shape)
+        # print("orig gt_scores.shape: ", gt_scores.shape)
+
         # To maintain the same number of total anchor numbers, we need to pad the gt_boxes and gt_classes
         if num_gt < gt_assign_max:
             gt_boxes = torch.cat([gt_boxes, gt_boxes.new_zeros((gt_assign_max - num_gt, gt_boxes.shape[1]))], dim=0)
@@ -251,6 +260,13 @@ class AxisAlignedTargetAssigner(object):
 
         labels = torch.ones((num_anchors, gt_assign_max), dtype=torch.int32, device=anchors.device) * -1
         gt_ids = torch.ones((num_anchors, gt_assign_max), dtype=torch.int32, device=anchors.device) * -1
+
+        # print("gt_boxes.shape: ", gt_boxes.shape)
+        # print("gt_classes.shape: ", gt_classes.shape)
+        # print("gt_scores.shape: ", gt_scores.shape)
+        # print("labels.shape: ", labels.shape)
+        # print("gt_ids.shape: ", gt_ids.shape)
+
         if gt_scores is not None:
             label_scores = torch.zeros((num_anchors, gt_assign_max), dtype=torch.float, device=anchors.device)
         if len(gt_boxes) > 0 and anchors.shape[0] > 0:
@@ -259,11 +275,12 @@ class AxisAlignedTargetAssigner(object):
 
             gt_to_anchor_max_topk = torch.topk(anchor_by_gt_overlap, k=gt_assign_max, dim=1)
             matched_gt_mask_topk = gt_to_anchor_max_topk.values >= matched_threshold
-            gt_ids[matched_gt_mask_topk] = gt_to_anchor_max_topk.indices[matched_gt_mask_topk].int()
+
+            gt_ids[matched_gt_mask_topk] = gt_to_anchor_max_topk.indices[matched_gt_mask_topk].int() # Assumes that values and indices are in the same order.
             labels[matched_gt_mask_topk] = gt_classes[gt_ids[matched_gt_mask_topk].long()]
             if gt_scores is not None:
                 label_scores[matched_gt_mask_topk] = gt_scores[gt_ids[matched_gt_mask_topk].long()]
-            bg_inds = (gt_to_anchor_max_topk.values < unmatched_threshold).nonzero()
+            bg_inds = (gt_to_anchor_max_topk.values < unmatched_threshold).nonzero() # Returns indices.
         else:
             bg_inds = torch.arange(num_anchors, gt_assign_max, device=anchors.device)
 
@@ -274,17 +291,25 @@ class AxisAlignedTargetAssigner(object):
                 label_scores[:] = 0
         else:
             labels[bg_inds] = 0
-            labels[matched_gt_mask_topk] = gt_classes[gt_ids[matched_gt_mask_topk].long()]
+            # labels[matched_gt_mask_topk] = gt_classes[gt_ids[matched_gt_mask_topk].long()]
             if gt_scores is not None:
                 # TODO: check whether updating label_scores for bg_inds is necessary or not.
                 label_scores[bg_inds] = 0
-                label_scores[matched_gt_mask_topk] = gt_scores[gt_ids[matched_gt_mask_topk].long()]
+                # label_scores[matched_gt_mask_topk] = gt_scores[gt_ids[matched_gt_mask_topk].long()]
 
+        # print("matched_gt_mask_topk", matched_gt_mask_topk)
+        # print("gt_ids[matched_gt_mask_topk]", gt_ids[matched_gt_mask_topk])
+        # print("matched_gt_mask_topk.shape", matched_gt_mask_topk.shape)
+        # print("gt_ids[matched_gt_mask_topk].shape", gt_ids[matched_gt_mask_topk].shape)
+        # print("anchors.shape", anchors.shape)
+
+        anchors_repeated = anchors.repeat(1, gt_assign_max).view(-1, gt_assign_max, anchors.shape[-1])
+        # print("anchors_repeated.shape", anchors_repeated.shape)
         bbox_targets = anchors.new_zeros((num_anchors, gt_assign_max, self.box_coder.code_size))
         if len(gt_boxes) > 0 and anchors.shape[0] > 0:
             bbox_targets[matched_gt_mask_topk, :] = self.box_coder.encode_torch(
-                gt_boxes[gt_ids[matched_gt_mask_topk].long()], anchors[gt_ids[matched_gt_mask_topk].long()])
-
+                gt_boxes[gt_ids[matched_gt_mask_topk].long()], anchors_repeated[matched_gt_mask_topk, :]) # box, anchors in the same dimentions.
+        # print("bbox_targets[matched_gt_mask_topk, :].shape", bbox_targets[matched_gt_mask_topk, :].shape)
         reg_weights = anchors.new_zeros((num_anchors, gt_assign_max))
         if self.norm_by_num_examples:
             num_examples = (labels >= 0).sum()
@@ -292,6 +317,8 @@ class AxisAlignedTargetAssigner(object):
             reg_weights[labels > 0] = 1.0 / num_examples
         else:
             reg_weights[labels > 0] = 1.0
+
+        # print("last labels.shape: ", labels.shape)
 
         ret_dict = {
             'box_cls_labels': labels,
