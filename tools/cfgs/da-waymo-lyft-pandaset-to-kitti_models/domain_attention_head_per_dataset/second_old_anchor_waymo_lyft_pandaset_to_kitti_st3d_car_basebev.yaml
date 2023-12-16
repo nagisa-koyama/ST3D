@@ -86,6 +86,8 @@ MODEL:
                 'dir_weight': 0.2,
                 'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
             }
+            SCORE_WEIGHTING: True
+
     POST_PROCESSING:
         RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
         SCORE_THRESH: 0.1
@@ -206,10 +208,11 @@ SELF_TRAIN:
                     'dir_weight': 0.2,
                     'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
                 }
+                SCORE_WEIGHTING: True
 
         POST_PROCESSING:
             RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
-            SCORE_THRESH: 0.1
+            SCORE_THRESH: 0.0001
             OUTPUT_RAW_SCORE: False
 
             EVAL_METRIC: kitti
