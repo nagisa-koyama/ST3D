@@ -276,26 +276,16 @@ class AxisAlignedTargetAssigner(object):
             gt_to_anchor_max_topk = torch.topk(anchor_by_gt_overlap, k=gt_assign_max, dim=1)
             matched_gt_mask_topk = gt_to_anchor_max_topk.values >= matched_threshold
 
-            gt_ids[matched_gt_mask_topk] = gt_to_anchor_max_topk.indices[matched_gt_mask_topk].int() # Assumes that values and indices are in the same order.
-            labels[matched_gt_mask_topk] = gt_classes[gt_ids[matched_gt_mask_topk].long()]
-            if gt_scores is not None:
-                label_scores[matched_gt_mask_topk] = gt_scores[gt_ids[matched_gt_mask_topk].long()]
-            bg_inds = (gt_to_anchor_max_topk.values < unmatched_threshold).nonzero() # Returns indices.
-        else:
-            bg_inds = torch.arange(num_anchors, gt_assign_max, device=anchors.device)
-
-        if len(gt_boxes) == 0 or anchors.shape[0] == 0:
-            labels[:] = 0
-            if gt_scores is not None:
-                # TODO: check whether updating label_scores is necessary or not.
-                label_scores[:] = 0
-        else:
-            labels[bg_inds] = 0
-            # labels[matched_gt_mask_topk] = gt_classes[gt_ids[matched_gt_mask_topk].long()]
-            if gt_scores is not None:
-                # TODO: check whether updating label_scores for bg_inds is necessary or not.
-                label_scores[bg_inds] = 0
-                # label_scores[matched_gt_mask_topk] = gt_scores[gt_ids[matched_gt_mask_topk].long()]
+            for i in range(gt_assign_max):
+                matched_gt_mask = matched_gt_mask_topk[:, i]
+                gt_ids[matched_gt_mask, i] = gt_to_anchor_max_topk.indices[matched_gt_mask, i].int()
+                labels[matched_gt_mask, i] = gt_classes[gt_ids[matched_gt_mask, i].long()]
+                if gt_scores is not None:
+                    label_scores[matched_gt_mask, i] = gt_scores[gt_ids[matched_gt_mask, i].long()]
+                bg_inds = (gt_to_anchor_max_topk.values[:, i] < unmatched_threshold).nonzero().flatten()
+                labels[bg_inds, i] = 0
+                if gt_scores is not None:
+                    label_scores[bg_inds, i] = 0
 
         # print("matched_gt_mask_topk", matched_gt_mask_topk)
         # print("gt_ids[matched_gt_mask_topk]", gt_ids[matched_gt_mask_topk])
