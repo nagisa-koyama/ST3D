@@ -24,7 +24,7 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
         pbar = tqdm.tqdm(total=total_it_each_epochs_aggregated, leave=leave_pbar, desc='train', dynamic_ncols=True)
 
     loss_total = None
-    draw_scene = False
+    draw_scene = True
     for cur_it in range(total_it_each_epochs_aggregated):
         dataset_index = cur_it % len(dataloader_iters)
         dataset_ontology = train_loaders[dataset_index].dataset.dataset_ontology
