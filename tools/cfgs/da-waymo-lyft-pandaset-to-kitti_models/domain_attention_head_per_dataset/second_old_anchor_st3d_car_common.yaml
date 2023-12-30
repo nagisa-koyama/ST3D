@@ -75,15 +75,16 @@ SELF_TRAIN:
 
     MEMORY_ENSEMBLE:
         ENABLED: True
-        NAME: consistency_ensemble
-        IOU_THRESH: 0.1
+        # NAME: consistency_ensemble
+        NAME: nms_ensemble
+        IOU_THRESH: 0.5
 
         NMS_CONFIG:
             NMS_TYPE: nms_gpu
             MULTI_CLASSES_NMS: False
             NMS_PRE_MAXSIZE: 512
             NMS_POST_MAXSIZE: 100
-            NMS_THRESH: 0.1
+            NMS_THRESH: 0.5
 
         MEMORY_VOTING:
             ENABLED: True
