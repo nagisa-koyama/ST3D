@@ -14,6 +14,8 @@ import numpy as np
 
 from ..dataset import DatasetTemplate
 from ...ops.roiaware_pool3d import roiaware_pool3d_utils
+from ...utils import conf_calib_utils
+
 
 import torch
 
@@ -364,9 +366,13 @@ class PandasetDataset(DatasetTemplate):
         )
         kitti_class_names = [map_name_to_kitti[x] for x in class_names]
 
+        conf_calib_utils.generate_calibration_curve(eval_det_annos, eval_gt_annos, kitti_class_names, dataset_name="pandaset")
+
         ap_result_str, ap_dict = kitti_eval.get_official_eval_result(
             gt_annos=eval_gt_annos, dt_annos=eval_det_annos, current_classes=kitti_class_names
         )
+
+
         return ap_result_str, ap_dict
 
 

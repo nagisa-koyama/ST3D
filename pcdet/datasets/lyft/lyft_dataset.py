@@ -6,7 +6,7 @@ import numpy as np
 from tqdm import tqdm
 
 from ...ops.roiaware_pool3d import roiaware_pool3d_utils
-from ...utils import common_utils, box_utils
+from ...utils import common_utils, box_utils, conf_calib_utils
 from ..dataset import DatasetTemplate
 
 
@@ -136,6 +136,8 @@ class LyftDataset(DatasetTemplate):
         print("class_namesin lyft_datsaet:", class_names)
         print("map_name_to_kitti in lyft_dataset:", map_name_to_kitti)
         kitti_class_names = [map_name_to_kitti[x] for x in class_names]
+
+        conf_calib_utils.generate_calibration_curve(eval_det_annos, eval_gt_annos, kitti_class_names, dataset_name="lyft")
 
         ap_result_str, ap_dict = kitti_eval.get_official_eval_result(
             gt_annos=eval_gt_annos, dt_annos=eval_det_annos, current_classes=kitti_class_names

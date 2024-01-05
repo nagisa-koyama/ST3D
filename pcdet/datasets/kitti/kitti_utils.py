@@ -23,6 +23,7 @@ def transform_annotations_to_kitti_format(annos, map_name_to_kitti=None, info_wi
             if anno['name'][k] in map_name_to_kitti:
                 anno['name'][k] = map_name_to_kitti[anno['name'][k]]
             else:
+                # print('Warning: name %s not in map_name_to_kitti' % anno['name'][k])
                 anno['name'][k] = 'Person_sitting'
 
         if 'boxes_lidar' in anno:
@@ -44,6 +45,9 @@ def transform_annotations_to_kitti_format(annos, map_name_to_kitti=None, info_wi
 
         if kwargs.get('GT_FILTER', None):
             anno['gt_boxes_lidar'] = gt_boxes_lidar
+
+        # For calibration curve
+        anno['gt_boxes_lidar'] = gt_boxes_lidar
 
         anno['bbox'] = np.zeros((len(anno['name']), 4))
         anno['bbox'][:, 2:4] = 50  # [0, 0, 50, 50]

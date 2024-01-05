@@ -12,7 +12,7 @@ import multiprocessing
 from tqdm import tqdm
 from pathlib import Path
 from ...ops.roiaware_pool3d import roiaware_pool3d_utils
-from ...utils import box_utils, common_utils
+from ...utils import box_utils, common_utils, conf_calib_utils
 from ..dataset import DatasetTemplate
 
 
@@ -267,6 +267,9 @@ class WaymoDataset(DatasetTemplate):
                 info_with_fakelidar=self.dataset_cfg.get('INFO_WITH_FAKELIDAR', False)
             )
             kitti_class_names = [map_name_to_kitti[x] for x in class_names]
+
+            conf_calib_utils.generate_calibration_curve(eval_det_annos, eval_gt_annos, kitti_class_names, dataset_name="waymo")
+
             ap_result_str, ap_dict = kitti_eval.get_official_eval_result(
                 gt_annos=eval_gt_annos, dt_annos=eval_det_annos, current_classes=kitti_class_names
             )

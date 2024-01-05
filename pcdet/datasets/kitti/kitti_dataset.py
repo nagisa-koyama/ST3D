@@ -5,7 +5,7 @@ import numpy as np
 from skimage import io
 
 from ...ops.roiaware_pool3d import roiaware_pool3d_utils
-from ...utils import box_utils, calibration_kitti, common_utils, object3d_kitti, self_training_utils
+from ...utils import box_utils, calibration_kitti, common_utils, object3d_kitti, self_training_utils, conf_calib_utils
 from ..dataset import DatasetTemplate
 
 
@@ -343,6 +343,7 @@ class KittiDataset(DatasetTemplate):
         eval_det_annos = det_annos
         eval_gt_annos = [copy.deepcopy(info['annos']) for info in self.kitti_infos]
         # print("eval_gt_annos[0][name]:", eval_gt_annos[0]['name'])
+        conf_calib_utils.generate_calibration_curve(eval_det_annos, eval_gt_annos, class_names, dataset_name="kitti")
         ap_result_str, ap_dict = kitti_eval.get_official_eval_result(eval_gt_annos, eval_det_annos, class_names)
 
         return ap_result_str, ap_dict
