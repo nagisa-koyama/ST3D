@@ -3,6 +3,8 @@ import torch
 import wandb
 from sklearn.calibration import calibration_curve
 import matplotlib.pyplot as plt
+from scipy.optimize import minimize
+from scipy.special import logit, expit
 
 from pcdet.ops.iou3d_nms import iou3d_nms_utils
 from pcdet.utils import box_utils
@@ -45,36 +47,6 @@ def plot_reliability_diagram(prob_true, prob_pred, dataset_name, class_name, ax=
     wandb.log({'val/{}/reliability_diagram_{}'.format(dataset_name, class_name): wandb.Image(filename)})
 
 
-def compute_expected_calibration_error(pred_names, pred_scores, gt_names, class_names, dataset_name, num_bins=10):
-    assert len(pred_names) == len(gt_names)
-    assert len(pred_names) == len(pred_scores)
-
-    ece_bin = []
-    for class_name in class_names:
-        eval_name_mask = pred_names == class_name
-        eval_pred_scores = pred_scores[eval_name_mask]
-        eval_gt_true = (gt_names[eval_name_mask] == class_name).astype(np.int32)
-        print("pred_scores: ", pred_scores)
-        print("pred_names: ", pred_names)
-        print("gt_names: ", gt_names)
-        print("max(pred_scores): ", np.max(pred_scores))
-        print("min(pred_scores): ", np.min(pred_scores))
-        print("max(eval_name_mask): ", np.max(eval_name_mask))
-        print("max(eval_pred_scores): ", np.max(eval_pred_scores))
-        print("min(eval_pred_scores): ", np.min(eval_pred_scores))
-        print("max(eval_gt_true): ", np.max(eval_gt_true))
-        print("min(eval_gt_true): ", np.min(eval_gt_true))
-        print("eval_gt_true: ", eval_gt_true)
-        print("eval_pred_scores: ", eval_pred_scores)
-
-        prob_true, prob_pred = calibration_curve(eval_gt_true, eval_pred_scores, n_bins=num_bins)
-        plot_reliability_diagram(prob_true, prob_pred, dataset_name, class_name)
-        bin_sizes = np.histogram(a=eval_pred_scores, range=(0, 1), bins=len(prob_true))[0]
-        ece_bin.append(ece_calculation_binary(prob_true, prob_pred, bin_sizes))
-
-    return np.mean(ece_bin)
-
-
 def match_pred_and_gt(pred_boxes, gt_boxes, match_iou_thresh=0.1, match_height=True):
     if len(gt_boxes) > 0 and len(pred_boxes) > 0:
         pred_by_gt_overlap = iou3d_nms_utils.boxes_iou3d_gpu(pred_boxes[:, 0:7], gt_boxes[:, 0:7]) \
@@ -104,7 +76,7 @@ def match_pred_and_gt(pred_boxes, gt_boxes, match_iou_thresh=0.1, match_height=T
         return None, None
 
 
-def generate_calibration_curve(pred_annos, gt_annos, class_names, match_iou_thresh=0.1, match_height=False, dataset_name=""):
+def generate_confidence_calibration_input(pred_annos, gt_annos, class_names, match_iou_thresh=0.1, match_height=False, dataset_name=""):
     assert len(pred_annos) == len(gt_annos)
     aggregated_pred_names = []
     aggregated_pred_scores = []
@@ -139,5 +111,55 @@ def generate_calibration_curve(pred_annos, gt_annos, class_names, match_iou_thre
     aggregated_pred_scores = np.concatenate(aggregated_pred_scores, axis=0)
     aggregated_gt_names = np.concatenate(aggregated_gt_names, axis=0)
 
-    print("ece: ", compute_expected_calibration_error(aggregated_pred_names,
-          aggregated_pred_scores, aggregated_gt_names, class_names, dataset_name))
+    assert len(aggregated_pred_names) == len(aggregated_gt_names)
+    assert len(aggregated_pred_names) == len(aggregated_pred_scores)
+
+    class_name_input_dict = {}
+    for class_name in class_names:
+        eval_name_mask = aggregated_pred_names == class_name
+        eval_pred_scores = aggregated_pred_scores[eval_name_mask]
+        eval_gt_true = (aggregated_gt_names[eval_name_mask] == class_name).astype(np.int32)
+        class_name_input_dict[class_name] = (eval_pred_scores, eval_gt_true)
+        # print("pred_scores: ", pred_scores)
+        # print("pred_names: ", pred_names)
+        # print("gt_names: ", gt_names)
+        print("max(pred_scores): ", np.max(pred_scores))
+        print("min(pred_scores): ", np.min(pred_scores))
+        print("max(eval_name_mask): ", np.max(eval_name_mask))
+        print("max(eval_pred_scores): ", np.max(eval_pred_scores))
+        print("min(eval_pred_scores): ", np.min(eval_pred_scores))
+        print("max(eval_gt_true): ", np.max(eval_gt_true))
+        print("min(eval_gt_true): ", np.min(eval_gt_true))
+        # print("eval_gt_true: ", eval_gt_true)
+        # print("eval_pred_scores: ", eval_pred_scores)
+    return class_name_input_dict
+
+def generate_calibration_curve(pred_annos, gt_annos, class_names, match_iou_thresh=0.1, match_height=False, dataset_name=""):
+    class_name_input_dict = generate_confidence_calibration_input(pred_annos, gt_annos, class_names, match_iou_thresh, match_height, dataset_name)
+
+    ece_bin = []
+    for class_name, (eval_pred_scores, eval_gt_true) in class_name_input_dict.items():
+        prob_true, prob_pred = calibration_curve(eval_gt_true, eval_pred_scores, n_bins=10)
+        plot_reliability_diagram(prob_true, prob_pred, dataset_name, class_name)
+        bin_sizes = np.histogram(a=eval_pred_scores, range=(0, 1), bins=len(prob_true))[0]
+        ece_bin.append(ece_calculation_binary(prob_true, prob_pred, bin_sizes))
+
+    ece = np.mean(ece_bin)
+    wandb.log({'val/{}/expected_calibration_error'.format(dataset_name): ece})
+    print("ece: ", ece)
+
+def run_platt_scaling(pred_annos, gt_annos, class_names, match_iou_thresh=0.1, match_height=False, dataset_name=""):
+    class_name_input_dict = generate_confidence_calibration_input(pred_annos, gt_annos, class_names, match_iou_thresh, match_height, dataset_name)
+
+    for class_name, (pred_scores, gt_true) in class_name_input_dict.items():
+
+        y_logits = logit(pred_scores)
+        def scale_fun_bce(x, *args):
+            a, b = x
+            y_logit_scaled = a*y_logits + b
+            y_pred_inner = expit(y_logit_scaled)
+            bce = sum([-(y_t * np.log(y_p) + (1 - y_t) * np.log(1 - y_p)) for y_t, y_p in zip(gt_true, y_pred_inner) if not y_p==0])
+            return bce
+
+        min_obj = minimize(scale_fun_bce,[1,0], method='Nelder-Mead',options={'xatol': 1e-4, 'disp': True})
+        print("calibrated_result min_obj:", min_obj)

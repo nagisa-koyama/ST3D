@@ -367,6 +367,7 @@ class PandasetDataset(DatasetTemplate):
         kitti_class_names = [map_name_to_kitti[x] for x in class_names]
 
         conf_calib_utils.generate_calibration_curve(eval_det_annos, eval_gt_annos, kitti_class_names, dataset_name="pandaset")
+        conf_calib_utils.run_platt_scaling(eval_det_annos, eval_gt_annos, kitti_class_names, dataset_name="pandaset")
 
         ap_result_str, ap_dict = kitti_eval.get_official_eval_result(
             gt_annos=eval_gt_annos, dt_annos=eval_det_annos, current_classes=kitti_class_names
