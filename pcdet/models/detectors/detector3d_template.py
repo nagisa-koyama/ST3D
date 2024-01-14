@@ -199,20 +199,18 @@ class Detector3DTemplate(nn.Module):
             box_preds = batch_dict['batch_box_preds'][batch_mask]
             src_box_preds = box_preds
 
-            confidence_temperture = 1.0
             if not isinstance(batch_dict['batch_cls_preds'], list):
                 cls_preds = batch_dict['batch_cls_preds'][batch_mask]
-
                 src_cls_preds = cls_preds
                 assert cls_preds.shape[1] in [1, self.num_class]
 
                 if not batch_dict['cls_preds_normalized']:
-                    cls_preds = torch.sigmoid(cls_preds / confidence_temperture)
+                    cls_preds = torch.sigmoid(cls_preds)
             else:
                 cls_preds = [x[batch_mask] for x in batch_dict['batch_cls_preds']]
                 src_cls_preds = cls_preds
                 if not batch_dict['cls_preds_normalized']:
-                    cls_preds = [torch.sigmoid(x / confidence_temperture) for x in cls_preds]
+                    cls_preds = [torch.sigmoid(x) for x in cls_preds]
 
             if post_process_cfg.NMS_CONFIG.MULTI_CLASSES_NMS:
                 if not isinstance(cls_preds, list):

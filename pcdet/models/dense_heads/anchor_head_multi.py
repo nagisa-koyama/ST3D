@@ -17,6 +17,16 @@ class SingleHead(BaseBEVBackbone):
         self.model_cfg = model_cfg
         self.separate_reg_config = separate_reg_config
         self.register_buffer('head_label_indices', head_label_indices)
+        if rpn_head_cfg and 'PLATT_SCALING_SCALE' in rpn_head_cfg:
+            self.platt_scaling_scale = torch.from_numpy(np.array(rpn_head_cfg['PLATT_SCALING_SCALE'])).cuda()
+            print("platt_scaling_scale: ", self.platt_scaling_scale)
+        else:
+            self.platt_scaling_scale = None
+        if rpn_head_cfg and 'PLATT_SCALING_OFFSET' in rpn_head_cfg:
+            self.platt_scaling_offset = torch.from_numpy(np.array(rpn_head_cfg['PLATT_SCALING_OFFSET'])).cuda()
+            print("platt_scaling_offset: ", self.platt_scaling_scale)
+        else:
+            self.platt_scaling_offset = None
 
         if self.separate_reg_config is not None:
             code_size_cnt = 0
@@ -128,6 +138,14 @@ class SingleHead(BaseBEVBackbone):
             box_preds = box_preds.view(batch_size, -1, self.code_size)
             cls_preds = cls_preds.view(batch_size, -1, self.num_class)
 
+        if self.platt_scaling_scale is not None:
+            scale = torch.ones_like(cls_preds) * self.platt_scaling_scale
+            cls_preds = cls_preds * scale
+
+        if self.platt_scaling_offset is not None:
+            offset = torch.ones_like(cls_preds) * self.platt_scaling_offset
+            cls_preds = cls_preds + offset
+
         if self.conv_dir_cls is not None:
             dir_cls_preds = self.conv_dir_cls(spatial_features_2d)
             if self.use_multihead:
@@ -175,6 +193,7 @@ class AnchorHeadMulti(AnchorHeadTemplate):
         rpn_head_cfgs = self.model_cfg.RPN_HEAD_CFGS
         rpn_heads = []
         class_names = []
+
         for rpn_head_cfg in rpn_head_cfgs:
             # All class names in rpn_head_cfgs are merged to one list. It assumes unique classes.
             class_names.extend(rpn_head_cfg['HEAD_CLS_NAME'])
@@ -193,7 +212,7 @@ class AnchorHeadMulti(AnchorHeadTemplate):
                 len(rpn_head_cfg['HEAD_CLS_NAME']) if self.separate_multihead else self.num_class,
                 num_anchors_per_location, self.box_coder.code_size, rpn_head_cfg,
                 head_label_indices=head_label_indices,
-                separate_reg_config=self.model_cfg.get('SEPARATE_REG_CONFIG', None)
+                separate_reg_config=self.model_cfg.get('SEPARATE_REG_CONFIG', None),
             )
             rpn_heads.append(rpn_head)
         # rpn head per rpn_head_cfg.
