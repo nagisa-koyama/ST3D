@@ -17,12 +17,18 @@ DATA_CONFIGS:
         _BASE_CONFIG_: cfgs/dataset_configs/da_waymo_dataset.yaml
         INFO_WITH_FAKELIDAR: False
         CLASS_NAMES: ['waymo:Vehicle']
+        DRAW_CONF_CALIB_CURVE: False
+        RUN_CONF_CALIB: False
     LYFT_CONFIG:
         _BASE_CONFIG_: cfgs/dataset_configs/da_lyft_dataset.yaml
         CLASS_NAMES: ['lyft:car']
+        DRAW_CONF_CALIB_CURVE: False
+        RUN_CONF_CALIB: False
     PANDASET_CONFIG:
         _BASE_CONFIG_: cfgs/dataset_configs/da_pandaset_dataset.yaml
         CLASS_NAMES: ['pandaset:Car']
+        DRAW_CONF_CALIB_CURVE: False
+        RUN_CONF_CALIB: False
 
 # DATA_CONFIG_TAR:
 #     _BASE_CONFIG_: cfgs/dataset_configs/da_kitti_dataset.yaml
@@ -30,8 +36,10 @@ DATA_CONFIGS:
 #     # CLASS_NAMES: ['kitti:Car', 'waymo:Vehicle', 'lyft:car', 'pandaset:Car']
 #     CLASS_NAMES: ['kitti:Car']
 #     SHIFT_COOR: [0.0, 0.0, 1.6]
+#     DRAW_CONF_CALIB_CURVE: False
+#     RUN_CONF_CALIB: False
 
 MODEL:
     BACKBONE_2D:
         NAME: DomainAttentionBEVBackbone
-        NUM_ADAPTERS: 4
+        NUM_ADAPTERS: 3

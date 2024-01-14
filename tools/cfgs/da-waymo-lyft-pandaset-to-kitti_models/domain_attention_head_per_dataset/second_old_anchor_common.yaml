@@ -106,15 +106,23 @@ MODEL:
         RPN_HEAD_CFGS: [
             # {
             #     'HEAD_CLS_NAME': ['kitti:Car'],
+            #     'PLATT_SCALING_SCALE': 1.0,
+            #     'PLATT_SCALING_OFFSET': 0.0,
             # },
             {
                 'HEAD_CLS_NAME': ['waymo:Vehicle'],
+                'PLATT_SCALING_SCALE': [2.15252313],
+                'PLATT_SCALING_OFFSET': [7.51406276],
             },
             {
                 'HEAD_CLS_NAME': ['lyft:car'],
+                'PLATT_SCALING_SCALE': [1.94203519],
+                'PLATT_SCALING_OFFSET': [3.21289819],
             },
             {
                 'HEAD_CLS_NAME': ['pandaset:Car'],
+                'PLATT_SCALING_SCALE': [1.63204776],
+                'PLATT_SCALING_OFFSET': [3.71043937],
             },
         ]
 
