@@ -31,6 +31,8 @@ class KittiDataset(DatasetTemplate):
 
         self.kitti_infos = []
         self.include_kitti_data(self.mode)
+        self.draw_conf_calib_curve = self.dataset_cfg.get('DRAW_CONF_CALIB_CURVE', False)
+        self.run_conf_calib = self.dataset_cfg.get('RUN_CONF_CALIB', False)
 
     def include_kitti_data(self, mode):
         if self.logger is not None:
@@ -343,8 +345,10 @@ class KittiDataset(DatasetTemplate):
         eval_det_annos = det_annos
         eval_gt_annos = [copy.deepcopy(info['annos']) for info in self.kitti_infos]
         # print("eval_gt_annos[0][name]:", eval_gt_annos[0]['name'])
-        conf_calib_utils.generate_calibration_curve(eval_det_annos, eval_gt_annos, class_names, dataset_name="kitti")
-        conf_calib_utils.run_platt_scaling(eval_det_annos, eval_gt_annos, class_names, dataset_name="kitti")
+        if self.draw_conf_calib_curve:
+            conf_calib_utils.generate_calibration_curve(eval_det_annos, eval_gt_annos, class_names, dataset_name="kitti")
+        if self.run_conf_calib:
+            conf_calib_utils.run_platt_scaling(eval_det_annos, eval_gt_annos, class_names, dataset_name="kitti")
 
         ap_result_str, ap_dict = kitti_eval.get_official_eval_result(eval_gt_annos, eval_det_annos, class_names)
 

@@ -73,7 +73,8 @@ class PandasetDataset(DatasetTemplate):
         self.pandaset_infos = []
         self.include_pandaset_infos(self.mode)
         self.logger=logger
-
+        self.draw_conf_calib_curve = self.dataset_cfg.get('DRAW_CONF_CALIB_CURVE', False)
+        self.run_conf_calib = self.dataset_cfg.get('RUN_CONF_CALIB', False)
 
     def include_pandaset_infos(self, mode):
         if self.logger is not None:
@@ -366,13 +367,14 @@ class PandasetDataset(DatasetTemplate):
         )
         kitti_class_names = [map_name_to_kitti[x] for x in class_names]
 
-        conf_calib_utils.generate_calibration_curve(eval_det_annos, eval_gt_annos, kitti_class_names, dataset_name="pandaset")
-        conf_calib_utils.run_platt_scaling(eval_det_annos, eval_gt_annos, kitti_class_names, dataset_name="pandaset")
+        if self.draw_conf_calib_curve:
+            conf_calib_utils.generate_calibration_curve(eval_det_annos, eval_gt_annos, kitti_class_names, dataset_name="pandaset")
+        if self.run_conf_calib:
+            conf_calib_utils.run_platt_scaling(eval_det_annos, eval_gt_annos, kitti_class_names, dataset_name="pandaset")
 
         ap_result_str, ap_dict = kitti_eval.get_official_eval_result(
             gt_annos=eval_gt_annos, dt_annos=eval_det_annos, current_classes=kitti_class_names
         )
-
 
         return ap_result_str, ap_dict
 

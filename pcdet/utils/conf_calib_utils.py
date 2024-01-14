@@ -120,18 +120,10 @@ def generate_confidence_calibration_input(pred_annos, gt_annos, class_names, mat
         eval_pred_scores = aggregated_pred_scores[eval_name_mask]
         eval_gt_true = (aggregated_gt_names[eval_name_mask] == class_name).astype(np.int32)
         class_name_input_dict[class_name] = (eval_pred_scores, eval_gt_true)
-        # print("pred_scores: ", pred_scores)
-        # print("pred_names: ", pred_names)
-        # print("gt_names: ", gt_names)
-        print("max(pred_scores): ", np.max(pred_scores))
-        print("min(pred_scores): ", np.min(pred_scores))
-        print("max(eval_name_mask): ", np.max(eval_name_mask))
         print("max(eval_pred_scores): ", np.max(eval_pred_scores))
         print("min(eval_pred_scores): ", np.min(eval_pred_scores))
         print("max(eval_gt_true): ", np.max(eval_gt_true))
         print("min(eval_gt_true): ", np.min(eval_gt_true))
-        # print("eval_gt_true: ", eval_gt_true)
-        # print("eval_pred_scores: ", eval_pred_scores)
     return class_name_input_dict
 
 def generate_calibration_curve(pred_annos, gt_annos, class_names, match_iou_thresh=0.1, match_height=False, dataset_name=""):
