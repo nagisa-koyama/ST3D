@@ -32,6 +32,7 @@ class AxisAlignedTargetAssigner(object):
         #     for rpn_head_cfg in rpn_head_cfgs:
         #         for idx, name in enumerate(rpn_head_cfg['HEAD_CLS_NAME']):
         #             self.gt_remapping[name] = idx + 1
+        self.num_gt_assignment = anchor_target_cfg.get('NUM_GT_ASSIGNMENT', 1)
 
     def assign_targets(self, all_anchors, gt_boxes_with_classes, gt_scores=None):
         """
@@ -91,14 +92,15 @@ class AxisAlignedTargetAssigner(object):
                 # print("anchors.shape: ", anchors.shape)
                 # print("feature_map_size: ", feature_map_size)
 
-                single_target = self.assign_targets_multi(
                 # single_target = self.assign_targets_single(
+                single_target = self.assign_targets_multi(
                     anchors,
                     cur_gt[mask],
                     gt_classes=selected_classes,
                     gt_scores=cur_gt_scores[mask] if cur_gt_scores is not None else None,
+                    gt_assign_max=self.num_gt_assignment,
                     matched_threshold=self.matched_thresholds[anchor_class_name],
-                    unmatched_threshold=self.unmatched_thresholds[anchor_class_name]
+                    unmatched_threshold=self.unmatched_thresholds[anchor_class_name],
                 )
                 target_list.append(single_target)
 
@@ -242,7 +244,7 @@ class AxisAlignedTargetAssigner(object):
         }
         return ret_dict
 
-    def assign_targets_multi(self, anchors, gt_boxes, gt_classes, gt_scores=None, gt_assign_max=3, matched_threshold=0.6, unmatched_threshold=0.45):
+    def assign_targets_multi(self, anchors, gt_boxes, gt_classes, gt_scores=None, gt_assign_max=1, matched_threshold=0.6, unmatched_threshold=0.45):
 
         num_anchors = anchors.shape[0]
         num_gt = gt_boxes.shape[0]
@@ -298,7 +300,7 @@ class AxisAlignedTargetAssigner(object):
         bbox_targets = anchors.new_zeros((num_anchors, gt_assign_max, self.box_coder.code_size))
         if len(gt_boxes) > 0 and anchors.shape[0] > 0:
             bbox_targets[matched_gt_mask_topk, :] = self.box_coder.encode_torch(
-                gt_boxes[gt_ids[matched_gt_mask_topk].long()], anchors_repeated[matched_gt_mask_topk, :]) # box, anchors in the same dimentions.
+                gt_boxes[gt_ids[matched_gt_mask_topk].long()], anchors_repeated[matched_gt_mask_topk, :])  # box, anchors in the same dimentions.
         # print("bbox_targets[matched_gt_mask_topk, :].shape", bbox_targets[matched_gt_mask_topk, :].shape)
         reg_weights = anchors.new_zeros((num_anchors, gt_assign_max))
         if self.norm_by_num_examples:
