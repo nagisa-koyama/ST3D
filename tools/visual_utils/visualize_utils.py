@@ -140,7 +140,7 @@ def draw_multi_grid_range(fig, grid_size=10, bv_range=(-50, -75, 100, 75)):
     return fig
 
 
-def draw_scenes(points, gt_boxes=None, ref_boxes=None, ref_scores=None, ref_labels=None):
+def draw_scenes(points, gt_boxes=None, ref_boxes=None, gt_scores=None, ref_scores=None, ref_labels=None):
     start_time = time.time()
     if not isinstance(points, np.ndarray):
         points = points.cpu().numpy()
@@ -148,7 +148,12 @@ def draw_scenes(points, gt_boxes=None, ref_boxes=None, ref_scores=None, ref_labe
         ref_boxes = ref_boxes.cpu().numpy()
     if gt_boxes is not None and not isinstance(gt_boxes, np.ndarray):
         gt_boxes = gt_boxes.cpu().numpy()
-    if ref_scores is not None and not isinstance(ref_scores, np.ndarray):
+    if gt_scores is not None and not isinstance(gt_scores, np.ndarray):
+        gt_scores = gt_scores.cpu().numpy()
+        ref_scores = None
+    elif ref_scores is not None and not isinstance(ref_scores, np.ndarray):
+        # gt_scores is prioritized over ref_scores.
+        gt_scores = None
         ref_scores = ref_scores.cpu().numpy()
     if ref_labels is not None and not isinstance(ref_labels, np.ndarray):
         ref_labels = ref_labels.cpu().numpy()
@@ -161,13 +166,12 @@ def draw_scenes(points, gt_boxes=None, ref_boxes=None, ref_scores=None, ref_labe
     fig.scene.disable_render = True
     print("draw_pts_duration:", draw_pts_duration - copy_to_cpu_duration)
 
-
     fig = draw_multi_grid_range(fig, grid_size=25, bv_range=(-50, -75, 100, 75))
     draw_multi_grid_range_duration = time.time()
     print("draw_multi_grid_range_duration:", draw_multi_grid_range_duration - draw_pts_duration)
     if gt_boxes is not None:
         corners3d = boxes_to_corners_3d(gt_boxes)
-        fig = draw_corners3d(corners3d, fig=fig, color=(0, 0, 1), max_num=100)
+        fig = draw_corners3d(corners3d, fig=fig, color=(0, 0, 1), cls=gt_scores, max_num=100)
     draw_corners3d_gt_boxes_duration = time.time()    
     print("draw_corners3d_gt_boxes_duration for {} boxes: {}".format(len(gt_boxes), draw_corners3d_gt_boxes_duration - draw_multi_grid_range_duration))
 
@@ -175,13 +179,11 @@ def draw_scenes(points, gt_boxes=None, ref_boxes=None, ref_scores=None, ref_labe
         ref_corners3d = boxes_to_corners_3d(ref_boxes)
         if ref_labels is None:
             fig = draw_corners3d(ref_corners3d, fig=fig, color=(0, 1, 0), cls=ref_scores, max_num=100)
-            # fig = draw_corners3d(ref_corners3d, fig=fig, color=(0, 1, 0), max_num=100)
         else:
             for k in range(ref_labels.min(), ref_labels.max() + 1):
                 cur_color = tuple(box_colormap[k % len(box_colormap)])
                 mask = (ref_labels == k)
                 fig = draw_corners3d(ref_corners3d[mask], fig=fig, color=cur_color, cls=ref_scores[mask], max_num=100)
-                # fig = draw_corners3d(ref_corners3d[mask], fig=fig, color=cur_color, max_num=100)
 
     draw_corners_3d_ref_boxes_duration = time.time()
     print("draw_corners3d_ref_boxes_duration for {} boxes: {}".format(len(ref_boxes), draw_corners_3d_ref_boxes_duration - draw_corners3d_gt_boxes_duration))

@@ -129,7 +129,7 @@ class DatasetTemplate(torch_data.Dataset):
 
 
     @staticmethod
-    def __vis__(points, gt_boxes, ref_boxes=None, scores=None, labels=None, use_fakelidar=False):
+    def __vis__(points, gt_boxes, ref_boxes=None, gt_scores=None, ref_scores=None, labels=None, use_fakelidar=False):
         import visual_utils.visualize_utils as vis
         import mayavi.mlab as mlab
         gt_boxes = copy.deepcopy(gt_boxes)
@@ -141,7 +141,7 @@ class DatasetTemplate(torch_data.Dataset):
             if use_fakelidar:
                 ref_boxes = box_utils.boxes3d_kitti_lidar_to_fakelidar(ref_boxes)
 
-        vis.draw_scenes(points, gt_boxes, ref_boxes=ref_boxes, ref_scores=scores, ref_labels=labels)
+        vis.draw_scenes(points, gt_boxes, ref_boxes=ref_boxes, gt_scores=gt_scores, ref_scores=ref_scores, ref_labels=labels)
         # mlab.show(stop=True)
 
     @staticmethod

@@ -91,7 +91,7 @@ def main():
             dataset.__vis__(
                 points=data_dict['points'][first_elem_mask, 1:], gt_boxes=data_dict['gt_boxes'][first_elem_index],
                 ref_boxes=annos[first_elem_index]['boxes_lidar'],
-                scores=annos[first_elem_index]['score'],
+                ref_scores=annos[first_elem_index]['score'],
                 labels=annos[first_elem_index]['pred_labels']
             )
             vis_duration = time.time()

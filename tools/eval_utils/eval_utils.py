@@ -81,7 +81,7 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
                 dataset.__vis__(
                     points=batch_dict['points'][first_elem_mask, 1:], gt_boxes=batch_dict['gt_boxes'][first_elem_index],
                     ref_boxes=annos[first_elem_index]['boxes_lidar'],
-                    scores=annos[first_elem_index]['score']
+                    ref_scores=annos[first_elem_index]['score']
                 )
                 filename = "scene_val_epoch{}_{}.png".format(epoch_id, dataset.dataset_ontology)
                 mlab.savefig(filename=filename)

@@ -110,9 +110,12 @@ def train_one_epoch_st(model, optimizer, source_reader, target_loader, model_fun
                     mlab.options.offscreen = True
                     first_elem_index = 0
                     first_elem_mask = target_batch['points'][:, 0] == first_elem_index
+                    gt_scores = None
+                    if target_batch.keys().__contains__('gt_scores'):
+                        gt_scores = target_batch['gt_scores'][first_elem_index]
                     target_loader.dataset.__vis__(
                         points=target_batch['points'][first_elem_mask, 1:], gt_boxes=target_batch['gt_boxes'][first_elem_index],
-                        ref_boxes=pred_dicts[0]['pred_boxes'], scores=pred_dicts[0]['pred_scores']
+                        ref_boxes=pred_dicts[0]['pred_boxes'], gt_scores=gt_scores, ref_scores=pred_dicts[0]['pred_scores']
                     )
                     filename = "scene_self_train_epoch{}_{}.png".format(cur_epoch, target_loader.dataset.dataset_ontology)
                     mlab.savefig(filename=filename)
