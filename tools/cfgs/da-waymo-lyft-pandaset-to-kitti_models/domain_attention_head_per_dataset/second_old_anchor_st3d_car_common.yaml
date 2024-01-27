@@ -49,12 +49,15 @@ OPTIMIZATION:
 SELF_TRAIN:
     # SCORE_THRESH: [0.0001]
     # SCORE_THRESH: [0.6]
+    # SCORE_THRESH: [0.5]
     SCORE_THRESH: [0.1]
+    # SCORE_THRESH: [0.01]
     # SCORE_THRESH: [0.2]
     # SCORE_THRESH: [0.05]
-    # NEG_THRESH: [0.0001]
+    # NEG_THRESH: [0.5]
     # NEG_THRESH: [0.2]
     NEG_THRESH: [0.1]
+    # NEG_THRESH: [0.01]
     # NEG_THRESH: [0.0001]
     # NEG_THRESH: [0.005]
     UPDATE_PSEUDO_LABEL: [0]
@@ -77,14 +80,14 @@ SELF_TRAIN:
         ENABLED: True
         # NAME: consistency_ensemble
         NAME: nms_ensemble
-        IOU_THRESH: 0.5
+        IOU_THRESH: 0.1
 
         NMS_CONFIG:
             NMS_TYPE: nms_gpu
             MULTI_CLASSES_NMS: False
             NMS_PRE_MAXSIZE: 512
             NMS_POST_MAXSIZE: 100
-            NMS_THRESH: 0.5
+            NMS_THRESH: 0.1
 
         MEMORY_VOTING:
             ENABLED: True
