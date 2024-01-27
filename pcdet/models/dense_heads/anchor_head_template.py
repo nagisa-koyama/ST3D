@@ -109,18 +109,17 @@ class AnchorHeadTemplate(nn.Module):
         negative_cls_weights = negatives * 1.0
 
         score_weighting = self.model_cfg.LOSS_CONFIG.get('SCORE_WEIGHTING', False)
-        if score_weighting is True:
-            cls_weights = (negative_cls_weights + 1.0 * positives * box_cls_scores).float()
-            pos_normalizer = (1.0 * positives * box_cls_scores).sum(1, keepdim=True).float()
-        else:
-            cls_weights = (negative_cls_weights + 1.0 * positives).float()
-            pos_normalizer = positives.sum(1, keepdim=True).float()
+        # TODO(nagisa.koyama): Revisit here once we confirm soft label is better or not.
+        # if score_weighting is True:
+        #     cls_weights = (negative_cls_weights + 1.0 * positives * box_cls_scores).float()
+        #     # pos_normalizer = (1.0 * positives * box_cls_scores).sum(1, keepdim=True).float()
+        #     pos_normalizer = positives.sum(1, keepdim=True).float()
+        cls_weights = (negative_cls_weights + 1.0 * positives).float()
+        pos_normalizer = positives.sum(1, keepdim=True).float()
 
-        reg_weights = positives.float()
         if self.num_class == 1:
             # class agnostic
             box_cls_labels[positives] = 1
-        reg_weights /= torch.clamp(pos_normalizer, min=1.0)
         cls_weights /= torch.clamp(pos_normalizer, min=1.0)
         cls_targets = box_cls_labels * cared.type_as(box_cls_labels)
         cls_targets = cls_targets.unsqueeze(dim=-1)
@@ -129,7 +128,13 @@ class AnchorHeadTemplate(nn.Module):
         one_hot_targets = torch.zeros(
             *list(cls_targets.shape), self.num_class + 1, dtype=cls_preds.dtype, device=cls_targets.device
         )
-        one_hot_targets.scatter_(-1, cls_targets.unsqueeze(dim=-1).long(), 1.0)
+        # Apply soft label.
+        # TODO(nagisa.koyama): Revisit here once we confirm soft label is better or not.
+        if score_weighting is True:
+            assert cls_targets.unsqueeze(dim=-1).long().shape == box_cls_scores.unsqueeze(dim=-1).shape
+            one_hot_targets.scatter_(-1, cls_targets.unsqueeze(dim=-1).long(), box_cls_scores.unsqueeze(dim=-1))
+        else:
+            one_hot_targets.scatter_(-1, cls_targets.unsqueeze(dim=-1).long(), 1.0)
         cls_preds = cls_preds.view(batch_size, -1, self.num_class)
         one_hot_targets = one_hot_targets[..., 1:]
         num_repeat_anchor = one_hot_targets.shape[1] // cls_preds.shape[1]
@@ -137,14 +142,6 @@ class AnchorHeadTemplate(nn.Module):
             1, 1, num_repeat_anchor).view(batch_size, -1, cls_preds.shape[-1]), one_hot_targets, weights=cls_weights)  # [N, M]
         # cls_loss_src = self.cls_loss_func(cls_preds.repeat(1, num_repeat_anchor, 1), one_hot_targets, weights=cls_weights)  # [N, M]
         cls_loss = cls_loss_src.sum() / batch_size / num_repeat_anchor
-
-        # print("pos_normalizer:", pos_normalizer)
-        # print("box_cls_labels.shape:", box_cls_labels.shape)
-        # print("cls_preds.shape:", cls_preds.shape)
-        # print("cls_target.shape:", cls_targets.shape)
-        # print("one_hot_targets.shape:", one_hot_targets.shape)
-        # print("num_repeat_anchors in cls_loss:", num_repeat_anchor)
-
         cls_loss = cls_loss * self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['cls_weight']
         tb_dict = {
             'rpn_loss_cls': cls_loss.item()
@@ -187,11 +184,18 @@ class AnchorHeadTemplate(nn.Module):
         box_dir_cls_preds = self.forward_ret_dict.get('dir_cls_preds', None)
         box_reg_targets = self.forward_ret_dict['box_reg_targets']
         box_cls_labels = self.forward_ret_dict['box_cls_labels']
+        box_cls_scores = self.forward_ret_dict['box_cls_scores'] if self.forward_ret_dict['box_cls_scores'] is not None else None
         batch_size = int(box_preds.shape[0])
 
         positives = box_cls_labels > 0
-        reg_weights = positives.float()
-        pos_normalizer = positives.sum(1, keepdim=True).float()
+        score_weighting = self.model_cfg.LOSS_CONFIG.get('SCORE_WEIGHTING', False)
+        # TODO(nagisa.koyama): Revisit here once we confirm confidence score can be applied to regression loss.
+        if score_weighting is True:
+            reg_weights = positives.float() * box_cls_scores.float()
+            pos_normalizer = reg_weights.sum(1, keepdim=True).float()
+        else:
+            reg_weights = positives.float()
+            pos_normalizer = positives.sum(1, keepdim=True).float()
         reg_weights /= torch.clamp(pos_normalizer, min=1.0)
 
         if isinstance(self.anchors, list):
@@ -232,7 +236,12 @@ class AnchorHeadTemplate(nn.Module):
             )
 
             dir_logits = box_dir_cls_preds.view(batch_size, -1, self.model_cfg.NUM_DIR_BINS)
-            weights = positives.type_as(dir_logits)
+            # Apply weights on positive samples for direction classification loss.
+            # TODO(nagisa.koyama): Revisit here once we confirm confidence score can be applied to direction loss.
+            if score_weighting is True:
+                weights = positives.float() * box_cls_scores.float()
+            else:
+                weights = positives.type_as(dir_logits)
             weights /= torch.clamp(weights.sum(-1, keepdim=True), min=1.0)
             num_repeat_anchor = dir_targets.shape[1] // dir_logits.shape[1]
             dir_loss = self.dir_loss_func(dir_logits.repeat(1, 1, num_repeat_anchor).view(batch_size, -1,
