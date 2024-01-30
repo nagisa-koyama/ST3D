@@ -417,7 +417,6 @@ def create_nuscenes_info(version, data_path, save_path, max_sweeps=10):
     from . import nuscenes_utils
     data_path = data_path / version
     save_path = save_path / version
-
     assert version in ['v1.0-trainval', 'v1.0-test', 'v1.0-mini']
     if version == 'v1.0-trainval':
         train_scenes = splits.train
@@ -471,7 +470,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.func == 'create_nuscenes_infos':
-        dataset_cfg = EasyDict(yaml.load(open(args.cfg_file)))
+        dataset_cfg = EasyDict(yaml.full_load(open(args.cfg_file)))
         ROOT_DIR = (Path(__file__).resolve().parent / '../../../').resolve()
         dataset_cfg.VERSION = args.version
         create_nuscenes_info(

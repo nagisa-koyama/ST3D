@@ -29,7 +29,7 @@ class DatasetTemplate(torch_data.Dataset):
             self.map_ontology_dataset_to_model = get_ontology_mapping(self.dataset_ontology, model_ontology)
             self.map_ontology_model_to_dataset = get_ontology_mapping(model_ontology, self.dataset_ontology)
             self.dataset_class_names = [self.map_ontology_model_to_dataset[label] for label in class_names]
-        elif ":" in class_names[0]:
+        elif class_names is not None and ":" in class_names[0]:
             # Multi-head setup. Handles only associated labels.
             self.dataset_class_names = copy.deepcopy([])
             for cls in class_names:
