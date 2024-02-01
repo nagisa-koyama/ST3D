@@ -57,6 +57,8 @@ class DataBaseSampler(object):
                     continue
             else:
                 mapped_class_name = class_name
+                if mapped_class_name not in dataset_class_names:
+                    continue
             self.sample_class_num[mapped_class_name] = sample_num
             self.sample_groups[mapped_class_name] = {
                 'sample_num': sample_num,
