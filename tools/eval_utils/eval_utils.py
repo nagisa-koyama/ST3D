@@ -12,6 +12,7 @@ import wandb
 from pcdet.models import load_data_to_gpu
 from pcdet.utils import common_utils
 from pcdet.models.model_utils.dsnorm import set_ds_target
+from pcdet.utils.ontology_mapping import get_ontology_mapping
 
 
 def statistics_info(cfg, ret_dict, metric, disp_dict):
@@ -139,24 +140,34 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
 
     # Multi-dataset setup.
     if ":" in class_names[0]:
-        class_names_for_evaluation = []
-        for cls in class_names:
-            ontology, label = cls.split(":")
+        class_names_for_evaluation = set()
+        model_to_dataset = None
+        model_ontology = cfg.get('ONTOLOGY', None)
+        if model_ontology is not None and dataset.dataset_ontology is not None:
+            model_to_dataset = get_ontology_mapping(model_ontology, dataset.dataset_ontology)
+        for name in class_names:
+            if model_to_dataset:
+                name = model_to_dataset[name]
+            ontology, label = name.split(":")
             if ontology == dataset.dataset_ontology:
-                class_names_for_evaluation.append(label)
+                class_names_for_evaluation.add(label)
         for index in range(len(eval_det_annos)):
             for index2 in range(len(eval_det_annos[index]['name'])):
+                det_annos = eval_det_annos[index]['name'][index2]
+                if model_to_dataset:
+                    det_annos = model_to_dataset[det_annos]
                 # Remap only dataset-specific inferences to be evaluated. Oher inferences will be ignored for metrics computation.
-                if dataset.dataset_ontology in eval_det_annos[index]['name'][index2]:
-                    eval_det_annos[index]['name'][index2] = eval_det_annos[index]['name'][index2].split(":")[-1]
+                if dataset.dataset_ontology in det_annos:
+                    eval_det_annos[index]['name'][index2] = det_annos.split(":")[-1]
             assert len(eval_det_annos[index]['boxes_lidar']) == len(eval_det_annos[index]['score'])
 
+    logger.info('model_ontology in eval_utils is %s' % model_ontology)
     logger.info('datset.dataset_ontology in eval_utils is %s' % dataset.dataset_ontology)
     logger.info('class_names in eval_utils is %s' % class_names)
-    logger.info('class_names_for_evaluation in eval_utils is %s' % class_names_for_evaluation)
+    logger.info('class_names_for_evaluation in eval_utils is %s' % list(class_names_for_evaluation))
 
     result_str, result_dict = dataset.evaluation(
-        eval_det_annos, class_names_for_evaluation,
+        eval_det_annos, list(class_names_for_evaluation),
         eval_metric=cfg.MODEL.POST_PROCESSING.EVAL_METRIC,
         output_path=final_output_dir
     )
