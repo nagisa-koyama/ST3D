@@ -139,7 +139,8 @@ RUN ln -s /storage/waymo_open_dataset_v_1_4_0/pcdet_structure/ data/waymo
 RUN ln -s /storage/kitti/ data/kitti
 RUN ln -s /storage/level5-3d-object-detection data/lyft
 RUN ln -s /storage/pandaset data/pandaset
-RUN ln -s /storage/nuscenes_mini_v1_0 data/nuscenes
+# RUN ln -s /storage/nuscenes_mini_v1_0 data/nuscenes
+RUN ln -s /storage/nuscenes_full_v_1_0 data/nuscenes
 
 # Add alias for test command
 RUN echo 'alias train_kitti="python train.py --cfg_file cfgs/kitti_models/second.yaml"' >> /root/.bashrc
@@ -168,6 +169,7 @@ RUN echo 'alias train_dev_wo_kitti_single="python train.py --cfg_file cfgs/da-wa
 RUN echo 'alias demo_kitti="python3 demo.py --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/domain_attention_head_per_dataset/second_old_anchor_waymo_lyft_pandaset_to_kitti.yaml --ckpt /storage/wandb/run-20230821_222115-469by94p/files/checkpoint_epoch_5.pth"' >> /root/.bashrc
 RUN echo 'alias demo_lyft="python3 demo.py --ckpt /storage/wandb/run-20230723_221713-2c94wfva/files/checkpoint_epoch_20.pth --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/naive/second_old_anchor_lyft_to_lyft.yaml"' >> /root/.bashrc
 RUN echo 'alias test_kitti_head_per_dataset="python test.py --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/domain_attention_head_per_dataset/second_old_anchor_waymo_lyft_pandaset_to_kitti.yaml --ckpt /storage/wandb/run-20230821_222115-469by94p/files/checkpoint_epoch_5.pth"' >> /root/.bashrc
+RUN echo 'alias train_nuscene="python train.py --cfg_file cfgs/nuscenes_models/second_car.yaml --epochs 3"' >> /root/.bashrc
 
 RUN nohup Xvfb -ac ${DISPLAY} -screen 0 1280x780x24 &
 
