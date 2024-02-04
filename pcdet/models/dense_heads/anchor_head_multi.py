@@ -293,7 +293,6 @@ class AnchorHeadMulti(AnchorHeadTemplate):
         else:
             cls_weights = (negative_cls_weights + 1.0 * positives).float()
             pos_normalizer = positives.sum(1, keepdim=True).float()
-        cls_weights = (negative_cls_weights + pos_cls_weight * positives).float() * self.forward_ret_dict['box_cls_scores']
 
         reg_weights = positives.float()
         if self.num_class == 1:
