@@ -139,11 +139,12 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
     class_names_for_evaluation = class_names
     eval_det_annos = copy.deepcopy(det_annos)
 
+    model_ontology = cfg.get('ONTOLOGY', None)
+
     # Multi-dataset setup.
     if ":" in class_names[0]:
         class_names_for_evaluation = set()
         model_to_dataset = None
-        model_ontology = cfg.get('ONTOLOGY', None)
         if model_ontology is not None and dataset.dataset_ontology is not None and model_ontology != dataset.dataset_ontology:
             model_to_dataset = get_ontology_mapping(model_ontology, dataset.dataset_ontology)
         for name in class_names:
