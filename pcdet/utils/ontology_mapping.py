@@ -13,7 +13,7 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'truck': 'Truck',
         'bicycle': 'Cyclist',
         'motorcycle': 'Cyclist',
-        'bus': 'Misc',
+        'bus': 'Car',
         'emergency_vehicle': 'Misc',
         'other_vehicle': 'Misc',
         'animal': 'Misc'
@@ -35,7 +35,7 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'Other Vehicle - Uncommon': 'Misc',
         'Other Vehicle - Pedicab': 'Misc',
         'Emergency Vehicle': 'Misc',
-        'Bus': 'Misc',
+        'Bus': 'Car',
         'Personal Mobility Device': 'Misc',
         'Motorized Scooter': 'Cyclist',
         'Bicycle': 'Cyclist',
@@ -53,7 +53,6 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'Construction Signs': 'Misc',
         'Temporary Construction Barriers': 'Misc',
         'Rolling Containers': 'Misc'
-
     }
     map_kitti_to_lyft = {
         'Car': 'car',
