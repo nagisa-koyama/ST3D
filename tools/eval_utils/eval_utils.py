@@ -22,7 +22,8 @@ def statistics_info(cfg, ret_dict, metric, disp_dict):
     metric['gt_num'] += ret_dict.get('gt', 0)
     min_thresh = cfg.MODEL.POST_PROCESSING.RECALL_THRESH_LIST[0]
     disp_dict['recall_%s' % str(min_thresh)] = \
-        '(%d, %d) / %d' % (metric['recall_roi_%s' % str(min_thresh)], metric['recall_rcnn_%s' % str(min_thresh)], metric['gt_num'])
+        '(%d, %d) / %d' % (metric['recall_roi_%s' % str(min_thresh)],
+                           metric['recall_rcnn_%s' % str(min_thresh)], metric['gt_num'])
 
 
 def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, save_to_file=False, result_dir=None, args=None):
@@ -48,9 +49,9 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         num_gpus = torch.cuda.device_count()
         local_rank = cfg.LOCAL_RANK % num_gpus
         model = torch.nn.parallel.DistributedDataParallel(
-                model,
-                device_ids=[local_rank],
-                broadcast_buffers=False
+            model,
+            device_ids=[local_rank],
+            broadcast_buffers=False
         )
     model.eval()
 
@@ -143,7 +144,7 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         class_names_for_evaluation = set()
         model_to_dataset = None
         model_ontology = cfg.get('ONTOLOGY', None)
-        if model_ontology is not None and dataset.dataset_ontology is not None:
+        if model_ontology is not None and dataset.dataset_ontology is not None and model_ontology != dataset.dataset_ontology:
             model_to_dataset = get_ontology_mapping(model_ontology, dataset.dataset_ontology)
         for name in class_names:
             if model_to_dataset:
@@ -182,7 +183,7 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
     logger.info('****************Evaluation done.*****************')
 
     for item in ret_dict.items():
-        wandb.log({'val/' + dataset.dataset_ontology + '/' + item[0] : item[1]})
+        wandb.log({'val/' + dataset.dataset_ontology + '/' + item[0]: item[1]})
 
     return ret_dict
 
