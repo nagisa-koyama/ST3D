@@ -170,6 +170,8 @@ RUN echo 'alias demo_kitti="python3 demo.py --cfg_file cfgs/da-waymo-lyft-pandas
 RUN echo 'alias demo_lyft="python3 demo.py --ckpt /storage/wandb/run-20230723_221713-2c94wfva/files/checkpoint_epoch_20.pth --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/naive/second_old_anchor_lyft_to_lyft.yaml"' >> /root/.bashrc
 RUN echo 'alias test_kitti_head_per_dataset="python test.py --cfg_file cfgs/da-waymo-lyft-pandaset-to-kitti_models/domain_attention_head_per_dataset/second_old_anchor_waymo_lyft_pandaset_to_kitti.yaml --ckpt /storage/wandb/run-20230821_222115-469by94p/files/checkpoint_epoch_5.pth"' >> /root/.bashrc
 RUN echo 'alias train_nuscene="python train.py --cfg_file cfgs/nuscenes_models/second_car.yaml --epochs 3"' >> /root/.bashrc
+RUN echo 'alias train_wlpn_head_per_dataset="python train.py --cfg_file cfgs/da-waymo-lyft-pandaset-nuscenes-to-kitti_models/domain_attention_head_per_dataset/second_old_anchor_waymo_lyft_pandaset_nuscenes_car_ped.yaml --batch_size 16 --epochs 5"' >> /root/.bashrc
+RUN echo 'alias train_wlpn_head_per_dataset_no_backward_together="python train.py --cfg_file cfgs/da-waymo-lyft-pandaset-nuscenes-to-kitti_models/domain_attention_head_per_dataset/second_old_anchor_waymo_lyft_pandaset_nuscenes_no_backward_together_car_ped.yaml --batch_size 16 --epochs 5"' >> /root/.bashrc
 
 RUN nohup Xvfb -ac ${DISPLAY} -screen 0 1280x780x24 &
 
