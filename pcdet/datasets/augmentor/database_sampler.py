@@ -53,12 +53,10 @@ class DataBaseSampler(object):
             elif ":" in dataset_class_names[0]:
                 # Multi-head handling. Skip class_name for other dataset.
                 mapped_class_name = dataset_ontology + ":" + class_name
-                if mapped_class_name not in dataset_class_names:
-                    continue
             else:
                 mapped_class_name = class_name
-                if mapped_class_name not in dataset_class_names:
-                    continue
+            if mapped_class_name not in dataset_class_names:
+                continue
             self.sample_class_num[mapped_class_name] = sample_num
             self.sample_groups[mapped_class_name] = {
                 'sample_num': sample_num,
