@@ -7,6 +7,8 @@ def get_ontology_mapping(input_ontology, output_ontology):
     # https://wandb.ai/wandb/lyft/reports/An-Exploration-of-Lyft-s-Self-Driving-Car-Dataset--Vmlldzo0MzcyNw#the-9-classes-in-the-lyft-dataset
     # Pandaset ontology 
     # https://github.com/scaleapi/pandaset-devkit/blob/master/docs/annotation_instructions_cuboids.pdf
+    # Nuscenes ontology
+    # https://github.com/nutonomy/nuscenes-devkit/blob/master/docs/instructions_nuscenes.md
     map_lyft_to_kitti = {
         'car': 'Car',
         'pedestrian': 'Pedestrian',
@@ -54,6 +56,32 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'Temporary Construction Barriers': 'Misc',
         'Rolling Containers': 'Misc'
     }
+    map_nuscenes_to_kitti = {
+        'car': 'Car',
+        'truck': 'Truck',
+        'bus': 'Car',
+        'construction_vehicle': 'Misc',
+        'motorcycle': 'Cyclist',
+        'bicycle': 'Cyclist',
+        'trailer': 'Misc',
+        'pedestrian': 'Pedestrian',
+        'traffic_cone': 'Misc',
+        'barrier': 'Misc',
+        'ignore': 'Misc'
+        # Follwoing classes are defined in the intruction but not in the dataset.
+        # 'Bicycle Rack': 'Misc',
+        # 'Police Vehicle': 'Misc',
+        # 'Ambulance': 'Misc',
+        # 'Child Pedestrian': 'Pedestrian',
+        # 'Construction Worker': 'Pedestrian',
+        # 'Stroller': 'Misc',
+        # 'Wheelchair': 'Misc',
+        # 'Portable Personal Mobility Vehicle': 'Misc',
+        # 'Police Officer': 'Pedestrian',
+        # 'Animal': 'Misc',
+        # 'Pushable Pullable Object': 'Misc',
+        # 'Debris': 'Misc'
+    }
     map_kitti_to_lyft = {
         'Car': 'car',
         'Pedestrian': 'pedestrian',
@@ -72,7 +100,7 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'Truck': 'Vehicle',
         'Cyclist': 'Cyclist',
         'Van': 'Vehicle',
-        'Misc': 'Sign',
+        'Misc': 'Sign', # 'Sign' as a catch-all for all other objects
         'Person_sitting': 'Pedestrian',
         'Tram': 'Sign',
         'Misc': 'Sign',
@@ -84,11 +112,23 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'Truck': 'Medium-sized Truck',
         'Cyclist': 'Bicycle',
         'Van': 'Medium-sized Truck',
-        'Misc': '',
+        'Misc': 'Sign', # 'Sign' as a catch-all for all other objects
         'Person_sitting': 'Pedestrian',
         'Tram': 'Sign',
         'Misc': 'Sign',
         'DontCare': 'Sign',
+    }
+    map_kitti_to_nuscenes = {
+        'Car': 'car',
+        'Pedestrian': 'pedestrian',
+        'Truck': 'truck',
+        'Cyclist': 'bicycle',
+        'Van': 'car',
+        'Misc': 'debris', # 'Debris as a catch-all for all other objects
+        'Person_sitting': 'pedestrian',
+        'Tram': 'debris',
+        'Misc': 'debris',
+        'DontCare': 'debris',
     }
     map_head_per_dataset_to_kitti = {
         'kitti:Car': 'kitti:Car',
@@ -119,12 +159,16 @@ def get_ontology_mapping(input_ontology, output_ontology):
         return map_waymo_to_kitti
     elif input_ontology == 'pandaset' and output_ontology == 'kitti':
         return map_pandaset_to_kitti
+    elif input_ontology == 'nuscenes' and output_ontology == 'kitti':
+        return map_nuscenes_to_kitti
     elif input_ontology == 'kitti' and output_ontology == 'lyft':
         return map_kitti_to_lyft
     elif input_ontology == 'kitti' and output_ontology == 'waymo':
         return map_kitti_to_waymo
     elif input_ontology == 'kitti' and output_ontology == 'pandaset':
         return map_kitti_to_pandaset
+    elif input_ontology == 'kitti' and output_ontology == 'nuscenes':
+        return map_kitti_to_nuscenes
     elif input_ontology == 'head_per_dataset' and output_ontology == 'kitti':
         return map_head_per_dataset_to_kitti
     elif input_ontology == 'kitti' and output_ontology == 'head_per_dataset':
