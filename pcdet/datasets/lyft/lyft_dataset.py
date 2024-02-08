@@ -125,6 +125,7 @@ class LyftDataset(DatasetTemplate):
             'Car': 'Car', # TODO: remove this once proper head-per-dataset eval is set up.
             'car': 'Car',
             'pedestrian': 'Pedestrian',
+            'Pedestrian': 'Pedestrian', # TODO: remove this once proper head-per-dataset eval is set up.
             'truck': 'Truck',
             'bicycle': 'Cyclist',
             'motorcycle': 'Cyclist'

@@ -135,10 +135,12 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'waymo:Vehicle': 'kitti:Car',
         'lyft:car': 'kitti:Car',
         'pandaset:Car': 'kitti:Car',
+        'nuscenes:car': 'kitti:Car',
         'kitti:Pedestrian': 'kitti:Pedestrian',
         'waymo:Pedestrian': 'kitti:Pedestrian',
         'lyft:pedestrian': 'kitti:Pedestrian',
         'pandaset:Pedestrian': 'kitti:Pedestrian',
+        'nuscenes:pedestrian': 'kitti:Pedestrian',
     }
     map_kitti_to_head_per_dataset = {
         'Car': 'waymo:Vehicle',

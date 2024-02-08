@@ -233,7 +233,9 @@ class NuScenesDataset(DatasetTemplate):
 
         map_name_to_kitti = {
             'car': 'Car',
+            'Car': 'Car', # TODO: remove this once proper head-per-dataset eval is set up.
             'pedestrian': 'Pedestrian',
+            'Pedestrian': 'Pedestrian', # TODO: remove this once proper head-per-dataset eval is set up.
             'truck': 'Truck',
         }
 
