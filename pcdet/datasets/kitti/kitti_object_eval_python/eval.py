@@ -360,14 +360,15 @@ def calculate_iou_partly(gt_annos, dt_annos, metric, num_parts=50):
     split_parts = get_split_parts(num_examples, num_parts)
     parted_overlaps = []
     example_idx = 0
-
     for num_part in split_parts:
         gt_annos_part = gt_annos[example_idx:example_idx + num_part]
         dt_annos_part = dt_annos[example_idx:example_idx + num_part]
         if metric == 0:
             gt_boxes = np.concatenate([a["bbox"] for a in gt_annos_part], 0)
             dt_boxes = np.concatenate([a["bbox"] for a in dt_annos_part], 0)
-            overlap_part = image_box_overlap(gt_boxes, dt_boxes)
+            # This casting is necessary to avoid out of memory.
+            overlap_part = image_box_overlap(gt_boxes, dt_boxes).astype(
+                np.float32)
         elif metric == 1:
             loc = np.concatenate(
                 [a["location"][:, [0, 2]] for a in gt_annos_part], 0)
@@ -383,8 +384,9 @@ def calculate_iou_partly(gt_annos, dt_annos, metric, num_parts=50):
             rots = np.concatenate([a["rotation_y"] for a in dt_annos_part], 0)
             dt_boxes = np.concatenate(
                 [loc, dims, rots[..., np.newaxis]], axis=1)
+            # This casting is necessary to avoid out of memory.
             overlap_part = bev_box_overlap(gt_boxes, dt_boxes).astype(
-                np.float64)
+                np.float32)
         elif metric == 2:
             loc = np.concatenate([a["location"] for a in gt_annos_part], 0)
             dims = np.concatenate([a["dimensions"] for a in gt_annos_part], 0)
@@ -396,11 +398,13 @@ def calculate_iou_partly(gt_annos, dt_annos, metric, num_parts=50):
             rots = np.concatenate([a["rotation_y"] for a in dt_annos_part], 0)
             dt_boxes = np.concatenate(
                 [loc, dims, rots[..., np.newaxis]], axis=1)
+            # This casting is necessary to avoid out of memory.
             overlap_part = d3_box_overlap(gt_boxes, dt_boxes).astype(
-                np.float64)
+                np.float32)
         else:
             raise ValueError("unknown metric")
-        parted_overlaps.append(overlap_part)
+        # This casting is necessary to avoid out of memory.
+        parted_overlaps.append(overlap_part.astype(np.float32))
         example_idx += num_part
     overlaps = []
     example_idx = 0
@@ -413,7 +417,7 @@ def calculate_iou_partly(gt_annos, dt_annos, metric, num_parts=50):
             dt_box_num = total_dt_num[example_idx + i]
             overlaps.append(
                 parted_overlaps[j][gt_num_idx:gt_num_idx + gt_box_num,
-                                   dt_num_idx:dt_num_idx + dt_box_num])
+                                   dt_num_idx:dt_num_idx + dt_box_num].astype(np.float32))
             gt_num_idx += gt_box_num
             dt_num_idx += dt_box_num
         example_idx += num_part
@@ -476,7 +480,6 @@ def eval_class(gt_annos,
     assert len(gt_annos) == len(dt_annos)
     num_examples = len(gt_annos)
     split_parts = get_split_parts(num_examples, num_parts)
-
     rets = calculate_iou_partly(dt_annos, gt_annos, metric, num_parts)
     overlaps, parted_overlaps, total_dt_num, total_gt_num = rets
     N_SAMPLE_PTS = 41
@@ -615,7 +618,6 @@ def do_eval(gt_annos,
 
     if PR_detail_dict is not None:
         PR_detail_dict['bev'] = ret['precision']
-
     ret = eval_class(gt_annos, dt_annos, current_classes, difficultys, 2,
                      min_overlaps)
     mAP_3d = get_mAP(ret["precision"])
@@ -644,6 +646,10 @@ def do_coco_style_eval(gt_annos, dt_annos, current_classes, overlap_ranges,
 
 
 def get_official_eval_result(gt_annos, dt_annos, current_classes, PR_detail_dict=None):
+    dt_count = sum([len(a["name"]) for a in dt_annos])
+    print("total num of dt:", dt_count)
+    gt_count = sum([len(a["name"]) for a in gt_annos])
+    print("total num of gt:", gt_count)
     overlap_0_7 = np.array([[0.7, 0.5, 0.5, 0.7,
                              0.5, 0.7], [0.7, 0.5, 0.5, 0.7, 0.5, 0.7],
                             [0.7, 0.5, 0.5, 0.7, 0.5, 0.7]])
@@ -762,7 +768,6 @@ def get_coco_eval_result(gt_annos, dt_annos, current_classes):
         3: 'Van',
         4: 'Person_sitting',
     }
-    print("calss_to_name:", class_to_name)
 
     class_to_range = {
         0: [0.5, 0.95, 10],
