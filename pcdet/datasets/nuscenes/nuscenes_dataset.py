@@ -6,7 +6,7 @@ import numpy as np
 from tqdm import tqdm
 
 from ...ops.roiaware_pool3d import roiaware_pool3d_utils
-from ...utils import common_utils, box_utils, self_training_utils
+from ...utils import common_utils, box_utils, self_training_utils, conf_calib_utils
 from ..dataset import DatasetTemplate
 
 
@@ -21,6 +21,8 @@ class NuScenesDataset(DatasetTemplate):
         self.include_nuscenes_data(self.mode)
         if self.training and self.dataset_cfg.get('BALANCED_RESAMPLING', False):
             self.infos = self.balanced_infos_resampling(self.infos)
+        self.draw_conf_calib_curve = self.dataset_cfg.get('DRAW_CONF_CALIB_CURVE', False)
+        self.run_conf_calib = self.dataset_cfg.get('RUN_CONF_CALIB', False)
 
     def include_nuscenes_data(self, mode):
         self.logger.info('Loading NuScenes dataset')
@@ -296,6 +298,11 @@ class NuScenesDataset(DatasetTemplate):
                 kitti_class_names.append(map_name_to_kitti[x])
             else:
                 kitti_class_names.append('Person_sitting')
+        if self.draw_conf_calib_curve:
+            conf_calib_utils.generate_calibration_curve(eval_det_annos, eval_gt_annos, kitti_class_names, dataset_name="nuscenes")
+        if self.run_conf_calib:
+            conf_calib_utils.run_platt_scaling(eval_det_annos, eval_gt_annos, kitti_class_names, dataset_name="nuscenes")
+
         ap_result_str, ap_dict = kitti_eval.get_official_eval_result(
             gt_annos=eval_gt_annos, dt_annos=eval_det_annos, current_classes=kitti_class_names
         )
