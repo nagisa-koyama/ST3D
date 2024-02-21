@@ -83,7 +83,13 @@ def generate_confidence_calibration_input(pred_annos, gt_annos, class_names, mat
     aggregated_gt_names = []
     for pred_anno, gt_anno in zip(pred_annos, gt_annos):
         pred_boxes = torch.from_numpy(pred_anno['boxes_lidar']).cuda()
-        gt_boxes = torch.from_numpy(gt_anno['gt_boxes_lidar']).cuda()
+        if 'gt_boxes_lidar' in gt_anno.keys():
+            gt_boxes_key = 'gt_boxes_lidar'
+        elif 'gt_boxes' in gt_anno.keys():
+            gt_boxes_key = 'gt_boxes'
+        else:
+            assert False, 'no gt_boxes key in gt_anno'
+        gt_boxes = torch.from_numpy(gt_anno[gt_boxes_key]).cuda()
         pos_inds, gt_inds = match_pred_and_gt(pred_boxes, gt_boxes, match_iou_thresh, match_height)
         if pos_inds is None or gt_inds is None:
             continue
