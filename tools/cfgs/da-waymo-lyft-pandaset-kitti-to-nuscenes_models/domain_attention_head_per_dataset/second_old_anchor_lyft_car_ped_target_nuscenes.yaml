@@ -1,0 +1,11 @@
+# This base config is intentionally shared among to-kitti and to-nuscenes tasks because teacher training setup is the same.
+_BASE_CONFIG_: cfgs/da-waymo-lyft-pandaset-nuscenes-to-kitti_models/domain_attention_head_per_dataset/second_old_anchor_lyft_car_ped.yaml
+
+ONTOLOGY: head_per_dataset
+
+DATA_CONFIG_TAR:
+    _BASE_CONFIG_: cfgs/dataset_configs/da_nuscenes_dataset.yaml
+    CLASS_NAMES: ['nuscenes:car', 'nuscenes:pedestrian']
+    SHIFT_COOR: [0.0, 0.0, 1.8]
+    DRAW_CONF_CALIB_CURVE: False
+    RUN_CONF_CALIB: False

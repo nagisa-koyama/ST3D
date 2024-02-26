@@ -1,0 +1,364 @@
+CLASS_NAMES: ['kitti:Car', 'kitti:Pedestrian']
+ONTOLOGY: 'kitti'
+
+# Defined for build_model but not used for self training.
+DATA_CONFIGS:
+    WAYMO_CONFIG:
+        _BASE_CONFIG_: cfgs/dataset_configs/da_waymo_dataset.yaml
+        INFO_WITH_FAKELIDAR: False
+        CLASS_NAMES: ['waymo:Vehicle', 'waymo:Pedestrian']
+        DRAW_CONF_CALIB_CURVE: False
+        RUN_CONF_CALIB: False
+    LYFT_CONFIG:
+        _BASE_CONFIG_: cfgs/dataset_configs/da_lyft_dataset.yaml
+        CLASS_NAMES: ['lyft:car', 'lyft:pedestrian']
+        DRAW_CONF_CALIB_CURVE: False
+        RUN_CONF_CALIB: False
+    PANDASET_CONFIG:
+        _BASE_CONFIG_: cfgs/dataset_configs/da_pandaset_dataset.yaml
+        CLASS_NAMES: ['pandaset:Car', 'pandaset:Pedestrian']
+        DRAW_CONF_CALIB_CURVE: False
+        RUN_CONF_CALIB: False
+    NUSCENES_CONFIG:
+        _BASE_CONFIG_: cfgs/dataset_configs/da_nuscenes_dataset.yaml
+        CLASS_NAMES: ['nuscenes:car', 'nuscenes:pedestrian']
+        SHIFT_COOR: [0.0, 0.0, 1.8]
+        DRAW_CONF_CALIB_CURVE: False
+        RUN_CONF_CALIB: False
+
+# Used for self-training
+DATA_CONFIG_TAR:
+    TARGET: True
+    USE_PSEUDO_LABEL: True
+    _BASE_CONFIG_: cfgs/dataset_configs/da_kitti_dataset.yaml
+    FOV_POINTS_ONLY: True
+    CLASS_NAMES: ['kitti:Car', 'kitti:Pedestrian']
+    SHIFT_COOR: [0.0, 0.0, 1.6]
+    DRAW_CONF_CALIB_CURVE: False
+    RUN_CONF_CALIB: False
+
+
+# Student model
+MODEL:
+    NAME: SECONDNet
+
+    VFE:
+        NAME: MeanVFE
+
+    BACKBONE_3D:
+        NAME: VoxelBackBone8x
+
+    MAP_TO_BEV:
+        NAME: HeightCompression
+        NUM_BEV_FEATURES: 256
+
+    BACKBONE_2D:
+        NAME: BaseBEVBackbone
+
+        LAYER_NUMS: [5, 5]
+        LAYER_STRIDES: [1, 2]
+        NUM_FILTERS: [128, 256]
+        UPSAMPLE_STRIDES: [1, 2]
+        NUM_UPSAMPLE_FILTERS: [256, 256]
+
+    DENSE_HEAD:
+        NAME: AnchorHeadSingle
+        CLASS_AGNOSTIC: False
+
+        USE_DIRECTION_CLASSIFIER: True
+        DIR_OFFSET: 0.78539
+        DIR_LIMIT_OFFSET: 0.0
+        NUM_DIR_BINS: 2
+
+        ANCHOR_GENERATOR_CONFIG: [
+            {
+                'class_name': 'kitti:Car',
+                'anchor_sizes': [[4.2, 2.0, 1.6]],
+                'anchor_rotations': [0, 1.57],
+                'anchor_bottom_heights': [0],
+                'align_center': False,
+                'feature_map_stride': 8,
+                'matched_threshold': 0.55,
+                'unmatched_threshold': 0.4
+            },
+            {
+                'class_name': 'kitti:Pedestrian',
+                'anchor_sizes': [[0.91, 0.86, 1.73]],
+                'anchor_rotations': [0, 1.57],
+                'anchor_bottom_heights': [0],
+                'align_center': False,
+                'feature_map_stride': 8,
+                'matched_threshold': 0.6,
+                'unmatched_threshold': 0.4
+            },
+        ]
+
+        TARGET_ASSIGNER_CONFIG:
+            NAME: AxisAlignedTargetAssigner
+            POS_FRACTION: -1.0
+            SAMPLE_SIZE: 512
+            NORM_BY_NUM_EXAMPLES: False
+            MATCH_HEIGHT: False
+            BOX_CODER: ResidualCoder
+            NUM_GT_ASSIGNMENT: 1
+
+        LOSS_CONFIG:
+            LOSS_WEIGHTS: {
+                'cls_weight': 1.0,
+                'loc_weight': 2.0,
+                'dir_weight': 0.2,
+                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+            }
+            SCORE_WEIGHTING: False
+
+    POST_PROCESSING:
+        RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+        SCORE_THRESH: 0.1
+        OUTPUT_RAW_SCORE: False
+
+        EVAL_METRIC: kitti
+
+        NMS_CONFIG:
+            MULTI_CLASSES_NMS: False
+            NMS_TYPE: nms_gpu
+            NMS_THRESH: 0.01
+            NMS_PRE_MAXSIZE: 4096
+            NMS_POST_MAXSIZE: 500
+
+# Teacher model
+SELF_TRAIN:
+    MODEL_TEACHER:
+        CLASS_NAMES: ['waymo:Vehicle', 'waymo:Pedestrian', 'lyft:car', 'lyft:pedestrian', 'pandaset:Car', 'pandaset:Pedestrian', 'nuscenes:car', 'nuscenes:pedestrian']
+        ONTOLOGY: 'head_per_dataset'
+
+        NAME: SECONDNet
+
+        VFE:
+            NAME: MeanVFE
+
+        BACKBONE_3D:
+            NAME: VoxelBackBone8x
+
+        MAP_TO_BEV:
+            NAME: HeightCompression
+            NUM_BEV_FEATURES: 256
+
+        BACKBONE_2D:
+            NAME: DomainAttentionBEVBackbone
+            # NAME: BaseBEVBackbone
+            NUM_ADAPTERS: 4
+
+            LAYER_NUMS: [5, 5]
+            LAYER_STRIDES: [1, 2]
+            NUM_FILTERS: [128, 256]
+            UPSAMPLE_STRIDES: [1, 2]
+            NUM_UPSAMPLE_FILTERS: [256, 256]
+
+        DENSE_HEAD:
+            NAME: AnchorHeadMulti
+            CLASS_AGNOSTIC: False
+
+            USE_DIRECTION_CLASSIFIER: True
+            DIR_OFFSET: 0.78539
+            DIR_LIMIT_OFFSET: 0.0
+            NUM_DIR_BINS: 2
+
+            USE_MULTIHEAD: True
+            SEPARATE_MULTIHEAD: True
+            ANCHOR_GENERATOR_CONFIG: [
+                {
+                    'class_name': 'waymo:Vehicle',
+                    'anchor_sizes': [[4.2, 2.0, 1.6]],
+                    'anchor_rotations': [0, 1.57],
+                    'anchor_bottom_heights': [0],
+                    'align_center': False,
+                    'feature_map_stride': 8,
+                    'matched_threshold': 0.55,
+                    'unmatched_threshold': 0.4
+                },
+                {
+                    'class_name': 'waymo:Pedestrian',
+                    'anchor_sizes': [[0.91, 0.86, 1.73]],
+                    'anchor_rotations': [0, 1.57],
+                    'anchor_bottom_heights': [0],
+                    'align_center': False,
+                    'feature_map_stride': 8,
+                    'matched_threshold': 0.5,
+                    'unmatched_threshold': 0.35
+                },
+                {
+                    'class_name': 'lyft:car',
+                    'anchor_sizes': [[4.2, 2.0, 1.6]],
+                    'anchor_rotations': [0, 1.57],
+                    'anchor_bottom_heights': [0],
+                    'align_center': False,
+                    'feature_map_stride': 8,
+                    'matched_threshold': 0.55,
+                    'unmatched_threshold': 0.4
+                },
+                {
+                    'class_name': lyft:pedestrian,
+                    'anchor_sizes': [[0.80, 0.76, 1.76]],
+                    'anchor_rotations': [0, 1.57],
+                    'anchor_bottom_heights': [0],
+                    'align_center': False,
+                    'feature_map_stride': 8,
+                    'matched_threshold': 0.6,
+                    'unmatched_threshold': 0.4
+                },
+                {
+                    'class_name': 'pandaset:Car',
+                    'anchor_sizes': [[4.2, 2.0, 1.6]],
+                    'anchor_rotations': [0, 1.57],
+                    'anchor_bottom_heights': [0],
+                    'align_center': False,
+                    'feature_map_stride': 8,
+                    'matched_threshold': 0.55,
+                    'unmatched_threshold': 0.4
+                },
+                {
+                    'class_name': pandaset:Pedestrian,
+                    'anchor_sizes': [[0.80, 0.76, 1.76]],
+                    'anchor_rotations': [0, 1.57],
+                    'anchor_bottom_heights': [0],
+                    'align_center': False,
+                    'feature_map_stride': 8,
+                    'matched_threshold': 0.6,
+                    'unmatched_threshold': 0.4
+                },
+                {
+                    'class_name': nuscenes:car,
+                    'anchor_sizes': [[4.7, 2.1, 1.7]],
+                    'anchor_rotations': [0, 1.57],
+                    'anchor_bottom_heights': [0],
+                    'align_center': False,
+                    'feature_map_stride': 8,
+                    'matched_threshold': 0.55,
+                    'unmatched_threshold': 0.4
+                },
+                {
+                    'class_name': nuscenes:pedestrian,
+                    'anchor_sizes': [[0.73, 0.67, 1.77]],
+                    'anchor_rotations': [0, 1.57],
+                    'anchor_bottom_heights': [0],
+                    'align_center': False,
+                    'feature_map_stride': 8,
+                    'matched_threshold': 0.6,
+                    'unmatched_threshold': 0.4
+                },
+            ]
+            SHARED_CONV_NUM_FILTER: null
+            RPN_HEAD_CFGS: [
+              {
+                  'HEAD_CLS_NAME': ['waymo:Vehicle', 'waymo:Pedestrian'],
+                  'PLATT_SCALING_SCALE': [2.29005354, 1.75972834],
+                  'PLATT_SCALING_OFFSET': [4.22400009, 4.01675142]
+              },
+              {
+                  'HEAD_CLS_NAME': ['lyft:car', 'lyft:pedestrian'],
+                  'PLATT_SCALING_SCALE': [2.27585992, 2.18814113],
+                  'PLATT_SCALING_OFFSET': [4.10048067, 3.9381164]
+              },
+              {
+                  'HEAD_CLS_NAME': ['pandaset:Car', 'pandaset:Pedestrian'],
+                  'PLATT_SCALING_SCALE': [2.09138165, 1.82753023],
+                  'PLATT_SCALING_OFFSET': [5.13847403, 3.86819057]
+              },
+              {
+                  'HEAD_CLS_NAME': ['nuscenes:car', 'nuscenes:pedestrian'],
+                  'PLATT_SCALING_SCALE': [2.65316149, 1.90218379],
+                  'PLATT_SCALING_OFFSET': [8.67043983, 3.88752247]
+              },
+            ]
+            # SEPARATE_REG_CONFIG: 
+            #     NUM_MIDDLE_CONV: 1
+            #     NUM_MIDDLE_FILTER: 64
+            #     REG_LIST: ['reg:2', 'height:1', 'size:3', 'angle:2']
+
+            TARGET_ASSIGNER_CONFIG:
+                NAME: AxisAlignedTargetAssigner
+                POS_FRACTION: -1.0
+                SAMPLE_SIZE: 512
+                NORM_BY_NUM_EXAMPLES: False
+                MATCH_HEIGHT: False
+                BOX_CODER: ResidualCoder
+
+            LOSS_CONFIG:
+                LOSS_WEIGHTS: {
+                    'cls_weight': 1.0,
+                    'loc_weight': 2.0,
+                    'dir_weight': 0.2,
+                    'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+                }
+                SCORE_WEIGHTING: False
+
+        POST_PROCESSING:
+            RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+            SCORE_THRESH: 0.0001
+            OUTPUT_RAW_SCORE: False
+
+            EVAL_METRIC: kitti
+
+            NMS_CONFIG:
+                MULTI_CLASSES_NMS: True
+                NMS_TYPE: nms_gpu
+                NMS_THRESH: 0.01
+                NMS_PRE_MAXSIZE: 4096
+                NMS_POST_MAXSIZE: 500
+
+    SCORE_THRESH: [0.1, 0.1]
+    NEG_THRESH: [0.1, 0.1]
+    UPDATE_PSEUDO_LABEL: [0, 0]
+    UPDATE_PSEUDO_LABEL_INTERVAL: 2
+    INIT_PS: None
+    SRC:
+        USE_DATA: False
+        USE_GRAD: False
+        LOSS_WEIGHT: 1.0
+    TAR:
+        USE_DATA: True
+        LOSS_WEIGHT: 1.0
+
+    PROG_AUG:
+        ENABLED: True
+        UPDATE_AUG: [5, 10, 20, 25]
+        SCALE: 1.1
+
+    MEMORY_ENSEMBLE:
+        ENABLED: True
+        # NAME: consistency_ensemble
+        NAME: nms_ensemble
+        IOU_THRESH: 0.1
+
+        NMS_CONFIG:
+            NMS_TYPE: nms_gpu
+            MULTI_CLASSES_NMS: False
+            NMS_PRE_MAXSIZE: 512
+            NMS_POST_MAXSIZE: 100
+            NMS_THRESH: 0.1
+
+        MEMORY_VOTING:
+            ENABLED: True
+            IGNORE_THRESH: 2
+            RM_THRESH: 3
+
+OPTIMIZATION:
+    NUM_EPOCHS: 200
+    BATCH_SIZE_PER_GPU: 4
+    OPTIMIZER: adam_onecycle
+    LR: 0.0015
+    WEIGHT_DECAY: 0.01
+    MOMENTUM: 0.9
+
+    MOMS: [0.95, 0.85]
+    PCT_START: 0.4
+    DIV_FACTOR: 10
+    DECAY_STEP_LIST: [35, 45]
+    LR_DECAY: 0.1
+    LR_CLIP: 0.0000001
+
+    LR_WARMUP: False
+    WARMUP_EPOCH: 1
+
+    GRAD_NORM_CLIP: 10
+
