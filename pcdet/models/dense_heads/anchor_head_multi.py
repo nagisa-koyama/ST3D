@@ -24,7 +24,7 @@ class SingleHead(BaseBEVBackbone):
             self.platt_scaling_scale = None
         if rpn_head_cfg and 'PLATT_SCALING_OFFSET' in rpn_head_cfg:
             self.platt_scaling_offset = torch.from_numpy(np.array(rpn_head_cfg['PLATT_SCALING_OFFSET'])).cuda()
-            print("platt_scaling_offset: ", self.platt_scaling_scale)
+            print("platt_scaling_offset: ", self.platt_scaling_offset)
         else:
             self.platt_scaling_offset = None
 
