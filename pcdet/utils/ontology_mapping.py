@@ -82,6 +82,45 @@ def get_ontology_mapping(input_ontology, output_ontology):
         # 'Pushable Pullable Object': 'Misc',
         # 'Debris': 'Misc'
     }
+    map_nuscenes_to_waymo = {
+        'car': 'Vehicle',
+        'truck': 'Vehicle',
+        'bus': 'Vehicle',
+        'construction_vehicle': 'Sign', # 'Sign' as a catch-all for all other objects
+        'motorcycle': 'Sign',
+        'bicycle': 'Cyclist',
+        'trailer': 'Sign',
+        'pedestrian': 'Pedestrian',
+        'traffic_cone': 'Sign',
+        'barrier': 'Sign',
+        'ignore': 'Sign'
+    }
+    map_nuscenes_to_lyft = {
+        'car': 'car',
+        'truck': 'truck',
+        'bus': 'bus',
+        'construction_vehicle': 'other_vehicle',
+        'motorcycle': 'motorcycle',
+        'bicycle': 'bicycle',
+        'trailer': 'other_vehicle',
+        'pedestrian': 'pedestrian',
+        'traffic_cone': 'animal', # 'animal' as a catch-all for all other objects
+        'barrier': 'animal',
+        'ignore': 'animal',
+    }
+    map_nuscenes_to_pandaset = {
+        'car': 'Car',
+        'truck': 'Medium-sized Truck',
+        'bus': 'Bus',
+        'construction_vehicle': 'Other Vehicle - Construction Vehicle',
+        'motorcycle': 'Motorcycle',
+        'bicycle': 'Bicycle',
+        'trailer': 'Towed Object',
+        'pedestrian': 'Pedestrian',
+        'traffic_cone': 'Cones',
+        'barrier': 'Temporary Construction Barriers',
+        'ignore': 'Animals - Other', # 'Animals - Other' as a catch-all for all other objects
+    }
     map_kitti_to_lyft = {
         'Car': 'car',
         'Pedestrian': 'pedestrian',
@@ -130,6 +169,54 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'Misc': 'debris',
         'DontCare': 'debris',
     }
+    map_lyft_to_nuscenes = {
+        'car': 'car',
+        'pedestrian': 'pedestrian',
+        'truck': 'truck',
+        'bicycle': 'bicycle',
+        'motorcycle': 'motorcycle',
+        'bus': 'bus',
+        'emergency_vehicle': 'ignore',
+        'other_vehicle': 'ignore',
+        'animal': 'ignore'
+    }
+    map_waymo_to_nuscenes = {
+        'Vehicle': 'car',
+        'Pedestrian': 'pedestrian',
+        'Cyclist': 'bicycle',
+        'Sign': 'ignore'
+    }
+    map_pandaset_to_nuscenes = {
+        'Car': 'car',
+        'Pickup Truck': 'truck',
+        'Medium-sized Truck': 'truck',
+        'Semi-truck': 'truck',
+        'Towed Object': 'trailer',
+        'Motorcycle': 'motorcycle',
+        'Other Vehicle - Construction Vehicle': 'construction_vehicle',
+        'Other Vehicle - Uncommon': 'ignore',
+        'Other Vehicle - Pedicab': 'ignore',
+        'Emergency Vehicle': 'ignore',
+        'Bus': 'bus',
+        'Personal Mobility Device': 'ignore',
+        'Motorized Scooter': 'bicycle',
+        'Bicycle': 'bicycle',
+        'Train': 'ignore',
+        'Trolley': 'ignore',
+        'Tram / Subway': 'ignore',
+        'Pedestrian': 'pedestrian',
+        'Pedestrian with Object': 'pedestrian',
+        'Animals - Bird': 'ignore',
+        'Animals - Other': 'ignore',
+        'Pylons': 'traffic_cone',
+        'Road Barriers': 'barrier',
+        'Signs': 'ignore',
+        'Cones': 'traffic_cone',
+        'Construction Signs': 'ignore',
+        'Temporary Construction Barriers': 'barrier',
+        'Rolling Containers': 'ignore'
+    }
+
     map_head_per_dataset_to_kitti = {
         'kitti:Car': 'kitti:Car',
         'waymo:Vehicle': 'kitti:Car',
@@ -140,8 +227,21 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'waymo:Pedestrian': 'kitti:Pedestrian',
         'lyft:pedestrian': 'kitti:Pedestrian',
         'pandaset:Pedestrian': 'kitti:Pedestrian',
-        'nuscenes:pedestrian': 'kitti:Pedestrian',
+        'nuscenes:pedestrian': 'kitti:Pedestrian'
     }
+    map_head_per_dataset_to_nuscenes = {
+        'kitti:Car': 'nuscenes:car',
+        'waymo:Vehicle': 'nuscenes:car',
+        'lyft:car': 'nuscenes:car',
+        'pandaset:Car': 'nuscenes:car',
+        'nuscenes:car': 'nuscenes:car',
+        'kitti:Pedestrian': 'nuscenes:pedestrian',
+        'waymo:Pedestrian': 'nuscenes:pedestrian',
+        'lyft:pedestrian': 'nuscenes:pedestrian',
+        'pandaset:Pedestrian': 'nuscenes:pedestrian',
+        'nuscenes:pedestrian': 'nuscenes:pedestrian'
+    }
+    # Defined for compatibility with the rest of the code but not used.
     map_kitti_to_head_per_dataset = {
         'Car': 'waymo:Vehicle',
         'Pedestrian': 'waymo:Pedestrian',
@@ -154,7 +254,20 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'Misc': 'waymo:Sign',
         'DontCare': 'waymo:Sign',
     }
-
+    # Defined for compatibility with the rest of the code but not used.
+    map_nuscenes_to_head_per_dataset = {
+        'car': 'waymo:Vehicle',
+        'truck': 'waymo:Vehicle',
+        'bus': 'waymo:Vehicle',
+        'construction_vehicle': 'waymo:Sign',
+        'motorcycle': 'waymo:Sign',
+        'bicycle': 'waymo:Cyclist',
+        'trailer': 'waymo:Sign',
+        'pedestrian': 'waymo:Pedestrian',
+        'traffic_cone': 'waymo:Sign',
+        'barrier': 'waymo:Sign',
+        'ignore': 'waymo:Sign'
+    }
     if input_ontology == 'lyft' and output_ontology == 'kitti':
         return map_lyft_to_kitti
     elif input_ontology == 'waymo' and output_ontology == 'kitti':
@@ -163,6 +276,12 @@ def get_ontology_mapping(input_ontology, output_ontology):
         return map_pandaset_to_kitti
     elif input_ontology == 'nuscenes' and output_ontology == 'kitti':
         return map_nuscenes_to_kitti
+    elif input_ontology == 'nuscenes' and output_ontology == 'waymo':
+        return map_nuscenes_to_waymo
+    elif input_ontology == 'nuscenes' and output_ontology == 'lyft':
+        return map_nuscenes_to_lyft
+    elif input_ontology == 'nuscenes' and output_ontology == 'pandaset':
+        return map_nuscenes_to_pandaset
     elif input_ontology == 'kitti' and output_ontology == 'lyft':
         return map_kitti_to_lyft
     elif input_ontology == 'kitti' and output_ontology == 'waymo':
@@ -171,9 +290,19 @@ def get_ontology_mapping(input_ontology, output_ontology):
         return map_kitti_to_pandaset
     elif input_ontology == 'kitti' and output_ontology == 'nuscenes':
         return map_kitti_to_nuscenes
+    elif input_ontology == 'waymo' and output_ontology == 'nuscenes':
+        return map_waymo_to_nuscenes
+    elif input_ontology == 'lyft' and output_ontology == 'nuscenes':
+        return map_lyft_to_nuscenes
+    elif input_ontology == 'pandaset' and output_ontology == 'nuscenes':
+        return map_pandaset_to_nuscenes
     elif input_ontology == 'head_per_dataset' and output_ontology == 'kitti':
         return map_head_per_dataset_to_kitti
     elif input_ontology == 'kitti' and output_ontology == 'head_per_dataset':
         return map_kitti_to_head_per_dataset
+    elif input_ontology == 'head_per_dataset' and output_ontology == 'nuscenes':
+        return map_head_per_dataset_to_nuscenes
+    elif input_ontology == 'nuscenes' and output_ontology == 'head_per_dataset':
+        return map_nuscenes_to_head_per_dataset
     else:
         assert False, input_ontology + ' to ' + output_ontology + ' is not supported'
