@@ -176,6 +176,7 @@ def nms_ensemble(gt_infos_a, gt_infos_b, memory_ensemble_cfg):
     if gt_infos_a['iou_scores'] is not None:
         new_iou_scores = np.concatenate((gt_infos_a['iou_scores'], gt_infos_b['iou_scores']), axis=0)
     new_memory_counter = np.concatenate((gt_infos_a['memory_counter'], gt_infos_b['memory_counter']), axis=0)
+    new_teacher_classes = np.concatenate((gt_infos_a['teacher_classes'], gt_infos_b['teacher_classes']), axis=0)
 
     selected, selected_scores = class_agnostic_nms(
         box_scores=gt_boxes[:, -1], box_preds=gt_boxes[:, :7], nms_config=memory_ensemble_cfg.NMS_CONFIG
@@ -216,7 +217,8 @@ def nms_ensemble(gt_infos_a, gt_infos_b, memory_ensemble_cfg):
         'gt_boxes': selected_gt_boxes,
         'cls_scores': new_cls_scores[selected] if gt_infos_a['cls_scores'] is not None else None,
         'iou_scores': new_iou_scores[selected] if gt_infos_a['iou_scores'] is not None else None,
-        'memory_counter': new_memory_counter[selected]
+        'memory_counter': new_memory_counter[selected],
+        'teacher_classes': new_teacher_classes[selected]
     }
 
     return new_gt_infos

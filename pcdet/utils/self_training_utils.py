@@ -1,7 +1,9 @@
+from collections import Counter
 import torch
 import os
 import glob
 import tqdm
+import wandb
 import numpy as np
 import torch.distributed as dist
 from pcdet.config import cfg
@@ -149,6 +151,16 @@ def gather_and_dump_pseudo_label_result(rank, ps_label_dir, cur_epoch):
     commu_utils.synchronize()
     PSEUDO_LABELS.clear()
     PSEUDO_LABELS.update(NEW_PSEUDO_LABELS)
+    teacher_class_names_concat = []
+    for frame_id, pseudo_label in PSEUDO_LABELS.items():
+        teacher_class_names_concat.extend(pseudo_label['teacher_classes'])
+    print("len(PSEUDO_LABELS.keys()):", len(PSEUDO_LABELS.keys()))
+    print("len(teacher_class_names_concat):", len(teacher_class_names_concat))
+    print(Counter(teacher_class_names_concat))
+    wandb.log({'train/ps_labels_total': len(teacher_class_names_concat)})
+    for key, value in Counter(teacher_class_names_concat).items():
+        wandb.log({'train/ps_labels_{}'.format(key): value})
+
     NEW_PSEUDO_LABELS.clear()
 
 
@@ -231,12 +243,14 @@ def save_pseudo_label_batch(input_dict,
                     pred_iou_scores = pred_iou_scores[remain_mask]
                 else:
                     pred_iou_scores = pred_scores
+                pred_teacher_classes = pred_teacher_classes[remain_mask]
 
 
             if len(pred_labels) > 0:
                 labels_ignore_scores = np.array(cfg.SELF_TRAIN.SCORE_THRESH)[pred_labels - 1]
                 ignore_mask = pred_scores < labels_ignore_scores
                 pred_labels[ignore_mask] = -pred_labels[ignore_mask]
+                pred_teacher_classes[ignore_mask] = ["Ignored"] * ignore_mask.sum()
 
             gt_box = np.concatenate((pred_boxes,
                                      pred_labels.reshape(-1, 1),
@@ -255,7 +269,8 @@ def save_pseudo_label_batch(input_dict,
             'gt_boxes': gt_box,
             'cls_scores': pred_cls_scores,
             'iou_scores': pred_iou_scores,
-            'memory_counter': np.zeros(gt_box.shape[0])
+            'memory_counter': np.zeros(gt_box.shape[0]),
+            'teacher_classes': pred_teacher_classes
         }
 
         # record pseudo label to pseudo label dict
@@ -265,6 +280,7 @@ def save_pseudo_label_batch(input_dict,
                 PSEUDO_LABELS[input_dict['frame_id'][b_idx]], gt_infos,
                 cfg.SELF_TRAIN.MEMORY_ENSEMBLE, ensemble_func
             )
+            # print("Count(teacher_classes):", Counter(gt_infos['teacher_classes']))
 
         # counter the number of ignore boxes for each class
         for i in range(ign_ps_nmeter.n):
