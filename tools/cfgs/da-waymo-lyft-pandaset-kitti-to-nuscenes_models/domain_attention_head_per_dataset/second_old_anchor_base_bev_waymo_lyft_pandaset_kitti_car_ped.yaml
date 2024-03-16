@@ -42,9 +42,9 @@ MODEL:
         NUM_BEV_FEATURES: 256
 
     BACKBONE_2D:
-        NAME: DomainAttentionBEVBackbone
-        # NAME: BaseBEVBackbone
-        NUM_ADAPTERS: 4
+        # NAME: DomainAttentionBEVBackbone
+        NAME: BaseBEVBackbone
+        # NUM_ADAPTERS: 4
 
         LAYER_NUMS: [5, 5]
         LAYER_STRIDES: [1, 2]

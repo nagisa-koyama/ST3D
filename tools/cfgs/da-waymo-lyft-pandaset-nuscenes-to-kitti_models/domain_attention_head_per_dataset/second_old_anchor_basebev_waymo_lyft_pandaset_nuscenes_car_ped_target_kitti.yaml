@@ -1,0 +1,11 @@
+_BASE_CONFIG_: cfgs/da-waymo-lyft-pandaset-nuscenes-to-kitti_models/domain_attention_head_per_dataset/second_old_anchor_basebev_waymo_lyft_pandaset_nuscenes_car_ped.yaml
+
+ONTOLOGY: head_per_dataset
+
+DATA_CONFIG_TAR:
+    _BASE_CONFIG_: cfgs/dataset_configs/da_kitti_dataset.yaml
+    FOV_POINTS_ONLY: True
+    CLASS_NAMES: ['kitti:Car', 'kitti:Pedestrian']
+    SHIFT_COOR: [0.0, 0.0, 1.6]
+    DRAW_CONF_CALIB_CURVE: False
+    RUN_CONF_CALIB: False

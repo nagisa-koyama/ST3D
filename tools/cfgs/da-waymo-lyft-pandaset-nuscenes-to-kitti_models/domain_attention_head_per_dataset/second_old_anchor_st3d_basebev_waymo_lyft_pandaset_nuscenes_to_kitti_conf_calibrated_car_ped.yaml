@@ -82,7 +82,7 @@ MODEL:
                 'unmatched_threshold': 0.4
             },
             {
-                'class_name': 'Pedestrian',
+                'class_name': 'kitti:Pedestrian',
                 'anchor_sizes': [[0.91, 0.86, 1.73]],
                 'anchor_rotations': [0, 1.57],
                 'anchor_bottom_heights': [0],
@@ -249,28 +249,27 @@ SELF_TRAIN:
             ]
             SHARED_CONV_NUM_FILTER: null
             RPN_HEAD_CFGS: [
-                {
-                    'HEAD_CLS_NAME': ['waymo:Vehicle', 'waymo:Pedestrian'],
-                    # 'PLATT_SCALING_SCALE': [2.15252313],
-                    # 'PLATT_SCALING_OFFSET': [7.51406276],
-                },
-                {
-                    'HEAD_CLS_NAME': ['lyft:car', 'lyft:pedestrian'],
-                    # 'PLATT_SCALING_SCALE': [1.94203519],
-                    # 'PLATT_SCALING_OFFSET': [3.21289819],
-                },
-                {
-                    'HEAD_CLS_NAME': ['pandaset:Car', 'pandaset:Pedestrian'],
-                    # 'PLATT_SCALING_SCALE': [1.63204776],
-                    # 'PLATT_SCALING_OFFSET': [3.71043937],
-                },
-                {
-                    'HEAD_CLS_NAME': ['nuscenes:car', 'nuscenes:pedestrian'],
-                    # 'PLATT_SCALING_SCALE': [1.63204776],
-                    # 'PLATT_SCALING_OFFSET': [3.71043937],
-                },
+              {
+                  'HEAD_CLS_NAME': ['waymo:Vehicle', 'waymo:Pedestrian'],
+                  'PLATT_SCALING_SCALE': [1.9911221, 2.7814059],
+                  'PLATT_SCALING_OFFSET': [4.33905828, 5.99642754],
+              },
+              {
+                  'HEAD_CLS_NAME': ['lyft:car', 'lyft:pedestrian'],
+                  'PLATT_SCALING_SCALE': [2.91941988, 2.48983598], 
+                  'PLATT_SCALING_OFFSET': [4.98609985, 2.89090901] 
+              },
+              {
+                  'HEAD_CLS_NAME': ['pandaset:Car', 'pandaset:Pedestrian'],
+                  'PLATT_SCALING_SCALE': [2.03741261, 2.36594835],
+                  'PLATT_SCALING_OFFSET': [3.79759851, 4.59116247] 
+              },
+              {
+                  'HEAD_CLS_NAME': ['nuscenes:car', 'nuscenes:pedestrian'],
+                  'PLATT_SCALING_SCALE': [1.93507834, 2.80344259], 
+                  'PLATT_SCALING_OFFSET': [2.80719739, 6.88218585]
+              },
             ]
-
             # SEPARATE_REG_CONFIG: 
             #     NUM_MIDDLE_CONV: 1
             #     NUM_MIDDLE_FILTER: 64

@@ -1,5 +1,5 @@
 # Model output definition
-CLASS_NAMES: ['waymo:Vehicle', 'waymo:Pedestrian', 'lyft:car', 'lyft:pedestrian', 'pandaset:Car', 'pandaset:Pedestrian', 'kitti:Car', 'kitti:Pedestrian']
+CLASS_NAMES: ['waymo:Vehicle', 'waymo:Pedestrian', 'lyft:car', 'lyft:pedestrian', 'pandaset:Car', 'pandaset:Pedestrian', 'nuscenes:car', 'nuscenes:pedestrian']
 # ONTOLOGY: head_per_dataset
 ONTOLOGY: null
 
@@ -20,13 +20,21 @@ DATA_CONFIGS:
         CLASS_NAMES: ['pandaset:Car', 'pandaset:Pedestrian']
         DRAW_CONF_CALIB_CURVE: False
         RUN_CONF_CALIB: False
-    KITTI_CONFIG:
-        _BASE_CONFIG_: cfgs/dataset_configs/da_kitti_dataset.yaml
-        FOV_POINTS_ONLY: True
-        CLASS_NAMES: ['kitti:Car', 'kitti:Pedestrian']
-        SHIFT_COOR: [0.0, 0.0, 1.6]
+    NUSCENES_CONFIG:
+        _BASE_CONFIG_: cfgs/dataset_configs/da_nuscenes_dataset.yaml
+        CLASS_NAMES: ['nuscenes:car', 'nuscenes:pedestrian']
+        SHIFT_COOR: [0.0, 0.0, 1.8]
         DRAW_CONF_CALIB_CURVE: False
         RUN_CONF_CALIB: False
+
+# DATA_CONFIG_TAR:
+#     _BASE_CONFIG_: cfgs/dataset_configs/da_kitti_dataset.yaml
+#     FOV_POINTS_ONLY: True
+#     # CLASS_NAMES: ['kitti:Car', 'waymo:Vehicle', 'lyft:car', 'pandaset:Car']
+#     CLASS_NAMES: ['kitti:Car']
+#     SHIFT_COOR: [0.0, 0.0, 1.6]
+#     DRAW_CONF_CALIB_CURVE: False
+#     RUN_CONF_CALIB: False
 
 MODEL:
     NAME: SECONDNet
@@ -42,9 +50,9 @@ MODEL:
         NUM_BEV_FEATURES: 256
 
     BACKBONE_2D:
-        NAME: DomainAttentionBEVBackbone
-        # NAME: BaseBEVBackbone
-        NUM_ADAPTERS: 4
+        # NAME: DomainAttentionBEVBackbone
+        NAME: BaseBEVBackbone
+        # NUM_ADAPTERS: 4
 
         LAYER_NUMS: [5, 5]
         LAYER_STRIDES: [1, 2]
@@ -125,7 +133,7 @@ MODEL:
                 'unmatched_threshold': 0.4
             },
             {
-                'class_name': kitti:Car,
+                'class_name': nuscenes:car,
                 'anchor_sizes': [[4.7, 2.1, 1.7]],
                 'anchor_rotations': [0, 1.57],
                 'anchor_bottom_heights': [0],
@@ -135,7 +143,7 @@ MODEL:
                 'unmatched_threshold': 0.4
             },
             {
-                'class_name': kitti:Pedestrian,
+                'class_name': nuscenes:pedestrian,
                 'anchor_sizes': [[0.73, 0.67, 1.77]],
                 'anchor_rotations': [0, 1.57],
                 'anchor_bottom_heights': [0],
@@ -164,7 +172,7 @@ MODEL:
                 # 'PLATT_SCALING_OFFSET': [3.71043937],
             },
             {
-                'HEAD_CLS_NAME': ['kitti:Car', 'kitti:Pedestrian'],
+                'HEAD_CLS_NAME': ['nuscenes:car', 'nuscenes:pedestrian'],
                 # 'PLATT_SCALING_SCALE': [1.63204776],
                 # 'PLATT_SCALING_OFFSET': [3.71043937],
             },
