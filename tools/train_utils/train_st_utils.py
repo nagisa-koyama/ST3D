@@ -31,7 +31,7 @@ def train_one_epoch_st(model, optimizer, source_reader, target_loader, model_fun
 
     disp_dict = {}
 
-    draw_scene = False
+    draw_scene = True
     for cur_it in range(total_it_each_epoch):
         lr_scheduler.step(accumulated_iter)
 
