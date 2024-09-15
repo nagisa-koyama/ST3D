@@ -38,6 +38,7 @@ def consistency_ensemble(gt_infos_a, gt_infos_b, memory_ensemble_cfg):
     new_cls_scores = gt_infos_a['cls_scores']
     new_iou_scores = gt_infos_a['iou_scores']
     new_memory_counter = gt_infos_a['memory_counter']
+    new_teacher_classes = gt_infos_a['teacher_classes']
 
     # if gt_box_b or gt_box_a don't have any predictions
     if gt_box_b.shape[0] == 0:
@@ -87,7 +88,9 @@ def consistency_ensemble(gt_infos_a, gt_infos_b, memory_ensemble_cfg):
     if gt_infos_a['iou_scores'] is not None:
         new_iou_scores[matching_selected[score_mask, 0]] = gt_infos_b['iou_scores'][
             matching_selected[score_mask, 1]]
-    
+
+    new_teacher_classes[matching_selected[score_mask, 0]] = gt_infos_b['teacher_classes'][matching_selected[score_mask, 1]]
+
     # for matching pairs, clear the ignore counter
     new_memory_counter[matching_selected[:, 0]] = 0
 
@@ -110,6 +113,7 @@ def consistency_ensemble(gt_infos_a, gt_infos_b, memory_ensemble_cfg):
             new_cls_scores = new_cls_scores[remain_mask]
         if gt_infos_a['iou_scores'] is not None:
             new_iou_scores = new_iou_scores[remain_mask]
+        new_teacher_classes = new_teacher_classes[remain_mask]
 
     # Add new appear boxes
     ious_b2a, match_idx_b2a = torch.max(iou_matrix, dim=0)
@@ -123,12 +127,14 @@ def consistency_ensemble(gt_infos_a, gt_infos_b, memory_ensemble_cfg):
         if gt_infos_a['iou_scores'] is not None:
             new_iou_scores = np.concatenate((new_iou_scores, gt_infos_b['iou_scores'][newboxes_idx]), axis=0)
         new_memory_counter = np.concatenate((new_memory_counter, gt_infos_b['memory_counter'][newboxes_idx]), axis=0)
+        new_teacher_classes = np.concatenate((new_teacher_classes, gt_infos_b['teacher_classes'][newboxes_idx]), axis=0)
 
     new_gt_infos = {
         'gt_boxes': new_gt_box,
         'cls_scores': new_cls_scores if gt_infos_a['cls_scores'] is not None else None,
         'iou_scores': new_iou_scores if gt_infos_a['iou_scores'] is not None else None,
-        'memory_counter': new_memory_counter
+        'memory_counter': new_memory_counter,
+        'teacher_classes': new_teacher_classes
     }
 
     return new_gt_infos

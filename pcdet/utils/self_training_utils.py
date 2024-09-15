@@ -153,7 +153,8 @@ def gather_and_dump_pseudo_label_result(rank, ps_label_dir, cur_epoch):
     PSEUDO_LABELS.update(NEW_PSEUDO_LABELS)
     teacher_class_names_concat = []
     for frame_id, pseudo_label in PSEUDO_LABELS.items():
-        teacher_class_names_concat.extend(pseudo_label['teacher_classes'])
+        if 'teacher_classes' in pseudo_label:
+            teacher_class_names_concat.extend(pseudo_label['teacher_classes'])
     print("len(PSEUDO_LABELS.keys()):", len(PSEUDO_LABELS.keys()))
     print("len(teacher_class_names_concat):", len(teacher_class_names_concat))
     print(Counter(teacher_class_names_concat))
@@ -183,8 +184,13 @@ def save_pseudo_label_batch(input_dict,
     pos_ps_nmeter = common_utils.NAverageMeter(len(cfg.CLASS_NAMES))
     ign_ps_nmeter = common_utils.NAverageMeter(len(cfg.CLASS_NAMES))
 
-    teacher_class_names = cfg.SELF_TRAIN.MODEL_TEACHER.get('CLASS_NAMES', None)
-    teacher_ontology = cfg.SELF_TRAIN.MODEL_TEACHER.get('ONTOLOGY', None)
+    # If teacher model is given, use ontology mapping to convert teacher class to student class.
+    if cfg.SELF_TRAIN.get('MODEL_TEACHER', None):
+        teacher_class_names = cfg.SELF_TRAIN.MODEL_TEACHER.get('CLASS_NAMES', None)
+        teacher_ontology = cfg.SELF_TRAIN.MODEL_TEACHER.get('ONTOLOGY', None)
+    else:
+        teacher_class_names = cfg.get('CLASS_NAMES', None)
+        teacher_ontology = cfg.get('ONTOLOGY', None)
     student_class_names = cfg.get('CLASS_NAMES', None)
 
     ontology_mapping_teacher_to_student = None
