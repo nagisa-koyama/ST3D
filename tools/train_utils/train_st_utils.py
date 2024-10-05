@@ -2,7 +2,7 @@ import torch
 import os
 import glob
 import mayavi.mlab as mlab
-import tqdm
+import tqdm.auto as tqdm
 from torch.nn.utils import clip_grad_norm_
 from pcdet.utils import common_utils
 from pcdet.utils import self_training_utils
@@ -15,7 +15,7 @@ import wandb
 from .train_utils import save_checkpoint, checkpoint_state
 
 
-def train_one_epoch_st(model, optimizer, source_reader, target_loader, model_func, lr_scheduler,
+def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_func, lr_scheduler,
                        accumulated_iter, optim_cfg, rank, tbar, total_it_each_epoch,
                        dataloader_iter, tb_log=None, leave_pbar=False, ema_model=None, cur_epoch=None):
     if total_it_each_epoch == len(target_loader):
@@ -34,9 +34,8 @@ def train_one_epoch_st(model, optimizer, source_reader, target_loader, model_fun
     draw_scene = True
     for cur_it in range(total_it_each_epoch):
         lr_scheduler.step(accumulated_iter)
-
         try:
-            cur_lr = float(optimizer.lr)
+            cur_lr = float(optimizer.param_groups[0]['lr'])
         except:
             cur_lr = optimizer.param_groups[0]['lr']
 
@@ -44,26 +43,55 @@ def train_one_epoch_st(model, optimizer, source_reader, target_loader, model_fun
             tb_log.add_scalar('meta_data/learning_rate', cur_lr, accumulated_iter)
 
         model.train()
-
         optimizer.zero_grad()
+        backward_together_src = cfg.SELF_TRAIN.SRC.get('BACKWARD_TOGETHER', None)
+        backward_together_tar = cfg.SELF_TRAIN.TAR.get('BACKWARD_TOGETHER', None)
+
+        loss_total = None
         if cfg.SELF_TRAIN.SRC.USE_DATA:
-            # forward source data with labels
-            source_batch = source_reader.read_data()
+            for source_index in range(len(source_readers)):
+                source_index = cur_it % len(source_readers)
+                source_ontology = source_readers[source_index].dataloader.dataset.dataset_ontology
 
-            if cfg.SELF_TRAIN.get('DSNORM', None):
-                model.apply(set_ds_source)
+                # forward source data with labels
+                source_batch = source_readers[source_index].read_data()
 
-            if cfg.SELF_TRAIN.SRC.get('SEP_LOSS_WEIGHTS', None):
-                source_batch['SEP_LOSS_WEIGHTS'] = cfg.SELF_TRAIN.SRC.SEP_LOSS_WEIGHTS
+                if cfg.SELF_TRAIN.get('DSNORM', None):
+                    model.apply(set_ds_source)
 
-            loss, tb_dict, disp_dict = model_func(model, source_batch)
-            loss = cfg.SELF_TRAIN.SRC.get('LOSS_WEIGHT', 1.0) * loss
-            loss.backward()
-            loss_meter.update(loss.item())
-            disp_dict.update({'loss': "{:.3f}({:.3f})".format(loss_meter.val, loss_meter.avg)})
+                if cfg.SELF_TRAIN.SRC.get('SEP_LOSS_WEIGHTS', None):
+                    source_batch['SEP_LOSS_WEIGHTS'] = cfg.SELF_TRAIN.SRC.SEP_LOSS_WEIGHTS
 
-            if not cfg.SELF_TRAIN.SRC.get('USE_GRAD', None):
-                optimizer.zero_grad()
+                loss, tb_dict, disp_dict = model_func(model, source_batch)
+                loss = cfg.SELF_TRAIN.SRC.get('LOSS_WEIGHT', 1.0) * loss
+                loss_meter.update(loss.item())
+
+                loss_total = loss if loss_total is None else loss_total + loss
+
+                # If backward together, postpone backward to the end of the loop
+                if not backward_together_src:
+                    loss.backward()
+                    disp_dict.update({'src_loss': loss.item(), 'lr': cur_lr})
+                    if not cfg.SELF_TRAIN.SRC.get('USE_GRAD', None):
+                        optimizer.zero_grad()
+                if rank == 0:
+                    wandb.log({'train/' + source_ontology + '/loss': loss})
+                    wandb.log({'train/' + source_ontology + '/learning_rate': cur_lr})
+                    tb_log.add_scalar('train/' + source_ontology + '/loss', loss, accumulated_iter)
+                    for key, val in tb_dict.items():
+                        tb_log.add_scalar('train/' + source_ontology + '/' + key, val, accumulated_iter)
+                        wandb.log({'train/' + source_ontology + '/' + key: val})
+
+            assert loss_total is not None
+            disp_dict.update({'src loss total': loss_total.item(), 'lr': cur_lr})
+            wandb.log({'train/' + 'src_loss_total': loss_total})
+            wandb.log({'train/' + 'src_loss_total_learning_rate': cur_lr})
+
+            # If backward together with sources is true, do backward here, but postpones if backward together with target.
+            if backward_together_src and not backward_together_tar:
+                loss_total.backward()
+                if not cfg.SELF_TRAIN.SRC.get('USE_GRAD', None):
+                    optimizer.zero_grad()
 
         if cfg.SELF_TRAIN.TAR.USE_DATA:
             try:
@@ -82,8 +110,15 @@ def train_one_epoch_st(model, optimizer, source_reader, target_loader, model_fun
             # parameters for save pseudo label on the fly
             st_loss, st_tb_dict, st_disp_dict = model_func(model, target_batch)
             st_loss = cfg.SELF_TRAIN.TAR.get('LOSS_WEIGHT', 1.0) * st_loss
-            st_loss.backward()
             st_loss_meter.update(st_loss.item())
+
+            loss_total = st_loss if loss_total is None else loss_total + st_loss
+
+            # If backward together with target is true, do backward with loss_total here.
+            if backward_together_tar:
+                loss_total.backward()
+            else:
+                st_loss.backward()
 
             # count number of used ps bboxes in this batch
             pos_pseudo_bbox = target_batch['pos_ps_bbox'].mean(dim=0).cpu().numpy()
@@ -98,7 +133,9 @@ def train_one_epoch_st(model, optimizer, source_reader, target_loader, model_fun
             disp_dict.update({'st_loss': "{:.3f}({:.3f})".format(st_loss_meter.val, st_loss_meter.avg),
                               'pos_ps_box': pos_ps_result,
                               'ign_ps_box': ign_ps_result})
-            
+
+            assert loss_total is not None
+            disp_dict.update({'loss total': loss_total.item(), 'lr': cur_lr})
 
             if rank == 0 and draw_scene == False:
                 with torch.no_grad():
@@ -114,10 +151,12 @@ def train_one_epoch_st(model, optimizer, source_reader, target_loader, model_fun
                     if target_batch.keys().__contains__('gt_scores'):
                         gt_scores = target_batch['gt_scores'][first_elem_index]
                     target_loader.dataset.__vis__(
-                        points=target_batch['points'][first_elem_mask, 1:], gt_boxes=target_batch['gt_boxes'][first_elem_index],
+                        points=target_batch['points'][first_elem_mask,
+                                                      1:], gt_boxes=target_batch['gt_boxes'][first_elem_index],
                         ref_boxes=pred_dicts[0]['pred_boxes'], gt_scores=gt_scores, ref_scores=pred_dicts[0]['pred_scores']
                     )
-                    filename = "scene_self_train_epoch{}_{}.png".format(cur_epoch, target_loader.dataset.dataset_ontology)
+                    filename = "scene_self_train_epoch{}_{}.png".format(
+                        cur_epoch, target_loader.dataset.dataset_ontology)
                     mlab.savefig(filename=filename)
                     wandb.save(filename)
                     wandb.log({'train/{}/self_train_scene'.format(target_loader.dataset.dataset_ontology): wandb.Image(filename)})
@@ -139,18 +178,17 @@ def train_one_epoch_st(model, optimizer, source_reader, target_loader, model_fun
             if tb_log is not None:
                 tb_log.add_scalar('meta_data/learning_rate', cur_lr, accumulated_iter)
                 wandb.log({'train/learning_rate': cur_lr})
-                if cfg.SELF_TRAIN.SRC.USE_DATA:
-                    tb_log.add_scalar('train/loss', loss, accumulated_iter)
-                    wandb.log({'train/loss': loss})
-                    for key, val in tb_dict.items():
-                        tb_log.add_scalar('train/' + key, val, accumulated_iter)
-                        wandb.log({'train/' + key: val})
+
                 if cfg.SELF_TRAIN.TAR.USE_DATA:
                     tb_log.add_scalar('train/st_loss', st_loss, accumulated_iter)
                     wandb.log({'train/st_loss': st_loss})
                     for key, val in st_tb_dict.items():
                         tb_log.add_scalar('train/' + key, val, accumulated_iter)
                         wandb.log({'train/' + key: val})
+
+            assert loss_total is not None
+            wandb.log({'train/' + 'loss_total': loss_total})
+            wandb.log({'train/' + 'loss_total_learning_rate': cur_lr})
 
     if rank == 0:
         pbar.close()
@@ -170,14 +208,12 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
     accumulated_iter = start_iter
 
     if model_teacher is None:
-        model_teacher = model # Sharrow copy to share the memory.
+        model_teacher = model  # Sharrow copy to share the memory.
 
-    # Basically do not support self training with muliple sources data. Just remains to keep interface
-    # compatible with train_model.
-    source_loader = source_loaders[0]
-    source_sampler = source_samplers[0]
-    source_reader = common_utils.DataReader(source_loader, source_sampler)
-    source_reader.construct_iter()
+    # Trying to support self training with muliple sources data.
+    source_readers = [common_utils.DataReader(source_loader, source_sampler)
+                      for source_loader, source_sampler in zip(source_loaders, source_samplers)]
+    [source_reader.construct_iter() for source_reader in source_readers]
 
     # for continue training.
     # if already exist generated pseudo label result
@@ -187,7 +223,7 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
 
     # for continue training
     if cfg.SELF_TRAIN.get('PROG_AUG', None) and cfg.SELF_TRAIN.PROG_AUG.ENABLED and \
-        start_epoch > 0:
+            start_epoch > 0:
         for cur_epoch in range(start_epoch):
             if cur_epoch in cfg.SELF_TRAIN.PROG_AUG.UPDATE_AUG:
                 target_loader.dataset.data_augmentor.re_prepare(
@@ -205,7 +241,7 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
         for cur_epoch in tbar:
             if target_sampler is not None:
                 target_sampler.set_epoch(cur_epoch)
-                source_reader.set_cur_epoch(cur_epoch)
+                [source_reader.set_cur_epoch(cur_epoch) for source_reader in source_readers]
 
             # train one epoch
             if lr_warmup_scheduler is not None and cur_epoch < optim_cfg.WARMUP_EPOCH:
@@ -223,15 +259,15 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
                     leave_pbar=True, ps_label_dir=ps_label_dir, cur_epoch=cur_epoch
                 )
                 target_loader.dataset.train()
-            
+
             # curriculum data augmentation
             if cfg.SELF_TRAIN.get('PROG_AUG', None) and cfg.SELF_TRAIN.PROG_AUG.ENABLED and \
-                (cur_epoch in cfg.SELF_TRAIN.PROG_AUG.UPDATE_AUG):
+                    (cur_epoch in cfg.SELF_TRAIN.PROG_AUG.UPDATE_AUG):
                 target_loader.dataset.data_augmentor.re_prepare(
                     augmentor_configs=None, intensity=cfg.SELF_TRAIN.PROG_AUG.SCALE)
 
             accumulated_iter = train_one_epoch_st(
-                model, optimizer, source_reader, target_loader, model_func,
+                model, optimizer, source_readers, target_loader, model_func,
                 lr_scheduler=cur_scheduler,
                 accumulated_iter=accumulated_iter, optim_cfg=optim_cfg,
                 rank=rank, tbar=tbar, tb_log=tb_log,
