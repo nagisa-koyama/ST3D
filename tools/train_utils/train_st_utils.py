@@ -39,9 +39,6 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
         except:
             cur_lr = optimizer.param_groups[0]['lr']
 
-        if tb_log is not None:
-            tb_log.add_scalar('meta_data/learning_rate', cur_lr, accumulated_iter)
-
         model.train()
         optimizer.zero_grad()
         backward_together_src = cfg.SELF_TRAIN.SRC.get('BACKWARD_TOGETHER', None)
@@ -77,9 +74,7 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                 if rank == 0:
                     wandb.log({'train/' + source_ontology + '/loss': loss})
                     wandb.log({'train/' + source_ontology + '/learning_rate': cur_lr})
-                    tb_log.add_scalar('train/' + source_ontology + '/loss', loss, accumulated_iter)
                     for key, val in tb_dict.items():
-                        tb_log.add_scalar('train/' + source_ontology + '/' + key, val, accumulated_iter)
                         wandb.log({'train/' + source_ontology + '/' + key: val})
 
             assert loss_total is not None
@@ -175,15 +170,11 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
             tbar.set_postfix(disp_dict)
             tbar.refresh()
 
-            if tb_log is not None:
-                tb_log.add_scalar('meta_data/learning_rate', cur_lr, accumulated_iter)
-                wandb.log({'train/learning_rate': cur_lr})
+            wandb.log({'train/learning_rate': cur_lr})
 
                 if cfg.SELF_TRAIN.TAR.USE_DATA:
-                    tb_log.add_scalar('train/st_loss', st_loss, accumulated_iter)
                     wandb.log({'train/st_loss': st_loss})
                     for key, val in st_tb_dict.items():
-                        tb_log.add_scalar('train/' + key, val, accumulated_iter)
                         wandb.log({'train/' + key: val})
 
             assert loss_total is not None
@@ -193,10 +184,8 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
     if rank == 0:
         pbar.close()
         for i, class_names in enumerate(target_loader.dataset.class_names):
-            tb_log.add_scalar(
-                'ps_box/pos_%s' % class_names, ps_bbox_nmeter.meters[i].avg, cur_epoch)
-            tb_log.add_scalar(
-                'ps_box/ign_%s' % class_names, ign_ps_bbox_nmeter.meters[i].avg, cur_epoch)
+            wandb.log({'ps_box/pos_' + class_names: ps_bbox_nmeter.meters[i].avg})
+            wandb.log({'ps_box/ign_' + class_names: ign_ps_bbox_nmeter.meters[i].avg})
 
     return accumulated_iter
 
