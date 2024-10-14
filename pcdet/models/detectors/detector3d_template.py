@@ -357,11 +357,14 @@ class Detector3DTemplate(nn.Module):
 
         if cfg.get('SELF_TRAIN', None) and cfg.SELF_TRAIN.get('DSNORM', None):
             self.load_state_dict(spconv_matched_state)
+            print("==> Load spconv weights from checkpoint")
         elif strict:
             self.load_state_dict(update_model_state)
+            print("==> Load weights from checkpoint")
         else:
             state_dict.update(update_model_state)
             self.load_state_dict(state_dict)
+            print("==> Load weights from checkpoint (not strict)")
         return state_dict, update_model_state
 
     def load_params_from_file(self, filename, logger, to_cpu=False):
