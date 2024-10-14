@@ -52,6 +52,7 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
 
                 # forward source data with labels
                 source_batch = source_readers[source_index].read_data()
+                source_batch['domain_label'] = 0
 
                 if cfg.SELF_TRAIN.get('DSNORM', None):
                     model.apply(set_ds_source)
@@ -68,7 +69,7 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                 # If backward together, postpone backward to the end of the loop
                 if not backward_together_src:
                     loss.backward()
-                    disp_dict.update({'src_loss': loss.item(), 'lr': cur_lr})
+                    disp_dict.update({'src_loss_' + source_ontology: loss.item(), 'lr': cur_lr})
                     if not cfg.SELF_TRAIN.SRC.get('USE_GRAD', None):
                         optimizer.zero_grad()
                 if rank == 0:
@@ -78,7 +79,7 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                         wandb.log({'train/' + source_ontology + '/' + key: val})
 
             assert loss_total is not None
-            disp_dict.update({'src loss total': loss_total.item(), 'lr': cur_lr})
+            disp_dict.update({'src_loss': loss_total.item(), 'lr': cur_lr})
             wandb.log({'train/' + 'src_loss_total': loss_total})
             wandb.log({'train/' + 'src_loss_total_learning_rate': cur_lr})
 
@@ -95,6 +96,8 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                 dataloader_iter = iter(target_loader)
                 target_batch = next(dataloader_iter)
                 print('new iters')
+
+            target_batch['domain_label'] = 1
 
             if cfg.SELF_TRAIN.get('DSNORM', None):
                 model.apply(set_ds_target)
@@ -125,12 +128,10 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
 
             st_tb_dict = common_utils.add_prefix_to_dict(st_tb_dict, 'st_')
             disp_dict.update(common_utils.add_prefix_to_dict(st_disp_dict, 'st_'))
-            disp_dict.update({'st_loss': "{:.3f}({:.3f})".format(st_loss_meter.val, st_loss_meter.avg),
-                              'pos_ps_box': pos_ps_result,
-                              'ign_ps_box': ign_ps_result})
+            disp_dict.update({'st_loss': "{:.3f}({:.3f})".format(st_loss_meter.val, st_loss_meter.avg)})
 
             assert loss_total is not None
-            disp_dict.update({'loss total': loss_total.item(), 'lr': cur_lr})
+            disp_dict.update({'loss_total': loss_total.item(), 'lr': cur_lr})
 
             if rank == 0 and draw_scene == False:
                 with torch.no_grad():
@@ -172,10 +173,10 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
 
             wandb.log({'train/learning_rate': cur_lr})
 
-                if cfg.SELF_TRAIN.TAR.USE_DATA:
-                    wandb.log({'train/st_loss': st_loss})
-                    for key, val in st_tb_dict.items():
-                        wandb.log({'train/' + key: val})
+            if cfg.SELF_TRAIN.TAR.USE_DATA:
+                wandb.log({'train/st_loss': st_loss})
+                for key, val in st_tb_dict.items():
+                    wandb.log({'train/' + key: val})
 
             assert loss_total is not None
             wandb.log({'train/' + 'loss_total': loss_total})

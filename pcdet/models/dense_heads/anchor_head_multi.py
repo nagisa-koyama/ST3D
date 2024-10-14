@@ -1,7 +1,9 @@
 import numpy as np
 import torch
+from torch.autograd import Variable
 import torch.nn as nn
 
+from ...ops.dann.functions import DomainDiscriminator, ReverseLayerF
 from ..backbones_2d import BaseBEVBackbone
 from .anchor_head_template import AnchorHeadTemplate
 
@@ -188,6 +190,7 @@ class AnchorHeadMulti(AnchorHeadTemplate):
             shared_conv_num_filter = input_channels
         self.rpn_heads = None
         self.make_multihead(shared_conv_num_filter)
+        self.domain_discriminator = DomainDiscriminator(in_channels=shared_conv_num_filter)
 
     def make_multihead(self, input_channels):
         rpn_head_cfgs = self.model_cfg.RPN_HEAD_CFGS
@@ -237,6 +240,12 @@ class AnchorHeadMulti(AnchorHeadTemplate):
         if self.model_cfg.get('USE_DIRECTION_CLASSIFIER', False):
             dir_cls_preds = [ret_dict['dir_cls_preds'] for ret_dict in ret_dicts]
             ret['dir_cls_preds'] = dir_cls_preds if self.separate_multihead else torch.cat(dir_cls_preds, dim=1)
+
+        # Adds domain discriminator to compute DANN loss.
+        if 'domain_label' in data_dict:
+            ret['domain_label'] = data_dict['domain_label']
+            reverse_feature = ReverseLayerF.apply(spatial_features_2d, 1.0)
+            ret['domain_preds'] = self.domain_discriminator(reverse_feature)
 
         self.forward_ret_dict.update(ret)
 
@@ -315,7 +324,7 @@ class AnchorHeadMulti(AnchorHeadTemplate):
             cls_pred = cls_pred.view(batch_size, -1, cur_num_class)
             if self.separate_multihead:
                 one_hot_target = one_hot_targets[:, start_idx:start_idx + cls_pred.shape[1],
-                                 c_idx:c_idx + cur_num_class]
+                                                 c_idx:c_idx + cur_num_class]
                 c_idx += cur_num_class
             else:
                 one_hot_target = one_hot_targets[:, start_idx:start_idx + cls_pred.shape[1]]
@@ -329,6 +338,7 @@ class AnchorHeadMulti(AnchorHeadTemplate):
         tb_dict = {
             'rpn_loss_cls': cls_losses.item()
         }
+
         return cls_losses, tb_dict
 
     def get_box_reg_layer_loss(self):
@@ -402,3 +412,20 @@ class AnchorHeadMulti(AnchorHeadTemplate):
                 tb_dict['rpn_loss_dir'] = tb_dict.get('rpn_loss_dir', 0) + dir_loss.item()
             start_idx += box_pred.shape[1]
         return box_losses, tb_dict
+
+    def get_domain_adversarial_loss(self):
+        loss_weights = self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS
+        # Returns None if dann_weight or domain_label is not set.
+        if 'dann_weight' not in loss_weights or 'domain_label' not in self.forward_ret_dict:
+            return None, {}
+
+        dann_loss_weight = loss_weights['dann_weight']
+        domain_preds = self.forward_ret_dict['domain_preds']
+        domain_label = self.forward_ret_dict['domain_label']
+        batch_size = int(domain_preds[0].shape[0])
+
+        loss = nn.BCEWithLogitsLoss()(domain_preds, Variable(
+            torch.FloatTensor(domain_preds.data.size()).fill_(domain_label)).cuda())
+        loss = loss.sum() / batch_size * dann_loss_weight
+        tb_dict['rpn_loss_dann'] = loss.item()
+        return loss, tb_dict
