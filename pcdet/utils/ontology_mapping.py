@@ -5,10 +5,18 @@ def get_ontology_mapping(input_ontology, output_ontology):
     # https://github.com/waymo-research/waymo-open-dataset/blob/master/docs/labeling_specifications.md
     # Lyft ontology
     # https://wandb.ai/wandb/lyft/reports/An-Exploration-of-Lyft-s-Self-Driving-Car-Dataset--Vmlldzo0MzcyNw#the-9-classes-in-the-lyft-dataset
-    # Pandaset ontology 
+    # Pandaset ontology
     # https://github.com/scaleapi/pandaset-devkit/blob/master/docs/annotation_instructions_cuboids.pdf
     # Nuscenes ontology
     # https://github.com/nutonomy/nuscenes-devkit/blob/master/docs/instructions_nuscenes.md
+    classes_kitti = ['Car', 'Pedestrian', 'Cyclist', 'Van', 'Truck', 'Person_sitting', 'Tram', 'Misc', 'DontCare']
+    classes_waymo = ['Vehicle', 'Pedestrian', 'Cyclist', 'Sign']
+    classes_lyft = ['car', 'pedestrian', 'truck', 'bicycle', 'motorcycle',
+                    'bus', 'emergency_vehicle', 'other_vehicle', 'animal']
+    classes_pandaset = ['Car', 'Pickup Truck', 'Medium-sized Truck', 'Semi-truck', 'Towed Object', 'Motorcycle', 'Other Vehicle - Construction Vehicle', 'Other Vehicle - Uncommon', 'Other Vehicle - Pedicab', 'Emergency Vehicle', 'Bus', 'Personal Mobility Device',
+                        'Motorized Scooter', 'Bicycle', 'Train', 'Trolley', 'Tram / Subway', 'Pedestrian', 'Pedestrian with Object', 'Animals - Bird', 'Animals - Other', 'Pylons', 'Road Barriers', 'Signs', 'Cones', 'Construction Signs', 'Temporary Construction Barriers', 'Rolling Containers']
+    classes_nuscenes = ['car', 'truck', 'bus', 'construction_vehicle', 'motorcycle',
+                        'bicycle', 'trailer', 'pedestrian', 'traffic_cone', 'barrier', 'ignore']
     map_lyft_to_kitti = {
         'car': 'Car',
         'pedestrian': 'Pedestrian',
@@ -86,7 +94,7 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'car': 'Vehicle',
         'truck': 'Vehicle',
         'bus': 'Vehicle',
-        'construction_vehicle': 'Sign', # 'Sign' as a catch-all for all other objects
+        'construction_vehicle': 'Sign',  # 'Sign' as a catch-all for all other objects
         'motorcycle': 'Sign',
         'bicycle': 'Cyclist',
         'trailer': 'Sign',
@@ -104,7 +112,7 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'bicycle': 'bicycle',
         'trailer': 'other_vehicle',
         'pedestrian': 'pedestrian',
-        'traffic_cone': 'animal', # 'animal' as a catch-all for all other objects
+        'traffic_cone': 'animal',  # 'animal' as a catch-all for all other objects
         'barrier': 'animal',
         'ignore': 'animal',
     }
@@ -119,7 +127,7 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'pedestrian': 'Pedestrian',
         'traffic_cone': 'Cones',
         'barrier': 'Temporary Construction Barriers',
-        'ignore': 'Animals - Other', # 'Animals - Other' as a catch-all for all other objects
+        'ignore': 'Animals - Other',  # 'Animals - Other' as a catch-all for all other objects
     }
     map_kitti_to_lyft = {
         'Car': 'car',
@@ -139,7 +147,7 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'Truck': 'Vehicle',
         'Cyclist': 'Cyclist',
         'Van': 'Vehicle',
-        'Misc': 'Sign', # 'Sign' as a catch-all for all other objects
+        'Misc': 'Sign',  # 'Sign' as a catch-all for all other objects
         'Person_sitting': 'Pedestrian',
         'Tram': 'Sign',
         'Misc': 'Sign',
@@ -151,7 +159,7 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'Truck': 'Medium-sized Truck',
         'Cyclist': 'Bicycle',
         'Van': 'Medium-sized Truck',
-        'Misc': 'Sign', # 'Sign' as a catch-all for all other objects
+        'Misc': 'Sign',  # 'Sign' as a catch-all for all other objects
         'Person_sitting': 'Pedestrian',
         'Tram': 'Sign',
         'Misc': 'Sign',
@@ -163,7 +171,7 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'Truck': 'truck',
         'Cyclist': 'bicycle',
         'Van': 'car',
-        'Misc': 'debris', # 'Debris as a catch-all for all other objects
+        'Misc': 'debris',  # 'Debris as a catch-all for all other objects
         'Person_sitting': 'pedestrian',
         'Tram': 'debris',
         'Misc': 'debris',
@@ -268,7 +276,26 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'barrier': 'waymo:Sign',
         'ignore': 'waymo:Sign'
     }
-    if input_ontology == 'lyft' and output_ontology == 'kitti':
+    # Supports identical mapping
+    if input_ontology == output_ontology:
+        map_identical = {}
+        classes = []
+        if input_ontology == 'kitti':
+            classes = classes_kitti
+        elif input_ontology == 'waymo':
+            classes = classes_waymo
+        elif input_ontology == 'lyft':
+            classes = classes_lyft
+        elif input_ontology == 'pandaset':
+            classes = classes_pandaset
+        elif input_ontology == 'nuscenes':
+            classes = classes_nuscenes
+        else:
+            assert False, input_ontology + ' to ' + output_ontology + ' is not supported'
+        for cls in classes:
+            map_identical[cls] = cls
+        return map_identical
+    elif input_ontology == 'lyft' and output_ontology == 'kitti':
         return map_lyft_to_kitti
     elif input_ontology == 'waymo' and output_ontology == 'kitti':
         return map_waymo_to_kitti

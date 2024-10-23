@@ -193,10 +193,7 @@ def save_pseudo_label_batch(input_dict,
         teacher_ontology = cfg.get('ONTOLOGY', None)
     student_class_names = cfg.get('CLASS_NAMES', None)
 
-    ontology_mapping_teacher_to_student = None
-    if teacher_ontology is not None and student_ontology is not None and teacher_ontology != student_ontology:
-        # print('teacher_ontology, student_ontology:', teacher_ontology, student_ontology)
-        ontology_mapping_teacher_to_student = get_ontology_mapping(teacher_ontology, student_ontology)
+    ontology_mapping_teacher_to_student = get_ontology_mapping(teacher_ontology, student_ontology)
 
     batch_size = len(pred_dicts)
     for b_idx in range(batch_size):
@@ -214,10 +211,7 @@ def save_pseudo_label_batch(input_dict,
             # print("pred_teacher_labels:", pred_labels)
             pred_teacher_classes = np.array(teacher_class_names)[pred_labels - 1]
             # print("pred_teacher_classes:", pred_teacher_classes)
-            if ontology_mapping_teacher_to_student is not None:
-                pred_student_classes = [ontology_mapping_teacher_to_student[teacher_class] for teacher_class in pred_teacher_classes]
-            else:
-                pred_student_classes = pred_teacher_classes
+            pred_student_classes = [ontology_mapping_teacher_to_student[teacher_class] for teacher_class in pred_teacher_classes]
             pred_student_labels = [student_class_names.index(student_class) + 1 for student_class in pred_student_classes]
             # print("pred_student_classes:", pred_student_classes)
             # print("pred_student_labels:", pred_student_labels)
