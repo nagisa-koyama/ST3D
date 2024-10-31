@@ -1,28 +1,11 @@
-CLASS_NAMES: ['waymo:Vehicle', 'waymo:Pedestrian', 'lyft:car', 'lyft:pedestrian', 'pandaset:Car', 'pandaset:Pedestrian', 'nuscenes:car', 'nuscenes:pedestrian', 'kitti:Car', 'kitti:Pedestrian']
+CLASS_NAMES: ['lyft:car', 'lyft:pedestrian', 'kitti:Car', 'kitti:Pedestrian']
 ONTOLOGY: 'kitti'
 
 # Defined for build_model but not used for self training.
 DATA_CONFIGS:
-    WAYMO_CONFIG:
-        _BASE_CONFIG_: cfgs/dataset_configs/da_waymo_dataset.yaml
-        INFO_WITH_FAKELIDAR: False
-        CLASS_NAMES: ['waymo:Vehicle', 'waymo:Pedestrian']
-        DRAW_CONF_CALIB_CURVE: False
-        RUN_CONF_CALIB: False
     LYFT_CONFIG:
         _BASE_CONFIG_: cfgs/dataset_configs/da_lyft_dataset.yaml
         CLASS_NAMES: ['lyft:car', 'lyft:pedestrian']
-        DRAW_CONF_CALIB_CURVE: False
-        RUN_CONF_CALIB: False
-    PANDASET_CONFIG:
-        _BASE_CONFIG_: cfgs/dataset_configs/da_pandaset_dataset.yaml
-        CLASS_NAMES: ['pandaset:Car', 'pandaset:Pedestrian']
-        DRAW_CONF_CALIB_CURVE: False
-        RUN_CONF_CALIB: False
-    NUSCENES_CONFIG:
-        _BASE_CONFIG_: cfgs/dataset_configs/da_nuscenes_dataset.yaml
-        CLASS_NAMES: ['nuscenes:car', 'nuscenes:pedestrian']
-        SHIFT_COOR: [0.0, 0.0, 1.8]
         DRAW_CONF_CALIB_CURVE: False
         RUN_CONF_CALIB: False
 
@@ -76,26 +59,6 @@ MODEL:
         SEPARATE_MULTIHEAD: True
         ANCHOR_GENERATOR_CONFIG: [
             {
-                'class_name': 'waymo:Vehicle',
-                'anchor_sizes': [[4.2, 2.0, 1.6]],
-                'anchor_rotations': [0, 1.57],
-                'anchor_bottom_heights': [0],
-                'align_center': False,
-                'feature_map_stride': 8,
-                'matched_threshold': 0.55,
-                'unmatched_threshold': 0.4
-            },
-            {
-                'class_name': 'waymo:Pedestrian',
-                'anchor_sizes': [[0.91, 0.86, 1.73]],
-                'anchor_rotations': [0, 1.57],
-                'anchor_bottom_heights': [0],
-                'align_center': False,
-                'feature_map_stride': 8,
-                'matched_threshold': 0.5,
-                'unmatched_threshold': 0.35
-            },
-            {
                 'class_name': 'lyft:car',
                 'anchor_sizes': [[4.2, 2.0, 1.6]],
                 'anchor_rotations': [0, 1.57],
@@ -108,46 +71,6 @@ MODEL:
             {
                 'class_name': lyft:pedestrian,
                 'anchor_sizes': [[0.80, 0.76, 1.76]],
-                'anchor_rotations': [0, 1.57],
-                'anchor_bottom_heights': [0],
-                'align_center': False,
-                'feature_map_stride': 8,
-                'matched_threshold': 0.6,
-                'unmatched_threshold': 0.4
-            },
-            {
-                'class_name': 'pandaset:Car',
-                'anchor_sizes': [[4.2, 2.0, 1.6]],
-                'anchor_rotations': [0, 1.57],
-                'anchor_bottom_heights': [0],
-                'align_center': False,
-                'feature_map_stride': 8,
-                'matched_threshold': 0.55,
-                'unmatched_threshold': 0.4
-            },
-            {
-                'class_name': pandaset:Pedestrian,
-                'anchor_sizes': [[0.80, 0.76, 1.76]],
-                'anchor_rotations': [0, 1.57],
-                'anchor_bottom_heights': [0],
-                'align_center': False,
-                'feature_map_stride': 8,
-                'matched_threshold': 0.6,
-                'unmatched_threshold': 0.4
-            },
-            {
-                'class_name': nuscenes:car,
-                'anchor_sizes': [[4.7, 2.1, 1.7]],
-                'anchor_rotations': [0, 1.57],
-                'anchor_bottom_heights': [0],
-                'align_center': False,
-                'feature_map_stride': 8,
-                'matched_threshold': 0.55,
-                'unmatched_threshold': 0.4
-            },
-            {
-                'class_name': nuscenes:pedestrian,
-                'anchor_sizes': [[0.73, 0.67, 1.77]],
                 'anchor_rotations': [0, 1.57],
                 'anchor_bottom_heights': [0],
                 'align_center': False,
@@ -179,24 +102,9 @@ MODEL:
         SHARED_CONV_NUM_FILTER: null
         RPN_HEAD_CFGS: [
             {
-                'HEAD_CLS_NAME': ['waymo:Vehicle', 'waymo:Pedestrian'],
-                # 'PLATT_SCALING_SCALE': [2.15252313],
-                # 'PLATT_SCALING_OFFSET': [7.51406276],
-            },
-            {
                 'HEAD_CLS_NAME': ['lyft:car', 'lyft:pedestrian'],
                 # 'PLATT_SCALING_SCALE': [1.94203519],
                 # 'PLATT_SCALING_OFFSET': [3.21289819],
-            },
-            {
-                'HEAD_CLS_NAME': ['pandaset:Car', 'pandaset:Pedestrian'],
-                # 'PLATT_SCALING_SCALE': [1.63204776],
-                # 'PLATT_SCALING_OFFSET': [3.71043937],
-            },
-            {
-                'HEAD_CLS_NAME': ['nuscenes:car', 'nuscenes:pedestrian'],
-                # 'PLATT_SCALING_SCALE': [1.63204776],
-                # 'PLATT_SCALING_OFFSET': [3.71043937],
             },
             {
                 'HEAD_CLS_NAME': ['kitti:Car', 'kitti:Pedestrian'],
@@ -234,7 +142,7 @@ MODEL:
         EVAL_METRIC: kitti
 
         NMS_CONFIG:
-            MULTI_CLASSES_NMS: True
+            MULTI_CLASSES_NMS: False # Check this
             NMS_TYPE: nms_gpu
             NMS_THRESH: 0.01
             NMS_PRE_MAXSIZE: 4096
@@ -243,7 +151,7 @@ MODEL:
 # Teacher model
 SELF_TRAIN:
     MODEL_TEACHER:
-        CLASS_NAMES: ['waymo:Vehicle', 'waymo:Pedestrian', 'lyft:car', 'lyft:pedestrian', 'pandaset:Car', 'pandaset:Pedestrian', 'nuscenes:car', 'nuscenes:pedestrian']
+        CLASS_NAMES: ['lyft:car', 'lyft:pedestrian']
         ONTOLOGY: 'head_per_dataset'
 
         NAME: SECONDNet
@@ -270,7 +178,8 @@ SELF_TRAIN:
             NUM_UPSAMPLE_FILTERS: [256, 256]
 
         DENSE_HEAD:
-            NAME: AnchorHeadMulti
+            # Here, this is set to AnchorHeadSingle because of its trained model.
+            NAME: AnchorHeadSingle
             CLASS_AGNOSTIC: False
 
             USE_DIRECTION_CLASSIFIER: True
@@ -278,29 +187,9 @@ SELF_TRAIN:
             DIR_LIMIT_OFFSET: 0.0
             NUM_DIR_BINS: 2
 
-            USE_MULTIHEAD: True
-            SEPARATE_MULTIHEAD: True
+            USE_MULTIHEAD: False
+            SEPARATE_MULTIHEAD: False
             ANCHOR_GENERATOR_CONFIG: [
-                {
-                    'class_name': 'waymo:Vehicle',
-                    'anchor_sizes': [[4.2, 2.0, 1.6]],
-                    'anchor_rotations': [0, 1.57],
-                    'anchor_bottom_heights': [0],
-                    'align_center': False,
-                    'feature_map_stride': 8,
-                    'matched_threshold': 0.55,
-                    'unmatched_threshold': 0.4
-                },
-                {
-                    'class_name': 'waymo:Pedestrian',
-                    'anchor_sizes': [[0.91, 0.86, 1.73]],
-                    'anchor_rotations': [0, 1.57],
-                    'anchor_bottom_heights': [0],
-                    'align_center': False,
-                    'feature_map_stride': 8,
-                    'matched_threshold': 0.5,
-                    'unmatched_threshold': 0.35
-                },
                 {
                     'class_name': 'lyft:car',
                     'anchor_sizes': [[4.2, 2.0, 1.6]],
@@ -321,70 +210,15 @@ SELF_TRAIN:
                     'matched_threshold': 0.6,
                     'unmatched_threshold': 0.4
                 },
-                {
-                    'class_name': 'pandaset:Car',
-                    'anchor_sizes': [[4.2, 2.0, 1.6]],
-                    'anchor_rotations': [0, 1.57],
-                    'anchor_bottom_heights': [0],
-                    'align_center': False,
-                    'feature_map_stride': 8,
-                    'matched_threshold': 0.55,
-                    'unmatched_threshold': 0.4
-                },
-                {
-                    'class_name': pandaset:Pedestrian,
-                    'anchor_sizes': [[0.80, 0.76, 1.76]],
-                    'anchor_rotations': [0, 1.57],
-                    'anchor_bottom_heights': [0],
-                    'align_center': False,
-                    'feature_map_stride': 8,
-                    'matched_threshold': 0.6,
-                    'unmatched_threshold': 0.4
-                },
-                {
-                    'class_name': nuscenes:car,
-                    'anchor_sizes': [[4.7, 2.1, 1.7]],
-                    'anchor_rotations': [0, 1.57],
-                    'anchor_bottom_heights': [0],
-                    'align_center': False,
-                    'feature_map_stride': 8,
-                    'matched_threshold': 0.55,
-                    'unmatched_threshold': 0.4
-                },
-                {
-                    'class_name': nuscenes:pedestrian,
-                    'anchor_sizes': [[0.73, 0.67, 1.77]],
-                    'anchor_rotations': [0, 1.57],
-                    'anchor_bottom_heights': [0],
-                    'align_center': False,
-                    'feature_map_stride': 8,
-                    'matched_threshold': 0.6,
-                    'unmatched_threshold': 0.4
-                },
             ]
             SHARED_CONV_NUM_FILTER: null
-            RPN_HEAD_CFGS: [
-                {
-                    'HEAD_CLS_NAME': ['waymo:Vehicle', 'waymo:Pedestrian'],
-                    # 'PLATT_SCALING_SCALE': [2.15252313],
-                    # 'PLATT_SCALING_OFFSET': [7.51406276],
-                },
-                {
-                    'HEAD_CLS_NAME': ['lyft:car', 'lyft:pedestrian'],
-                    # 'PLATT_SCALING_SCALE': [1.94203519],
-                    # 'PLATT_SCALING_OFFSET': [3.21289819],
-                },
-                {
-                    'HEAD_CLS_NAME': ['pandaset:Car', 'pandaset:Pedestrian'],
-                    # 'PLATT_SCALING_SCALE': [1.63204776],
-                    # 'PLATT_SCALING_OFFSET': [3.71043937],
-                },
-                {
-                    'HEAD_CLS_NAME': ['nuscenes:car', 'nuscenes:pedestrian'],
-                    # 'PLATT_SCALING_SCALE': [1.63204776],
-                    # 'PLATT_SCALING_OFFSET': [3.71043937],
-                },
-            ]
+            # RPN_HEAD_CFGS: [
+            #     {
+            #         'HEAD_CLS_NAME': ['lyft:car', 'lyft:pedestrian'],
+            #         # 'PLATT_SCALING_SCALE': [1.94203519],
+            #         # 'PLATT_SCALING_OFFSET': [3.21289819],
+            #     },
+            # ]
 
             # SEPARATE_REG_CONFIG: 
             #     NUM_MIDDLE_CONV: 1
@@ -416,21 +250,21 @@ SELF_TRAIN:
             EVAL_METRIC: kitti
 
             NMS_CONFIG:
-                MULTI_CLASSES_NMS: True
+                MULTI_CLASSES_NMS: False # Need to revisit.
                 NMS_TYPE: nms_gpu
                 NMS_THRESH: 0.01
                 NMS_PRE_MAXSIZE: 4096
                 NMS_POST_MAXSIZE: 500
 
-    SCORE_THRESH: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
-    NEG_THRESH: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
-    UPDATE_PSEUDO_LABEL: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    SCORE_THRESH: [0.1, 0.1, 0.1, 0.1]
+    NEG_THRESH: [0.1, 0.1, 0.1, 0.1]
+    UPDATE_PSEUDO_LABEL: [0, 0, 0, 0]
     UPDATE_PSEUDO_LABEL_INTERVAL: 2
     INIT_PS: None
     SRC:
         USE_DATA: True
         USE_GRAD: False
-        LOSS_WEIGHT: 0.25
+        LOSS_WEIGHT: 1.0
         BACKWARD_TOGETHER: True
     TAR:
         USE_DATA: True

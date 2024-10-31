@@ -431,7 +431,7 @@ SELF_TRAIN:
     SRC:
         USE_DATA: True
         USE_GRAD: False
-        LOSS_WEIGHT: 1.0
+        LOSS_WEIGHT: 0.25
         BACKWARD_TOGETHER: True
     TAR:
         USE_DATA: True

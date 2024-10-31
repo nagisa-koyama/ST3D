@@ -222,6 +222,7 @@ MODEL:
                 'cls_weight': 1.0,
                 'loc_weight': 2.0,
                 'dir_weight': 0.2,
+                'dann_weight': 0.1,
                 'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
             }
             SCORE_WEIGHTING: False
@@ -259,9 +260,9 @@ SELF_TRAIN:
             NUM_BEV_FEATURES: 256
 
         BACKBONE_2D:
-            # NAME: DomainAttentionBEVBackbone
-            NAME: BaseBEVBackbone
-            # NUM_ADAPTERS: 4
+            NAME: DomainAttentionBEVBackbone
+            # NAME: BaseBEVBackbone
+            NUM_ADAPTERS: 4
 
             LAYER_NUMS: [5, 5]
             LAYER_STRIDES: [1, 2]
@@ -430,7 +431,7 @@ SELF_TRAIN:
     SRC:
         USE_DATA: True
         USE_GRAD: False
-        LOSS_WEIGHT: 0.25
+        LOSS_WEIGHT: 1.0
         BACKWARD_TOGETHER: True
     TAR:
         USE_DATA: True
