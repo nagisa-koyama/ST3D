@@ -58,16 +58,16 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
                 loss_total = loss
             else:
                 loss_total += loss
-            loss.backward()
             if dataset_index == len(dataloader_iters) - 1:
                 # Update params only when final dataset is pulled in.
+                loss_total.backward() # Fixed on Nov 2nd, 2024.
                 clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
                 optimizer.step()
             disp_dict.update({'loss total': loss_total.item(), 'lr': cur_lr})
         else:
             optimizer.zero_grad()
             loss_total = loss
-            loss.backward()
+            loss_total.backward()
             clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
             optimizer.step()
             disp_dict.update({'loss ' + dataset_ontology: loss.item(), 'lr': cur_lr})
