@@ -68,6 +68,7 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
 
                 # If backward together, postpone backward to the end of the loop
                 if not backward_together_src:
+                    # Here, we do backward for each source separately.
                     loss.backward()
                     disp_dict.update({'src_loss_' + source_ontology: loss.item(), 'lr': cur_lr})
                     if not cfg.SELF_TRAIN.SRC.get('USE_GRAD', None):
@@ -166,8 +167,9 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
         # log to console and tensorboard
         if rank == 0:
             pbar.update()
-            pbar.set_postfix(dict(total_it=accumulated_iter, pos_ps_box=pos_ps_result,
-                                  ign_ps_box=ign_ps_result))
+            if cfg.SELF_TRAIN.TAR.USE_DATA:
+                pbar.set_postfix(dict(total_it=accumulated_iter, pos_ps_box=pos_ps_result,
+                                    ign_ps_box=ign_ps_result))
             tbar.set_postfix(disp_dict)
             tbar.refresh()
 

@@ -63,7 +63,7 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
                 loss_total.backward() # Fixed on Nov 2nd, 2024.
                 clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
                 optimizer.step()
-            disp_dict.update({'loss total': loss_total.item(), 'lr': cur_lr})
+                disp_dict.update({'loss total': loss_total.item(), 'lr': cur_lr})
         else:
             optimizer.zero_grad()
             loss_total = loss
