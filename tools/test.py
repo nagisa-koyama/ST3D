@@ -69,11 +69,16 @@ def eval_single_ckpt(model, test_loaders, args, eval_output_dir, logger, epoch_i
 
 
 def get_no_evaluated_ckpt(ckpt_dir, ckpt_record_file, args):
-    ckpt_list = glob.glob(os.path.join(ckpt_dir, '*checkpoint_epoch_*.pth'))
-    ckpt_list.sort(key=os.path.getmtime)
+    ckpt_list_unsorted = glob.glob(os.path.join(ckpt_dir, '*checkpoint_epoch_*.pth'))
+    ckpt_list_sorted = [None] * len(ckpt_list_unsorted)
+    for cur_ckpt in ckpt_list_unsorted:
+        num_list = re.findall('checkpoint_epoch_(.*).pth', cur_ckpt)
+        # Assuming ckpt number is 1-index. Also assuming ckpt number is incremental.
+        ckpt_list_sorted[int(float(num_list[-1])) - 1] = cur_ckpt
+
     evaluated_ckpt_list = [float(x.strip()) for x in open(ckpt_record_file, 'r').readlines()]
 
-    for cur_ckpt in ckpt_list:
+    for cur_ckpt in ckpt_list_sorted:
         num_list = re.findall('checkpoint_epoch_(.*).pth', cur_ckpt)
         if num_list.__len__() == 0:
             continue
