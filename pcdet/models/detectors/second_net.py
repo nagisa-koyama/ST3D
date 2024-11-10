@@ -11,11 +11,13 @@ class SECONDNet(Detector3DTemplate):
             batch_dict = cur_module(batch_dict)
 
         if self.training:
-            loss, tb_dict, disp_dict = self.get_training_loss()
+            loss, tb_dict, disp_dict, dann_loss = self.get_training_loss()
 
             ret_dict = {
-                'loss': loss
+                'loss': loss,
             }
+            if dann_loss is not None:
+                ret_dict['dann_loss'] = dann_loss
             return ret_dict, tb_dict, disp_dict
         else:
             pred_dicts, recall_dicts = self.post_processing(batch_dict)
@@ -24,5 +26,5 @@ class SECONDNet(Detector3DTemplate):
     def get_training_loss(self):
         disp_dict = {}
 
-        loss_rpn, tb_dict = self.dense_head.get_loss()
-        return loss_rpn, tb_dict, disp_dict
+        loss_rpn, tb_dict, loss_dann = self.dense_head.get_loss()
+        return loss_rpn, tb_dict, disp_dict, loss_dann

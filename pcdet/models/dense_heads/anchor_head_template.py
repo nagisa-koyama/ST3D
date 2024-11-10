@@ -270,11 +270,10 @@ class AnchorHeadTemplate(nn.Module):
             cls_weight = weights[0]
             box_weight = weights[1]
         rpn_loss = cls_weight * cls_loss + box_weight * box_loss
-        if domain_loss:
-            rpn_loss += domain_loss
-
+        # Excludes domain_loss from the rpn_loss logging.
         tb_dict['rpn_loss'] = rpn_loss.item()
-        return rpn_loss, tb_dict
+
+        return rpn_loss, tb_dict, domain_loss
 
     def generate_predicted_boxes(self, batch_size, cls_preds, box_preds, dir_cls_preds=None):
         """

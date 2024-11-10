@@ -23,18 +23,21 @@ def load_data_to_gpu(batch_dict):
 
 
 def model_fn_decorator():
-    ModelReturn = namedtuple('ModelReturn', ['loss', 'tb_dict', 'disp_dict'])
+    ModelReturn = namedtuple('ModelReturn', ['loss', 'tb_dict', 'disp_dict', 'dann_loss'])
 
     def model_func(model, batch_dict):
         load_data_to_gpu(batch_dict)
         ret_dict, tb_dict, disp_dict = model(batch_dict)
 
         loss = ret_dict['loss'].mean()
+        dann_loss = None
+        if 'dann_loss' in ret_dict.keys() and ret_dict['dann_loss']:
+            dann_loss = ret_dict['dann_loss'].mean()
         if hasattr(model, 'update_global_step'):
             model.update_global_step()
         else:
             model.module.update_global_step()
 
-        return ModelReturn(loss, tb_dict, disp_dict)
+        return ModelReturn(loss, tb_dict, disp_dict, dann_loss)
 
     return model_func

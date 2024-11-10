@@ -422,12 +422,15 @@ class AnchorHeadMulti(AnchorHeadTemplate):
         dann_loss_weight = loss_weights['dann_weight']
         domain_preds = self.forward_ret_dict['domain_preds']
         domain_label = self.forward_ret_dict['domain_label']
-        print("domain_label: ", domain_label)
         batch_size = int(domain_preds[0].shape[0])
 
         loss = nn.BCEWithLogitsLoss()(domain_preds, Variable(
             torch.FloatTensor(domain_preds.data.size()).fill_(domain_label)).cuda())
         loss = loss.sum() / batch_size * dann_loss_weight
+
+        # Debug metrics computation
         tb_dict = {}
-        tb_dict['rpn_loss_dann'] = loss.item()
+        tb_dict['dann_loss'] = loss.item()
+        tb_dict['domain_preds_num'] = torch.numel(domain_preds)
+        tb_dict['domain_preds_accuracy'] = ((domain_preds > 0) == domain_label).sum() / tb_dict['domain_preds_num']
         return loss, tb_dict
