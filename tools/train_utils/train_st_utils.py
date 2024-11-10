@@ -207,7 +207,7 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                 wandb.log({'train/st_loss': st_loss})
                 for key, val in st_tb_dict.items():
                     wandb.log({'train/' + key: val})
-                    if key == 'domain_preds_accuracy':
+                    if key == 'st_domain_preds_accuracy':
                         weight = 0.5
                         weighted_domain_preds_accuracy = val * weight
                         if domain_preds_accuracy:
