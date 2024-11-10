@@ -129,12 +129,12 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
 
             if st_dann_loss:
                 st_dann_loss = cfg.SELF_TRAIN.TAR.get('LOSS_WEIGHT', 1.0) * st_dann_loss
-                assert (dann_loss_total, "dann_loss should be summed in both SELF_TRAIN.SRC and TAR")
+                assert dann_loss_total, "dann_loss should be summed in both SELF_TRAIN.SRC and TAR"
                 dann_loss_total += st_dann_loss
                 # Reflects dann_loss into loss_total here.
                 loss_total += dann_loss_total
             else:
-                assert (dann_loss_total is None, "dann_loss should not be summed only in SELF_TRAIN.SRC")
+                assert dann_loss_total is None, "dann_loss should not be summed only in SELF_TRAIN.SRC"
 
             # If backward together with target is true, do backward with loss_total here.
             if backward_together_tar:
