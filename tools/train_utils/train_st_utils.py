@@ -69,7 +69,7 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
 
                 # dann_loss is summed with tar later.
                 if dann_loss is not None:
-                    dann_loss = cfg.SELF_TRAIN.SRC.get('LOSS_WEIGHT', 1.0) * dann_loss
+                    dann_loss *= 0.5 / len(source_readers)  # 0.5 is the weight for source domain
                     dann_loss_total = dann_loss if dann_loss_total is None else dann_loss_total + dann_loss
 
                 # If backward together, postpone backward to the end of the loop
@@ -86,8 +86,8 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                     for key, val in tb_dict.items():
                         wandb.log({'train/' + source_ontology + '/' + key: val})
                         if key == 'domain_preds_accuracy':
-                            weight = 0.5 / len(source_readers)
-                            weighted_domain_preds_accuracy = val * weight
+                            weighted_domain_preds_accuracy = val * 0.5 / \
+                                len(source_readers)  # 0.5 is the weight for source domain
                             if domain_preds_accuracy:
                                 domain_preds_accuracy += weighted_domain_preds_accuracy
                             else:
@@ -128,9 +128,8 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
             loss_total = st_loss if loss_total is None else loss_total + st_loss
 
             if st_dann_loss:
-                st_dann_loss = cfg.SELF_TRAIN.TAR.get('LOSS_WEIGHT', 1.0) * st_dann_loss
                 assert dann_loss_total, "dann_loss should be summed in both SELF_TRAIN.SRC and TAR"
-                dann_loss_total += st_dann_loss
+                dann_loss_total += st_dann_loss * 0.5  # 0.5 is the weight for target domain
                 # Reflects dann_loss into loss_total here.
                 loss_total += dann_loss_total
             else:
@@ -167,7 +166,6 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                     model.eval()
                     # load_data_to_gpu(target_batch)
                     pred_dicts, _ = model.forward(target_batch)
-                    # print("pred_dicts in train_st_utils:", pred_dicts)
 
                     mlab.options.offscreen = True
                     first_elem_index = 0
@@ -208,8 +206,7 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                 for key, val in st_tb_dict.items():
                     wandb.log({'train/' + key: val})
                     if key == 'st_domain_preds_accuracy':
-                        weight = 0.5
-                        weighted_domain_preds_accuracy = val * weight
+                        weighted_domain_preds_accuracy = val * 0.5  # 0.5 is the weight for target domain
                         if domain_preds_accuracy:
                             domain_preds_accuracy += weighted_domain_preds_accuracy
                         else:
