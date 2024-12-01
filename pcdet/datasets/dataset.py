@@ -11,6 +11,7 @@ from ..utils import common_utils, box_utils, self_training_utils
 from ..ops.roiaware_pool3d import roiaware_pool3d_utils
 from ..utils.ontology_mapping import get_ontology_mapping
 
+
 class DatasetTemplate(torch_data.Dataset):
     def __init__(self, dataset_cfg=None, class_names=None, training=True, root_path=None, logger=None,
                  model_ontology=None):
@@ -33,11 +34,17 @@ class DatasetTemplate(torch_data.Dataset):
             # Multi-head setup. Handles only associated labels.
             self.dataset_class_names = copy.deepcopy([])
             for cls in class_names:
-                assert(cls.count(":") == 1)
+                assert (cls.count(":") == 1)
                 ontology, label = cls.split(":")
                 if ontology == self.dataset_ontology:
                     self.dataset_class_names.append(cls)
-            assert(self.dataset_class_names[-1].count(":") == 1)
+            assert (self.dataset_class_names[-1].count(":") == 1)
+        print("Model class names:", class_names)
+        print("Mapping from dataset to model ontology:",
+              self.map_ontology_dataset_to_model if self.map_ontology_dataset_to_model else "None")
+        print("Mapping from model to dataset ontology:",
+              self.map_ontology_model_to_dataset if self.map_ontology_model_to_dataset else "None")
+        print("Mapped dataset class names:", self.dataset_class_names)
 
         self.logger = logger
         self.root_path = root_path if root_path is not None else Path(self.dataset_cfg.DATA_PATH)
@@ -62,8 +69,6 @@ class DatasetTemplate(torch_data.Dataset):
         self.voxel_size = self.data_processor.voxel_size
         self.total_epochs = 0
         self._merge_all_iters_to_one_epoch = False
-
-
 
     @property
     def mode(self):
@@ -92,7 +97,7 @@ class DatasetTemplate(torch_data.Dataset):
         Returns:
 
         """
-        
+
         def get_template_prediction(num_samples):
             box_dim = 9 if self.dataset_cfg.get('TRAIN_WITH_SPEED', False) else 7
             ret_dict = {
@@ -127,7 +132,6 @@ class DatasetTemplate(torch_data.Dataset):
 
         return annos
 
-
     @staticmethod
     def __vis__(points, gt_boxes, ref_boxes=None, gt_scores=None, ref_scores=None, labels=None, use_fakelidar=False):
         import visual_utils.visualize_utils as vis
@@ -141,7 +145,8 @@ class DatasetTemplate(torch_data.Dataset):
             if use_fakelidar:
                 ref_boxes = box_utils.boxes3d_kitti_lidar_to_fakelidar(ref_boxes)
 
-        vis.draw_scenes(points, gt_boxes, ref_boxes=ref_boxes, gt_scores=gt_scores, ref_scores=ref_scores, ref_labels=labels)
+        vis.draw_scenes(points, gt_boxes, ref_boxes=ref_boxes, gt_scores=gt_scores,
+                        ref_scores=ref_scores, ref_labels=labels)
         # mlab.show(stop=True)
 
     @staticmethod
@@ -272,6 +277,8 @@ class DatasetTemplate(torch_data.Dataset):
         # ontology remapping
         if self.map_ontology_dataset_to_model is not None:
             updated_gt_names = []
+            # print("data_dict[gt_names] in prepare_data before ontology remap", data_dict['gt_names'])
+            # print("self.map_ontology_dataset_to_model", self.map_ontology_dataset_to_model)
             for index in range(data_dict['gt_names'].size):
                 # Note: previously updated name is trancated due to initially allocated smaller memory size.
                 # Resolved by newly creating numpy.array instead of updating existing element.
@@ -290,7 +297,7 @@ class DatasetTemplate(torch_data.Dataset):
                     updated_gt_names.append(data_dict['gt_names'][index])
                 else:
                     updated_gt_names.append(self.dataset_ontology + ":" + data_dict['gt_names'][index])
-                assert(updated_gt_names[-1].count(":") == 1)
+                assert (updated_gt_names[-1].count(":") == 1)
             data_dict['gt_names'] = np.array(updated_gt_names)
             # print("data_dict[gt_names] in prepare_data after multi-head label update", data_dict['gt_names'])
 

@@ -249,6 +249,18 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'pandaset:Pedestrian': 'nuscenes:pedestrian',
         'nuscenes:pedestrian': 'nuscenes:pedestrian'
     }
+    map_head_per_dataset_to_lyft = {
+        'kitti:Car': 'lyft:car',
+        'waymo:Vehicle': 'lyft:car',
+        'lyft:car': 'lyft:car',
+        'pandaset:Car': 'lyft:car',
+        'nuscenes:car': 'lyft:car',
+        'kitti:Pedestrian': 'lyft:pedestrian',
+        'waymo:Pedestrian': 'lyft:pedestrian',
+        'lyft:pedestrian': 'lyft:pedestrian',
+        'pandaset:Pedestrian': 'lyft:pedestrian',
+        'nuscenes:pedestrian': 'lyft:pedestrian',
+    }
     # Defined for compatibility with the rest of the code but not used.
     map_kitti_to_head_per_dataset = {
         'Car': 'waymo:Vehicle',
@@ -264,17 +276,29 @@ def get_ontology_mapping(input_ontology, output_ontology):
     }
     # Defined for compatibility with the rest of the code but not used.
     map_nuscenes_to_head_per_dataset = {
+        'nuscenes:car': 'waymo:Vehicle',
+        'nuscenes:truck': 'waymo:Vehicle',
+        'nuscenes:bus': 'waymo:Vehicle',
+        'nuscenes:construction_vehicle': 'waymo:Vehicle',
+        'nuscenes:motorcycle': 'waymo:Cyclist',
+        'nuscenes:bicycle': 'waymo:Cyclist',
+        'nuscenes:trailer': 'waymo:Sign',
+        'nuscenes:pedestrian': 'waymo:Pedestrian',
+        'nuscenes:traffic_cone': 'waymo:Sign',
+        'nuscenes:barrier': 'waymo:Sign',
+        'nuscenes:ignore': 'waymo:Sign'
+    }
+    # Defined for compatibility with the rest of the code but not used.
+    map_lyft_to_head_per_dataset = {
         'car': 'waymo:Vehicle',
-        'truck': 'waymo:Vehicle',
-        'bus': 'waymo:Vehicle',
-        'construction_vehicle': 'waymo:Sign',
-        'motorcycle': 'waymo:Sign',
-        'bicycle': 'waymo:Cyclist',
-        'trailer': 'waymo:Sign',
         'pedestrian': 'waymo:Pedestrian',
-        'traffic_cone': 'waymo:Sign',
-        'barrier': 'waymo:Sign',
-        'ignore': 'waymo:Sign'
+        'truck': 'waymo:Vehicle',
+        'bicycle': 'waymo:Cyclist',
+        'motorcycle': 'waymo:Cyclist',
+        'bus': 'waymo:Vehicle',
+        'emergency_vehicle': 'waymo:Sign',
+        'other_vehicle': 'waymo:Sign',
+        'animal': 'waymo:Sign'
     }
     # Supports identical mapping
     if input_ontology == output_ontology:
@@ -331,5 +355,9 @@ def get_ontology_mapping(input_ontology, output_ontology):
         return map_head_per_dataset_to_nuscenes
     elif input_ontology == 'nuscenes' and output_ontology == 'head_per_dataset':
         return map_nuscenes_to_head_per_dataset
+    elif input_ontology == 'head_per_dataset' and output_ontology == 'lyft':
+        return map_head_per_dataset_to_lyft
+    elif input_ontology == 'lyft' and output_ontology == 'head_per_dataset':
+        return map_lyft_to_head_per_dataset
     else:
         assert False, input_ontology + ' to ' + output_ontology + ' is not supported'
