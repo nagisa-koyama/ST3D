@@ -3,7 +3,7 @@ import torch
 from torch.autograd import Variable
 import torch.nn as nn
 
-from ...ops.dann.functions import DomainDiscriminator, ReverseLayerF
+from ...ops.dann.functions import DomainDiscriminator, ReverseLayerF, DAImgHead
 from ..backbones_2d import BaseBEVBackbone
 from .anchor_head_template import AnchorHeadTemplate
 
@@ -190,7 +190,8 @@ class AnchorHeadMulti(AnchorHeadTemplate):
             shared_conv_num_filter = input_channels
         self.rpn_heads = None
         self.make_multihead(shared_conv_num_filter)
-        self.domain_discriminator = DomainDiscriminator(in_channels=shared_conv_num_filter)
+        # self.domain_discriminator = DomainDiscriminator(in_channels=shared_conv_num_filter)
+        self.domain_discriminator = DAImgHead(in_channels=shared_conv_num_filter)
 
     def make_multihead(self, input_channels):
         rpn_head_cfgs = self.model_cfg.RPN_HEAD_CFGS
