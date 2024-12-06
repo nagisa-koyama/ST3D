@@ -319,7 +319,7 @@ def main():
     if args.eval_fov_only:
         cfg.DATA_CONFIG_TAR.FOV_POINTS_ONLY = True
 
-    test_data_configs = get_eval_configs()
+    test_data_configs = get_eval_configs(cfg)
     test_datasets = list()
     for test_data_config in test_data_configs.values():
         test_set, test_loader, test_sampler = build_dataloader(

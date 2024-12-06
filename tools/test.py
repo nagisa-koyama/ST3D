@@ -91,7 +91,7 @@ def get_no_evaluated_ckpt(ckpt_dir, ckpt_record_file, args):
     return -1, None
 
 
-def get_eval_configs():
+def get_eval_configs(cfg):
     if cfg.get('DATA_CONFIG_TAR', None):
         return {'DATA_CONFIG_TAR': cfg.DATA_CONFIG_TAR}
     elif cfg.get('DATA_CONFIG', None):
@@ -104,7 +104,7 @@ def get_eval_configs():
 
 def repeat_eval_ckpt(model, test_loaders, args, eval_output_dir, logger, ckpt_dir, dist_test=False):
 
-    data_config_evals = get_eval_configs().values()
+    data_config_evals = get_eval_configs(cfg).values()
     data_config_eval_rep = list(data_config_evals)[0]
 
     # evaluated ckpt record. Tentatively use first dataset.
@@ -181,7 +181,7 @@ def main():
 
     eval_output_dir = output_dir / 'eval'
 
-    eval_configs = get_eval_configs()
+    eval_configs = get_eval_configs(cfg)
     eval_config_rep = list(eval_configs.values())[0]
 
     if not args.eval_all:
@@ -214,7 +214,7 @@ def main():
 
     ckpt_dir = args.ckpt_dir if args.ckpt_dir is not None else output_dir / 'ckpt'
 
-    eval_configs = get_eval_configs()
+    eval_configs = get_eval_configs(cfg)
     test_datasets = list()
     for eval_config in eval_configs.values():
         test_set, test_loader, test_sampler = build_dataloader(
