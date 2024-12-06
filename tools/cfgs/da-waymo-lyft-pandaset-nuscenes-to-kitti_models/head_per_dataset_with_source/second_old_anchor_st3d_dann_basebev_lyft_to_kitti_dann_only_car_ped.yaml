@@ -1,5 +1,6 @@
 CLASS_NAMES: ['lyft:car', 'lyft:pedestrian', 'kitti:Car', 'kitti:Pedestrian']
 ONTOLOGY: 'kitti'
+#ONTOLOGY: 'head_per_dataset' # This is for evaluation.
 
 # Defined for build_model but not used for self training.
 DATA_CONFIGS:
