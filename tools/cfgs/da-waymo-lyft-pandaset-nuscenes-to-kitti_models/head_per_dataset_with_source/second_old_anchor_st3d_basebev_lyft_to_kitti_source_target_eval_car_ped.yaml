@@ -12,7 +12,7 @@ DATA_CONFIGS:
     KITTI_CONFIG:
         _BASE_CONFIG_: cfgs/dataset_configs/da_kitti_dataset.yaml
         CLASS_NAMES: ['kitti:Car', 'kitti:Pedestrian']
-        FOV_POINTS_ONLY: True
+        FOV_POINTS_ONLY: False
         SHIFT_COOR: [0.0, 0.0, 1.6]
         DRAW_CONF_CALIB_CURVE: False
         RUN_CONF_CALIB: False
