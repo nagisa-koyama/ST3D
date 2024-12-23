@@ -33,6 +33,7 @@ def parse_config():
                         default='/storage', help='specify the output directory')
     parser.add_argument('--out_filename', type=str,
                         default='scene.png', help='specify the output filename')
+    parser.add_argument('--run_name', type=str, default=None, help='run name for wandb')
     args = parser.parse_args()
     cfg_from_yaml_file(args.cfg_file, cfg)
 
@@ -44,7 +45,7 @@ def main():
     logger = common_utils.create_logger()
     logger.info('-----------------Run TSNE-------------------------')
 
-    wandb.init(config=vars(cfg), project="st3d")
+    wandb.init(config=vars(cfg), project="st3d", name=args.run_name)
 
     # Dataset configs
     eval_configs = get_eval_configs(cfg)

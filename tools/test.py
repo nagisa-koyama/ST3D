@@ -40,6 +40,7 @@ def parse_config():
     parser.add_argument('--eval_all', action='store_true', default=False, help='whether to evaluate all checkpoints')
     parser.add_argument('--ckpt_dir', type=str, default=None, help='specify a ckpt directory to be evaluated if needed')
     parser.add_argument('--save_to_file', action='store_true', default=False, help='')
+    parser.add_argument('--run_name', type=str, default=None, help='run name for wandb')
 
     args = parser.parse_args()
 
@@ -199,7 +200,7 @@ def main():
     logger = common_utils.create_logger(log_file, rank=cfg.LOCAL_RANK)
 
     if cfg.LOCAL_RANK == 0:
-        wandb.init(config=vars(cfg), project="st3d")
+        wandb.init(config=vars(cfg), project="st3d", name=args.run_name)
 
     # log to file
     logger.info('**********************Start logging**********************')

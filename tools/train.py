@@ -54,6 +54,7 @@ def parse_config():
     parser.add_argument('--eval_fov_only', action='store_true', default=False, help='')
     parser.add_argument('--eval_src', action='store_true', default=False, help='')
     parser.add_argument('--num_epochs_to_eval', type=int, default=100, help='number of checkpoints to be evaluated')
+    parser.add_argument('--run_name', type=str, default=None, help='run name for wandb')
 
     args = parser.parse_args()
 
@@ -100,8 +101,8 @@ def main():
     logger = common_utils.create_logger(log_file, rank=cfg.LOCAL_RANK)
 
     if cfg.LOCAL_RANK == 0:
-        wandb.init(config=vars(cfg), project="st3d")
-    
+        wandb.init(config=vars(cfg), project="st3d", name=args.run_name)
+
     # log to file
     logger.info('**********************Start logging**********************')
     gpu_list = os.environ['CUDA_VISIBLE_DEVICES'] if 'CUDA_VISIBLE_DEVICES' in os.environ.keys() else 'ALL'
