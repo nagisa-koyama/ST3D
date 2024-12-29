@@ -32,7 +32,7 @@ def parse_config():
     parser.add_argument('--out_dir', type=str,
                         default='/storage', help='specify the output directory')
     parser.add_argument('--out_filename', type=str,
-                        default='scene.png', help='specify the output filename')
+                        default='tsne.png', help='specify the output filename')
     parser.add_argument('--run_name', type=str, default=None, help='run name for wandb')
     args = parser.parse_args()
     cfg_from_yaml_file(args.cfg_file, cfg)
@@ -79,6 +79,7 @@ def main():
     labels = []
     feature_extraction_start = time.time()
     for eval_dataset in eval_datasets:
+        print("eval_dataset onotology:", eval_dataset['loader'].dataset.dataset_ontology)
         for idx, data_dict in enumerate(eval_dataset['loader']):
             load_data_to_gpu(data_dict)
             load_data_to_gpu_duration = time.time()
@@ -94,12 +95,12 @@ def main():
             if idx * args.batch_size >= 1000:
                 print("Breaking after 1000 samples")
                 break
-        feature_extraction_end = time.time()
-        print("Feature extraction duration[s]:", feature_extraction_end - feature_extraction_start)
-        tsne = model_tsne.fit_transform(features)
-        print(tsne)
-        tsne_duration = time.time()
-        print("tsne duration [s]:", time.time() - feature_extraction_end)
+    feature_extraction_end = time.time()
+    print("Feature extraction duration[s]:", feature_extraction_end - feature_extraction_start)
+    tsne = model_tsne.fit_transform(features)
+    print(tsne)
+    tsne_duration = time.time()
+    print("tsne duration [s]:", time.time() - feature_extraction_end)
 
     logger.info('TSNE done.')
 
