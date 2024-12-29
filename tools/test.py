@@ -133,7 +133,8 @@ def repeat_eval_ckpt(model, test_loaders, args, eval_output_dir, logger, ckpt_di
             time.sleep(wait_second)
             total_time += 30
             if total_time > args.max_waiting_mins * 60 and (first_eval is False):
-                break
+                assert False, 'Time limit reached, exit without evaluation'
+                # break
             continue
 
         total_time = 0
