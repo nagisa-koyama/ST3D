@@ -327,6 +327,8 @@ class DatasetTemplate(torch_data.Dataset):
 
         if data_dict.get('gt_boxes', None) is not None:
             selected = common_utils.keep_arrays_by_name(data_dict['gt_names'], self.class_names)
+            # print("self.class_names", self.class_names)
+            # print("selected:", selected)
             data_dict['gt_boxes'] = data_dict['gt_boxes'][selected]
             data_dict['gt_names'] = data_dict['gt_names'][selected]
             # for pseudo label has ignore labels.
@@ -350,8 +352,8 @@ class DatasetTemplate(torch_data.Dataset):
         #     return self.__getitem__(new_index)
         # print("selected gt_names at prepare_data:", data_dict['gt_names'])
         # print("gt_classes at prepare_data:", gt_classes)
-        data_dict.pop('gt_names', None)
-        data_dict.pop('gt_classes', None)
+        # data_dict.pop('gt_names', None)
+        # data_dict.pop('gt_classes', None)
 
         return data_dict
 
@@ -386,6 +388,12 @@ class DatasetTemplate(torch_data.Dataset):
                     for k in range(batch_size):
                         batch_scores[k, :val[k].__len__()] = val[k]
                     ret[key] = batch_scores
+                elif key in ['gt_names', 'gt_classes']:
+                    max_gt = max([len(x) for x in val])
+                    batch_names = np.full((batch_size, max_gt), "", dtype=np.object)
+                    for k in range(batch_size):
+                        batch_names[k, :val[k].__len__()] = val[k]
+                    ret[key] = batch_names
                 else:
                     ret[key] = np.stack(val, axis=0)
             except:
