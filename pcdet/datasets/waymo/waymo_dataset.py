@@ -127,6 +127,8 @@ class WaymoDataset(DatasetTemplate):
         sequence_name = pc_info['lidar_sequence']
         sample_idx = pc_info['sample_idx']
         points = self.get_lidar(sequence_name, sample_idx)
+        if self.dataset_cfg.get('SHIFT_COOR', None):
+            points[:, 0:3] += np.array(self.dataset_cfg.SHIFT_COOR, dtype=np.float32)
 
         input_dict = {
             'points': points,
@@ -142,6 +144,9 @@ class WaymoDataset(DatasetTemplate):
                 gt_boxes_lidar = box_utils.boxes3d_kitti_fakelidar_to_lidar(annos['gt_boxes_lidar'])
             else:
                 gt_boxes_lidar = annos['gt_boxes_lidar']
+
+            if self.dataset_cfg.get('SHIFT_COOR', None):
+                gt_boxes_lidar[:, 0:3] += self.dataset_cfg.SHIFT_COOR
 
             input_dict.update({
                 'gt_names': annos['name'],
@@ -232,6 +237,8 @@ class WaymoDataset(DatasetTemplate):
             pred_dict = get_template_prediction(pred_scores.shape[0])
             if pred_scores.shape[0] == 0:
                 return pred_dict
+            if self.dataset_cfg.get('SHIFT_COOR', None):
+                pred_boxes[:, 0:3] -= self.dataset_cfg.SHIFT_COOR
 
             pred_dict['name'] = np.array(class_names)[pred_labels - 1]
             pred_dict['score'] = pred_scores

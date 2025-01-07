@@ -93,6 +93,9 @@ class LyftDataset(DatasetTemplate):
         info = copy.deepcopy(self.infos[index])
         points = self.get_lidar_with_sweeps(index, max_sweeps=self.dataset_cfg.MAX_SWEEPS)
 
+        if self.dataset_cfg.get('SHIFT_COOR', None):
+            points[:, 0:3] += np.array(self.dataset_cfg.SHIFT_COOR, dtype=np.float32)
+
         input_dict = {
             'points': points,
             'frame_id': Path(info['lidar_path']).stem,
@@ -104,6 +107,9 @@ class LyftDataset(DatasetTemplate):
                 'gt_boxes': info['gt_boxes'],
                 'gt_names': info['gt_names']
             })
+
+            if self.dataset_cfg.get('SHIFT_COOR', None):
+                input_dict['gt_boxes'][:, 0:3] += self.dataset_cfg.SHIFT_COOR
 
         # delete default label
         if self.dataset_cfg.get('USE_PSEUDO_LABEL', None) and self.training:

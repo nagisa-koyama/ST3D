@@ -427,8 +427,9 @@ class KittiDataset(DatasetTemplate):
         # load saved pseudo label for unlabel data
         if self.dataset_cfg.get('USE_PSEUDO_LABEL', None) and self.training:
             self.fill_pseudo_labels(input_dict)
-
+        # print("input_dict['gt_names'] in the second last __getitem__:", input_dict['gt_names'])
         data_dict = self.prepare_data(data_dict=input_dict)
+        # print("data_dict['gt_names'] in the last __getitem__:", data_dict['gt_names'])
 
         return data_dict
 

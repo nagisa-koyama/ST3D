@@ -121,7 +121,13 @@ class PandasetDataset(DatasetTemplate):
 
         pose = self._get_pose(info)
         points = self._get_lidar_points(info, pose)
+        if self.dataset_cfg.get('SHIFT_COOR', None):
+            points[:, 0:3] += np.array(self.dataset_cfg.SHIFT_COOR, dtype=np.float32)
+
         boxes, labels, zrot_world_to_ego = self._get_annotations(info, pose)
+        if self.dataset_cfg.get('SHIFT_COOR', None):
+            boxes[:, 0:3] += self.dataset_cfg.SHIFT_COOR
+
         pose_np = pose_dict_to_numpy(pose)
 
         input_dict = {'points': points,
