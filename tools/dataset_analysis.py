@@ -115,7 +115,7 @@ def main():
 
             mask_car = np.isin(data_dict['gt_names'], target_class_list)
 
-            print("car gt_boxes:", data_dict['gt_boxes'][mask_car])
+            # print("car gt_boxes:", data_dict['gt_boxes'][mask_car])
             hist_x_car_curr, bins_x_car_curr = np.histogram(
                 data_dict['gt_boxes'][mask_car, CAR_X_INDEX], bins=BINS, range=RANGE_XY)
             hist_y_car_curr, bins_y_car_curr = np.histogram(
