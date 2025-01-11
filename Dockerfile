@@ -226,6 +226,8 @@ RUN echo 'alias test_wlpk_basebev_head_per_dataset_target="python test.py --cfg_
 
 RUN apt install -y libgl1-mesa-glx libgl1-mesa-dri
 
+ENV WANDB_DISABLE_SERVICE=true
+
 # Copy latest ST3D source from local storage except folders in .dockerignore.
 # Assuming that directory structure is kept.
 COPY . $WORK_DIR/ST3D
