@@ -47,7 +47,17 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
 
         model.train()
 
-        loss, tb_dict, disp_dict = model_func(model, batch)
+        outputs = model_func(model, batch)
+        if len(outputs) == 2:
+            loss = outputs[0]
+            tb_dict = outputs[1]
+            disp_dict = None
+        elif len(outputs) in [3, 4]:
+            loss = outputs[0]
+            tb_dict = outputs[1]
+            disp_dict = outputs[2]
+        else:
+            raise ValueError('incompatible outputs with length {}'.format(len(outputs)))
 
         backward_together = optim_cfg.get('BACKWORD_TOGETHER', None)
         if backward_together:
@@ -63,14 +73,16 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
                 loss_total.backward() # Fixed on Nov 2nd, 2024.
                 clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
                 optimizer.step()
-                disp_dict.update({'loss total': loss_total.item(), 'lr': cur_lr})
+                if disp_dict is not None:
+                    disp_dict.update({'loss total': loss_total.item(), 'lr': cur_lr})
         else:
             optimizer.zero_grad()
             loss_total = loss
             loss_total.backward()
             clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
             optimizer.step()
-            disp_dict.update({'loss ' + dataset_ontology: loss.item(), 'lr': cur_lr})
+            if disp_dict is not None:
+                disp_dict.update({'loss ' + dataset_ontology: loss.item(), 'lr': cur_lr})
 
         accumulated_iter += 1
 
@@ -78,7 +90,8 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
         if rank == 0:
             pbar.update()
             pbar.set_postfix(dict(total_it=accumulated_iter))
-            tbar.set_postfix(disp_dict)
+            if disp_dict is not None:
+                tbar.set_postfix(disp_dict)
             tbar.refresh()
 
             if tb_log is not None:
