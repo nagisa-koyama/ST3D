@@ -175,22 +175,20 @@ def main():
                 )
 
                 annos_car = [anno for anno in annos if np.isin(anno['name'], target_class_list).any()]
-                annos_car_location = np.array([anno['location'] for anno in annos_car])
-                annos_car_dimensions = np.array([anno['dimensions'] for anno in annos_car])
-                # print("annos_car_location.shape:", annos_car_location.shape)
-                # print("annos_car_dimensions.shape:", annos_car_dimensions.shape)
+                annos_car_boxes = np.array([anno['boxes_lidar'] for anno in annos_car])
+                # print("annos_car_boxes.shape:", annos_car_boxes.shape)
                 hist_x_car_pred_curr, bins_x_car_pred_curr = np.histogram(
-                    annos_car_location[:, :, CAR_X_INDEX], bins=BINS, range=RANGE_XY)
+                    annos_car_boxes[:, CAR_X_INDEX], bins=BINS, range=RANGE_XY)
                 hist_y_car_pred_curr, bins_y_car_pred_curr = np.histogram(
-                    annos_car_location[:, :, CAR_Y_INDEX], bins=BINS, range=RANGE_XY)
+                    annos_car_boxes[:, CAR_Y_INDEX], bins=BINS, range=RANGE_XY)
                 hist_z_car_pred_curr, bins_z_car_pred_curr = np.histogram(
-                    annos_car_location[:, :, CAR_Z_INDEX], bins=BINS, range=RANGE_Z)
+                    annos_car_boxes[:, CAR_Z_INDEX], bins=BINS, range=RANGE_Z)
                 hist_length_car_pred_curr, bins_length_car_pred_curr = np.histogram(
-                    annos_car_dimensions[:, :, CAR_LENGTH_INDEX_PRED], bins=BINS, range=RANGE_CAR_SIZE)
+                    annos_car_boxes[:, CAR_LENGTH_INDEX], bins=BINS, range=RANGE_CAR_SIZE)
                 hist_width_car_pred_curr, bins_width_car_pred_curr = np.histogram(
-                    annos_car_dimensions[:, :, CAR_WIDTH_INDEX_PRED], bins=BINS, range=RANGE_CAR_SIZE)
+                    annos_car_boxes[:, CAR_WIDTH_INDEX], bins=BINS, range=RANGE_CAR_SIZE)
                 hist_height_car_pred_curr, bins_height_car_pred_curr = np.histogram(
-                    annos_car_dimensions[:, :, CAR_HEIGHT_INDEX_PRED], bins=BINS, range=RANGE_CAR_SIZE)
+                    annos_car_boxes[:, CAR_HEIGHT_INDEX], bins=BINS, range=RANGE_CAR_SIZE)
 
             if hist_x is None:
                 hist_x = hist_x_curr
