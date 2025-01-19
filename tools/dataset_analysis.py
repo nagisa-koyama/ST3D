@@ -34,6 +34,7 @@ def parse_config():
     parser.add_argument('--out_filename', type=str,
                         default='point_hist.png', help='specify the output filename')
     parser.add_argument('--run_name', type=str, default=None, help='run name for wandb')
+    parser.add_argument('--is_train', action='store_true', help='analyze train set, otherwise use test set')
     args = parser.parse_args()
     cfg_from_yaml_file(args.cfg_file, cfg)
 
@@ -55,10 +56,10 @@ def main():
     for eval_config in eval_configs.values():
         eval_set, eval_loader, eval_sampler = build_dataloader(
             dataset_cfg=eval_config,
-            class_names=cfg.CLASS_NAMES,
+            class_names=eval_config.CLASS_NAMES,
             batch_size=args.batch_size,
             dist=False, workers=1,
-            logger=logger, training=False,
+            logger=logger, training=args.is_train,
             model_ontology=cfg.get('ONTOLOGY', None)
         )
         eval_dataset = dict(dataset_class=eval_set, loader=eval_loader, sampler=eval_sampler)
@@ -131,8 +132,6 @@ def main():
             # print('data_dict[gt_boxes]', data_dict['gt_boxes'])
             # print("data_dict['points'].shape:", data_dict['points'].shape)
             # print("data_dict['gt_boxes'].shape:", data_dict['gt_boxes'].shape)
-            # print("data_dict['gt_names'].shape:", data_dict['gt_names'].shape)
-            # print("data_dict['gt_names']:", data_dict['gt_names'])
             hist_x_curr, bins_x_curr = np.histogram(data_dict['points'][:, X_INDEX], bins=BINS, range=RANGE_XY)
             hist_y_curr, bins_y_curr = np.histogram(data_dict['points'][:, Y_INDEX], bins=BINS, range=RANGE_XY)
             hist_z_curr, bins_z_curr = np.histogram(data_dict['points'][:, Z_INDEX], bins=BINS, range=RANGE_Z)
@@ -145,16 +144,13 @@ def main():
                     data_dict['points'][:, INTENSITY_INDEX], bins=BINS, range=RANGE_INTENSITY)
             hist_num_points_curr, bins_num_points_curr = np.histogram(
                 data_dict['points'].shape[0], bins=BINS, range=RANGE_NUM_POINTS)
-
-            mask_car = np.isin(np.array(data_dict['gt_names']), target_class_list)
-            mask_match = mask_car.shape[1] == data_dict['gt_boxes'].shape[1]
-
-            if mask_match is False:
-                print("skip sample with wrong mask_car shape")
-                print("mask_car.shape:", mask_car.shape)
-                print("gt_names.shape:", data_dict['gt_names'].shape)
-                print("car gt_boxes.shape:", data_dict['gt_boxes'].shape)
-                continue
+            car_class_index = -1
+            for index, class_name in enumerate(eval_dataset['loader'].dataset.class_names):
+                if class_name in target_class_list:
+                    car_class_index = index + 1 # +1 because of background class
+                    # print("car_class name:", class_name)
+                    # print("car_class index:", car_class_index)
+            mask_car = data_dict['gt_boxes'][:, :, 7] == car_class_index # accesing gt_classes index.
 
             hist_x_car_curr, bins_x_car_curr = np.histogram(
                 data_dict['gt_boxes'][mask_car, CAR_X_INDEX], bins=BINS, range=RANGE_XY)
@@ -205,19 +201,18 @@ def main():
                     bins_intensity = bins_intensity_curr
                 hist_num_points = hist_num_points_curr
                 bins_num_points = bins_num_points_curr
-                if mask_match:
-                    hist_x_car = hist_x_car_curr
-                    bins_x_car = bins_x_car_curr
-                    hist_y_car = hist_y_car_curr
-                    bins_y_car = bins_y_car_curr
-                    hist_z_car = hist_z_car_curr
-                    bins_z_car = bins_z_car_curr
-                    hist_length_car = hist_length_car_curr
-                    bins_length_car = bins_length_car_curr
-                    hist_width_car = hist_width_car_curr
-                    bins_width_car = bins_width_car_curr
-                    hist_height_car = hist_height_car_curr
-                    bins_height_car = bins_height_car_curr
+                hist_x_car = hist_x_car_curr
+                bins_x_car = bins_x_car_curr
+                hist_y_car = hist_y_car_curr
+                bins_y_car = bins_y_car_curr
+                hist_z_car = hist_z_car_curr
+                bins_z_car = bins_z_car_curr
+                hist_length_car = hist_length_car_curr
+                bins_length_car = bins_length_car_curr
+                hist_width_car = hist_width_car_curr
+                bins_width_car = bins_width_car_curr
+                hist_height_car = hist_height_car_curr
+                bins_height_car = bins_height_car_curr
                 if model:
                     hist_x_car_pred = hist_x_car_pred_curr
                     bins_x_car_pred = bins_x_car_pred_curr
@@ -238,13 +233,12 @@ def main():
                 if with_intensity:
                     hist_intensity += hist_intensity_curr
                     hist_num_points += hist_num_points_curr
-                if mask_match:
-                    hist_x_car += hist_x_car_curr
-                    hist_y_car += hist_y_car_curr
-                    hist_z_car += hist_z_car_curr
-                    hist_length_car += hist_length_car_curr
-                    hist_width_car += hist_width_car_curr
-                    hist_height_car += hist_height_car_curr
+                hist_x_car += hist_x_car_curr
+                hist_y_car += hist_y_car_curr
+                hist_z_car += hist_z_car_curr
+                hist_length_car += hist_length_car_curr
+                hist_width_car += hist_width_car_curr
+                hist_height_car += hist_height_car_curr
                 if model:
                     hist_x_car_pred += hist_x_car_pred_curr
                     hist_y_car_pred += hist_y_car_pred_curr
@@ -257,8 +251,8 @@ def main():
             progress_bar.set_postfix_str(dataset_name)
             progress_bar.update()
 
-            # if idx * args.batch_size >= 10:
-            #     print("Breaking after 10 samples")
+            # if idx * args.batch_size >= 100:
+            #     print("Breaking after 100 samples")
             #     break
 
         # initialize a matplotlib plot
@@ -394,16 +388,16 @@ def main():
             ax_height_car_pred.bar(bins_height_car_pred[:-1], hist_height_car_pred / np.sum(hist_height_car_pred),
                                    width=np.diff(bins_height_car_pred), color='y', alpha=0.5)
 
-        filename = os.path.join(args.out_dir, f'point_hist_{dataset_name}.png')
+        filename = os.path.join(args.out_dir, f'0_point_hist_{dataset_name}.png')
         fig.savefig(filename)
         wandb.save(filename)
         wandb.log({f'val/{dataset_name}/point histogram': wandb.Image(filename)})
-        filename_car = os.path.join(args.out_dir, f'gt_car_hist_{dataset_name}.png')
+        filename_car = os.path.join(args.out_dir, f'1_gt_car_hist_{dataset_name}.png')
         fig_car.savefig(filename_car)
         wandb.save(filename_car)
         wandb.log({f'val/{dataset_name}/GT car histogram': wandb.Image(filename_car)})
         if model:
-            filename_car_pred = os.path.join(args.out_dir, f'pred_car_hist_{dataset_name}.png')
+            filename_car_pred = os.path.join(args.out_dir, f'2_pred_car_hist_{dataset_name}.png')
             fig_car_pred.savefig(filename_car_pred)
             wandb.save(filename_car_pred)
             wandb.log({f'val/{dataset_name}/pred car histogram': wandb.Image(filename_car_pred)})
