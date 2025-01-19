@@ -118,10 +118,7 @@ def main():
         CAR_LENGTH_INDEX = 3
         CAR_WIDTH_INDEX = 4
         CAR_HEIGHT_INDEX = 5
-        CAR_LENGTH_INDEX_PRED = 0
-        CAR_WIDTH_INDEX_PRED = 1
-        CAR_HEIGHT_INDEX_PRED = 2
-        BINS = 100
+        BINS = 400
         RANGE_XY = (-150, 150)
         RANGE_Z = (-10, 10)
         RANGE_INTENSITY = (-0.1, 1.1)
@@ -150,9 +147,15 @@ def main():
                 data_dict['points'].shape[0], bins=BINS, range=RANGE_NUM_POINTS)
 
             mask_car = np.isin(np.array(data_dict['gt_names']), target_class_list)
-            # print("mask_car.shape:", mask_car.shape)
-            # print("car gt_boxes.shape:", data_dict['gt_boxes'].shape)
-            # print("data_dict['gt_boxes'][maxk_car, :].shape:", data_dict['gt_boxes'][mask_car, :].shape)
+            mask_match = mask_car.shape[1] == data_dict['gt_boxes'].shape[1]
+
+            if mask_match is False:
+                print("skip sample with wrong mask_car shape")
+                print("mask_car.shape:", mask_car.shape)
+                print("gt_names.shape:", data_dict['gt_names'].shape)
+                print("car gt_boxes.shape:", data_dict['gt_boxes'].shape)
+                continue
+
             hist_x_car_curr, bins_x_car_curr = np.histogram(
                 data_dict['gt_boxes'][mask_car, CAR_X_INDEX], bins=BINS, range=RANGE_XY)
             hist_y_car_curr, bins_y_car_curr = np.histogram(
@@ -176,19 +179,19 @@ def main():
 
                 annos_car = [anno for anno in annos if np.isin(anno['name'], target_class_list).any()]
                 annos_car_boxes = np.array([anno['boxes_lidar'] for anno in annos_car])
-                # print("annos_car_boxes.shape:", annos_car_boxes.shape)
+                print("annos_car_boxes.shape:", annos_car_boxes.shape)
                 hist_x_car_pred_curr, bins_x_car_pred_curr = np.histogram(
-                    annos_car_boxes[:, CAR_X_INDEX], bins=BINS, range=RANGE_XY)
+                    annos_car_boxes[:, :, CAR_X_INDEX], bins=BINS, range=RANGE_XY)
                 hist_y_car_pred_curr, bins_y_car_pred_curr = np.histogram(
-                    annos_car_boxes[:, CAR_Y_INDEX], bins=BINS, range=RANGE_XY)
+                    annos_car_boxes[:, :, CAR_Y_INDEX], bins=BINS, range=RANGE_XY)
                 hist_z_car_pred_curr, bins_z_car_pred_curr = np.histogram(
-                    annos_car_boxes[:, CAR_Z_INDEX], bins=BINS, range=RANGE_Z)
+                    annos_car_boxes[:, :, CAR_Z_INDEX], bins=BINS, range=RANGE_Z)
                 hist_length_car_pred_curr, bins_length_car_pred_curr = np.histogram(
-                    annos_car_boxes[:, CAR_LENGTH_INDEX], bins=BINS, range=RANGE_CAR_SIZE)
+                    annos_car_boxes[:, :, CAR_LENGTH_INDEX], bins=BINS, range=RANGE_CAR_SIZE)
                 hist_width_car_pred_curr, bins_width_car_pred_curr = np.histogram(
-                    annos_car_boxes[:, CAR_WIDTH_INDEX], bins=BINS, range=RANGE_CAR_SIZE)
+                    annos_car_boxes[:, :, CAR_WIDTH_INDEX], bins=BINS, range=RANGE_CAR_SIZE)
                 hist_height_car_pred_curr, bins_height_car_pred_curr = np.histogram(
-                    annos_car_boxes[:, CAR_HEIGHT_INDEX], bins=BINS, range=RANGE_CAR_SIZE)
+                    annos_car_boxes[:, :, CAR_HEIGHT_INDEX], bins=BINS, range=RANGE_CAR_SIZE)
 
             if hist_x is None:
                 hist_x = hist_x_curr
@@ -202,18 +205,19 @@ def main():
                     bins_intensity = bins_intensity_curr
                 hist_num_points = hist_num_points_curr
                 bins_num_points = bins_num_points_curr
-                hist_x_car = hist_x_car_curr
-                bins_x_car = bins_x_car_curr
-                hist_y_car = hist_y_car_curr
-                bins_y_car = bins_y_car_curr
-                hist_z_car = hist_z_car_curr
-                bins_z_car = bins_z_car_curr
-                hist_length_car = hist_length_car_curr
-                bins_length_car = bins_length_car_curr
-                hist_width_car = hist_width_car_curr
-                bins_width_car = bins_width_car_curr
-                hist_height_car = hist_height_car_curr
-                bins_height_car = bins_height_car_curr
+                if mask_match:
+                    hist_x_car = hist_x_car_curr
+                    bins_x_car = bins_x_car_curr
+                    hist_y_car = hist_y_car_curr
+                    bins_y_car = bins_y_car_curr
+                    hist_z_car = hist_z_car_curr
+                    bins_z_car = bins_z_car_curr
+                    hist_length_car = hist_length_car_curr
+                    bins_length_car = bins_length_car_curr
+                    hist_width_car = hist_width_car_curr
+                    bins_width_car = bins_width_car_curr
+                    hist_height_car = hist_height_car_curr
+                    bins_height_car = bins_height_car_curr
                 if model:
                     hist_x_car_pred = hist_x_car_pred_curr
                     bins_x_car_pred = bins_x_car_pred_curr
@@ -234,12 +238,13 @@ def main():
                 if with_intensity:
                     hist_intensity += hist_intensity_curr
                     hist_num_points += hist_num_points_curr
-                hist_x_car += hist_x_car_curr
-                hist_y_car += hist_y_car_curr
-                hist_z_car += hist_z_car_curr
-                hist_length_car += hist_length_car_curr
-                hist_width_car += hist_width_car_curr
-                hist_height_car += hist_height_car_curr
+                if mask_match:
+                    hist_x_car += hist_x_car_curr
+                    hist_y_car += hist_y_car_curr
+                    hist_z_car += hist_z_car_curr
+                    hist_length_car += hist_length_car_curr
+                    hist_width_car += hist_width_car_curr
+                    hist_height_car += hist_height_car_curr
                 if model:
                     hist_x_car_pred += hist_x_car_pred_curr
                     hist_y_car_pred += hist_y_car_pred_curr
@@ -261,7 +266,7 @@ def main():
         ax_x.set_xlabel('point X [m]')
         ax_y.set_xlabel('point Y [m]')
         ax_z.set_xlabel('point Z [m]')
-        if hist_intensity:
+        if hist_intensity is not None:
             ax_intensity.set_xlabel('point intensity')
         else:
             ax_intensity.axis('off')
@@ -291,7 +296,7 @@ def main():
         peak_x = bins_x[np.argmax(hist_x)]
         peak_y = bins_y[np.argmax(hist_y)]
         peak_z = bins_z[np.argmax(hist_z)]
-        if hist_intensity:
+        if hist_intensity is not None:
             peak_intensity = bins_intensity[np.argmax(hist_intensity)]
         peak_num_points = bins_num_points[np.argmax(hist_num_points)]
         peak_x_car = bins_x_car[np.argmax(hist_x_car)]
@@ -314,7 +319,10 @@ def main():
         average_z = np.average(bins_z[:-1], weights=hist_z)
         if hist_intensity is not None:
             average_intensity = np.average(bins_intensity[:-1], weights=hist_intensity)
-        average_num_points = np.average(bins_num_points[:-1], weights=hist_num_points)
+        if hist_num_points.sum() == 0:
+            average_num_points = 0
+        else:
+            average_num_points = np.average(bins_num_points[:-1], weights=hist_num_points)
         average_x_car = np.average(bins_x_car[:-1], weights=hist_x_car)
         average_y_car = np.average(bins_y_car[:-1], weights=hist_y_car)
         average_z_car = np.average(bins_z_car[:-1], weights=hist_z_car)
@@ -386,16 +394,16 @@ def main():
             ax_height_car_pred.bar(bins_height_car_pred[:-1], hist_height_car_pred / np.sum(hist_height_car_pred),
                                    width=np.diff(bins_height_car_pred), color='y', alpha=0.5)
 
-        filename = os.path.join(args.out_dir, f'{dataset_name}_point_hist.png')
+        filename = os.path.join(args.out_dir, f'point_hist_{dataset_name}.png')
         fig.savefig(filename)
         wandb.save(filename)
         wandb.log({f'val/{dataset_name}/point histogram': wandb.Image(filename)})
-        filename_car = os.path.join(args.out_dir, f'{dataset_name}_gt_car_hist.png')
+        filename_car = os.path.join(args.out_dir, f'gt_car_hist_{dataset_name}.png')
         fig_car.savefig(filename_car)
         wandb.save(filename_car)
         wandb.log({f'val/{dataset_name}/GT car histogram': wandb.Image(filename_car)})
         if model:
-            filename_car_pred = os.path.join(args.out_dir, f'{dataset_name}_pred_car_hist.png')
+            filename_car_pred = os.path.join(args.out_dir, f'pred_car_hist_{dataset_name}.png')
             fig_car_pred.savefig(filename_car_pred)
             wandb.save(filename_car_pred)
             wandb.log({f'val/{dataset_name}/pred car histogram': wandb.Image(filename_car_pred)})
