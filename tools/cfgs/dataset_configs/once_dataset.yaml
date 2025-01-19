@@ -3,7 +3,8 @@ DATA_PATH: '../data/once'
 CLOUD_DATA_PATH: '/cache/once'
 ONTOLOGY: 'once'
 
-POINT_CLOUD_RANGE: [-75.2, -75.2, -5.0, 75.2, 75.2, 3.0]
+# POINT_CLOUD_RANGE: [-75.2, -75.2, -5.0, 75.2, 75.2, 3.0]
+POINT_CLOUD_RANGE: [-200, -200, -20, 200, 200, 20]
 
 INFO_PATH: {
     'train': [once_infos_train.pkl],

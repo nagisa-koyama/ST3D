@@ -3,7 +3,8 @@ DATA_PATH: '../data/waymo'
 PROCESSED_DATA_TAG: 'waymo_processed_data'
 ONTOLOGY: 'waymo'
 
-POINT_CLOUD_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+# POINT_CLOUD_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+POINT_CLOUD_RANGE: [-200, -200, -20, 200, 200, 20]
 
 DATA_SPLIT: {
     'train': train,

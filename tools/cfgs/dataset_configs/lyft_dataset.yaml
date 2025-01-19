@@ -19,7 +19,8 @@ INFO_PATH: {
     'test': [lyft_infos_val.pkl],
 }
 
-POINT_CLOUD_RANGE: [-80.0, -80.0, -5.0, 80.0, 80.0, 3.0]
+# POINT_CLOUD_RANGE: [-80.0, -80.0, -5.0, 80.0, 80.0, 3.0]
+POINT_CLOUD_RANGE: [-200, -200, -20, 200, 200, 20]
 
 DATA_AUGMENTOR:
     DISABLE_AUG_LIST: ['placeholder']
