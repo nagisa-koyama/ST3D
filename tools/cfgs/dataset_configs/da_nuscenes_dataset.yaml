@@ -23,12 +23,15 @@ POINT_CLOUD_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
 MIN_POINTS_OF_GT: 1
 
 DATA_AUGMENTOR:
-    DISABLE_AUG_LIST: ['random_object_scaling', 'random_object_rotation']
+    DISABLE_AUG_LIST: ['random_object_rotation', 'random_object_scaling', 'normalize_object_size']
     AUG_CONFIG_LIST:
-        - NAME: random_object_scaling
+        - NAME: random_object_scaling # Disabled
           SCALE_UNIFORM_NOISE: [0.9, 1.1]
 
-        - NAME: random_object_rotation
+        - NAME: normalize_object_size # Disabled
+          SIZE_RES: [-0.91, -0.49, -0.26]
+
+        - NAME: random_object_rotation # Disabled
           #ROT_PROB: 0.8
           ROT_PROB: 1.0
           ROT_UNIFORM_NOISE: [-0.78539816, 0.78539816]
@@ -37,7 +40,8 @@ DATA_AUGMENTOR:
           ALONG_AXIS_LIST: ['x', 'y']
 
         - NAME: random_world_rotation
-          WORLD_ROT_ANGLE: [-0.3925, 0.3925]
+          # WORLD_ROT_ANGLE: [-0.3925, 0.3925]
+          WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
 
         - NAME: random_world_scaling
           WORLD_SCALE_RANGE: [0.95, 1.05]
