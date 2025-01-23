@@ -120,11 +120,12 @@ def main():
         CAR_WIDTH_INDEX = 4
         CAR_HEIGHT_INDEX = 5
         BINS = 400
+        BINS_SIZE = 100
         RANGE_XY = (-150, 150)
         RANGE_Z = (-10, 10)
         RANGE_INTENSITY = (-0.1, 1.1)
         RANGE_CAR_SIZE = (0, 10)
-        RANGE_NUM_POINTS = (15000, 150000)
+        RANGE_NUM_POINTS = (20000, 200000)
         progress_bar = tqdm.tqdm(total=len(eval_dataset['loader']), leave=True, desc='eval', dynamic_ncols=True)
         target_class_list = ["Vehicle", "Car", "car", "waymo:Vehicle",
                              "pandaset:Car", "lyft:car", "nuscenes:car", "kitti:Car"]
@@ -140,6 +141,8 @@ def main():
             if with_intensity:
                 if (np.max(data_dict['points'][:, INTENSITY_INDEX]) > 1.0):
                     RANGE_INTENSITY = (-0.5, 256.5)
+                elif (np.max(data_dict['points'][:, INTENSITY_INDEX]) > 256.0):
+                    assert False, "Intensity range is not 0-1 or 0-255"
                 hist_intensity_curr, bins_intensity_curr = np.histogram(
                     data_dict['points'][:, INTENSITY_INDEX], bins=BINS, range=RANGE_INTENSITY)
             hist_num_points_curr, bins_num_points_curr = np.histogram(
@@ -159,11 +162,11 @@ def main():
             hist_z_car_curr, bins_z_car_curr = np.histogram(
                 data_dict['gt_boxes'][mask_car, CAR_Z_INDEX], bins=BINS, range=RANGE_Z)
             hist_length_car_curr, bins_length_car_curr = np.histogram(
-                data_dict['gt_boxes'][mask_car, CAR_LENGTH_INDEX], bins=BINS, range=RANGE_CAR_SIZE)
+                data_dict['gt_boxes'][mask_car, CAR_LENGTH_INDEX], bins=BINS_SIZE, range=RANGE_CAR_SIZE)
             hist_width_car_curr, bins_width_car_curr = np.histogram(
-                data_dict['gt_boxes'][mask_car, CAR_WIDTH_INDEX], bins=BINS, range=RANGE_CAR_SIZE)
+                data_dict['gt_boxes'][mask_car, CAR_WIDTH_INDEX], bins=BINS_SIZE, range=RANGE_CAR_SIZE)
             hist_height_car_curr, bins_height_car_curr = np.histogram(
-                data_dict['gt_boxes'][mask_car, CAR_HEIGHT_INDEX], bins=BINS, range=RANGE_CAR_SIZE)
+                data_dict['gt_boxes'][mask_car, CAR_HEIGHT_INDEX], bins=BINS_SIZE, range=RANGE_CAR_SIZE)
 
             if model:
                 load_data_to_gpu(data_dict)
