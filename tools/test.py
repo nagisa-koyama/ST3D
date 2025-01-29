@@ -102,6 +102,17 @@ def get_eval_configs(cfg):
     else:
         assert False, "One of DATA_CONFIG_TAR, DATA_CONFIG or DATA_CONFIGS should be defined"
 
+def get_all_configs(cfg):
+    configs = {}
+    if cfg.get('DATA_CONFIG_TAR', None):
+        configs['DATA_CONFIG_TAR'] = cfg.DATA_CONFIG_TAR
+    if cfg.get('DATA_CONFIG', None):
+        configs['DATA_CONFIG'] = cfg.DATA_CONFIG
+    if cfg.get('DATA_CONFIGS', None):
+        configs.update(cfg.DATA_CONFIGS)
+    if len(configs) == 0:
+        assert False, "One of DATA_CONFIG_TAR, DATA_CONFIG or DATA_CONFIGS should be defined"
+    return configs
 
 def repeat_eval_ckpt(model, test_loaders, args, eval_output_dir, logger, ckpt_dir, dist_test=False):
 

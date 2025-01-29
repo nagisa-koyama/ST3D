@@ -186,7 +186,8 @@ def draw_scenes(points, gt_boxes=None, ref_boxes=None, gt_scores=None, ref_score
                 fig = draw_corners3d(ref_corners3d[mask], fig=fig, color=cur_color, cls=ref_scores[mask], max_num=100)
 
     draw_corners_3d_ref_boxes_duration = time.time()
-    print("draw_corners3d_ref_boxes_duration for {} boxes: {}".format(len(ref_boxes), draw_corners_3d_ref_boxes_duration - draw_corners3d_gt_boxes_duration))
+    if ref_boxes is not None:
+        print("draw_corners3d_ref_boxes_duration for {} boxes: {}".format(len(ref_boxes), draw_corners_3d_ref_boxes_duration - draw_corners3d_gt_boxes_duration))
     # mlab.view(azimuth=-179, elevation=54.0, distance=104.0, roll=90.0)
     mlab.view(azimuth=90.0, elevation=0.0, distance=150.0)
     print("view_duration:", time.time() - draw_corners_3d_ref_boxes_duration)
