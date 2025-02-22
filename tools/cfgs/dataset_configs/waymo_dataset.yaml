@@ -19,7 +19,7 @@ SAMPLED_INTERVAL: {
 INFO_WITH_FAKELIDAR: False
 
 DATA_AUGMENTOR:
-    DISABLE_AUG_LIST: ['placeholder']
+    DISABLE_AUG_LIST: ['gt_sampling']
     AUG_CONFIG_LIST:
         - NAME: gt_sampling
           USE_ROAD_PLANE: False
