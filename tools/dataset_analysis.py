@@ -180,7 +180,7 @@ def main():
         CAR_LENGTH_INDEX = 3
         CAR_WIDTH_INDEX = 4
         CAR_HEIGHT_INDEX = 5
-        BINS = 400
+        BINS = 50
         BINS_SIZE = 100
         RANGE_XY = (-150, 150)
         RANGE_Z = (-10, 10)
@@ -190,7 +190,7 @@ def main():
         RANGE_NUM_POINTS = (20000, 200000)
         RANGE_NUM_VOXELS = (0, 100000)
         RANGE_NUM_POINTS_IN_VOXEL = (0, 50)
-        RANGE_DIST = (0, 150)
+        RANGE_DIST = (0, 75)
 
         progress_bar = tqdm.tqdm(total=len(eval_dataset['loader']), leave=True, desc='eval', dynamic_ncols=True)
         target_class_list = ["Vehicle", "Car", "car", "waymo:Vehicle",
@@ -206,11 +206,11 @@ def main():
 
             with_intensity = data_dict['points'].shape[1] > INTENSITY_INDEX
             if with_intensity:
-                range = RANGE_INTENSITY
-                if (np.max(data_dict['points'][:, INTENSITY_INDEX]) > 1.0):
-                    range = RANGE_INTENSITY_256
-                elif (np.max(data_dict['points'][:, INTENSITY_INDEX]) > 256.0):
-                    assert False, "Intensity range is not 0-1 or 0-255"
+                range = RANGE_INTENSITY_256
+                # if (np.max(data_dict['points'][:, INTENSITY_INDEX]) > 1.0):
+                #     range = RANGE_INTENSITY_256
+                # elif (np.max(data_dict['points'][:, INTENSITY_INDEX]) > 256.0):
+                #     assert False, "Intensity range is not 0-1 or 0-255"
                 hist_intensity_curr, bins_intensity_curr = np.histogram(
                     data_dict['points'][:, INTENSITY_INDEX], bins=BINS, range=range)
                 # print(data_dict['points'][:, INTENSITY_INDEX])
@@ -342,9 +342,9 @@ def main():
             progress_bar.set_postfix_str(dataset_name)
             progress_bar.update()
 
-            if idx * args.batch_size >= 100:
-                print("Breaking after 100 samples")
-                break
+            # if idx * args.batch_size >= 100:
+            #     print("Breaking after 1000 samples")
+            #     break
 
         # initialize a matplotlib plot
         fig, ((ax_x, ax_y, ax_z, ax_intensity), (ax_num_points, ax_num_voxels, ax_num_points_in_voxel, ax_dist)) = init_point_plot()
@@ -381,6 +381,9 @@ def main():
             peak_length_car_pred = bins_length_car_pred[np.argmax(hist_length_car_pred)]
             peak_width_car_pred = bins_width_car_pred[np.argmax(hist_width_car_pred)]
             peak_height_car_pred = bins_height_car_pred[np.argmax(hist_height_car_pred)]
+
+        # save histogram to file
+        np.save(f"/storage/hist_dist_{dataset_name}_tmp.npy", hist_dist)
 
         # compute average of histgram
         average_x = np.average(bins_x[:-1], weights=hist_x) if hist_x.sum() > 0 else 0
@@ -448,11 +451,11 @@ def main():
                                    width=np.diff(bins_num_points_in_voxel), color='y', alpha=0.5)
         ax_dist.bar(bins_dist[:-1], hist_dist / np.sum(hist_dist), width=np.diff(bins_dist), color='y', alpha=0.5)
 
-        ax_x_point.bar(bins_x[:-1], hist_x / np.sum(hist_x), width=np.diff(bins_x), alpha=0.5, label=dataset_name)
-        ax_y_point.bar(bins_y[:-1], hist_y / np.sum(hist_y), width=np.diff(bins_y), alpha=0.5)
-        ax_z_point.bar(bins_z[:-1], hist_z / np.sum(hist_z), width=np.diff(bins_z), alpha=0.5)
+        ax_x_point.bar(bins_x[:-1], hist_x, width=np.diff(bins_x), alpha=0.5, label=dataset_name)
+        ax_y_point.bar(bins_y[:-1], hist_y, width=np.diff(bins_y), alpha=0.5)
+        ax_z_point.bar(bins_z[:-1], hist_z, width=np.diff(bins_z), alpha=0.5)
         if hist_intensity is not None:
-            ax_intensity_point.bar(bins_intensity[:-1], hist_intensity / np.sum(hist_intensity),
+            ax_intensity_point.bar(bins_intensity[:-1], hist_intensity,
                                    width=np.diff(bins_intensity), alpha=0.5)
         ax_num_points_point.bar(bins_num_points[:-1], hist_num_points / np.sum(hist_num_points),
                                 width=np.diff(bins_num_points), alpha=0.5)
@@ -460,7 +463,7 @@ def main():
                                 width=np.diff(bins_num_voxels), alpha=0.5)
         ax_num_points_in_voxel_point.bar(bins_num_points_in_voxel[:-1], hist_num_points_in_voxel / np.sum(hist_num_points_in_voxel),
                                          width=np.diff(bins_num_points_in_voxel), alpha=0.5)
-        ax_dist_point.bar(bins_dist[:-1], hist_dist / np.sum(hist_dist), width=np.diff(bins_dist), alpha=0.5)
+        ax_dist_point.bar(bins_dist[:-1], hist_dist, width=np.diff(bins_dist), alpha=0.5)
 
         ax_x_car.bar(bins_x_car[:-1], hist_x_car / np.sum(hist_x_car), width=np.diff(bins_x_car), alpha=0.5)
         ax_y_car.bar(bins_y_car[:-1], hist_y_car / np.sum(hist_y_car), width=np.diff(bins_y_car), alpha=0.5)
@@ -472,17 +475,17 @@ def main():
         ax_height_car.bar(bins_height_car[:-1], hist_height_car / np.sum(hist_height_car),
                           width=np.diff(bins_height_car), alpha=0.5)
 
-        ax_x_gt_car.bar(bins_x_car[:-1], hist_x_car / np.sum(hist_x_car),
+        ax_x_gt_car.bar(bins_x_car[:-1], hist_x_car,
                         width=np.diff(bins_x_car), alpha=0.5, label=dataset_name)
-        ax_y_gt_car.bar(bins_y_car[:-1], hist_y_car / np.sum(hist_y_car),
+        ax_y_gt_car.bar(bins_y_car[:-1], hist_y_car,
                         width=np.diff(bins_y_car), alpha=0.5)
-        ax_z_gt_car.bar(bins_z_car[:-1], hist_z_car / np.sum(hist_z_car),
+        ax_z_gt_car.bar(bins_z_car[:-1], hist_z_car,
                         width=np.diff(bins_z_car), alpha=0.5)
-        ax_length_gt_car.bar(bins_length_car[:-1], hist_length_car / np.sum(hist_length_car),
+        ax_length_gt_car.bar(bins_length_car[:-1], hist_length_car,
                              width=np.diff(bins_length_car), alpha=0.5)
-        ax_width_gt_car.bar(bins_width_car[:-1], hist_width_car / np.sum(hist_width_car),
+        ax_width_gt_car.bar(bins_width_car[:-1], hist_width_car,
                             width=np.diff(bins_width_car), alpha=0.5)
-        ax_height_gt_car.bar(bins_height_car[:-1], hist_height_car / np.sum(hist_height_car),
+        ax_height_gt_car.bar(bins_height_car[:-1], hist_height_car,
                              width=np.diff(bins_height_car), alpha=0.5)
 
         if model:
@@ -499,17 +502,17 @@ def main():
             ax_height_car_pred.bar(bins_height_car_pred[:-1], hist_height_car_pred / np.sum(hist_height_car_pred),
                                    width=np.diff(bins_height_car_pred), color='y', alpha=0.5)
 
-            ax_x_pred_car.bar(bins_x_car_pred[:-1], hist_x_car_pred / np.sum(hist_x_car_pred),
+            ax_x_pred_car.bar(bins_x_car_pred[:-1], hist_x_car_pred,
                               width=np.diff(bins_x_car_pred), alpha=0.5, label=dataset_name)
-            ax_y_pred_car.bar(bins_y_car_pred[:-1], hist_y_car_pred / np.sum(hist_y_car_pred),
+            ax_y_pred_car.bar(bins_y_car_pred[:-1], hist_y_car_pred,
                               width=np.diff(bins_y_car_pred), alpha=0.5)
-            ax_z_pred_car.bar(bins_z_car_pred[:-1], hist_z_car_pred / np.sum(hist_z_car_pred),
+            ax_z_pred_car.bar(bins_z_car_pred[:-1], hist_z_car_pred,
                               width=np.diff(bins_z_car_pred), alpha=0.5)
-            ax_length_pred_car.bar(bins_length_car_pred[:-1], hist_length_car_pred / np.sum(hist_length_car_pred),
+            ax_length_pred_car.bar(bins_length_car_pred[:-1], hist_length_car_pred,
                                    width=np.diff(bins_length_car_pred), alpha=0.5)
-            ax_width_pred_car.bar(bins_width_car_pred[:-1], hist_width_car_pred / np.sum(hist_width_car_pred),
+            ax_width_pred_car.bar(bins_width_car_pred[:-1], hist_width_car_pred,
                                   width=np.diff(bins_width_car_pred), alpha=0.5)
-            ax_height_pred_car.bar(bins_height_car_pred[:-1], hist_height_car_pred / np.sum(hist_height_car_pred),
+            ax_height_pred_car.bar(bins_height_car_pred[:-1], hist_height_car_pred,
                                    width=np.diff(bins_height_car_pred), alpha=0.5)
 
         filename = os.path.join(args.out_dir, f'0_point_hist_{dataset_name}.png')
