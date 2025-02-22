@@ -57,13 +57,20 @@ class DatasetTemplate(torch_data.Dataset):
             self.dataset_cfg.POINT_FEATURE_ENCODING,
             point_cloud_range=self.point_cloud_range
         )
+        self.hist_dist = dict()
+        self.hist_dist["kitti"] = np.load("/storage/hist_dist_kitti.npy")
+        self.hist_dist["nuscenes"] = np.load("/storage/hist_dist_nuscenes.npy")
+        self.hist_dist["waymo"] = np.load("/storage/hist_dist_waymo.npy")
+        self.hist_dist["lyft"] = np.load("/storage/hist_dist_lyft.npy")
+        self.hist_dist["pandaset"] = np.load("/storage/hist_dist_pandaset.npy")
         self.data_augmentor = DataAugmentor(
             self.root_path, self.dataset_cfg.DATA_AUGMENTOR, self.dataset_class_names, logger=self.logger,
             map_ontology_dataset_to_model=self.map_ontology_dataset_to_model, dataset_ontology=self.dataset_ontology
         ) if self.training else None
         self.data_processor = DataProcessor(
             self.dataset_cfg.DATA_PROCESSOR, point_cloud_range=self.point_cloud_range,
-            training=self.training, num_point_features=self.point_feature_encoder.num_point_features
+            training=self.training, num_point_features=self.point_feature_encoder.num_point_features,
+            hist_dist_src=self.hist_dist[self.dataset_ontology], hist_dist_tgt=self.hist_dist["kitti"]
         )
         self.grid_size = self.data_processor.grid_size
         self.voxel_size = self.data_processor.voxel_size

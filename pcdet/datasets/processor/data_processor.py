@@ -1,6 +1,7 @@
 from functools import partial
 
 import numpy as np
+import math
 
 from ...utils import box_utils, common_utils
 
@@ -60,7 +61,7 @@ class VoxelGeneratorWrapper():
 
 
 class DataProcessor(object):
-    def __init__(self, processor_configs, point_cloud_range, training, num_point_features):
+    def __init__(self, processor_configs, point_cloud_range, training, num_point_features, hist_dist_src = None, hist_dist_tgt = None):
         self.point_cloud_range = point_cloud_range
         self.training = training
         self.num_point_features = num_point_features
@@ -69,6 +70,8 @@ class DataProcessor(object):
         self.data_processor_queue = []
 
         self.voxel_generator = None
+        self.hist_dist_src = hist_dist_src
+        self.hist_dist_tgt = hist_dist_tgt
 
         for cur_cfg in processor_configs:
             cur_processor = getattr(self, cur_cfg.NAME)(config=cur_cfg)
@@ -172,6 +175,25 @@ class DataProcessor(object):
             np.random.shuffle(choice)
         data_dict['points'] = points[choice]
         return data_dict
+
+    def sample_points_hist_based(self, data_dict=None, config=None):
+        if data_dict is None:
+            return partial(self.sample_points_hist_based, config=config)
+
+        if self.hist_dist_src is None or self.hist_dist_tgt is None:
+            return data_dict
+
+        points = data_dict['points']
+        points_dist = np.linalg.norm(points[:, 0:2], axis=1)
+        # TODO: load MAX_DIST from config
+        MAX_DIST = 75.0
+        bin_num = len(self.hist_dist_src)
+        indexes = np.floor(np.clip(points_dist, 0, MAX_DIST - 0.0001) / MAX_DIST * bin_num).astype(np.int32)
+        sample_rate = self.hist_dist_tgt[indexes] / self.hist_dist_src[indexes]
+        points_mask = np.random.rand(len(points)) < sample_rate
+        data_dict['points'] = points[points_mask]
+        return data_dict
+
 
     def forward(self, data_dict):
         """
