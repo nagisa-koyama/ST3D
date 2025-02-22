@@ -69,7 +69,8 @@ class LyftDataset(DatasetTemplate):
         sweep_points_list = [points]
         sweep_times_list = [np.zeros((points.shape[0], 1))]
 
-        for k in np.random.choice(len(info['sweeps']), max_sweeps - 1, replace=False):
+        # for k in np.random.choice(len(info['sweeps']), max_sweeps - 1, replace=False):
+        for k in range(max_sweeps - 1):
             points_sweep, times_sweep = self.get_sweep(info['sweeps'][k])
             sweep_points_list.append(points_sweep)
             sweep_times_list.append(times_sweep)
