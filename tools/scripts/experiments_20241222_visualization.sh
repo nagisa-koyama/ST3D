@@ -1,0 +1,3 @@
+# Vis with the target model
+xvfb-run -a python demo.py --cfg_file cfgs/da-waymo-lyft-pandaset-nuscenes-to-kitti_models/head_per_dataset_with_source/second_old_anchor_st3d_basebev_lyft_to_kitti_source_target_eval_car_ped.yaml --ckpt /storage/wandb/run-20241031_161514-nfzq3i87/files/checkpoint_epoch_100.pth --out_filename lyft_viz_nfzq3i87.png -platform offscreen
+xvfb-run -a python demo.py --cfg_file cfgs/da-waymo-lyft-pandaset-nuscenes-to-kitti_models/head_per_dataset_with_source/second_old_anchor_st3d_basebev_lyft_to_kitti_target_only_car_ped.yaml --ckpt /storage/wandb/run-20241031_161514-nfzq3i87/files/checkpoint_epoch_100.pth --out_filename kitti_viz_nfzq3i87.png -platform offscreen
