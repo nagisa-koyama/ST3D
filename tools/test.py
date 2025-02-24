@@ -237,6 +237,11 @@ def main():
 
     eval_configs = get_all_configs(cfg)
     test_datasets = list()
+    # load ontology for eval. This is necessary to evaluate multihead model with remapping.
+    model_ontology_eval = cfg.get('EVAL_ONTOLOGY', None)
+    if model_ontology_eval is None:
+        model_ontlogy_eval = cfg.get('ONTOLOGY', None)
+
     for eval_config in eval_configs.values():
         test_set, test_loader, test_sampler = build_dataloader(
             dataset_cfg=eval_config,
@@ -244,7 +249,7 @@ def main():
             batch_size=args.batch_size,
             dist=dist_test, workers=args.workers,
             logger=logger, training=False,
-            model_ontology=cfg.get('ONTOLOGY', None)
+            model_ontology=model_ontology_eval
         )
         test_dataset = dict(dataset_class=test_set, loader=test_loader, sampler=test_sampler)
         test_datasets.append(test_dataset)
