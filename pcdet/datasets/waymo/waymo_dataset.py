@@ -206,29 +206,29 @@ class WaymoDataset(DatasetTemplate):
         data_dict.pop('num_points_in_gt', None)
         return data_dict
 
-    @staticmethod
-    def generate_prediction_dicts(batch_dict, pred_dicts, class_names, output_path=None):
-        """
-        Args:
-            batch_dict:
-                frame_id:
-            pred_dicts: list of pred_dicts
-                pred_boxes: (N, 7), Tensor
-                pred_scores: (N), Tensor
-                pred_labels: (N), Tensor
-            class_names:
-            output_path:
+    # @staticmethod
+    # def generate_prediction_dicts(batch_dict, pred_dicts, class_names, output_path=None):
+    #     """
+    #     Args:
+    #         batch_dict:
+    #             frame_id:
+    #         pred_dicts: list of pred_dicts
+    #             pred_boxes: (N, 7), Tensor
+    #             pred_scores: (N), Tensor
+    #             pred_labels: (N), Tensor
+    #         class_names:
+    #         output_path:
 
-        Returns:
+    #     Returns:
 
-        """
+    #     """
 
-        def get_template_prediction(num_samples):
-            ret_dict = {
-                'name': np.zeros(num_samples), 'score': np.zeros(num_samples),
-                'boxes_lidar': np.zeros([num_samples, 7])
-            }
-            return ret_dict
+    #     def get_template_prediction(num_samples):
+    #         ret_dict = {
+    #             'name': np.zeros(num_samples), 'score': np.zeros(num_samples),
+    #             'boxes_lidar': np.zeros([num_samples, 7])
+    #         }
+    #         return ret_dict
 
         # def generate_single_sample_dict(box_dict):
         #     pred_scores = box_dict['pred_scores'].cpu().numpy()
@@ -305,6 +305,7 @@ class WaymoDataset(DatasetTemplate):
 
         eval_det_annos = copy.deepcopy(det_annos)
         eval_gt_annos = [copy.deepcopy(info['annos']) for info in self.infos]
+        # eval_gt_annos = eval_gt_annos[0:len(eval_det_annos)]
 
         if kwargs['eval_metric'] == 'kitti':
             ap_result_str, ap_dict = kitti_eval(eval_det_annos, eval_gt_annos)
