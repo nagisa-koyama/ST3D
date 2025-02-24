@@ -261,6 +261,42 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'pandaset:Pedestrian': 'lyft:pedestrian',
         'nuscenes:pedestrian': 'lyft:pedestrian',
     }
+    map_head_per_dataset_to_waymo = {
+        'kitti:Car': 'waymo:Vehicle',
+        'waymo:Vehicle': 'waymo:Vehicle',
+        'lyft:car': 'waymo:Vehicle',
+        'pandaset:Car': 'waymo:Vehicle',
+        'nuscenes:car': 'waymo:Vehicle',
+        'kitti:Pedestrian': 'waymo:Pedestrian',
+        'waymo:Pedestrian': 'waymo:Pedestrian',
+        'lyft:pedestrian': 'waymo:Pedestrian',
+        'pandaset:Pedestrian': 'waymo:Pedestrian',
+        'nuscenes:pedestrian': 'waymo:Pedestrian',
+    }
+    map_head_per_dataset_to_waymo = {
+        'kitti:Car': 'waymo:Vehicle',
+        'waymo:Vehicle': 'waymo:Vehicle',
+        'lyft:car': 'waymo:Vehicle',
+        'pandaset:Car': 'waymo:Vehicle',
+        'nuscenes:car': 'waymo:Vehicle',
+        'kitti:Pedestrian': 'waymo:Pedestrian',
+        'waymo:Pedestrian': 'waymo:Pedestrian',
+        'lyft:pedestrian': 'waymo:Pedestrian',
+        'pandaset:Pedestrian': 'waymo:Pedestrian',
+        'nuscenes:pedestrian': 'waymo:Pedestrian',
+    }
+    map_head_per_dataset_to_pandaset = {
+        'kitti:Car': 'pandaset:Car',
+        'waymo:Vehicle': 'pandaset:Car',
+        'lyft:car': 'pandaset:Car',
+        'pandaset:Car': 'pandaset:Car',
+        'nuscenes:car': 'pandaset:Car',
+        'kitti:Pedestrian': 'pandaset:Pedestrian',
+        'waymo:Pedestrian': 'pandaset:Pedestrian',
+        'lyft:pedestrian': 'pandaset:Pedestrian',
+        'pandaset:Pedestrian': 'pandaset:Pedestrian',
+        'nuscenes:pedestrian': 'pandaset:Pedestrian'
+    }
     # Defined for compatibility with the rest of the code but not used.
     map_kitti_to_head_per_dataset = {
         'Car': 'waymo:Vehicle',
@@ -276,17 +312,17 @@ def get_ontology_mapping(input_ontology, output_ontology):
     }
     # Defined for compatibility with the rest of the code but not used.
     map_nuscenes_to_head_per_dataset = {
-        'nuscenes:car': 'waymo:Vehicle',
-        'nuscenes:truck': 'waymo:Vehicle',
-        'nuscenes:bus': 'waymo:Vehicle',
-        'nuscenes:construction_vehicle': 'waymo:Vehicle',
-        'nuscenes:motorcycle': 'waymo:Cyclist',
-        'nuscenes:bicycle': 'waymo:Cyclist',
-        'nuscenes:trailer': 'waymo:Sign',
-        'nuscenes:pedestrian': 'waymo:Pedestrian',
-        'nuscenes:traffic_cone': 'waymo:Sign',
-        'nuscenes:barrier': 'waymo:Sign',
-        'nuscenes:ignore': 'waymo:Sign'
+        'car': 'waymo:Vehicle',
+        'truck': 'waymo:Vehicle',
+        'bus': 'waymo:Vehicle',
+        'construction_vehicle': 'waymo:Vehicle',
+        'motorcycle': 'waymo:Cyclist',
+        'bicycle': 'waymo:Cyclist',
+        'trailer': 'waymo:Sign',
+        'pedestrian': 'waymo:Pedestrian',
+        'traffic_cone': 'waymo:Sign',
+        'barrier': 'waymo:Sign',
+        'ignore': 'waymo:Sign'
     }
     # Defined for compatibility with the rest of the code but not used.
     map_lyft_to_head_per_dataset = {
@@ -300,6 +336,45 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'other_vehicle': 'waymo:Sign',
         'animal': 'waymo:Sign'
     }
+    # Defined for compatibility with the rest of the code but not used.
+    map_waymo_to_head_per_dataset = {
+        'Vehicle': 'waymo:Vehicle',
+        'Pedestrian': 'waymo:Pedestrian',
+        'Cyclist': 'waymo:Cyclist',
+        'Sign': 'waymo:Sign'
+    }
+    # Defined for compatibility with the rest of the code but not used.
+    map_pandaset_to_head_per_dataset = {
+        'Car': 'waymo:Vehicle',
+        'Pickup Truck': 'waymo:Vehicle',
+        'Medium-sized Truck': 'waymo:Vehicle',
+        'Semi-truck': 'waymo:Vehicle',
+        'Towed Object': 'waymo:Vehicle',
+        'Motorcycle': 'waymo:Cyclist',
+        'Other Vehicle - Construction Vehicle': 'waymo:Vehicle',
+        'Other Vehicle - Uncommon': 'waymo:Vehicle',
+        'Other Vehicle - Pedicab': 'waymo:Vehicle',
+        'Emergency Vehicle': 'waymo:Vehicle',
+        'Bus': 'waymo:Vehicle',
+        'Personal Mobility Device': 'waymo:Vehicle',
+        'Motorized Scooter': 'waymo:Cyclist',
+        'Bicycle': 'waymo:Cyclist',
+        'Train': 'waymo:Sign',
+        'Trolley': 'waymo:Sign',
+        'Tram / Subway': 'waymo:Sign',
+        'Pedestrian': 'waymo:Pedestrian',
+        'Pedestrian with Object': 'waymo:pedestrian',
+        'Animals - Bird': 'waymo:Sign',
+        'Animals - Other': 'waymo:Sign',
+        'Pylons': 'waymo:Sign',
+        'Road Barriers': 'waymo:Sign',
+        'Signs': 'waymo:Sign',
+        'Cones': 'waymo:Sign',
+        'Construction Signs': 'waymo:Sign',
+        'Temporary Construction Barriers': 'waymo:Sign',
+        'Rolling Containers': 'waymo:Sign'
+    }
+
     # Supports identical mapping
     if input_ontology == output_ontology:
         map_identical = {}
