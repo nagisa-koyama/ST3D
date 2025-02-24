@@ -157,6 +157,7 @@ class NuScenesDataset(DatasetTemplate):
             # debug_dict = {'gt_boxes': copy.deepcopy(input_dict['gt_boxes'][gt_boxes_mask])}
 
         if self.dataset_cfg.get('FOV_POINTS_ONLY', None):
+            assert(0)
             input_dict['points'] = self.extract_fov_data(
                 input_dict['points'], self.dataset_cfg.FOV_DEGREE, self.dataset_cfg.FOV_ANGLE
             )
