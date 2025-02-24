@@ -44,7 +44,8 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
     class_names = dataset.class_names
     det_annos = []
 
-    logger.info('*************** EPOCH %s EVALUATION *****************' % epoch_id)
+    logger.info('*************** EPOCH {} of {} EVALUATION start.*****************'.format(epoch_id,
+                dataloader.dataset.dataset_ontology))
     if dist_test:
         num_gpus = torch.cuda.device_count()
         local_rank = cfg.LOCAL_RANK % num_gpus
@@ -181,7 +182,8 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
     ret_dict['eval_avg_pred_bboxes'] = total_pred_objects / max(1, len(det_annos))
 
     logger.info('Result is save to %s' % result_dir)
-    logger.info('****************Evaluation done.*****************')
+    logger.info('*************** EPOCH {} of {} EVALUATION end.*****************'.format(epoch_id,
+                dataloader.dataset.dataset_ontology))
 
     for item in ret_dict.items():
         wandb.log({'val/' + dataset.dataset_ontology + '/' + item[0]: item[1]})

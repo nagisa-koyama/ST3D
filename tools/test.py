@@ -116,7 +116,7 @@ def get_all_configs(cfg):
 
 def repeat_eval_ckpt(model, test_loaders, args, eval_output_dir, logger, ckpt_dir, dist_test=False):
 
-    data_config_evals = get_eval_configs(cfg).values()
+    data_config_evals = get_all_configs(cfg).values()
     data_config_eval_rep = list(data_config_evals)[0]
 
     # evaluated ckpt record. Tentatively use first dataset.
@@ -133,19 +133,31 @@ def repeat_eval_ckpt(model, test_loaders, args, eval_output_dir, logger, ckpt_di
     while True:
         # check whether there is checkpoint which is not evaluated
         cur_epoch_id, cur_ckpt = get_no_evaluated_ckpt(ckpt_dir, ckpt_record_file, args)
-        if cur_epoch_id == -1 or int(float(cur_epoch_id)) < args.start_epoch:
-            if cfg.LOCAL_RANK == 0:
-                tb_log.flush()
 
-            wait_second = 30
-            if cfg.LOCAL_RANK == 0:
-                print('Wait %s seconds for next check (progress: %.1f / %d minutes): %s \r'
-                      % (wait_second, total_time * 1.0 / 60, args.max_waiting_mins, ckpt_dir), end='', flush=True)
-            time.sleep(wait_second)
-            total_time += 30
-            if total_time > args.max_waiting_mins * 60 and (first_eval is False):
-                print('Time limit reached, exit without evaluation')
-                break
+        # if there is no unevaluated ckpt, break
+        if cur_epoch_id == -1:
+            break
+
+        # record this epoch which has been evaluated
+        with open(ckpt_record_file, 'a') as f:
+            print('%s' % cur_epoch_id, file=f)
+
+        if int(float(cur_epoch_id)) < args.start_epoch:
+            continue
+
+            # TODO: Revisit this if it this is required.
+            # if cfg.LOCAL_RANK == 0:
+            #     tb_log.flush()
+
+            # wait_second = 30
+            # if cfg.LOCAL_RANK == 0:
+            #     print('Wait %s seconds for next check (progress: %.1f / %d minutes): %s \r'
+            #           % (wait_second, total_time * 1.0 / 60, args.max_waiting_mins, ckpt_dir), end='', flush=True)
+            # time.sleep(wait_second)
+            # total_time += 30
+            # if total_time > args.max_waiting_mins * 60 and (first_eval is False):
+            #     print('Time limit reached, exit without evaluation')
+            #     break
 
         total_time = 0
         first_eval = False
@@ -165,9 +177,6 @@ def repeat_eval_ckpt(model, test_loaders, args, eval_output_dir, logger, ckpt_di
             for key, val in tb_dict.items():
                 tb_log.add_scalar(key, val, cur_epoch_id)
 
-        # record this epoch which has been evaluated
-        with open(ckpt_record_file, 'a') as f:
-            print('%s' % cur_epoch_id, file=f)
         logger.info('Epoch %s has been evaluated' % cur_epoch_id)
 
 
@@ -226,7 +235,7 @@ def main():
 
     ckpt_dir = args.ckpt_dir if args.ckpt_dir is not None else output_dir / 'ckpt'
 
-    eval_configs = get_eval_configs(cfg)
+    eval_configs = get_all_configs(cfg)
     test_datasets = list()
     for eval_config in eval_configs.values():
         test_set, test_loader, test_sampler = build_dataloader(

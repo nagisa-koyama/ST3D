@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 from tensorboardX import SummaryWriter
 import torch.distributed as dist
-from test import repeat_eval_ckpt, get_eval_configs
+from test import repeat_eval_ckpt, get_all_configs
 
 import wandb
 

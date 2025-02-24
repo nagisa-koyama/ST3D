@@ -38,6 +38,9 @@ class DatasetTemplate(torch_data.Dataset):
                 ontology, label = cls.split(":")
                 if ontology == self.dataset_ontology:
                     self.dataset_class_names.append(cls)
+                    print("Added class:", cls)
+                else:
+                    print("Skipped class:", cls)
             assert (self.dataset_class_names[-1].count(":") == 1)
         print("Model class names:", class_names)
         print("Mapping from dataset to model ontology:",
