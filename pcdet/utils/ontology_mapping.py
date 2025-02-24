@@ -434,5 +434,13 @@ def get_ontology_mapping(input_ontology, output_ontology):
         return map_head_per_dataset_to_lyft
     elif input_ontology == 'lyft' and output_ontology == 'head_per_dataset':
         return map_lyft_to_head_per_dataset
+    elif input_ontology == 'head_per_dataset' and output_ontology == 'waymo':
+        return map_head_per_dataset_to_waymo
+    elif input_ontology == 'waymo' and output_ontology == 'head_per_dataset':
+        return map_waymo_to_head_per_dataset
+    elif input_ontology == 'head_per_dataset' and output_ontology == 'pandaset':
+        return map_head_per_dataset_to_pandaset
+    elif input_ontology == 'pandaset' and output_ontology == 'head_per_dataset':
+        return map_pandaset_to_head_per_dataset
     else:
         assert False, input_ontology + ' to ' + output_ontology + ' is not supported'

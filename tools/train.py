@@ -325,7 +325,7 @@ def main():
    # load ontology for eval. This is necessary to evaluate multihead model with remapping.
     model_ontology_eval = cfg.get('EVAL_ONTOLOGY', None)
     if model_ontology_eval is None:
-        model_ontlogy_eval = cfg.get('ONTOLOGY', None)
+        model_ontology_eval = cfg.get('ONTOLOGY', None)
     for test_data_config in test_data_configs.values():
         test_set, test_loader, test_sampler = build_dataloader(
             dataset_cfg=test_data_config,

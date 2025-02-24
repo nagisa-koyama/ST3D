@@ -93,6 +93,8 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
 
             progress_bar.set_postfix(disp_dict)
             progress_bar.update()
+        # if i > 1:
+        #     break
 
     if cfg.LOCAL_RANK == 0:
         progress_bar.close()
@@ -140,7 +142,10 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
     class_names_for_evaluation = class_names
     eval_det_annos = copy.deepcopy(det_annos)
 
-    model_ontology = cfg.get('ONTOLOGY', None)
+    # load ontology for eval. This is necessary to evaluate multihead model with remapping.
+    model_ontology = cfg.get('EVAL_ONTOLOGY', None)
+    if model_ontology is None:
+        model_ontology = cfg.get('ONTOLOGY', None)
 
     # Multi-dataset setup.
     if ":" in class_names[0]:
