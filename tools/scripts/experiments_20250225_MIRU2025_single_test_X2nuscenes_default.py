@@ -45,7 +45,8 @@ dict_cfg_waymo2nuscenes = {
     "platform": common_platform,
 }
 
-dict_cfgs = [dict_cfg_lyft2nuscenes, dict_cfg_kitti2nuscenes, dict_cfg_waymo2nuscenes, dict_cfg_pandaset2nuscenes]
+# dict_cfgs = [dict_cfg_lyft2nuscenes, dict_cfg_kitti2nuscenes, dict_cfg_waymo2nuscenes, dict_cfg_pandaset2nuscenes]
+dict_cfgs = [dict_cfg_lyft2nuscenes, dict_cfg_waymo2nuscenes, dict_cfg_pandaset2nuscenes]
 
 for dict_cfg in dict_cfgs:
     cmd = "python"

@@ -45,7 +45,18 @@ dict_cfg_waymo2kitti = {
     "platform": common_platform,
 }
 
-dict_cfgs = [dict_cfg_lyft2kitti, dict_cfg_nuscenes2kitti, dict_cfg_waymo2kitti, dict_cfg_pandaset2kitti] 
+dict_cfg_kitti2nuscenes = {
+    "name": f"train_2nuscenes_{common_suffix}",
+    "script": 'train.py',
+    "cfg_file": "cfgs/da-MIRU2025/second_old_anchor_basebev_multi_kitti2nuscenes_car_ped_point_calibrated.yaml",
+    "teacher_ckpt": "",
+    "ckpt_dir": "",
+    "args": common_args,
+    "platform": common_platform,
+}
+
+
+dict_cfgs = [dict_cfg_lyft2kitti, dict_cfg_nuscenes2kitti, dict_cfg_waymo2kitti, dict_cfg_pandaset2kitti, dict_cfg_kitti2nuscenes] 
 # dict_cfgs = [dict_cfg_lyft2kitti, dict_cfg_nuscenes2kitti]
 # dict_cfgs = [dict_cfg_pandaset2kitti, dict_cfg_waymo2kitti]
 
