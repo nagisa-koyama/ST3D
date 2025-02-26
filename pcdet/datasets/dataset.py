@@ -60,12 +60,17 @@ class DatasetTemplate(torch_data.Dataset):
             self.dataset_cfg.POINT_FEATURE_ENCODING,
             point_cloud_range=self.point_cloud_range
         )
+        hist_dist_kitti_path = self.dataset_cfg.get('HIST_DIST_KITTI_PATH', None)
+        hist_dist_nuscenes_path = self.dataset_cfg.get('HIST_DIST_NUSCENES_PATH', None)
+        hist_dist_waymo_path = self.dataset_cfg.get('HIST_DIST_WAYMO_PATH', None)
+        hist_dist_lyft_path = self.dataset_cfg.get('HIST_DIST_LYFT_PATH', None)
+        hist_dist_pandaset_path = self.dataset_cfg.get('HIST_DIST_PANDASET_PATH', None)
         self.hist_dist = dict()
-        self.hist_dist["kitti"] = np.load("/storage/hist_dist_kitti.npy")
-        self.hist_dist["nuscenes"] = np.load("/storage/hist_dist_nuscenes.npy")
-        self.hist_dist["waymo"] = np.load("/storage/hist_dist_waymo.npy")
-        self.hist_dist["lyft"] = np.load("/storage/hist_dist_lyft.npy")
-        self.hist_dist["pandaset"] = np.load("/storage/hist_dist_pandaset.npy")
+        self.hist_dist["kitti"] = np.load(hist_dist_kitti_path) if hist_dist_kitti_path is not None else None
+        self.hist_dist["nuscenes"] = np.load(hist_dist_nuscenes_path) if hist_dist_nuscenes_path is not None else None
+        self.hist_dist["waymo"] = np.load(hist_dist_waymo_path) if hist_dist_waymo_path is not None else None
+        self.hist_dist["lyft"] = np.load(hist_dist_lyft_path) if hist_dist_lyft_path is not None else None
+        self.hist_dist["pandaset"] = np.load(hist_dist_pandaset_path) if hist_dist_pandaset_path is not None else None
         self.data_augmentor = DataAugmentor(
             self.root_path, self.dataset_cfg.DATA_AUGMENTOR, self.dataset_class_names, logger=self.logger,
             map_ontology_dataset_to_model=self.map_ontology_dataset_to_model, dataset_ontology=self.dataset_ontology
