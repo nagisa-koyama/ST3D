@@ -1,0 +1,45 @@
+POINT_CLOUD_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+MIN_POINTS_OF_GT: 1
+FOV_POINTS_ONLY: False
+DRAW_CONF_CALIB_CURVE: False
+RUN_CONF_CALIB: False
+
+DATA_AUGMENTOR:
+    DISABLE_AUG_LIST: ['random_object_rotation', 'random_object_scaling', 'normalize_object_size']
+    AUG_CONFIG_LIST:
+        - NAME: random_object_scaling # Disabled
+          SCALE_UNIFORM_NOISE: [0.9, 1.1]
+
+        - NAME: normalize_object_size # Disabled
+          SIZE_RES: [-0.91, -0.49, -0.26]
+
+        - NAME: random_object_rotation # Disabled
+          ROT_PROB: 1.0
+          ROT_UNIFORM_NOISE: [-0.78539816, 0.78539816]
+
+        - NAME: random_world_flip
+          ALONG_AXIS_LIST: ['x', 'y']
+
+        - NAME: random_world_rotation
+          WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+
+        - NAME: random_world_scaling
+          WORLD_SCALE_RANGE: [0.95, 1.05]
+
+DATA_PROCESSOR:
+    - NAME: mask_points_and_boxes_outside_range
+      REMOVE_OUTSIDE_BOXES: True
+
+    - NAME: shuffle_points
+      SHUFFLE_ENABLED: {
+        'train': True,
+        'test': False
+      }
+
+    - NAME: transform_points_to_voxels
+      VOXEL_SIZE: [0.1, 0.1, 0.15]
+      MAX_POINTS_PER_VOXEL: 10
+      MAX_NUMBER_OF_VOXELS: {
+        'train': 100000,
+        'test': 100000
+      }

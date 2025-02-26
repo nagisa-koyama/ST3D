@@ -1,0 +1,29 @@
+_BASE_CONFIG_: cfgs/da-MIRU2025/preprocess_sample_points_hist_based.yaml
+
+DATASET: 'LyftDataset'
+DATA_PATH: '../data/lyft'
+ONTOLOGY: 'lyft'
+
+VERSION: 'trainval'
+SET_NAN_VELOCITY_TO_ZEROS: True
+# MAX_SWEEPS: 5
+MAX_SWEEPS: 1
+EVAL_LYFT_IOU_LIST: [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
+
+DATA_SPLIT: {
+    'train': train,
+    'test': val
+}
+
+INFO_PATH: {
+    'train': [lyft_infos_train.pkl],
+    'test': [lyft_infos_val.pkl],
+}
+
+POINT_FEATURE_ENCODING: {
+    encoding_type: absolute_coordinates_encoding,
+    used_feature_list: ['x', 'y', 'z'],
+    src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp'],
+}
+
+SHIFT_COOR: [0.0, 0.0, 1.6]
