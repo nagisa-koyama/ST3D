@@ -28,7 +28,7 @@ dict_cfg_kitti2nuscenes = {
 dict_cfg_pandaset2nuscenes = {
     "name": f"test_pandaset2nuscenes_{common_suffix}_29mwwr9p",
     "script": 'test.py',
-    "cfg_file": "cfgs/da-MIRU2025/second_old_anchor_basebev_multi_pandaset2kitti_car_ped_default.yaml",
+    "cfg_file": "cfgs/da-MIRU2025/second_old_anchor_basebev_multi_pandaset2nuscenes_car_ped_default.yaml",
     "teacher_ckpt": "",
     "ckpt_dir": "/storage/wandb/run-20250222_231807-29mwwr9p/files/ckpt/",
     "args": common_args,
