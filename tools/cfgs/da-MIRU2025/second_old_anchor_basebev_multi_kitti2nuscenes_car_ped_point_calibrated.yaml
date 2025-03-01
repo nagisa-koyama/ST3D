@@ -5,11 +5,11 @@ EVAL_ONTOLOGY: head_per_dataset
 
 DATA_CONFIGS:
     KITTI_CONFIG:
-        _BASE_CONFIG_: cfgs/da-MIRU2025/da_kitti_dataset_point_calibrated_to_kitti.yaml
+        _BASE_CONFIG_: cfgs/da-MIRU2025/da_kitti_dataset_point_calibrated_to_nuscenes.yaml
         CLASS_NAMES: ['kitti:Car', 'kitti:Pedestrian']
 
 DATA_CONFIG_TAR:
-    _BASE_CONFIG_: cfgs/da-MIRU2025/da_nuscenes_dataset_point_calibrated_to_kitti.yaml
+    _BASE_CONFIG_: cfgs/da-MIRU2025/da_nuscenes_dataset_point_calibrated_to_nuscenes.yaml
     CLASS_NAMES: ['nuscenes:car', 'nuscenes:pedestrian']
 
 MODEL:
