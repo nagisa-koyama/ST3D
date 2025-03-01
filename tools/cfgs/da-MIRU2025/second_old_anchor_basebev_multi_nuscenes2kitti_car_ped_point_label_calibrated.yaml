@@ -5,7 +5,7 @@ EVAL_ONTOLOGY: head_per_dataset
 
 DATA_CONFIGS:
     NUSCENES_CONFIG:
-        _BASE_CONFIG_: cfgs/da-MIRU2025/da_nuscenes_dataset_point_calibrated.yaml
+        _BASE_CONFIG_: cfgs/da-MIRU2025/da_nuscenes_dataset_point_calibrated_to_kitti.yaml
         CLASS_NAMES: ['nuscenes:car', 'nuscenes:pedestrian']
         DATA_AUGMENTOR:
           DISABLE_AUG_LIST: ['random_object_rotation', 'normalize_object_size', 'random_world_sampling']
@@ -37,7 +37,7 @@ DATA_CONFIGS:
 
 
 DATA_CONFIG_TAR:
-    _BASE_CONFIG_: cfgs/da-MIRU2025/da_kitti_dataset_point_calibrated.yaml
+    _BASE_CONFIG_: cfgs/da-MIRU2025/da_kitti_dataset_point_calibrated_to_kitti.yaml
     CLASS_NAMES: ['kitti:Car', 'kitti:Pedestrian']
 
 MODEL:

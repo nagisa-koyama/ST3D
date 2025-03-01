@@ -5,7 +5,7 @@ EVAL_ONTOLOGY: head_per_dataset
 
 DATA_CONFIGS:
     LYFT_CONFIG:
-        _BASE_CONFIG_: cfgs/da-MIRU2025/da_lyft_dataset_point_calibrated.yaml
+        _BASE_CONFIG_: cfgs/da-MIRU2025/da_lyft_dataset_point_calibrated_to_nuscenes.yaml
         CLASS_NAMES: ['lyft:car', 'lyft:pedestrian']
 
 MODEL:
@@ -129,5 +129,5 @@ OPTIMIZATION:
     GRAD_NORM_CLIP: 10
 
 DATA_CONFIG_TAR:
-    _BASE_CONFIG_: cfgs/da-MIRU2025/da_nuscenes_dataset_point_calibrated.yaml
+    _BASE_CONFIG_: cfgs/da-MIRU2025/da_nuscenes_dataset_point_calibrated_to_nuscenes.yaml
     CLASS_NAMES: ['nuscenes:car', 'nuscenes:pedestrian']

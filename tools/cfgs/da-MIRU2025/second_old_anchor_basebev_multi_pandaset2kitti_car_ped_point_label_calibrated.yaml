@@ -5,7 +5,7 @@ EVAL_ONTOLOGY: head_per_dataset
 
 DATA_CONFIGS:
     PANDASET_CONFIG:
-        _BASE_CONFIG_: cfgs/da-MIRU2025/da_pandaset_dataset_point_calibrated.yaml
+        _BASE_CONFIG_: cfgs/da-MIRU2025/da_pandaset_dataset_point_calibrated_to_kitti.yaml
         CLASS_NAMES: ['pandaset:Car', 'pandaset:Pedestrian']
         DATA_AUGMENTOR:
           DISABLE_AUG_LIST: ['random_object_rotation', 'normalize_object_size', 'random_world_sampling']
@@ -36,7 +36,7 @@ DATA_CONFIGS:
                 WORLD_SCALE_RANGE: [0.95, 1.05]
 
 DATA_CONFIG_TAR:
-    _BASE_CONFIG_: cfgs/da-MIRU2025/da_kitti_dataset_point_calibrated.yaml
+    _BASE_CONFIG_: cfgs/da-MIRU2025/da_kitti_dataset_point_calibrated_to_kitti.yaml
     CLASS_NAMES: ['kitti:Car', 'kitti:Pedestrian']
 
 MODEL:

@@ -5,11 +5,11 @@ EVAL_ONTOLOGY: head_per_dataset
 
 DATA_CONFIGS:
     LYFT_CONFIG:
-        _BASE_CONFIG_: cfgs/da-MIRU2025/da_lyft_dataset_point_calibrated.yaml
+        _BASE_CONFIG_: cfgs/da-MIRU2025/da_lyft_dataset_point_calibrated_to_kitti.yaml
         CLASS_NAMES: ['lyft:car', 'lyft:pedestrian']
 
 DATA_CONFIG_TAR:
-    _BASE_CONFIG_: cfgs/da-MIRU2025/da_kitti_dataset_point_calibrated.yaml
+    _BASE_CONFIG_: cfgs/da-MIRU2025/da_kitti_dataset_point_calibrated_to_kitti.yaml
     CLASS_NAMES: ['kitti:Car', 'kitti:Pedestrian']
 
 MODEL:
