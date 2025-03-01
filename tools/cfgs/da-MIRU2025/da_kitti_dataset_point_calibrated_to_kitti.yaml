@@ -1,4 +1,4 @@
-_BASE_CONFIG_: cfgs/da-MIRU2025/preprocess_sample_points_hist_based_kitti.yaml
+_BASE_CONFIG_: cfgs/da-MIRU2025/preprocess_sample_points_hist_based_to_kitti.yaml
 
 DATASET: 'KittiDataset'
 DATA_PATH: '../data/kitti'
