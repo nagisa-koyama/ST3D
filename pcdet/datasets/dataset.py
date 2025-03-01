@@ -42,12 +42,12 @@ class DatasetTemplate(torch_data.Dataset):
                 else:
                     print("Skipped class:", cls)
             assert (self.dataset_class_names[-1].count(":") == 1)
-        print("Model class names:", class_names)
-        print("Mapping from dataset to model ontology:",
+        logger.info("Model class names:", class_names)
+        logger.info("Mapping from dataset to model ontology:",
               self.map_ontology_dataset_to_model if self.map_ontology_dataset_to_model else "None")
-        print("Mapping from model to dataset ontology:",
+        logger.info("Mapping from model to dataset ontology:",
               self.map_ontology_model_to_dataset if self.map_ontology_model_to_dataset else "None")
-        print("Mapped dataset class names:", self.dataset_class_names)
+        logger.info("Mapped dataset class names:", self.dataset_class_names)
 
         self.logger = logger
         self.root_path = root_path if root_path is not None else Path(self.dataset_cfg.DATA_PATH)
@@ -71,6 +71,7 @@ class DatasetTemplate(torch_data.Dataset):
         self.hist_dist["waymo"] = np.load(hist_dist_waymo_path) if hist_dist_waymo_path is not None else None
         self.hist_dist["lyft"] = np.load(hist_dist_lyft_path) if hist_dist_lyft_path is not None else None
         self.hist_dist["pandaset"] = np.load(hist_dist_pandaset_path) if hist_dist_pandaset_path is not None else None
+        point_calib_target = self.dataset_cfg.get('POINT_CALIB_TARGET', 'kitti')
         self.data_augmentor = DataAugmentor(
             self.root_path, self.dataset_cfg.DATA_AUGMENTOR, self.dataset_class_names, logger=self.logger,
             map_ontology_dataset_to_model=self.map_ontology_dataset_to_model, dataset_ontology=self.dataset_ontology
@@ -78,7 +79,7 @@ class DatasetTemplate(torch_data.Dataset):
         self.data_processor = DataProcessor(
             self.dataset_cfg.DATA_PROCESSOR, point_cloud_range=self.point_cloud_range,
             training=self.training, num_point_features=self.point_feature_encoder.num_point_features,
-            hist_dist_src=self.hist_dist[self.dataset_ontology], hist_dist_tgt=self.hist_dist["kitti"]
+            hist_dist_src=self.hist_dist[self.dataset_ontology], hist_dist_tgt=self.hist_dist[point_calib_target]
         )
         self.grid_size = self.data_processor.grid_size
         self.voxel_size = self.data_processor.voxel_size
