@@ -42,12 +42,12 @@ class DatasetTemplate(torch_data.Dataset):
                 else:
                     print("Skipped class:", cls)
             assert (self.dataset_class_names[-1].count(":") == 1)
-        logger.info("Model class names:", class_names)
-        logger.info("Mapping from dataset to model ontology:",
-              self.map_ontology_dataset_to_model if self.map_ontology_dataset_to_model else "None")
-        logger.info("Mapping from model to dataset ontology:",
-              self.map_ontology_model_to_dataset if self.map_ontology_model_to_dataset else "None")
-        logger.info("Mapped dataset class names:", self.dataset_class_names)
+        logger.info("Model class names: {}".format(class_names))
+        logger.info("Mapping from dataset to model ontology: {}".format(
+              self.map_ontology_dataset_to_model if self.map_ontology_dataset_to_model else "None"))
+        logger.info("Mapping from model to dataset ontology: {}".format(
+              self.map_ontology_model_to_dataset if self.map_ontology_model_to_dataset else "None"))
+        logger.info("Mapped dataset class names: {}".format(self.dataset_class_names))
 
         self.logger = logger
         self.root_path = root_path if root_path is not None else Path(self.dataset_cfg.DATA_PATH)
