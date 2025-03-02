@@ -12,7 +12,7 @@ from pcdet.datasets import build_dataloader
 from pcdet.models import build_network, load_data_to_gpu
 from pcdet.config import cfg, cfg_from_yaml_file
 from pcdet.utils import common_utils
-from test import get_eval_configs
+from test import get_all_configs
 # try:
 #     import open3d
 #     from visual_utils import open3d_vis_utils as V
@@ -120,7 +120,7 @@ def main():
     wandb.init(config=vars(cfg), project="st3d", name=args.run_name)
 
     # Dataset configs
-    eval_configs = get_eval_configs(cfg)
+    eval_configs = get_all_configs(cfg)
     eval_config_rep = list(eval_configs.values())[0]
 
     eval_datasets = list()
@@ -221,7 +221,7 @@ def main():
         RANGE_NUM_VOXELS = (0, 100000)
         RANGE_NUM_POINTS_IN_VOXEL = (0, 50)
         RANGE_DIST = (0, 75)
-        MAX_SAMPLE = 10000
+        MAX_SAMPLE = 100
 
         progress_bar = tqdm.tqdm(total=len(eval_dataset['loader']), leave=True, desc='eval', dynamic_ncols=True)
         car_class_list = ["Vehicle", "Car", "car", "waymo:Vehicle",
