@@ -36,7 +36,7 @@ dict_cfg_waymo2nuscenes = {
 }
 
 dict_cfg_kitti2nuscenes = {
-    "name": f"train_2nuscenes_{common_suffix}",
+    "name": f"train_kitti2nuscenes_{common_suffix}",
     "script": 'train.py',
     "cfg_file": "cfgs/da-MIRU2025/second_old_anchor_basebev_multi_kitti2nuscenes_car_ped_point_calibrated.yaml",
     "teacher_ckpt": "",
