@@ -1,0 +1,60 @@
+_BASE_CONFIG_: cfgs/da-MIRU2025/preprocess_sample_points_hist_based_to_kitti_wo_aug.yaml
+
+DATASET: 'PandasetDataset'
+DATA_PATH: '../data/pandaset'
+ONTOLOGY: 'pandaset'
+
+DATA_SPLIT: {
+    'train': train,
+    'test': val
+}
+
+SEQUENCES: {
+    'train': ['014', '050', '079', '048', '093', '091', '063', '104', '100', '092', '012', '047', '018', '006', '099', '085', '035', '041', '052', '105', '030', '113', '002', '084', '028', '119', '044', '005', '102', '034', '077', '064', '067', '058', '019', '015', '037', '095', '120', '066', '023', '071', '117', '098', '139', '038', '116', '046', '088', '089', '040', '033', '016', '024', '122', '039', '158', '069', '124', '123', '106'], # ~60% of the sequences, randomly chosen
+    'val': ['045', '059', '055', '051', '020', '097', '073', '043', '003', '101', '027', '056', '011', '078', '080', '109', '042', '021', '094', '057'], # ~20% of the sequences, randomly chosen
+    'test': ['074', '004', '086', '062', '068', '008', '001', '110', '053', '115', '054', '065', '017', '103', '072', '013', '029', '090', '112', '149', '070', '032'] # ~20% of the sequences, randomly chosen
+}
+
+# Acquisition device to consider when loading the data
+# Pandaset contains data from:
+# - a pandar64 spinning lidar
+# - a pandarGT forward facing lidar
+# To use data from:
+# - the pandar64 lidar only (default), set LIDAR_DEVICE to 0,
+# - the pandarGT lidar onlu, set it to 1
+# - both devices, set it to -1
+LIDAR_DEVICE: -1
+
+INFO_PATH: {
+    'train': [pandaset_infos_train.pkl],
+    'test': [pandaset_infos_val.pkl],
+}
+
+TRAINING_CATEGORIES: {
+# This maps raw dataset categories with the corresponding categories used in training
+# This map can be incomplete. In case a category is not present, the category
+# for training is the same as the raw dataset category
+  # 'Car': 'Car',
+  # 'Pickup Truck': 'Car',
+  # 'Medium-sized Truck': 'Truck',
+  # 'Semi-truck': 'Truck',
+  # 'Towed Object': 'Other Vehicle',
+  # 'Motorcycle': 'Motorcycle',
+  # 'Other Vehicle - Construction Vehicle': 'Other Vehicle',
+  # 'Other Vehicle - Uncommon': 'Other Vehicle',
+  # 'Other Vehicle - Pedicab': 'Other Vehicle',
+  # 'Emergency Vehicle': 'Other Vehicle',
+  # 'Bus': 'Bus',
+  # 'Bicycle': 'Bicycle',
+  # 'Pedestrian': 'Pedestrian',
+  # 'Pedestrian with Object': 'Pedestrian',
+  # 'Animals - Other': 'Animal'
+}
+
+POINT_FEATURE_ENCODING: {
+    encoding_type: absolute_coordinates_encoding,
+    used_feature_list: ['x', 'y', 'z'],
+    src_feature_list: ['x', 'y', 'z', 'intensity'],
+}
+
+SHIFT_COOR: [0.0, 0.0, 0.3]

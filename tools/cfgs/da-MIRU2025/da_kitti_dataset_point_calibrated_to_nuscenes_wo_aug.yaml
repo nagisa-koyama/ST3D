@@ -1,0 +1,30 @@
+_BASE_CONFIG_: cfgs/da-MIRU2025/preprocess_sample_points_hist_based_to_nuscenes_wo_aug.yaml
+
+DATASET: 'KittiDataset'
+DATA_PATH: '../data/kitti'
+ONTOLOGY: 'kitti'
+
+DATA_SPLIT: {
+    'train': train,
+    'test': val
+}
+
+INFO_PATH: {
+    'train': [kitti_infos_train.pkl],
+    'test': [kitti_infos_val.pkl],
+}
+
+POINT_FEATURE_ENCODING: {
+    encoding_type: absolute_coordinates_encoding,
+    used_feature_list: ['x', 'y', 'z'],
+    src_feature_list: ['x', 'y', 'z', 'intensity'],
+}
+
+TEST:
+    BOX_FILTER: {
+        'USE_IMAGE_AREA_FILTER': True,
+        'FOV_FILTER': True,
+        'LIMIT_RANGE': [-75.2, -75.2, -2, 75.2, 75.2, 4]
+    }
+
+SHIFT_COOR: [0.0, 0.0, 1.7]
