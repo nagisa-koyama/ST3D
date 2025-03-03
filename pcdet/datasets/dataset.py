@@ -71,7 +71,8 @@ class DatasetTemplate(torch_data.Dataset):
         self.hist_dist["waymo"] = np.load(hist_dist_waymo_path) if hist_dist_waymo_path is not None else None
         self.hist_dist["lyft"] = np.load(hist_dist_lyft_path) if hist_dist_lyft_path is not None else None
         self.hist_dist["pandaset"] = np.load(hist_dist_pandaset_path) if hist_dist_pandaset_path is not None else None
-        point_calib_target = self.dataset_cfg.get('POINT_CALIB_TARGET', 'kitti')
+        point_calib_target = self.dataset_cfg.get('POINT_CALIB_TAR', None)
+        assert point_calib_target in self.hist_dist, "Invalid point calibration target: {}".format(point_calib_target)
         self.data_augmentor = DataAugmentor(
             self.root_path, self.dataset_cfg.DATA_AUGMENTOR, self.dataset_class_names, logger=self.logger,
             map_ontology_dataset_to_model=self.map_ontology_dataset_to_model, dataset_ontology=self.dataset_ontology
