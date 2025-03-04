@@ -85,7 +85,7 @@ MODEL:
                 'unmatched_threshold': 0.4
             },
             {
-                'class_name': lyft:pedestrian,
+                'class_name': 'lyft:pedestrian',
                 'anchor_sizes': [[0.8, 0.8, 1.8]],
                 'anchor_rotations': [0, 1.57],
                 'anchor_bottom_heights': [0],
@@ -95,7 +95,7 @@ MODEL:
                 'unmatched_threshold': 0.01
             },
             {
-                'class_name': kitti:Car,
+                'class_name': 'kitti:Car',
                 'anchor_sizes': [[3.83, 1.59, 1.48]],
                 'anchor_rotations': [0, 1.57],
                 'anchor_bottom_heights': [0],
@@ -105,7 +105,7 @@ MODEL:
                 'unmatched_threshold': 0.4
             },
             {
-                'class_name': kitti:Pedestrian,
+                'class_name': 'kitti:Pedestrian',
                 'anchor_sizes': [[0.8, 0.8, 1.8]],
                 'anchor_rotations': [0, 1.57],
                 'anchor_bottom_heights': [0],
@@ -214,7 +214,7 @@ SELF_TRAIN:
                     'unmatched_threshold': 0.4
                 },
                 {
-                    'class_name': lyft:pedestrian,
+                    'class_name': 'lyft:pedestrian',
                     'anchor_sizes': [[0.8, 0.8, 1.8]],
                     'anchor_rotations': [0, 1.57],
                     'anchor_bottom_heights': [0],
@@ -306,7 +306,7 @@ SELF_TRAIN:
             RM_THRESH: 3
 
 OPTIMIZATION:
-    NUM_EPOCHS: 50
+    NUM_EPOCHS: 100
     BATCH_SIZE_PER_GPU: 20
     OPTIMIZER: adam_onecycle
     LR: 0.0015

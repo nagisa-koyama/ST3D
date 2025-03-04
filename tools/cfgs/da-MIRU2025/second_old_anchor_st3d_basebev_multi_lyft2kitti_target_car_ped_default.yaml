@@ -281,7 +281,7 @@ SELF_TRAIN:
             RM_THRESH: 3
 
 OPTIMIZATION:
-    NUM_EPOCHS: 50
+    NUM_EPOCHS: 100
     BATCH_SIZE_PER_GPU: 20
     OPTIMIZER: adam_onecycle
     LR: 0.0015

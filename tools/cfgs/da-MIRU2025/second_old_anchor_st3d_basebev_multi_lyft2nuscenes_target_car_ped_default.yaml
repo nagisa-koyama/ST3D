@@ -61,7 +61,7 @@ MODEL:
                 'unmatched_threshold': 0.4
             },
             {
-                'class_name': lyft:pedestrian,
+                'class_name': 'lyft:pedestrian',
                 'anchor_sizes': [[0.8, 0.8, 1.8]],
                 'anchor_rotations': [0, 1.57],
                 'anchor_bottom_heights': [0],
@@ -71,7 +71,7 @@ MODEL:
                 'unmatched_threshold': 0.01
             },
             {
-                'class_name': nuscenes:car,
+                'class_name': 'nuscenes:car',
                 'anchor_sizes': [[4.58, 1.87, 1.67]],
                 'anchor_rotations': [0, 1.57],
                 'anchor_bottom_heights': [0],
@@ -81,7 +81,7 @@ MODEL:
                 'unmatched_threshold': 0.4
             },
             {
-                'class_name': nuscenes:pedestrian,
+                'class_name': 'nuscenes:pedestrian',
                 'anchor_sizes': [[0.8, 0.8, 1.8]],
                 'anchor_rotations': [0, 1.57],
                 'anchor_bottom_heights': [0],
@@ -190,7 +190,7 @@ SELF_TRAIN:
                     'unmatched_threshold': 0.4
                 },
                 {
-                    'class_name': lyft:pedestrian,
+                    'class_name': 'lyft:pedestrian',
                     'anchor_sizes': [[0.8, 0.8, 1.8]],
                     'anchor_rotations': [0, 1.57],
                     'anchor_bottom_heights': [0],
@@ -282,7 +282,7 @@ SELF_TRAIN:
             RM_THRESH: 3
 
 OPTIMIZATION:
-    NUM_EPOCHS: 50
+    NUM_EPOCHS: 30
     BATCH_SIZE_PER_GPU: 20
     OPTIMIZER: adam_onecycle
     LR: 0.0015
