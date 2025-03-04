@@ -1,7 +1,7 @@
 import os
 import subprocess
 
-common_prefix = "MIRU2025_st3d_target"
+common_prefix = "MIRU2025_st3d_dann_source_"
 common_suffix = "default"
 common_args = "--batch_size 20"
 common_platform = "-platform offscreen"
@@ -9,7 +9,7 @@ common_platform = "-platform offscreen"
 dict_cfg_lyft2kitti = {
     "name": f"{common_prefix}_lyft2kitti_2p12ncu_{common_suffix}",
     "script": 'train.py',
-    "cfg_file": "cfgs/da-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2kitti_target_car_ped_default.yaml",
+    "cfg_file": "cfgs/da-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2kitti_dann_source_car_ped_default.yaml",
     "teacher_ckpt": "/storage/wandb/run-20250222_231738-2p12ncu2/files/ckpt/checkpoint_epoch_50.pth",
     "pretrained_ckpt": "/storage/wandb/run-20250222_231738-2p12ncu2/files/ckpt/checkpoint_epoch_50.pth",
     "ckpt_dir": "",
@@ -20,7 +20,7 @@ dict_cfg_lyft2kitti = {
 dict_cfg_lyft2nuscenes = {
     "name": f"{common_prefix}_lyft2nuscenes_2p12ncu_{common_suffix}",
     "script": 'train.py',
-    "cfg_file": "cfgs/da-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2nuscenes_target_car_ped_default.yaml",
+    "cfg_file": "cfgs/da-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2nuscenes_dann_source_car_ped_default.yaml",
     "teacher_ckpt": "/storage/wandb/run-20250222_231738-2p12ncu2/files/ckpt/checkpoint_epoch_50.pth",
     "pretrained_ckpt": "/storage/wandb/run-20250222_231738-2p12ncu2/files/ckpt/checkpoint_epoch_50.pth",
     "ckpt_dir": "",
@@ -30,6 +30,7 @@ dict_cfg_lyft2nuscenes = {
 
 
 dict_cfgs = [dict_cfg_lyft2kitti, dict_cfg_lyft2nuscenes]
+# dict_cfgs = [dict_cfg_lyft2nuscenes]
 
 for dict_cfg in dict_cfgs:
     cmd = "python"

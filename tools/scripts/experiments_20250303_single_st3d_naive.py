@@ -1,35 +1,36 @@
 import os
 import subprocess
 
-common_prefix = "MIRU2025_st3d_target"
-common_suffix = "default"
-common_args = "--batch_size 20"
+common_prefix = "MIRU2025_st3d_naive"
+common_suffix = "2p12ncu"
+common_args = "--batch_size 20 --epochs 100"
 common_platform = "-platform offscreen"
+lyft_teacher_ckpt = "/storage/wandb/run-20250222_231738-2p12ncu2/files/ckpt/checkpoint_epoch_50.pth"
 
 dict_cfg_lyft2kitti = {
-    "name": f"{common_prefix}_lyft2kitti_2p12ncu_{common_suffix}",
+    "name": f"{common_prefix}_lyft2kitti_{common_suffix}",
     "script": 'train.py',
-    "cfg_file": "cfgs/da-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2kitti_target_car_ped_default.yaml",
-    "teacher_ckpt": "/storage/wandb/run-20250222_231738-2p12ncu2/files/ckpt/checkpoint_epoch_50.pth",
-    "pretrained_ckpt": "/storage/wandb/run-20250222_231738-2p12ncu2/files/ckpt/checkpoint_epoch_50.pth",
+    "cfg_file": "cfgs/da-MIRU2025/second_old_anchor_st3d_naive_basebev_multi_lyft2kitti_car_ped.yaml",
+    "teacher_ckpt": "",
+    "pretrained_ckpt": lyft_teacher_ckpt,
     "ckpt_dir": "",
     "args": common_args,
     "platform": common_platform,
 }
 
 dict_cfg_lyft2nuscenes = {
-    "name": f"{common_prefix}_lyft2nuscenes_2p12ncu_{common_suffix}",
+    "name": f"{common_prefix}_lyft2nuscenes_{common_suffix}",
     "script": 'train.py',
-    "cfg_file": "cfgs/da-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2nuscenes_target_car_ped_default.yaml",
-    "teacher_ckpt": "/storage/wandb/run-20250222_231738-2p12ncu2/files/ckpt/checkpoint_epoch_50.pth",
-    "pretrained_ckpt": "/storage/wandb/run-20250222_231738-2p12ncu2/files/ckpt/checkpoint_epoch_50.pth",
+    "cfg_file": "cfgs/da-MIRU2025/second_old_anchor_st3d_naive_basebev_multi_lyft2nuscenes_car_ped.yaml",
+    "teacher_ckpt": "",
+    "pretrained_ckpt": lyft_teacher_ckpt,
     "ckpt_dir": "",
     "args": common_args,
     "platform": common_platform,
 }
 
-
-dict_cfgs = [dict_cfg_lyft2kitti, dict_cfg_lyft2nuscenes]
+# dict_cfgs = [dict_cfg_lyft2kitti]
+dict_cfgs = [dict_cfg_lyft2nuscenes]
 
 for dict_cfg in dict_cfgs:
     cmd = "python"
