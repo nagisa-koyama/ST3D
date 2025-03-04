@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 from tensorboardX import SummaryWriter
 import torch.distributed as dist
-from test import repeat_eval_ckpt, get_all_configs
+from test import repeat_eval_ckpt, get_all_configs, get_eval_configs
 
 import wandb
 
@@ -320,7 +320,7 @@ def main():
     if args.eval_fov_only:
         cfg.DATA_CONFIG_TAR.FOV_POINTS_ONLY = True
 
-    test_data_configs = get_all_configs(cfg)
+    test_data_configs = get_eval_configs(cfg)
     test_datasets = list()
    # load ontology for eval. This is necessary to evaluate multihead model with remapping.
     model_ontology_eval = cfg.get('EVAL_ONTOLOGY', None)
