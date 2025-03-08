@@ -46,16 +46,16 @@ def init_point_plot():
     # initialize a matplotlib plot
     fig, ((ax_x, ax_y, ax_z, ax_intensity),
           (ax_dist, ax_num_points, ax_num_voxels, ax_num_points_in_voxel)) = plt.subplots(2, 4, figsize=(20, 10))
-    YLABEL_PER_FRAME = "Num points per frame"
+    YLABEL_PER_FRAME = "Num. of points per frame"
     YLABEL_STATS = "Probability"
     ax_x.set_xlabel('X [m]')
-    ax_x.set_ylabel(YLABEL_PER_FRAME)
+    ax_x.set_ylabel(YLABEL_STATS)
     ax_y.set_xlabel('Y [m]')
-    ax_y.set_ylabel(YLABEL_PER_FRAME)
+    ax_y.set_ylabel(YLABEL_STATS)
     ax_z.set_xlabel('Z [m]')
-    ax_z.set_ylabel(YLABEL_PER_FRAME)
+    ax_z.set_ylabel(YLABEL_STATS)
     ax_intensity.set_xlabel('Intensity')
-    ax_intensity.set_ylabel(YLABEL_PER_FRAME)
+    ax_intensity.set_ylabel(YLABEL_STATS)
     ax_dist.set_xlabel('Distance [m]')
     ax_dist.set_ylabel(YLABEL_PER_FRAME)
     ax_num_points.set_xlabel('Num. of points')
@@ -78,27 +78,45 @@ def init_single_plot(xlabel="", ylabel=""):
 
 def init_gt_car_plot():
     # To make the figure size same as point.
-    fig_car, ((ax_x_car, ax_y_car, ax_z_car, _), (ax_length_car, ax_width_car,
-                                                  ax_height_car, _)) = plt.subplots(2, 4, figsize=(20, 10))
-    ax_x_car.set_xlabel('GT Car X [m]')
-    ax_y_car.set_xlabel('GT Car Y [m]')
-    ax_z_car.set_xlabel('GT Car Z [m]')
-    ax_length_car.set_xlabel('GT Car length [m]')
-    ax_width_car.set_xlabel('GT Car width [m]')
-    ax_height_car.set_xlabel('GT Car height [m]')
-    return fig_car, ((ax_x_car, ax_y_car, ax_z_car), (ax_length_car, ax_width_car,
-                                                      ax_height_car))
+    fig_car, ((ax_x_car, ax_y_car, ax_z_car, ax_dist_car), (ax_length_car, ax_width_car,
+                                                            ax_height_car, _)) = plt.subplots(2, 4, figsize=(20, 10))
+    YLABEL_PER_FRAME = "Num. of labels per frame"
+    YLABEL_STATS = "Probability"
+    ax_x_car.set_xlabel('X [m]')
+    ax_x_car.set_ylabel(YLABEL_STATS)
+    ax_y_car.set_xlabel('Y [m]')
+    ax_y_car.set_ylabel(YLABEL_STATS)
+    ax_z_car.set_xlabel('Z [m]')
+    ax_z_car.set_ylabel(YLABEL_STATS)
+    ax_dist_car.set_xlabel('Distance [m]')
+    ax_dist_car.set_ylabel(YLABEL_PER_FRAME)
+    ax_length_car.set_xlabel('Length [m]')
+    ax_length_car.set_ylabel(YLABEL_STATS)
+    ax_width_car.set_xlabel('Width [m]')
+    ax_width_car.set_ylabel(YLABEL_STATS)
+    ax_height_car.set_xlabel('Height [m]')
+    ax_height_car.set_ylabel(YLABEL_STATS)
+    return fig_car, ((ax_x_car, ax_y_car, ax_z_car, ax_dist_car), (ax_length_car, ax_width_car,
+                                                                   ax_height_car, _))
 
 
 def init_gt_ped_plot():
     fig_ped, ((ax_x_ped, ax_y_ped, ax_z_ped), (ax_length_ped, ax_width_ped,
                                                ax_height_ped)) = plt.subplots(2, 3, figsize=(20, 10))
+    YLABEL_PER_FRAME = "Num points per frame"
+    YLABEL_STATS = "Probability"
     ax_x_ped.set_xlabel('GT Pedestrian X [m]')
+    ax_x_ped.set_ylabel(YLABEL_STATS)
     ax_y_ped.set_xlabel('GT Pedestrian Y [m]')
+    ax_y_ped.set_ylabel(YLABEL_STATS)
     ax_z_ped.set_xlabel('GT Pedestrian Z [m]')
+    ax_z_ped.set_ylabel(YLABEL_STATS)
     ax_length_ped.set_xlabel('GT Pedestrian length [m]')
+    ax_length_ped.set_ylabel(YLABEL_STATS)
     ax_width_ped.set_xlabel('GT Pedestrian width [m]')
+    ax_width_ped.set_ylabel(YLABEL_STATS)
     ax_height_ped.set_xlabel('GT Pedestrian height [m]')
+    ax_height_ped.set_ylabel(YLABEL_STATS)
     return fig_ped, ((ax_x_ped, ax_y_ped, ax_z_ped), (ax_length_ped, ax_width_ped,
                                                       ax_height_ped))
 
@@ -143,11 +161,11 @@ def copy_bar_plot(ax_orig, filename):
             ax.bar(x_pos, height, width=width, color=patch.get_facecolor())
     ax.set_xlim(ax_orig.get_xlim())
     ax.set_ylim(ax_orig.get_ylim())
-    ax.set_xlabel(ax_orig.get_xlabel(), fontsize=14)
-    ax.set_ylabel(ax_orig.get_ylabel(), fontsize=14)
+    ax.set_xlabel(ax_orig.get_xlabel(), fontsize=16)
+    ax.set_ylabel(ax_orig.get_ylabel(), fontsize=16)
     # Create a new legend for the new figure
     handles, labels = ax_orig.get_legend_handles_labels()
-    ax.legend(handles, labels, fontsize=14)
+    ax.legend(handles, labels, fontsize=16)
     ax.tick_params(axis='both', which='major', labelsize=14)
     fig.savefig(filename)
     fig.savefig(filename[:-4] + ".svg")
@@ -194,8 +212,8 @@ def main():
 
     fig_point_all, ((ax_x_point_all, ax_y_point_all, ax_z_point_all, ax_intensity_point_all),
                     (ax_num_points_point_all, ax_num_voxels_point_all, ax_num_points_in_voxel_point_all, ax_dist_point_all)) = init_point_plot()
-    fig_gt_car_all, ((ax_x_gt_car_all, ax_y_gt_car_all, ax_z_gt_car_all), (ax_length_gt_car_all, ax_width_gt_car_all,
-                                                                           ax_height_gt_car_all)) = init_gt_car_plot()
+    fig_gt_car_all, ((ax_x_gt_car_all, ax_y_gt_car_all, ax_z_gt_car_all, ax_dist_gt_car_all), (ax_length_gt_car_all, ax_width_gt_car_all,
+                                                                                               ax_height_gt_car_all, _)) = init_gt_car_plot()
     fig_gt_ped_all, ((ax_x_gt_ped_all, ax_y_gt_ped_all, ax_z_gt_ped_all), (ax_length_gt_ped_all, ax_width_gt_ped_all,
                                                                            ax_height_gt_ped_all)) = init_gt_ped_plot()
     if model:
@@ -261,7 +279,7 @@ def main():
         RANGE_NUM_VOXELS = (0, 100000)
         RANGE_NUM_POINTS_IN_VOXEL = (0, 10)
         RANGE_DIST = (0, 100)
-        MAX_SAMPLE = 100
+        MAX_SAMPLE = 5
 
         progress_bar = tqdm.tqdm(total=len(eval_dataset['loader']), leave=True, desc='eval', dynamic_ncols=True)
         car_class_list = ["Vehicle", "Car", "car", "waymo:Vehicle",
@@ -315,6 +333,8 @@ def main():
                 data_dict['gt_boxes'][mask_car, BOX_WIDTH_INDEX], bins=BINS_SIZE, range=RANGE_BOX_SIZE)
             hist_height_car_curr, bins_height_car_curr = np.histogram(
                 data_dict['gt_boxes'][mask_car, BOX_HEIGHT_INDEX], bins=BINS_SIZE, range=RANGE_BOX_SIZE)
+            dist_car = np.linalg.norm(data_dict['gt_boxes'][mask_car, BOX_X_INDEX:BOX_Y_INDEX], axis=1)
+            hist_dist_car_curr, bins_dist_car_curr = np.histogram(dist_car, bins=BINS, range=RANGE_DIST)
 
             hist_x_ped_curr, bins_x_ped_curr = np.histogram(
                 data_dict['gt_boxes'][mask_ped, BOX_X_INDEX], bins=BINS, range=RANGE_XY)
@@ -397,6 +417,8 @@ def main():
                 bins_width_car = bins_width_car_curr
                 hist_height_car = hist_height_car_curr
                 bins_height_car = bins_height_car_curr
+                hist_dist_car = hist_dist_car_curr
+                bins_dist_car = bins_dist_car_curr
                 hist_x_ped = hist_x_ped_curr
                 bins_x_ped = bins_x_ped_curr
                 hist_y_ped = hist_y_ped_curr
@@ -422,6 +444,8 @@ def main():
                     bins_width_car_pred = bins_width_car_pred_curr
                     hist_height_car_pred = hist_height_car_pred_curr
                     bins_height_car_pred = bins_height_car_pred_curr
+                    hist_dist_car_pred = hist_dist_car_pred_curr
+                    bins_dist_car_pred = bins_dist_car_pred_curr
                     hist_x_ped_pred = hist_x_ped_pred_curr
                     bins_x_ped_pred = bins_x_ped_pred_curr
                     hist_y_ped_pred = hist_y_ped_pred_curr
@@ -456,6 +480,7 @@ def main():
                 hist_length_ped += hist_length_ped_curr
                 hist_width_ped += hist_width_ped_curr
                 hist_height_ped += hist_height_ped_curr
+                hist_dist_car += hist_dist_car_curr
                 if model:
                     hist_x_car_pred += hist_x_car_pred_curr
                     hist_y_car_pred += hist_y_car_pred_curr
@@ -484,8 +509,8 @@ def main():
         if hist_intensity is None:
             ax_intensity.axis('off')
 
-        fig_car, ((ax_x_car, ax_y_car, ax_z_car), (ax_length_car, ax_width_car,
-                  ax_height_car)) = init_gt_car_plot()
+        fig_car, ((ax_x_car, ax_y_car, ax_z_car, ax_dist_car), (ax_length_car, ax_width_car,
+                  ax_height_car, _)) = init_gt_car_plot()
 
         fig_ped, ((ax_x_ped, ax_y_ped, ax_z_ped), (ax_length_ped, ax_width_ped,
                                                    ax_height_ped)) = init_gt_ped_plot()
@@ -518,6 +543,7 @@ def main():
         peak_length_ped = bins_length_ped[np.argmax(hist_length_ped)]
         peak_width_ped = bins_width_ped[np.argmax(hist_width_ped)]
         peak_height_ped = bins_height_ped[np.argmax(hist_height_ped)]
+        peak_dist_car = bins_dist_car[np.argmax(hist_dist_car)]
         if model:
             peak_x_car_pred = bins_x_car_pred[np.argmax(hist_x_car_pred)]
             peak_y_car_pred = bins_y_car_pred[np.argmax(hist_y_car_pred)]
@@ -555,6 +581,7 @@ def main():
         average_width_car = np.average(bins_width_car[:-1], weights=hist_width_car) if hist_width_car.sum() > 0 else 0
         average_height_car = np.average(
             bins_height_car[:-1], weights=hist_height_car) if hist_height_car.sum() > 0 else 0
+        average_dist_car = np.average(bins_dist_car[:-1], weights=hist_dist_car) if hist_dist_car.sum() > 0 else 0
         average_x_ped = np.average(bins_x_ped[:-1], weights=hist_x_ped) if hist_x_ped.sum() > 0 else 0
         average_y_ped = np.average(bins_y_ped[:-1], weights=hist_y_ped) if hist_y_ped.sum() > 0 else 0
         average_z_ped = np.average(bins_z_ped[:-1], weights=hist_z_ped) if hist_z_ped.sum() > 0 else 0
@@ -592,6 +619,7 @@ def main():
         set_stats_to_title(ax_length_car, peak_length_car, average_length_car)
         set_stats_to_title(ax_width_car, peak_width_car, average_width_car)
         set_stats_to_title(ax_height_car, peak_height_car, average_height_car)
+        set_stats_to_title(ax_dist_car, peak_dist_car, average_dist_car)
         set_stats_to_title(ax_x_ped, peak_x_ped, average_x_ped)
         set_stats_to_title(ax_y_ped, peak_y_ped, average_y_ped)
         set_stats_to_title(ax_z_ped, peak_z_ped, average_z_ped)
@@ -630,11 +658,11 @@ def main():
 
         num_frames = len(eval_dataset['loader']) if len(eval_dataset['loader']) < MAX_SAMPLE else MAX_SAMPLE
 
-        ax_x_point_all.bar(bins_x[:-1], hist_x / num_frames, width=np.diff(bins_x), alpha=ALPHA, label=dataset_name)
-        ax_y_point_all.bar(bins_y[:-1], hist_y / num_frames, width=np.diff(bins_y), alpha=ALPHA, label=dataset_name)
-        ax_z_point_all.bar(bins_z[:-1], hist_z / num_frames, width=np.diff(bins_z), alpha=ALPHA, label=dataset_name)
+        ax_x_point_all.bar(bins_x[:-1], hist_x / np.sum(hist_x), width=np.diff(bins_x), alpha=ALPHA, label=dataset_name)
+        ax_y_point_all.bar(bins_y[:-1], hist_y / np.sum(hist_y), width=np.diff(bins_y), alpha=ALPHA, label=dataset_name)
+        ax_z_point_all.bar(bins_z[:-1], hist_z / np.sum(hist_z), width=np.diff(bins_z), alpha=ALPHA, label=dataset_name)
         if hist_intensity is not None:
-            ax_intensity_point_all.bar(bins_intensity[:-1], hist_intensity / num_frames,
+            ax_intensity_point_all.bar(bins_intensity[:-1], hist_intensity / np.sum(hist_intensity),
                                        width=np.diff(bins_intensity), alpha=ALPHA, label=dataset_name)
         ax_num_points_point_all.bar(bins_num_points[:-1], hist_num_points / np.sum(hist_num_points),
                                     width=np.diff(bins_num_points), alpha=ALPHA, label=dataset_name)
@@ -657,19 +685,23 @@ def main():
                          width=np.diff(bins_width_car), alpha=ALPHA)
         ax_height_car.bar(bins_height_car[:-1], hist_height_car / np.sum(hist_height_car),
                           width=np.diff(bins_height_car), alpha=ALPHA)
+        ax_dist_car.bar(bins_dist_car[:-1], hist_dist_car / np.sum(hist_dist_car),
+                        width=np.diff(bins_dist_car), alpha=ALPHA)
 
-        ax_x_gt_car_all.bar(bins_x_car[:-1], hist_x_car / num_frames,
+        ax_x_gt_car_all.bar(bins_x_car[:-1], hist_x_car / np.sum(hist_x_car),
                             width=np.diff(bins_x_car), alpha=ALPHA, label=dataset_name)
-        ax_y_gt_car_all.bar(bins_y_car[:-1], hist_y_car / num_frames,
+        ax_y_gt_car_all.bar(bins_y_car[:-1], hist_y_car / np.sum(hist_y_car),
                             width=np.diff(bins_y_car), alpha=ALPHA, label=dataset_name)
-        ax_z_gt_car_all.bar(bins_z_car[:-1], hist_z_car / num_frames,
+        ax_z_gt_car_all.bar(bins_z_car[:-1], hist_z_car / np.sum(hist_z_car),
                             width=np.diff(bins_z_car), alpha=ALPHA, label=dataset_name)
-        ax_length_gt_car_all.bar(bins_length_car[:-1], hist_length_car / num_frames,
+        ax_length_gt_car_all.bar(bins_length_car[:-1], hist_length_car / np.sum(hist_length_car),
                                  width=np.diff(bins_length_car), alpha=ALPHA, label=dataset_name)
-        ax_width_gt_car_all.bar(bins_width_car[:-1], hist_width_car / num_frames,
+        ax_width_gt_car_all.bar(bins_width_car[:-1], hist_width_car / np.sum(hist_width_car),
                                 width=np.diff(bins_width_car), alpha=ALPHA, label=dataset_name)
-        ax_height_gt_car_all.bar(bins_height_car[:-1], hist_height_car / num_frames,
+        ax_height_gt_car_all.bar(bins_height_car[:-1], hist_height_car / np.sum(hist_height_car),
                                  width=np.diff(bins_height_car), alpha=ALPHA, label=dataset_name)
+        ax_dist_gt_car_all.bar(bins_dist_car[:-1], hist_dist_car / num_frames,
+                               width=np.diff(bins_dist_car), alpha=ALPHA, label=dataset_name)
 
         ax_x_ped.bar(bins_x_ped[:-1], hist_x_ped / np.sum(hist_x_ped),
                      width=np.diff(bins_x_ped), alpha=ALPHA)
@@ -684,17 +716,17 @@ def main():
         ax_height_ped.bar(bins_height_ped[:-1], hist_height_ped / np.sum(hist_height_ped),
                           width=np.diff(bins_height_ped), alpha=ALPHA)
 
-        ax_x_gt_ped_all.bar(bins_x_ped[:-1], hist_x_ped / num_frames,
+        ax_x_gt_ped_all.bar(bins_x_ped[:-1], hist_x_ped / np.sum(hist_x_ped),
                             width=np.diff(bins_x_ped), alpha=ALPHA, label=dataset_name)
-        ax_y_gt_ped_all.bar(bins_y_ped[:-1], hist_y_ped / num_frames,
+        ax_y_gt_ped_all.bar(bins_y_ped[:-1], hist_y_ped / np.sum(hist_y_ped),
                             width=np.diff(bins_y_ped), alpha=ALPHA, label=dataset_name)
-        ax_z_gt_ped_all.bar(bins_z_ped[:-1], hist_z_ped / num_frames,
+        ax_z_gt_ped_all.bar(bins_z_ped[:-1], hist_z_ped / np.sum(hist_z_ped),
                             width=np.diff(bins_z_ped), alpha=ALPHA, label=dataset_name)
-        ax_length_gt_ped_all.bar(bins_length_ped[:-1], hist_length_ped / num_frames,
+        ax_length_gt_ped_all.bar(bins_length_ped[:-1], hist_length_ped / np.sum(hist_length_ped),
                                  width=np.diff(bins_length_ped), alpha=ALPHA, label=dataset_name)
-        ax_width_gt_ped_all.bar(bins_width_ped[:-1], hist_width_ped / num_frames,
+        ax_width_gt_ped_all.bar(bins_width_ped[:-1], hist_width_ped / np.sum(hist_width_ped),
                                 width=np.diff(bins_width_ped), alpha=ALPHA, label=dataset_name)
-        ax_height_gt_ped_all.bar(bins_height_ped[:-1], hist_height_ped / num_frames,
+        ax_height_gt_ped_all.bar(bins_height_ped[:-1], hist_height_ped / np.sum(hist_height_ped),
                                  width=np.diff(bins_height_ped), alpha=ALPHA, label=dataset_name)
         if model:
             ax_x_car_pred.bar(bins_x_car_pred[:-1], hist_x_car_pred / np.sum(hist_x_car_pred),
@@ -710,17 +742,17 @@ def main():
             ax_height_car_pred.bar(bins_height_car_pred[:-1], hist_height_car_pred / np.sum(hist_height_car_pred),
                                    width=np.diff(bins_height_car_pred), color='y', alpha=ALPHA)
 
-            ax_x_pred_car_all.bar(bins_x_car_pred[:-1], hist_x_car_pred / num_frames,
+            ax_x_pred_car_all.bar(bins_x_car_pred[:-1], hist_x_car_pred / np.sum(hist_x_car_pred),
                                   width=np.diff(bins_x_car_pred), alpha=ALPHA, label=dataset_name)
-            ax_y_pred_car_all.bar(bins_y_car_pred[:-1], hist_y_car_pred / num_frames,
+            ax_y_pred_car_all.bar(bins_y_car_pred[:-1], hist_y_car_pred / np.sum(hist_y_car_pred),
                                   width=np.diff(bins_y_car_pred), alpha=ALPHA, label=dataset_name)
-            ax_z_pred_car_all.bar(bins_z_car_pred[:-1], hist_z_car_pred / num_frames,
+            ax_z_pred_car_all.bar(bins_z_car_pred[:-1], hist_z_car_pred / np.sum(hist_z_car_pred),
                                   width=np.diff(bins_z_car_pred), alpha=ALPHA, label=dataset_name)
-            ax_length_pred_car_all.bar(bins_length_car_pred[:-1], hist_length_car_pred / num_frames,
+            ax_length_pred_car_all.bar(bins_length_car_pred[:-1], hist_length_car_pred / np.sum(hist_length_car_pred),
                                        width=np.diff(bins_length_car_pred), alpha=ALPHA, label=dataset_name)
-            ax_width_pred_car_all.bar(bins_width_car_pred[:-1], hist_width_car_pred / num_frames,
+            ax_width_pred_car_all.bar(bins_width_car_pred[:-1], hist_width_car_pred / np.sum(hist_width_car_pred),
                                       width=np.diff(bins_width_car_pred), alpha=ALPHA, label=dataset_name)
-            ax_height_pred_car_all.bar(bins_height_car_pred[:-1], hist_height_car_pred / num_frames,
+            ax_height_pred_car_all.bar(bins_height_car_pred[:-1], hist_height_car_pred / np.sum(hist_height_car_pred),
                                        width=np.diff(bins_height_car_pred), alpha=ALPHA, label=dataset_name)
 
             ax_x_ped_pred.bar(bins_x_ped_pred[:-1], hist_x_ped_pred / np.sum(hist_x_ped_pred),
@@ -736,17 +768,17 @@ def main():
             ax_height_ped_pred.bar(bins_height_ped_pred[:-1], hist_height_ped_pred / np.sum(hist_height_ped_pred),
                                    width=np.diff(bins_height_ped_pred), color='y', alpha=ALPHA)
 
-            ax_x_pred_ped_all.bar(bins_x_ped_pred[:-1], hist_x_ped_pred / num_frames,
+            ax_x_pred_ped_all.bar(bins_x_ped_pred[:-1], hist_x_ped_pred / np.sum(hist_x_ped_pred),
                                   width=np.diff(bins_x_ped_pred), alpha=ALPHA, label=dataset_name)
-            ax_y_pred_ped_all.bar(bins_y_ped_pred[:-1], hist_y_ped_pred / num_frames,
+            ax_y_pred_ped_all.bar(bins_y_ped_pred[:-1], hist_y_ped_pred / np.sum(hist_y_ped_pred),
                                   width=np.diff(bins_y_ped_pred), alpha=ALPHA, label=dataset_name)
-            ax_z_pred_ped_all.bar(bins_z_ped_pred[:-1], hist_z_ped_pred / num_frames,
+            ax_z_pred_ped_all.bar(bins_z_ped_pred[:-1], hist_z_ped_pred / np.sum(hist_z_ped_pred),
                                   width=np.diff(bins_z_ped_pred), alpha=ALPHA, label=dataset_name)
-            ax_length_pred_ped_all.bar(bins_length_ped_pred[:-1], hist_length_ped_pred / num_frames,
+            ax_length_pred_ped_all.bar(bins_length_ped_pred[:-1], hist_length_ped_pred / np.sum(hist_length_ped_pred),
                                        width=np.diff(bins_length_ped_pred), alpha=ALPHA, label=dataset_name)
-            ax_width_pred_ped_all.bar(bins_width_ped_pred[:-1], hist_width_ped_pred / num_frames,
+            ax_width_pred_ped_all.bar(bins_width_ped_pred[:-1], hist_width_ped_pred / np.sum(hist_width_ped_pred),
                                       width=np.diff(bins_width_ped_pred), alpha=ALPHA, label=dataset_name)
-            ax_height_pred_ped_all.bar(bins_height_ped_pred[:-1], hist_height_ped_pred / num_frames,
+            ax_height_pred_ped_all.bar(bins_height_ped_pred[:-1], hist_height_ped_pred / np.sum(hist_height_ped_pred),
                                        width=np.diff(bins_height_ped_pred), alpha=ALPHA, label=dataset_name)
 
         filename = os.path.join(args.out_dir, f'0_point_hist_{dataset_name}{args.figure_suffix}.png')
@@ -819,6 +851,8 @@ def main():
                       'val/GT car width histogram'])
     fig_copies.append([ax_height_gt_car_all, f'100_gt_car_height_hist_all{args.figure_suffix}.png',
                       'val/GT car height histogram'])
+    fig_copies.append([ax_dist_gt_car_all, f'100_gt_car_dist_hist_all{args.figure_suffix}.png',
+                      'val/GT car dist histogram'])
     for ax, filename, title in fig_copies:
         path = os.path.join(args.out_dir, filename)
         copy_bar_plot(ax, path)
