@@ -1,0 +1,20 @@
+CLASS_NAMES: ['waymo:Vehicle', 'waymo:Pedestrian', 'lyft:car', 'lyft:pedestrian', 'pandaset:Car', 'pandaset:Pedestrian', 'nuscenes:car', 'nuscenes:pedestrian', 'kitti:Car', 'kitti:Pedestrian']
+ONTOLOGY: null
+
+# Defined for build_model but not used for self training.
+DATA_CONFIGS:
+    PANDASET_CONFIG:
+        _BASE_CONFIG_: cfgs/da-MIRU2025/pandaset_dataset.yaml
+        CLASS_NAMES: ['pandaset:Car', 'pandaset:Pedestrian']
+    WAYMO_CONFIG:
+        _BASE_CONFIG_: cfgs/da-MIRU2025/waymo_dataset.yaml
+        CLASS_NAMES: ['waymo:Vehicle', 'waymo:Pedestrian']
+    KITTI_CONFIG:
+        _BASE_CONFIG_: cfgs/da-MIRU2025/kitti_dataset.yaml
+        CLASS_NAMES: ['kitti:Car', 'kitti:Pedestrian']
+    LYFT_CONFIG:
+        _BASE_CONFIG_: cfgs/da-MIRU2025/lyft_dataset.yaml
+        CLASS_NAMES: ['lyft:car', 'lyft:pedestrian']
+    NUSCENES_CONFIG:
+        _BASE_CONFIG_: cfgs/da-MIRU2025/nuscenes_dataset.yaml
+        CLASS_NAMES: ['nuscenes:car', 'nuscenes:pedestrian']
