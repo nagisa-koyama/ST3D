@@ -15,7 +15,7 @@ SAMPLED_INTERVAL: {
     'test': 5
 }
 
-INFO_WITH_FAKELIDAR: True
+INFO_WITH_FAKELIDAR: False
 
 POINT_FEATURE_ENCODING: {
     encoding_type: absolute_coordinates_encoding,
