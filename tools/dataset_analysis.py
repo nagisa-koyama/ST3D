@@ -35,6 +35,7 @@ def parse_config():
                         default='point_hist.png', help='specify the output filename')
     parser.add_argument('--run_name', type=str, default=None, help='run name for wandb')
     parser.add_argument('--is_train', action='store_true', help='analyze train set, otherwise use test set')
+    parser.add_argument('--figure_suffix', type=str, default="", help='add suffix to figure name')
     args = parser.parse_args()
     cfg_from_yaml_file(args.cfg_file, cfg)
 
@@ -44,21 +45,41 @@ def parse_config():
 def init_point_plot():
     # initialize a matplotlib plot
     fig, ((ax_x, ax_y, ax_z, ax_intensity),
-          (ax_num_points, ax_num_voxels, ax_num_points_in_voxel, ax_dist)) = plt.subplots(2, 4, figsize=(20, 10))
-    ax_x.set_xlabel('point X [m]')
-    ax_y.set_xlabel('point Y [m]')
-    ax_z.set_xlabel('point Z [m]')
-    ax_intensity.set_xlabel('point intensity')
-    ax_num_points.set_xlabel('num points')
-    ax_num_voxels.set_xlabel('num voxels')
-    ax_num_points_in_voxel.set_xlabel('num points in voxel')
-    ax_dist.set_xlabel('point distance [m]')
+          (ax_dist, ax_num_points, ax_num_voxels, ax_num_points_in_voxel)) = plt.subplots(2, 4, figsize=(20, 10))
+    YLABEL_PER_FRAME = "Num points per frame"
+    YLABEL_STATS = "Probability"
+    ax_x.set_xlabel('X [m]')
+    ax_x.set_ylabel(YLABEL_PER_FRAME)
+    ax_y.set_xlabel('Y [m]')
+    ax_y.set_ylabel(YLABEL_PER_FRAME)
+    ax_z.set_xlabel('Z [m]')
+    ax_z.set_ylabel(YLABEL_PER_FRAME)
+    ax_intensity.set_xlabel('Intensity')
+    ax_intensity.set_ylabel(YLABEL_PER_FRAME)
+    ax_dist.set_xlabel('Distance [m]')
+    ax_dist.set_ylabel(YLABEL_PER_FRAME)
+    ax_num_points.set_xlabel('Num. of points')
+    ax_num_points.set_ylabel(YLABEL_STATS)
+    ax_num_voxels.set_xlabel('Num. of voxels')
+    ax_num_voxels.set_ylabel(YLABEL_STATS)
+    ax_num_points_in_voxel.set_xlabel('Num. points in voxel')
+    ax_num_points_in_voxel.set_ylabel(YLABEL_STATS)
+
     return fig, ((ax_x, ax_y, ax_z, ax_intensity), (ax_num_points, ax_num_voxels, ax_num_points_in_voxel, ax_dist))
 
 
+def init_single_plot(xlabel="", ylabel=""):
+    # initialize a matplotlib plot
+    fig, ax = plt.subplots(1, 1)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    return fig, ax
+
+
 def init_gt_car_plot():
-    fig_car, ((ax_x_car, ax_y_car, ax_z_car), (ax_length_car, ax_width_car,
-                                               ax_height_car)) = plt.subplots(2, 3, figsize=(20, 10))
+    # To make the figure size same as point.
+    fig_car, ((ax_x_car, ax_y_car, ax_z_car, _), (ax_length_car, ax_width_car,
+                                                  ax_height_car, _)) = plt.subplots(2, 4, figsize=(20, 10))
     ax_x_car.set_xlabel('GT Car X [m]')
     ax_y_car.set_xlabel('GT Car Y [m]')
     ax_z_car.set_xlabel('GT Car Z [m]')
@@ -112,6 +133,27 @@ def set_stats_to_title(ax_x, peak_x, average_x):
     ax_x.title.set_text(f'Peak: {peak_x:.2f}, Average: {average_x:.2f}')
 
 
+def copy_bar_plot(ax_orig, filename):
+    fig, ax = plt.subplots(1, 1, figsize=(6, 6), tight_layout=True)
+    for container in ax_orig.containers:
+        for patch in container.patches:
+            x_pos = patch.get_x()
+            height = patch.get_height()
+            width = patch.get_width()
+            ax.bar(x_pos, height, width=width, color=patch.get_facecolor())
+    ax.set_xlim(ax_orig.get_xlim())
+    ax.set_ylim(ax_orig.get_ylim())
+    ax.set_xlabel(ax_orig.get_xlabel(), fontsize=14)
+    ax.set_ylabel(ax_orig.get_ylabel(), fontsize=14)
+    # Create a new legend for the new figure
+    handles, labels = ax_orig.get_legend_handles_labels()
+    ax.legend(handles, labels, fontsize=14)
+    ax.tick_params(axis='both', which='major', labelsize=14)
+    fig.savefig(filename)
+    fig.savefig(filename[:-4] + ".svg")
+    return fig, ax
+
+
 def main():
     args, cfg = parse_config()
     logger = common_utils.create_logger()
@@ -147,24 +189,20 @@ def main():
         model.eval()
         logger.info("Model loaded")
 
-    features = None
-    labels = []
-    feature_extraction_start = time.time()
-
     # Change color map.
     plt.rcParams["axes.prop_cycle"] = plt.cycler("color", plt.get_cmap("tab10").colors)
 
-    fig_point, ((ax_x_point, ax_y_point, ax_z_point, ax_intensity_point),
-                (ax_num_points_point, ax_num_voxels_point, ax_num_points_in_voxel_point, ax_dist_point)) = init_point_plot()
-    fig_gt_car, ((ax_x_gt_car, ax_y_gt_car, ax_z_gt_car), (ax_length_gt_car, ax_width_gt_car,
-                                                           ax_height_gt_car)) = init_gt_car_plot()
-    fig_gt_ped, ((ax_x_gt_ped, ax_y_gt_ped, ax_z_gt_ped), (ax_length_gt_ped, ax_width_gt_ped,
-                                                           ax_height_gt_ped)) = init_gt_ped_plot()
+    fig_point_all, ((ax_x_point_all, ax_y_point_all, ax_z_point_all, ax_intensity_point_all),
+                    (ax_num_points_point_all, ax_num_voxels_point_all, ax_num_points_in_voxel_point_all, ax_dist_point_all)) = init_point_plot()
+    fig_gt_car_all, ((ax_x_gt_car_all, ax_y_gt_car_all, ax_z_gt_car_all), (ax_length_gt_car_all, ax_width_gt_car_all,
+                                                                           ax_height_gt_car_all)) = init_gt_car_plot()
+    fig_gt_ped_all, ((ax_x_gt_ped_all, ax_y_gt_ped_all, ax_z_gt_ped_all), (ax_length_gt_ped_all, ax_width_gt_ped_all,
+                                                                           ax_height_gt_ped_all)) = init_gt_ped_plot()
     if model:
-        fig_pred_car, ((ax_x_pred_car, ax_y_pred_car, ax_z_pred_car), (ax_length_pred_car, ax_width_pred_car,
-                                                                       ax_height_pred_car)) = init_pred_car_plot()
-        fig_pred_ped, ((ax_x_pred_ped, ax_y_pred_ped, ax_z_pred_ped), (ax_length_pred_ped, ax_width_pred_ped,
-                                                                       ax_height_pred_ped)) = init_pred_ped_plot()
+        fig_pred_car_all, ((ax_x_pred_car_all, ax_y_pred_car_all, ax_z_pred_car_all), (ax_length_pred_car_all, ax_width_pred_car_all,
+                                                                                       ax_height_pred_car_all)) = init_pred_car_plot()
+        fig_pred_ped_all, ((ax_x_pred_ped_all, ax_y_pred_ped_all, ax_z_pred_ped_all), (ax_length_pred_ped_all, ax_width_pred_ped_all,
+                                                                                       ax_height_pred_ped_all)) = init_pred_ped_plot()
 
     for eval_dataset in eval_datasets:
         dataset_name = eval_dataset['loader'].dataset.dataset_ontology
@@ -223,7 +261,7 @@ def main():
         RANGE_NUM_VOXELS = (0, 100000)
         RANGE_NUM_POINTS_IN_VOXEL = (0, 10)
         RANGE_DIST = (0, 100)
-        MAX_SAMPLE = 10
+        MAX_SAMPLE = 100
 
         progress_bar = tqdm.tqdm(total=len(eval_dataset['loader']), leave=True, desc='eval', dynamic_ncols=True)
         car_class_list = ["Vehicle", "Car", "car", "waymo:Vehicle",
@@ -232,9 +270,6 @@ def main():
                                  "pandaset:Pedestrian", "lyft:pedestrian", "nuscenes:pedestrian", "kitti:Pedestrian"]
 
         for idx, data_dict in enumerate(eval_dataset['loader']):
-            # print('data_dict[gt_boxes]', data_dict['gt_boxes'])
-            # print("data_dict['points'].shape:", data_dict['points'].shape)
-            # print("data_dict['gt_boxes'].shape:", data_dict['gt_boxes'].shape)
             hist_x_curr, bins_x_curr = np.histogram(data_dict['points'][:, X_INDEX], bins=BINS, range=RANGE_XY)
             hist_y_curr, bins_y_curr = np.histogram(data_dict['points'][:, Y_INDEX], bins=BINS, range=RANGE_XY)
             hist_z_curr, bins_z_curr = np.histogram(data_dict['points'][:, Z_INDEX], bins=BINS, range=RANGE_Z)
@@ -595,19 +630,20 @@ def main():
 
         num_frames = len(eval_dataset['loader']) if len(eval_dataset['loader']) < MAX_SAMPLE else MAX_SAMPLE
 
-        ax_x_point.bar(bins_x[:-1], hist_x / num_frames, width=np.diff(bins_x), alpha=ALPHA, label=dataset_name)
-        ax_y_point.bar(bins_y[:-1], hist_y / num_frames, width=np.diff(bins_y), alpha=ALPHA)
-        ax_z_point.bar(bins_z[:-1], hist_z / num_frames, width=np.diff(bins_z), alpha=ALPHA)
+        ax_x_point_all.bar(bins_x[:-1], hist_x / num_frames, width=np.diff(bins_x), alpha=ALPHA, label=dataset_name)
+        ax_y_point_all.bar(bins_y[:-1], hist_y / num_frames, width=np.diff(bins_y), alpha=ALPHA, label=dataset_name)
+        ax_z_point_all.bar(bins_z[:-1], hist_z / num_frames, width=np.diff(bins_z), alpha=ALPHA, label=dataset_name)
         if hist_intensity is not None:
-            ax_intensity_point.bar(bins_intensity[:-1], hist_intensity / num_frames,
-                                   width=np.diff(bins_intensity), alpha=ALPHA)
-        ax_num_points_point.bar(bins_num_points[:-1], hist_num_points / num_frames,
-                                width=np.diff(bins_num_points), alpha=ALPHA)
-        ax_num_voxels_point.bar(bins_num_voxels[:-1], hist_num_voxels / num_frames,
-                                width=np.diff(bins_num_voxels), alpha=ALPHA)
-        ax_num_points_in_voxel_point.bar(bins_num_points_in_voxel[:-1], hist_num_points_in_voxel / num_frames,
-                                         width=np.diff(bins_num_points_in_voxel), alpha=ALPHA)
-        ax_dist_point.bar(bins_dist[:-1], hist_dist / num_frames, width=np.diff(bins_dist), alpha=ALPHA)
+            ax_intensity_point_all.bar(bins_intensity[:-1], hist_intensity / num_frames,
+                                       width=np.diff(bins_intensity), alpha=ALPHA, label=dataset_name)
+        ax_num_points_point_all.bar(bins_num_points[:-1], hist_num_points / np.sum(hist_num_points),
+                                    width=np.diff(bins_num_points), alpha=ALPHA, label=dataset_name)
+        ax_num_voxels_point_all.bar(bins_num_voxels[:-1], hist_num_voxels / np.sum(hist_num_voxels),
+                                    width=np.diff(bins_num_voxels), alpha=ALPHA, label=dataset_name)
+        ax_num_points_in_voxel_point_all.bar(bins_num_points_in_voxel[:-1], hist_num_points_in_voxel / np.sum(hist_num_points_in_voxel),
+                                             width=np.diff(bins_num_points_in_voxel), alpha=ALPHA, label=dataset_name)
+        ax_dist_point_all.bar(bins_dist[:-1], hist_dist / num_frames,
+                              width=np.diff(bins_dist), alpha=ALPHA, label=dataset_name)
 
         ax_x_car.bar(bins_x_car[:-1], hist_x_car / np.sum(hist_x_car),
                      width=np.diff(bins_x_car), alpha=ALPHA)
@@ -622,18 +658,18 @@ def main():
         ax_height_car.bar(bins_height_car[:-1], hist_height_car / np.sum(hist_height_car),
                           width=np.diff(bins_height_car), alpha=ALPHA)
 
-        ax_x_gt_car.bar(bins_x_car[:-1], hist_x_car / num_frames,
-                        width=np.diff(bins_x_car), alpha=ALPHA, label=dataset_name)
-        ax_y_gt_car.bar(bins_y_car[:-1], hist_y_car / num_frames,
-                        width=np.diff(bins_y_car), alpha=ALPHA)
-        ax_z_gt_car.bar(bins_z_car[:-1], hist_z_car / num_frames,
-                        width=np.diff(bins_z_car), alpha=ALPHA)
-        ax_length_gt_car.bar(bins_length_car[:-1], hist_length_car / num_frames,
-                             width=np.diff(bins_length_car), alpha=ALPHA)
-        ax_width_gt_car.bar(bins_width_car[:-1], hist_width_car / num_frames,
-                            width=np.diff(bins_width_car), alpha=ALPHA)
-        ax_height_gt_car.bar(bins_height_car[:-1], hist_height_car / num_frames,
-                             width=np.diff(bins_height_car), alpha=ALPHA)
+        ax_x_gt_car_all.bar(bins_x_car[:-1], hist_x_car / num_frames,
+                            width=np.diff(bins_x_car), alpha=ALPHA, label=dataset_name)
+        ax_y_gt_car_all.bar(bins_y_car[:-1], hist_y_car / num_frames,
+                            width=np.diff(bins_y_car), alpha=ALPHA, label=dataset_name)
+        ax_z_gt_car_all.bar(bins_z_car[:-1], hist_z_car / num_frames,
+                            width=np.diff(bins_z_car), alpha=ALPHA, label=dataset_name)
+        ax_length_gt_car_all.bar(bins_length_car[:-1], hist_length_car / num_frames,
+                                 width=np.diff(bins_length_car), alpha=ALPHA, label=dataset_name)
+        ax_width_gt_car_all.bar(bins_width_car[:-1], hist_width_car / num_frames,
+                                width=np.diff(bins_width_car), alpha=ALPHA, label=dataset_name)
+        ax_height_gt_car_all.bar(bins_height_car[:-1], hist_height_car / num_frames,
+                                 width=np.diff(bins_height_car), alpha=ALPHA, label=dataset_name)
 
         ax_x_ped.bar(bins_x_ped[:-1], hist_x_ped / np.sum(hist_x_ped),
                      width=np.diff(bins_x_ped), alpha=ALPHA)
@@ -648,18 +684,18 @@ def main():
         ax_height_ped.bar(bins_height_ped[:-1], hist_height_ped / np.sum(hist_height_ped),
                           width=np.diff(bins_height_ped), alpha=ALPHA)
 
-        ax_x_gt_ped.bar(bins_x_ped[:-1], hist_x_ped / num_frames,
-                        width=np.diff(bins_x_ped), alpha=ALPHA, label=dataset_name)
-        ax_y_gt_ped.bar(bins_y_ped[:-1], hist_y_ped / num_frames,
-                        width=np.diff(bins_y_ped), alpha=ALPHA)
-        ax_z_gt_ped.bar(bins_z_ped[:-1], hist_z_ped / num_frames,
-                        width=np.diff(bins_z_ped), alpha=ALPHA)
-        ax_length_gt_ped.bar(bins_length_ped[:-1], hist_length_ped / num_frames,
-                             width=np.diff(bins_length_ped), alpha=ALPHA)
-        ax_width_gt_ped.bar(bins_width_ped[:-1], hist_width_ped / num_frames,
-                            width=np.diff(bins_width_ped), alpha=ALPHA)
-        ax_height_gt_ped.bar(bins_height_ped[:-1], hist_height_ped / num_frames,
-                             width=np.diff(bins_height_ped), alpha=ALPHA)
+        ax_x_gt_ped_all.bar(bins_x_ped[:-1], hist_x_ped / num_frames,
+                            width=np.diff(bins_x_ped), alpha=ALPHA, label=dataset_name)
+        ax_y_gt_ped_all.bar(bins_y_ped[:-1], hist_y_ped / num_frames,
+                            width=np.diff(bins_y_ped), alpha=ALPHA, label=dataset_name)
+        ax_z_gt_ped_all.bar(bins_z_ped[:-1], hist_z_ped / num_frames,
+                            width=np.diff(bins_z_ped), alpha=ALPHA, label=dataset_name)
+        ax_length_gt_ped_all.bar(bins_length_ped[:-1], hist_length_ped / num_frames,
+                                 width=np.diff(bins_length_ped), alpha=ALPHA, label=dataset_name)
+        ax_width_gt_ped_all.bar(bins_width_ped[:-1], hist_width_ped / num_frames,
+                                width=np.diff(bins_width_ped), alpha=ALPHA, label=dataset_name)
+        ax_height_gt_ped_all.bar(bins_height_ped[:-1], hist_height_ped / num_frames,
+                                 width=np.diff(bins_height_ped), alpha=ALPHA, label=dataset_name)
         if model:
             ax_x_car_pred.bar(bins_x_car_pred[:-1], hist_x_car_pred / np.sum(hist_x_car_pred),
                               width=np.diff(bins_x_car_pred), color='r', alpha=ALPHA)
@@ -674,18 +710,18 @@ def main():
             ax_height_car_pred.bar(bins_height_car_pred[:-1], hist_height_car_pred / np.sum(hist_height_car_pred),
                                    width=np.diff(bins_height_car_pred), color='y', alpha=ALPHA)
 
-            ax_x_pred_car.bar(bins_x_car_pred[:-1], hist_x_car_pred / num_frames,
-                              width=np.diff(bins_x_car_pred), alpha=ALPHA, label=dataset_name)
-            ax_y_pred_car.bar(bins_y_car_pred[:-1], hist_y_car_pred / num_frames,
-                              width=np.diff(bins_y_car_pred), alpha=ALPHA)
-            ax_z_pred_car.bar(bins_z_car_pred[:-1], hist_z_car_pred / num_frames,
-                              width=np.diff(bins_z_car_pred), alpha=ALPHA)
-            ax_length_pred_car.bar(bins_length_car_pred[:-1], hist_length_car_pred / num_frames,
-                                   width=np.diff(bins_length_car_pred), alpha=ALPHA)
-            ax_width_pred_car.bar(bins_width_car_pred[:-1], hist_width_car_pred / num_frames,
-                                  width=np.diff(bins_width_car_pred), alpha=ALPHA)
-            ax_height_pred_car.bar(bins_height_car_pred[:-1], hist_height_car_pred / num_frames,
-                                   width=np.diff(bins_height_car_pred), alpha=ALPHA)
+            ax_x_pred_car_all.bar(bins_x_car_pred[:-1], hist_x_car_pred / num_frames,
+                                  width=np.diff(bins_x_car_pred), alpha=ALPHA, label=dataset_name)
+            ax_y_pred_car_all.bar(bins_y_car_pred[:-1], hist_y_car_pred / num_frames,
+                                  width=np.diff(bins_y_car_pred), alpha=ALPHA, label=dataset_name)
+            ax_z_pred_car_all.bar(bins_z_car_pred[:-1], hist_z_car_pred / num_frames,
+                                  width=np.diff(bins_z_car_pred), alpha=ALPHA, label=dataset_name)
+            ax_length_pred_car_all.bar(bins_length_car_pred[:-1], hist_length_car_pred / num_frames,
+                                       width=np.diff(bins_length_car_pred), alpha=ALPHA, label=dataset_name)
+            ax_width_pred_car_all.bar(bins_width_car_pred[:-1], hist_width_car_pred / num_frames,
+                                      width=np.diff(bins_width_car_pred), alpha=ALPHA, label=dataset_name)
+            ax_height_pred_car_all.bar(bins_height_car_pred[:-1], hist_height_car_pred / num_frames,
+                                       width=np.diff(bins_height_car_pred), alpha=ALPHA, label=dataset_name)
 
             ax_x_ped_pred.bar(bins_x_ped_pred[:-1], hist_x_ped_pred / np.sum(hist_x_ped_pred),
                               width=np.diff(bins_x_ped_pred), color='r', alpha=ALPHA)
@@ -700,67 +736,94 @@ def main():
             ax_height_ped_pred.bar(bins_height_ped_pred[:-1], hist_height_ped_pred / np.sum(hist_height_ped_pred),
                                    width=np.diff(bins_height_ped_pred), color='y', alpha=ALPHA)
 
-            ax_x_pred_ped.bar(bins_x_ped_pred[:-1], hist_x_ped_pred / num_frames,
-                              width=np.diff(bins_x_ped_pred), alpha=ALPHA, label=dataset_name)
-            ax_y_pred_ped.bar(bins_y_ped_pred[:-1], hist_y_ped_pred / num_frames,
-                              width=np.diff(bins_y_ped_pred), alpha=ALPHA)
-            ax_z_pred_ped.bar(bins_z_ped_pred[:-1], hist_z_ped_pred / num_frames,
-                              width=np.diff(bins_z_ped_pred), alpha=ALPHA)
-            ax_length_pred_ped.bar(bins_length_ped_pred[:-1], hist_length_ped_pred / num_frames,
-                                   width=np.diff(bins_length_ped_pred), alpha=ALPHA)
-            ax_width_pred_ped.bar(bins_width_ped_pred[:-1], hist_width_ped_pred / num_frames,
-                                  width=np.diff(bins_width_ped_pred), alpha=ALPHA)
-            ax_height_pred_ped.bar(bins_height_ped_pred[:-1], hist_height_ped_pred / num_frames,
-                                   width=np.diff(bins_height_ped_pred), alpha=ALPHA)
+            ax_x_pred_ped_all.bar(bins_x_ped_pred[:-1], hist_x_ped_pred / num_frames,
+                                  width=np.diff(bins_x_ped_pred), alpha=ALPHA, label=dataset_name)
+            ax_y_pred_ped_all.bar(bins_y_ped_pred[:-1], hist_y_ped_pred / num_frames,
+                                  width=np.diff(bins_y_ped_pred), alpha=ALPHA, label=dataset_name)
+            ax_z_pred_ped_all.bar(bins_z_ped_pred[:-1], hist_z_ped_pred / num_frames,
+                                  width=np.diff(bins_z_ped_pred), alpha=ALPHA, label=dataset_name)
+            ax_length_pred_ped_all.bar(bins_length_ped_pred[:-1], hist_length_ped_pred / num_frames,
+                                       width=np.diff(bins_length_ped_pred), alpha=ALPHA, label=dataset_name)
+            ax_width_pred_ped_all.bar(bins_width_ped_pred[:-1], hist_width_ped_pred / num_frames,
+                                      width=np.diff(bins_width_ped_pred), alpha=ALPHA, label=dataset_name)
+            ax_height_pred_ped_all.bar(bins_height_ped_pred[:-1], hist_height_ped_pred / num_frames,
+                                       width=np.diff(bins_height_ped_pred), alpha=ALPHA, label=dataset_name)
 
-        filename = os.path.join(args.out_dir, f'0_point_hist_{dataset_name}.png')
+        filename = os.path.join(args.out_dir, f'0_point_hist_{dataset_name}{args.figure_suffix}.png')
         fig.savefig(filename)
         wandb.save(filename)
-        wandb.log({f'val/{dataset_name}/point histogram': wandb.Image(filename)})
-        filename_car = os.path.join(args.out_dir, f'1_gt_car_hist_{dataset_name}.png')
+        wandb.log({f'val/{dataset_name}/Point histogram': wandb.Image(filename)})
+        filename_car = os.path.join(args.out_dir, f'1_gt_car_hist_{dataset_name}{args.figure_suffix}.png')
         fig_car.savefig(filename_car)
         wandb.save(filename_car)
         wandb.log({f'val/{dataset_name}/GT car histogram': wandb.Image(filename_car)})
-        filename_ped = os.path.join(args.out_dir, f'2_gt_pedestrian_hist_{dataset_name}.png')
+        filename_ped = os.path.join(args.out_dir, f'2_gt_pedestrian_hist_{dataset_name}{args.figure_suffix}.png')
         fig_ped.savefig(filename_ped)
         wandb.save(filename_ped)
         wandb.log({f'val/{dataset_name}/GT pedestrian histogram': wandb.Image(filename_ped)})
         if model:
-            filename_car_pred = os.path.join(args.out_dir, f'3_pred_car_hist_{dataset_name}.png')
+            filename_car_pred = os.path.join(args.out_dir, f'3_pred_car_hist_{dataset_name}{args.figure_suffix}.png')
             fig_car_pred.savefig(filename_car_pred)
             wandb.save(filename_car_pred)
-            wandb.log({f'val/{dataset_name}/pred car histogram': wandb.Image(filename_car_pred)})
-            filename_ped_pred = os.path.join(args.out_dir, f'4_pred_pedestrian_hist_{dataset_name}.png')
+            wandb.log({f'val/{dataset_name}/Pred car histogram': wandb.Image(filename_car_pred)})
+            filename_ped_pred = os.path.join(
+                args.out_dir, f'4_pred_pedestrian_hist_{dataset_name}{args.figure_suffix}.png')
             fig_ped_pred.savefig(filename_ped_pred)
             wandb.save(filename_ped_pred)
-            wandb.log({f'val/{dataset_name}/pred pedestrian histogram': wandb.Image(filename_ped_pred)})
+            wandb.log({f'val/{dataset_name}/Pred pedestrian histogram': wandb.Image(filename_ped_pred)})
 
-    filename_point = os.path.join(args.out_dir, f'0_point_hist_all.png')
-    fig_point.legend()
-    fig_point.savefig(filename_point)
+    filename_point = os.path.join(args.out_dir, f'0_point_hist_all{args.figure_suffix}.png')
+    fig_point_all.legend()
+    fig_point_all.savefig(filename_point)
     wandb.save(filename_point)
-    wandb.log({f'val/point histogram': wandb.Image(filename_point)})
-    filename_gt_car = os.path.join(args.out_dir, f'1_gt_car_hist_all.png')
-    fig_gt_car.legend()
-    fig_gt_car.savefig(filename_gt_car)
+    wandb.log({f'val/Point histogram': wandb.Image(filename_point)})
+
+    filename_gt_car = os.path.join(args.out_dir, f'1_gt_car_hist_all{args.figure_suffix}.png')
+    fig_gt_car_all.legend()
+    fig_gt_car_all.savefig(filename_gt_car)
     wandb.save(filename_gt_car)
     wandb.log({f'val/GT car histogram': wandb.Image(filename_gt_car)})
-    filename_gt_ped = os.path.join(args.out_dir, f'2_gt_pedestrian_hist_all.png')
-    fig_gt_ped.legend()
-    fig_gt_ped.savefig(filename_gt_ped)
+
+    filename_gt_ped = os.path.join(args.out_dir, f'2_gt_pedestrian_hist_all{args.figure_suffix}.png')
+    fig_gt_ped_all.legend()
+    fig_gt_ped_all.savefig(filename_gt_ped)
     wandb.save(filename_gt_ped)
     wandb.log({f'val/GT pedestrian histogram': wandb.Image(filename_gt_ped)})
+
     if model:
-        filename_pred_car = os.path.join(args.out_dir, f'3_pred_car_hist_all.png')
-        fig_pred_car.legend()
-        fig_pred_car.savefig(filename_pred_car)
+        filename_pred_car = os.path.join(args.out_dir, f'3_pred_car_hist_all{args.figure_suffix}.png')
+        fig_pred_car_all.legend()
+        fig_pred_car_all.savefig(filename_pred_car)
         wandb.save(filename_pred_car)
-        wandb.log({f'val/pred car histogram': wandb.Image(filename_pred_car)})
-        filename_pred_ped = os.path.join(args.out_dir, f'4_pred_pedestrian_hist_all.png')
-        fig_pred_ped.legend()
-        fig_pred_ped.savefig(filename_pred_ped)
+        wandb.log({f'val/Pred car histogram': wandb.Image(filename_pred_car)})
+        filename_pred_ped = os.path.join(args.out_dir, f'4_pred_pedestrian_hist_all{args.figure_suffix}.png')
+        fig_pred_ped_all.legend()
+        fig_pred_ped_all.savefig(filename_pred_ped)
         wandb.save(filename_pred_ped)
-        wandb.log({f'val/pred pedestrian histogram': wandb.Image(filename_pred_ped)})
+        wandb.log({f'val/Pred pedestrian histogram': wandb.Image(filename_pred_ped)})
+
+    fig_copies = []
+    fig_copies.append([ax_x_point_all, f'100_point_x_hist_all{args.figure_suffix}.png', 'val/point x histogram'])
+    fig_copies.append([ax_y_point_all, f'100_point_y_hist_all{args.figure_suffix}.png', 'val/point y histogram'])
+    fig_copies.append([ax_z_point_all, f'100_point_z_hist_all{args.figure_suffix}.png', 'val/point z histogram'])
+    fig_copies.append([ax_intensity_point_all, f'100_point_intensity_hist_all{args.figure_suffix}.png',
+                      'val/point intensity histogram'])
+    fig_copies.append([ax_dist_point_all, f'100_point_dist_hist_all{args.figure_suffix}.png',
+                      'val/point dist histogram'])
+    fig_copies.append([ax_x_gt_car_all, f'100_gt_car_x_hist_all{args.figure_suffix}.png', 'val/GT car x histogram'])
+    fig_copies.append([ax_y_gt_car_all, f'100_gt_car_y_hist_all{args.figure_suffix}.png', 'val/GT car y histogram'])
+    fig_copies.append([ax_z_gt_car_all, f'100_gt_car_z_hist_all{args.figure_suffix}.png', 'val/GT car z histogram'])
+    fig_copies.append([ax_length_gt_car_all, f'100_gt_car_length_hist_all{args.figure_suffix}.png',
+                      'val/GT car length histogram'])
+    fig_copies.append([ax_width_gt_car_all, f'100_gt_car_width_hist_all{args.figure_suffix}.png',
+                      'val/GT car width histogram'])
+    fig_copies.append([ax_height_gt_car_all, f'100_gt_car_height_hist_all{args.figure_suffix}.png',
+                      'val/GT car height histogram'])
+    for ax, filename, title in fig_copies:
+        path = os.path.join(args.out_dir, filename)
+        copy_bar_plot(ax, path)
+        wandb.save(path)
+        wandb.log({title: wandb.Image(path)})
 
     logger.info('Dataset analysis done.')
 
