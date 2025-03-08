@@ -18,7 +18,7 @@ dict_cfg_kitti2nuscenes = {
     "platform": common_platform,
 }
 
-dict_cfgs = [dict_cfg_nuscenes2kitti_ckpt]
+dict_cfgs = [dict_cfg_kitti2nuscenes]
 
 for dict_cfg in dict_cfgs:
     cmd = "python"
