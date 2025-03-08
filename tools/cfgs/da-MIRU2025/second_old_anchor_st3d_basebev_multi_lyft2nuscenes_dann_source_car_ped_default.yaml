@@ -1,5 +1,6 @@
 CLASS_NAMES: ['lyft:car', 'lyft:pedestrian', 'nuscenes:car', 'nuscenes:pedestrian']
 ONTOLOGY: 'nuscenes'
+EVAL_ONTOLOGY: 'head_per_dataset'
 
 # Defined for build_model but not used for self training.
 DATA_CONFIGS:
