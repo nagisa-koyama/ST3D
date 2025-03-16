@@ -161,12 +161,12 @@ def copy_bar_plot(ax_orig, filename):
             ax.bar(x_pos, height, width=width, color=patch.get_facecolor())
     ax.set_xlim(ax_orig.get_xlim())
     ax.set_ylim(ax_orig.get_ylim())
-    ax.set_xlabel(ax_orig.get_xlabel(), fontsize=16)
-    ax.set_ylabel(ax_orig.get_ylabel(), fontsize=16)
+    ax.set_xlabel(ax_orig.get_xlabel(), fontsize=18)
+    ax.set_ylabel(ax_orig.get_ylabel(), fontsize=18)
     # Create a new legend for the new figure
     handles, labels = ax_orig.get_legend_handles_labels()
     ax.legend(handles, labels, fontsize=16)
-    ax.tick_params(axis='both', which='major', labelsize=14)
+    ax.tick_params(axis='both', which='major', labelsize=16)
     fig.savefig(filename)
     fig.savefig(filename[:-4] + ".svg")
     return fig, ax
@@ -270,7 +270,7 @@ def main():
         BOX_WIDTH_INDEX = 4
         BOX_HEIGHT_INDEX = 5
         BINS = 50
-        BINS_SIZE = 100
+        BINS_SIZE = 50
         RANGE_XY = (-100, 100)
         RANGE_Z = (-10, 10)
         RANGE_INTENSITY = (0, 1)
@@ -279,7 +279,7 @@ def main():
         RANGE_NUM_VOXELS = (0, 100000)
         RANGE_NUM_POINTS_IN_VOXEL = (0, 10)
         RANGE_DIST = (0, 100)
-        MAX_SAMPLE = 5
+        MAX_SAMPLE = 1000
 
         progress_bar = tqdm.tqdm(total=len(eval_dataset['loader']), leave=True, desc='eval', dynamic_ncols=True)
         car_class_list = ["Vehicle", "Car", "car", "waymo:Vehicle",
