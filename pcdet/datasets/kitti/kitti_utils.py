@@ -13,6 +13,8 @@ def transform_annotations_to_kitti_format(annos, map_name_to_kitti=None, info_wi
     Returns:
 
     """
+    assert info_with_fakelidar == False, "INFO_WITH_FAKELIDAR is not supported in kitti_eval"
+
     for anno in annos:
         if 'name' not in anno:
             anno['name'] = anno['gt_names']

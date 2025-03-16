@@ -140,6 +140,7 @@ class WaymoDataset(DatasetTemplate):
             annos = info['annos']
             annos = common_utils.drop_info_with_name(annos, name='unknown')
 
+            assert self.dataset_cfg.get('INFO_WITH_FAKELIDAR', False) == False, "INFO_WITH_FAKELIDAR is not supported in kitti_eval"
             if self.dataset_cfg.get('INFO_WITH_FAKELIDAR', False):
                 gt_boxes_lidar = box_utils.boxes3d_kitti_fakelidar_to_lidar(annos['gt_boxes_lidar'])
             else:
