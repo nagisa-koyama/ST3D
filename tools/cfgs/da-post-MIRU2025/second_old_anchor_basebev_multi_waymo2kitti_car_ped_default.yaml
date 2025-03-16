@@ -5,7 +5,7 @@ EVAL_ONTOLOGY: head_per_dataset
 
 DATA_CONFIGS:
     WAYMO_CONFIG:
-        _BASE_CONFIG_: cfgs/da-MIRU2025/da_waymo_dataset.yaml
+        _BASE_CONFIG_: cfgs/da-post-MIRU2025/da_waymo_dataset.yaml
         CLASS_NAMES: ['waymo:Vehicle', 'waymo:Pedestrian']
 
 DATA_CONFIG_TAR:
