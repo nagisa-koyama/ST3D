@@ -49,8 +49,8 @@ MODEL:
                 'anchor_bottom_heights': [0],
                 'align_center': False,
                 'feature_map_stride': 8,
-                'matched_threshold': 0.55,
-                'unmatched_threshold': 0.4
+                'matched_threshold': 0.2,
+                'unmatched_threshold': 0.01
             },
             {
                 'class_name': 'waymo:Pedestrian',
