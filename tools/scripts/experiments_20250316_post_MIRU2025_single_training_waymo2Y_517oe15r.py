@@ -1,7 +1,7 @@
 import os
 import subprocess
 
-common_suffix = "post_MIRU2025_hist_517oe15r_match_0.2"
+common_suffix = "post_MIRU2025_hist_517oe15r"
 common_platform = "-platform offscreen"
 common_args = "--batch_size 20"
 
