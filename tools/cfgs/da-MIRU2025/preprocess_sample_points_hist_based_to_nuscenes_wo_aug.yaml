@@ -4,11 +4,11 @@ FOV_POINTS_ONLY: False
 DRAW_CONF_CALIB_CURVE: False
 RUN_CONF_CALIB: False
 
-HIST_DIST_KITTI_PATH: /storage/hist_dist_kitti_517oe15r.npy
-HIST_DIST_NUSCENES_PATH: /storage/hist_dist_nuscenes_517oe15r.npy
-HIST_DIST_LYFT_PATH: /storage/hist_dist_lyft_517oe15r.npy
-HIST_DIST_WAYMO_PATH: /storage/hist_dist_waymo_517oe15r.npy
-HIST_DIST_PANDASET_PATH: /storage/hist_dist_pandaset_517oe15r.npy
+HIST_DIST_KITTI_PATH: /storage/hist_dist_kitti_7oiwveh1.npy
+HIST_DIST_NUSCENES_PATH: /storage/hist_dist_nuscenes_7oiwveh1.npy
+HIST_DIST_LYFT_PATH: /storage/hist_dist_lyft_7oiwveh1.npy
+HIST_DIST_WAYMO_PATH: /storage/hist_dist_waymo_7oiwveh1.npy
+HIST_DIST_PANDASET_PATH: /storage/hist_dist_pandaset_7oiwveh1.npy
 POINT_CALIB_TAR: "nuscenes"
 
 DATA_PROCESSOR:
