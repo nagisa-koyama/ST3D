@@ -308,8 +308,7 @@ def main():
             hist_num_points_in_voxel_curr, bins_num_points_in_voxel_curr = np.histogram(
                 data_dict['voxel_num_points'], bins=RANGE_NUM_POINTS_IN_VOXEL[-1], range=RANGE_NUM_POINTS_IN_VOXEL)
 
-            # 3D distance.
-            dist = np.linalg.norm(data_dict['points'][:, X_INDEX:Z_INDEX], axis=1)
+            dist = np.linalg.norm(data_dict['points'][:, X_INDEX:Y_INDEX], axis=1)
             hist_dist_curr, bins_dist_curr = np.histogram(dist, bins=BINS, range=RANGE_DIST)
 
             car_class_index = -1

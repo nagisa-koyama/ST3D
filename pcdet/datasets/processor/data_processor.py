@@ -184,8 +184,7 @@ class DataProcessor(object):
             return data_dict
 
         points = data_dict['points']
-        # 3D distance.
-        points_dist = np.linalg.norm(points[:, 0:3], axis=1)
+        points_dist = np.linalg.norm(points[:, 0:2], axis=1)
         # TODO: load MAX_DIST from config
         MAX_DIST = 75.0
         bin_num = len(self.hist_dist_src)
