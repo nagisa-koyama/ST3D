@@ -7,7 +7,7 @@ DATA_CONFIGS:
         _BASE_CONFIG_: cfgs/da-MIRU2025/da_lyft_dataset_point_calibrated_to_kitti_wo_aug.yaml
         CLASS_NAMES: ['lyft:car', 'lyft:pedestrian']
         DATA_AUGMENTOR:
-            DISABLE_AUG_LIST: ['random_object_rotation', 'normalize_object_size', 'random_object_sampling']
+            DISABLE_AUG_LIST: ['random_object_rotation', 'normalize_object_size', 'random_world_sampling']
             AUG_CONFIG_LIST:
                 - NAME: random_object_scaling
                   SCALE_UNIFORM_NOISE: [0.8260869565217391, 0.8260869565217391]
