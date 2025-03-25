@@ -21,6 +21,18 @@ dict_cfg_default = {
     "platform": common_platform,
 }
 
+dict_cfg_point_label_calibrated = {
+    "name": f"{common_prefix}_point_label_calibrated_7oiwveh1_to_nuscenes_{common_suffix}",
+    # "name": "",
+    "script": 'dataset_analysis.py',
+    "cfg_file": "cfgs/da-MIRU2025/dataset_analysis_point_label_calibrated_517oe15r_to_nuscenes.yaml",
+    "teacher_ckpt": "",
+    "ckpt_dir": "",
+    "ckpt": "",
+    "args": common_args + " --figure_suffix point_label_calibrated_7oiwveh1_to_nuscenes",
+    "platform": common_platform,
+}
+
 dict_cfgs = [
     dict_cfg_default, 
     dict_cfg_point_label_calibrated
