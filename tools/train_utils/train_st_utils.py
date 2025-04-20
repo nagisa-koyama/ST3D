@@ -17,7 +17,7 @@ from .train_utils import save_checkpoint, checkpoint_state
 
 def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_func, lr_scheduler,
                        accumulated_iter, optim_cfg, rank, tbar, total_it_each_epoch,
-                       dataloader_iter, tb_log=None, leave_pbar=False, ema_model=None, cur_epoch=None):
+                       dataloader_iter, tb_log=None, leave_pbar=False, ema_model=None, cur_epoch=None, logger=None):
     if total_it_each_epoch == len(target_loader):
         dataloader_iter = iter(target_loader)
 
@@ -128,12 +128,14 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
             loss_total = st_loss if loss_total is None else loss_total + st_loss
 
             if st_dann_loss:
-                assert dann_loss_total, "dann_loss should be summed in both SELF_TRAIN.SRC and TAR"
-                dann_loss_total += st_dann_loss * 0.5  # 0.5 is the weight for target domain
-                # Reflects dann_loss into loss_total here.
-                loss_total += dann_loss_total
+                if dann_loss_total:
+                    dann_loss_total += st_dann_loss * 0.5  # 0.5 is the weight for target domain
+                    # Reflects dann_loss into loss_total here.
+                    loss_total += dann_loss_total
+                else:
+                    logger.info("dann_loss was summed in SELF_TRAIN.TAR but not in SRC, skipping it from loss_total.")
             else:
-                assert dann_loss_total is None, "dann_loss should not be summed only in SELF_TRAIN.SRC"
+                logger.info("dann_loss was summed in SELF_TRAIN.SRC but not in TAR, skipping it from loss_total.")
 
             # If backward together with target is true, do backward with loss_total here.
             if backward_together_tar:
@@ -302,7 +304,7 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
                 rank=rank, tbar=tbar, tb_log=tb_log,
                 leave_pbar=(cur_epoch + 1 == total_epochs),
                 total_it_each_epoch=total_it_each_epoch,
-                dataloader_iter=dataloader_iter, ema_model=ema_model, cur_epoch=cur_epoch
+                dataloader_iter=dataloader_iter, ema_model=ema_model, cur_epoch=cur_epoch, logger=logger
             )
 
             # save trained model
