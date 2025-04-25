@@ -135,7 +135,8 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                 else:
                     logger.info("dann_loss was summed in SELF_TRAIN.TAR but not in SRC, skipping it from loss_total.")
             else:
-                logger.info("dann_loss was summed in SELF_TRAIN.SRC but not in TAR, skipping it from loss_total.")
+                if dann_loss_total:
+                    logger.info("dann_loss was summed in SELF_TRAIN.SRC but not in TAR, skipping it from loss_total.")
 
             # If backward together with target is true, do backward with loss_total here.
             if backward_together_tar:
