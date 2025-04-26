@@ -157,6 +157,9 @@ ENV WANDB_DISABLE_SERVICE=true
 RUN pip install numpy==1.22
 RUN pip install configobj
 
+# To avoid memory fragmentation. 
+ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128
+
 # Copy latest ST3D source from local storage except folders in .dockerignore.
 # Assuming that directory structure is kept.
 COPY . $WORK_DIR/ST3D
