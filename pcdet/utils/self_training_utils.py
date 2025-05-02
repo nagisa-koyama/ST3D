@@ -6,6 +6,7 @@ import tqdm
 import wandb
 import numpy as np
 import torch.distributed as dist
+import torchinfo
 from pcdet.config import cfg
 from pcdet.models import load_data_to_gpu
 from pcdet.utils import common_utils, commu_utils, memory_ensemble_utils
@@ -75,6 +76,11 @@ def save_pseudo_label_epoch(model, val_loader, rank, leave_pbar, ps_label_dir, c
         ps_label_dir: dir to save pseudo label
         cur_epoch
     """
+    # Override point feature encoder to use only xyz
+    point_feature_encoder_orig = val_loader.dataset.point_feature_encoder
+    val_loader.dataset.point_feature_encoder.point_encoding_config.used_feature_list = ['x', 'y', 'z']
+    val_loader.dataset.point_feature_encoder.used_feature_list = ['x', 'y', 'z']
+
     val_dataloader_iter = iter(val_loader)
     total_it_each_epoch = len(val_loader)
 
@@ -127,6 +133,9 @@ def save_pseudo_label_epoch(model, val_loader, rank, leave_pbar, ps_label_dir, c
     if rank == 0:
         pbar.close()
 
+    # Set original point feature encoder back
+    val_loader.dataset.point_feature_encoder = point_feature_encoder_orig
+
     gather_and_dump_pseudo_label_result(rank, ps_label_dir, cur_epoch)
 
 
@@ -155,9 +164,9 @@ def gather_and_dump_pseudo_label_result(rank, ps_label_dir, cur_epoch):
     for frame_id, pseudo_label in PSEUDO_LABELS.items():
         if 'teacher_classes' in pseudo_label:
             teacher_class_names_concat.extend(pseudo_label['teacher_classes'])
-    print("len(PSEUDO_LABELS.keys()):", len(PSEUDO_LABELS.keys()))
-    print("len(teacher_class_names_concat):", len(teacher_class_names_concat))
-    print(Counter(teacher_class_names_concat))
+    # print("len(PSEUDO_LABELS.keys()):", len(PSEUDO_LABELS.keys()))
+    # print("len(teacher_class_names_concat):", len(teacher_class_names_concat))
+    # print(Counter(teacher_class_names_concat))
     wandb.log({'train/ps_labels_total': len(teacher_class_names_concat)})
     for key, value in Counter(teacher_class_names_concat).items():
         wandb.log({'train/ps_labels_{}'.format(key): value})
