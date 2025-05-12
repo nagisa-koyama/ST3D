@@ -2,6 +2,7 @@ import glob
 import os
 
 import mayavi.mlab as mlab
+import numpy as np
 import torch
 import tqdm
 from torch.nn.utils import clip_grad_norm_
@@ -13,11 +14,25 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
     # dataloader_iter = dataloader_iters[0]
     assert(len(dataloader_iters) == len(train_loaders))
     assert(len(total_it_each_epochs) == len(train_loaders))
+
+    # WD based weight with calibration to kitti.
+    # wd_kitti_and_lyft = 0.9263759576340952
+    # wd_kitti_and_nuscenes = 1.5917341303012047
+    # wd_kitti_and_pandaset = 0.7142317325278063
+    # wd_kitti_and_waymo = 0.016310214402112777
+    # wd_sum = wd_kitti_and_lyft + wd_kitti_and_nuscenes
+    # lyft_weight = (wd_sum - wd_kitti_and_lyft) / wd_sum
+    # nuscenes_weight = (wd_sum - wd_kitti_and_nuscenes) / wd_sum
+    # pandaset_weight = (wd_sum - wd_kitti_and_pandaset) / wd_sum
+    # waymo_weight = (wd_sum - wd_kitti_and_waymo) / wd_sum
+
     for index in range(len(total_it_each_epochs)):
         if total_it_each_epochs[index] == len(train_loaders[index]):
             dataloader_iters[index] = iter(train_loaders[index])
 
-    total_it_each_epochs_aggregated = max(total_it_each_epochs)*len(total_it_each_epochs)
+    total_it_each_epochs_aggregated = sum(total_it_each_epochs)
+    # Upsample smaller datasets.
+    # total_it_each_epochs_aggregated = max(total_it_each_epochs)*len(total_it_each_epochs)
     print("total_it_each_epochs:", total_it_each_epochs)
     print("total_it_each_epochs_aggregated:", total_it_each_epochs_aggregated)
     if rank == 0:
@@ -26,8 +41,29 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
     loss_total = None
     draw_scene = True
     for cur_it in range(total_it_each_epochs_aggregated):
-        dataset_index = cur_it % len(dataloader_iters)
+        # Equal dataset-weight sampling.
+        # dataset_index = cur_it % len(dataloader_iters)
+
+        random_0to1 = np.random.rand()
+
+        # Equal sample-weight sampling.
+        accum_rate = 0.0
+        dataset_index = None
+        for index in range(len(total_it_each_epochs)):
+            accum_rate += total_it_each_epochs[index] / total_it_each_epochs_aggregated
+            if random_0to1 < accum_rate:
+                dataset_index = index
+                break
+        assert dataset_index is not None, "dataset_index is None, random_0to1: {}".format(random_0to1)
+
+        # WD weighted dataset sampling.
+        # if random_0to1 < lyft_weight:
+        #     dataset_index = 0
+        # else:
+        #     dataset_index = 1
+
         dataset_ontology = train_loaders[dataset_index].dataset.dataset_ontology
+
         try:
             batch = next(dataloader_iters[dataset_index])
         except StopIteration:
@@ -58,6 +94,12 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
             disp_dict = outputs[2]
         else:
             raise ValueError('incompatible outputs with length {}'.format(len(outputs)))
+
+        # Loss weighting.
+        # if dataset_ontology == 'lyft':
+        #     loss = loss * (wd_kitti_and_nuscenes / (wd_kitti_and_lyft + wd_kitti_and_nuscenes))
+        # elif dataset_ontology == 'nuscenes':
+        #     loss = loss * (wd_kitti_and_lyft / (wd_kitti_and_lyft + wd_kitti_and_nuscenes))
 
         backward_together = optim_cfg.get('BACKWORD_TOGETHER', None)
         if backward_together:

@@ -253,7 +253,11 @@ def main():
                                                                      args.merge_all_iters_to_one_epoch,
                                                                      args.epochs)
             iters_each_epoch_list.append(iters_each_epoch)
-        total_iters_each_epoch = max(iters_each_epoch_list)*len(iters_each_epoch_list)
+
+        # No upsampling.
+        total_iters_each_epoch = sum(iters_each_epoch_list)
+        # Upsample smaller dataset.
+        # total_iters_each_epoch = max(iters_each_epoch_list)*len(iters_each_epoch_list)
 
     lr_scheduler, lr_warmup_scheduler = build_scheduler(
         optimizer, total_iters_each_epoch=total_iters_each_epoch, total_epochs=args.epochs,
@@ -330,7 +334,7 @@ def main():
         test_set, test_loader, test_sampler = build_dataloader(
             dataset_cfg=test_data_config,
             class_names=cfg.CLASS_NAMES,
-            batch_size=args.batch_size,
+            batch_size=min(args.batch_size, 10),
             dist=dist_train, workers=args.workers,
             logger=logger, training=False,
             model_ontology=model_ontology_eval
