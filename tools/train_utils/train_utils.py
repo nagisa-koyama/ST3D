@@ -51,7 +51,7 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
         dataset_index = None
         for index in range(len(total_it_each_epochs)):
             accum_rate += total_it_each_epochs[index] / total_it_each_epochs_aggregated
-            if random_0to1 < accum_rate:
+            if random_0to1 <= accum_rate:
                 dataset_index = index
                 break
         assert dataset_index is not None, "dataset_index is None, random_0to1: {}".format(random_0to1)

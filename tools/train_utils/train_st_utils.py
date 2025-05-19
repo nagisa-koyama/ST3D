@@ -2,6 +2,7 @@ import torch
 import os
 import glob
 import mayavi.mlab as mlab
+import numpy as np
 import tqdm.auto as tqdm
 from torch.nn.utils import clip_grad_norm_
 from pcdet.utils import common_utils
@@ -48,50 +49,60 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
         dann_loss_total = None
         domain_preds_accuracy = None
         if cfg.SELF_TRAIN.SRC.USE_DATA:
-            for source_index in range(len(source_readers)):
-                source_index = cur_it % len(source_readers)
-                source_ontology = source_readers[source_index].dataloader.dataset.dataset_ontology
+            # Equal dataset-weight sampling.
+            # source_index = cur_it % len(source_readers)
 
-                # forward source data with labels
-                source_batch = source_readers[source_index].read_data()
-                source_batch['domain_label'] = 0
+            random_0to1 = np.random.rand()
+            # Equal sample-weight sampling.
+            accum_rate = 0.0
+            source_index = None
+            total_it_aggregated = sum([reader.dataloader.dataset.__len__() for reader in source_readers])
+            total_it_per_dataset = [reader.dataloader.dataset.__len__() for reader in source_readers]
+            for index in range(len(total_it_per_dataset)):
+                accum_rate += total_it_per_dataset[index] / total_it_aggregated
+                if random_0to1 <= accum_rate:
+                    source_index = index
+                    break
+            assert source_index is not None, "source_index is None, random_0to1: {}".format(random_0to1)
 
-                if cfg.SELF_TRAIN.get('DSNORM', None):
-                    model.apply(set_ds_source)
+            source_ontology = source_readers[source_index].dataloader.dataset.dataset_ontology
 
-                if cfg.SELF_TRAIN.SRC.get('SEP_LOSS_WEIGHTS', None):
-                    source_batch['SEP_LOSS_WEIGHTS'] = cfg.SELF_TRAIN.SRC.SEP_LOSS_WEIGHTS
+            # forward source data with labels
+            source_batch = source_readers[source_index].read_data()
+            source_batch['domain_label'] = 0
 
-                loss, tb_dict, disp_dict, dann_loss = model_func(model, source_batch)
-                loss = cfg.SELF_TRAIN.SRC.get('LOSS_WEIGHT', 1.0) * loss
-                loss_meter.update(loss.item())
-                loss_total = loss if loss_total is None else loss_total + loss
+            if cfg.SELF_TRAIN.get('DSNORM', None):
+                model.apply(set_ds_source)
 
-                # dann_loss is summed with tar later.
-                if dann_loss is not None:
-                    dann_loss *= 0.5 / len(source_readers)  # 0.5 is the weight for source domain
-                    dann_loss_total = dann_loss if dann_loss_total is None else dann_loss_total + dann_loss
+            if cfg.SELF_TRAIN.SRC.get('SEP_LOSS_WEIGHTS', None):
+                source_batch['SEP_LOSS_WEIGHTS'] = cfg.SELF_TRAIN.SRC.SEP_LOSS_WEIGHTS
 
-                # If backward together, postpone backward to the end of the loop
-                if not backward_together_src:
-                    # Here, we do backward for each source separately.
-                    loss.backward()
-                    disp_dict.update({'src_loss_' + source_ontology: "{:.2f}".format(loss.item())})
-                    if not cfg.SELF_TRAIN.SRC.get('USE_GRAD', None):
-                        optimizer.zero_grad()
+            loss, tb_dict, disp_dict, dann_loss = model_func(model, source_batch)
+            loss = cfg.SELF_TRAIN.SRC.get('LOSS_WEIGHT', 1.0) * loss
+            loss_meter.update(loss.item())
+            loss_total = loss if loss_total is None else loss_total + loss
 
-                if rank == 0:
-                    wandb.log({'train/' + source_ontology + '/loss': loss})
-                    wandb.log({'train/' + source_ontology + '/learning_rate': cur_lr})
-                    for key, val in tb_dict.items():
-                        wandb.log({'train/' + source_ontology + '/' + key: val})
-                        if key == 'domain_preds_accuracy':
-                            weighted_domain_preds_accuracy = val * 0.5 / \
-                                len(source_readers)  # 0.5 is the weight for source domain
-                            if domain_preds_accuracy:
-                                domain_preds_accuracy += weighted_domain_preds_accuracy
-                            else:
-                                domain_preds_accuracy = weighted_domain_preds_accuracy
+            # dann_loss is summed with tar later.
+            if dann_loss is not None:
+                dann_loss *= 0.5 # 0.5 is the weight for source domain
+                dann_loss_total = dann_loss if dann_loss_total is None else dann_loss_total + dann_loss
+
+            # If backward together, postpone backward to the end of the loop
+            if not backward_together_src:
+                # Here, we do backward for each source separately.
+                loss.backward()
+                disp_dict.update({'src_loss_' + source_ontology: "{:.2f}".format(loss.item())})
+                if not cfg.SELF_TRAIN.SRC.get('USE_GRAD', None):
+                    optimizer.zero_grad()
+
+            if rank == 0:
+                wandb.log({'train/' + source_ontology + '/loss': loss})
+                wandb.log({'train/' + source_ontology + '/learning_rate': cur_lr})
+                for key, val in tb_dict.items():
+                    wandb.log({'train/' + source_ontology + '/' + key: val})
+                    if key == 'domain_preds_accuracy':
+                        weighted_domain_preds_accuracy = val * 0.5 # 0.5 is the weight for source domain
+                        domain_preds_accuracy = weighted_domain_preds_accuracy
 
             assert loss_total is not None
             disp_dict.update({'src_loss': "{:.2f}".format(loss_total.item())})
