@@ -115,8 +115,7 @@ def get_all_configs(cfg):
     return configs
 
 def repeat_eval_ckpt(model, test_loaders, args, eval_output_dir, logger, ckpt_dir, dist_test=False):
-
-    data_config_evals = get_all_configs(cfg).values()
+    data_config_evals = get_eval_configs(cfg).values()
     data_config_eval_rep = list(data_config_evals)[0]
 
     # evaluated ckpt record. Tentatively use first dataset.
@@ -133,7 +132,6 @@ def repeat_eval_ckpt(model, test_loaders, args, eval_output_dir, logger, ckpt_di
     while True:
         # check whether there is checkpoint which is not evaluated
         cur_epoch_id, cur_ckpt = get_no_evaluated_ckpt(ckpt_dir, ckpt_record_file, args)
-
         # if there is no unevaluated ckpt, break
         if cur_epoch_id == -1:
             break
@@ -167,6 +165,7 @@ def repeat_eval_ckpt(model, test_loaders, args, eval_output_dir, logger, ckpt_di
 
         # start evaluation
         for test_loader, data_config_eval in zip(test_loaders, data_config_evals):
+            print('Evaluating %s' % test_loader.dataset.__class__.__name__)
             cur_result_dir = eval_output_dir / ('epoch_%s' % cur_epoch_id) / data_config_eval.DATA_SPLIT['test']
             tb_dict = eval_utils.eval_one_epoch(
                 cfg, model, test_loader, cur_epoch_id, logger, dist_test=dist_test,
@@ -235,7 +234,7 @@ def main():
 
     ckpt_dir = args.ckpt_dir if args.ckpt_dir is not None else output_dir / 'ckpt'
 
-    eval_configs = get_all_configs(cfg)
+    eval_configs = get_eval_configs(cfg)
     test_datasets = list()
     # load ontology for eval. This is necessary to evaluate multihead model with remapping.
     model_ontology_eval = cfg.get('EVAL_ONTOLOGY', None)
