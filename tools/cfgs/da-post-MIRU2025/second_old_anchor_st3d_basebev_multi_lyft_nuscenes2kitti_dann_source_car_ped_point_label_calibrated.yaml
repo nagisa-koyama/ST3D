@@ -213,7 +213,6 @@ MODEL:
 
         NMS_CONFIG:
             MULTI_CLASSES_NMS: False # Check this
-            # MULTI_CLASSES_NMS: True
             NMS_TYPE: nms_gpu
             NMS_THRESH: 0.01
             # NMS_THRESH: 0.0001

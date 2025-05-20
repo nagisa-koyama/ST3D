@@ -1,5 +1,6 @@
 CLASS_NAMES: ['lyft:car', 'lyft:pedestrian',  'nuscenes:car', 'nuscenes:pedestrian', 'kitti:Car', 'kitti:Pedestrian']
 ONTOLOGY: 'kitti'
+EVAL_ONTOLOGY: 'head_per_dataset'
 
 # Defined for build_model but not used for self training.
 DATA_CONFIGS:
@@ -210,8 +211,7 @@ MODEL:
         EVAL_METRIC: kitti
 
         NMS_CONFIG:
-            # MULTI_CLASSES_NMS: False # Check this
-            MULTI_CLASSES_NMS: True
+            MULTI_CLASSES_NMS: False # Check this
             NMS_TYPE: nms_gpu
             NMS_THRESH: 0.01
             # NMS_THRESH: 0.0001
