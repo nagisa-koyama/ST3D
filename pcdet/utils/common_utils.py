@@ -220,12 +220,12 @@ class DataReader(object):
 
     def read_data(self):
         try:
-            return next(self.dataloader_iter.next)
-        except:
+            return next(self.dataloader_iter)
+        except StopIteration:
             if self.sampler is not None:
                 self.sampler.set_epoch(self.cur_epoch)
             self.construct_iter()
-            return next(self.dataloader_iter.next)
+            return next(self.dataloader_iter)
 
 
 class AverageMeter(object):
