@@ -4,7 +4,8 @@ import subprocess
 common_prefix = "post-MIRU2025"
 common_suffix = "point_label_calibrated_equal_sample_weight"
 common_args = "--batch_size 20"
-common_platform = "-platform offscreen"
+# common_platform = "-platform offscreen"
+common_platform = ""
 
 
 dict_cfg_lyft_kitti2nuscenes_default = {
@@ -24,7 +25,7 @@ dict_cfgs = [
 ]
 
 for dict_cfg in dict_cfgs:
-    cmd = "python"
+    cmd = "python3"
     if dict_cfg["script"]:
         cmd += " " + dict_cfg["script"]
     if dict_cfg["cfg_file"]:

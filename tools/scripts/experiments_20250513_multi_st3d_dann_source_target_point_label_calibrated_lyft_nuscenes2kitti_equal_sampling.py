@@ -4,7 +4,8 @@ import subprocess
 common_prefix = "post_MIRU2025_st3d_dann_source_target_equal_sampling"
 common_suffix = "point_label_calibrated_hist_517oe15r_200epochs"
 common_args = "--batch_size 20 --epochs 200"
-common_platform = "-platform offscreen"
+# common_platform = "-platform offscreen"
+common_platform = ""
 
 dict_cfg_lyft_nuscenes2kitti = {
     "name": f"{common_prefix}_lyft_nuscenes2kitti_yu16yll1_{common_suffix}",
@@ -36,7 +37,7 @@ dict_cfgs = [
 ]
 
 for dict_cfg in dict_cfgs:
-    cmd = "python"
+    cmd = "python3"
     if dict_cfg["script"]:
         cmd += " " + dict_cfg["script"]
     if dict_cfg["cfg_file"]:

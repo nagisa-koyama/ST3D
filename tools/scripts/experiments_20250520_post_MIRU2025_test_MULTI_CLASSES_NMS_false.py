@@ -3,7 +3,8 @@ import subprocess
 
 
 common_args = "--batch_size 20"
-common_platform = "-platform offscreen"
+# common_platform = "-platform offscreen"
+common_platform = ""
 
 # Skipped
 # ommon_prefix = "post-MIRU2025"
@@ -90,7 +91,7 @@ dict_cfgs = [
 ]
 
 for dict_cfg in dict_cfgs:
-    cmd = "python"
+    cmd = "python3"
     if dict_cfg["script"]:
         cmd += " " + dict_cfg["script"]
     if dict_cfg["cfg_file"]:
