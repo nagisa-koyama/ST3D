@@ -409,7 +409,7 @@ class DatasetTemplate(torch_data.Dataset):
                     ret[key] = batch_scores
                 elif key in ['gt_names', 'gt_classes']:
                     max_gt = max([len(x) for x in val])
-                    batch_names = np.full((batch_size, max_gt), "", dtype=np.object)
+                    batch_names = np.full((batch_size, max_gt), "", dtype=object)
                     for k in range(batch_size):
                         batch_names[k, :val[k].__len__()] = val[k]
                     ret[key] = batch_names
