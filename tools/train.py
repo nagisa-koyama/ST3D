@@ -220,14 +220,15 @@ def main():
     if args.ckpt is not None:
         it, start_epoch = model.load_params_with_optimizer(args.ckpt, to_cpu=dist_train, optimizer=optimizer, logger=logger)
         last_epoch = start_epoch + 1
-    else:
-        ckpt_list = glob.glob(str(ckpt_dir / '*checkpoint_epoch_*.pth'))
-        if len(ckpt_list) > 0:
-            ckpt_list.sort(key=os.path.getmtime)
-            it, start_epoch = model.load_params_with_optimizer(
-                ckpt_list[-1], to_cpu=dist_train, optimizer=optimizer, logger=logger
-            )
-            last_epoch = start_epoch + 1
+    # TODO: Delete this block once we confirm that we don't need to load from checkpoint in the local folder.
+    # else:
+    #     ckpt_list = glob.glob(str(ckpt_dir / '*checkpoint_epoch_*.pth'))
+    #     if len(ckpt_list) > 0:
+    #         ckpt_list.sort(key=os.path.getmtime)
+    #         it, start_epoch = model.load_params_with_optimizer(
+    #             ckpt_list[-1], to_cpu=dist_train, optimizer=optimizer, logger=logger
+    #         )
+    #         last_epoch = start_epoch + 1
 
     # -----------------------configure networks---------------------------
     # configurte distributed run
