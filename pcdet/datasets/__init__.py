@@ -70,10 +70,9 @@ def build_dataloader(dataset_cfg, class_names, batch_size, dist, root_path=None,
         sampler = None
     shuffle = (sampler is not None) and training
     if force_no_shuffle is not None:
-        shuffle = not force_no_shuffle
+        shuffle = shuffle and not force_no_shuffle # TODO: check if this works as intended with demo.py
     dataloader = DataLoader(
         dataset, batch_size=batch_size, pin_memory=True, num_workers=workers,
-        # shuffle=(sampler is None) and training, collate_fn=dataset.collate_batch,
         shuffle=shuffle, collate_fn=dataset.collate_batch,
         drop_last=False, sampler=sampler, timeout=0
     )
