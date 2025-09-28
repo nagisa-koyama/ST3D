@@ -1,0 +1,289 @@
+# =========================================
+# Singularity Definition File for ST3D
+# Adapted for Host CUDA 12.x and ST3D requirements
+# =========================================
+
+# SECTION 1: Header
+# Defines the base image for the Singularity container.
+# This corresponds to the 'FROM' instruction in a Dockerfile.
+# --- CHANGE: Updated base image to CUDA 12.2 and a newer Ubuntu version (22.04) ---
+# CUDA 12.2 is chosen as a stable point. Check NVIDIA NGC for the latest recommended version.
+# Ubuntu 22.04 is a logical upgrade from 20.04 given the move to newer CUDA.
+Bootstrap: docker
+From: nvcr.io/nvidia/cuda:12.2.2-devel-ubuntu22.04
+
+# SECTION 2: Environment
+# Sets environment variables that will be available inside the container
+# at runtime. This corresponds to the 'ENV' and 'ARG' instructions in a Dockerfile.
+%environment
+    # Define PYTHON_VERSION from Dockerfile ARG.
+    # In Singularity .def files, ARGs are not directly supported like Dockerfile.
+    # --- CHANGE: Moved to Python 3.10 as it's the default for Ubuntu 22.04 ---
+    export PYTHON_VERSION="python3.10"
+
+    # Environment variables from the original Dockerfile
+    export CPATH="/usr/local/include:${CPATH}"
+    # --- CHANGE: CUDA_PATH is typically /usr/local/cuda in NVIDIA images ---
+    export CUDA_PATH="/usr/local/cuda"
+    export CPATH="${CUDA_PATH}/include:${CPATH}"
+    export LD_LIBRARY_PATH="${CUDA_PATH}/lib64:${CUDA_PATH}/lib:/usr/local/lib:${LD_LIBRARY_PATH}"
+    export DEBIAN_FRONTEND="noninteractive"
+    export NVIDIA_DRIVER_CAPABILITIES="all"
+
+    # The following line was commented out in the Dockerfile. Uncomment if 'graphics' capability is needed.
+    # export NVIDIA_DRIVER_CAPABILITIES="${NVIDIA_DRIVER_CAPABILITIES:+$NVIDIA_DRIVER_CAPABILITIES,}graphics"
+    # --- RECOMMENDATION: Do not set CUDA_VISIBLE_DEVICES here if you want flexibility at runtime. ---
+    # It's better to set this using SINGULARITYENV_CUDA_VISIBLE_DEVICES at runtime.
+    # If set here, it's baked into the image.
+    export WANDB_API_KEY="8f252267771b0b737b6b5bcfce56c9e52dc50a99"
+    export WANDB_PROJECT="st3d"
+
+    # Define WORK_DIR. If USER_NAME is not set externally, 'default_user' will be used.
+    export WORK_DIR="/code"
+
+    # Add cmake bin path to PATH for persistent availability
+    # --- NOTE: CMake version might be different, adjust path if needed after install ---
+    export PATH="${WORK_DIR}/cmake-3.13.2-Linux-x86_64/bin:${PATH}"
+
+    # Set PYTORCH_CUDA_ALLOC_CONF for memory fragmentation as per Dockerfile
+    export PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:128"
+
+    # WANDB_DISABLE_SERVICE setting
+    export WANDB_DISABLE_SERVICE="true"
+
+    # Ensure /usr/local/bin (where python symlinks are created) is in PATH
+    export PATH="/usr/local/bin:${PATH}"
+
+    # Set timezone for non-interactive tzdata configuration
+    export TZ="Asia/Tokyo"
+
+    # Set CUDA architecture list to ensure PyTorch C++ extensions build correctly
+    # Adjust these based on your target NVIDIA GPU architecture(s).
+    # Common examples:
+    # 7.0 for V100, Quadro GV100
+    # 7.5 for Turing (RTX 20-series, T4, Quadro RTX)
+    # 8.0 for Ampere (RTX 3090, A100)
+    # 8.6 for Ampere (RTX 3080, 3070, A6000, A40)
+    # 8.9 for Ada Lovelace (RTX 40-series)
+    # 9.0 for Hopper (H100)
+    # --- CHANGE: Updated TORCH_CUDA_ARCH_LIST for modern GPUs with CUDA 12.x ---
+    # If your host system has a mix of older and newer GPUs, include all relevant ones.
+    export TORCH_CUDA_ARCH_LIST="7.0 7.5 8.0 8.6 8.9 9.0" # Example: covering a wider range
+    # export TORCH_CUDA_ARCH_LIST="8.6" # Example: covering a wider range
+
+# SECTION 3: Post
+# This section executes commands inside the container during the build process.
+%post
+    # Ensure DEBIAN_FRONTEND and TZ are set in this shell context for robustness
+    export DEBIAN_FRONTEND="noninteractive"
+    export TZ="Asia/Tokyo"
+
+    # Pre-seed tzdata configuration to prevent interactive prompts
+    echo "tzdata tzdata/Areas select Asia" | debconf-set-selections
+    echo "tzdata tzdata/Zones select Tokyo" | debconf-set-selections
+
+    # Define PYTHON_VERSION from Dockerfile ARG.
+    # --- CHANGE: Use Python 3.10 and let the base image handle Python. ---
+    # NVIDIA CUDA images usually come with Python pre-installed or rely on apt.
+    # Explicitly installing 3.8 and setting symlinks might conflict or be redundant.
+    # If 3.10 is too new for your application, consider a 20.04 base with CUDA 12.x
+    # or install a specific Python version manually, but 3.10 is standard for 22.04.
+    export PYTHON_VERSION="python3.10"
+
+    # Environment variables from the original Dockerfile
+    export CPATH="/usr/local/include:${CPATH}"
+    export CUDA_PATH="/usr/local/cuda"
+    export CPATH="${CUDA_PATH}/include:${CPATH}"
+    export LD_LIBRARY_PATH="${CUDA_PATH}/lib64:${CUDA_PATH}/lib:/usr/local/lib:${LD_LIBRARY_PATH}"
+    export NVIDIA_DRIVER_CAPABILITIES="all"
+
+    # Set the working directory for the post-script execution context.
+    export WORK_DIR="/code"
+    mkdir -p "$WORK_DIR"
+    cd "$WORK_DIR"
+
+    # --- NOTE ON APT KEYS: ---
+    # For Ubuntu 22.04 and newer CUDA versions, NVIDIA repositories and keys
+    # are often handled automatically by the base image or are updated.
+    # Explicitly adding old keys might not be necessary or could cause issues.
+    # The `nvidia/cuda` base images from NGC usually have this handled.
+    # If you encounter key errors during `apt update`, you might need to find
+    # the correct GPG key for the NVIDIA CUDA 12.x repository for Ubuntu 22.04.
+    # For now, I'll comment out the explicit key fetches, assuming the base image handles it.
+    # echo "Fetching NVIDIA GPG keys..."
+    # apt-key adv --fetch-keys http://developer.download.nvidia.com/compute/cuda/repos/ubuntu1604/x86_64/3bf863cc.pub || echo "Warning: NVIDIA key 1 fetch failed. Continuing."
+    # apt-key adv --fetch-keys http://developer.download.nvidia.com/compute/cuda/repos/ubuntu1604/x86_64/7fa2af80.pub || echo "Warning: NVIDIA key 2 fetch failed. Continuing."
+
+    echo "Updating and upgrading apt packages..."
+    apt-get update -y && \
+    apt-get upgrade -y
+
+    echo "Installing core build tools and utilities..."
+    apt-get install -y --no-install-recommends build-essential \
+                                                 apt-utils \
+                                                 ca-certificates \
+                                                 make \
+                                                 wget \
+                                                 git \
+                                                 curl \
+                                                 emacs \
+                                                 openssh-server \
+                                                 unzip # unzip is needed for python setup
+
+    # --- CHANGE: Python setup streamlined for Ubuntu 22.04 and Python 3.10 ---
+    # Ubuntu 22.04 comes with Python 3.10 by default.
+    echo "Setting up Python..."
+    # No need to add deadsnakes PPA for 3.10 on Ubuntu 22.04 as it's default.
+    # No need to install python3.8 specifically.
+    apt-get install -y python3 python3-dev python3-pip python3-distutils-extra
+    python3 -m pip install --upgrade pip wheel
+    # Symlinks are generally handled by the base image.
+    # If 'python' or 'python3' isn't symlinked to 3.10, you might need:
+    # update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1
+    # update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
+
+    echo "Installing PyTorch..."
+    # --- CHANGE: Install PyTorch with CUDA 12.1 (compatible with CUDA 12.2) ---
+    # PyTorch does not release wheels for every minor CUDA version.
+    # Use the closest available (e.g., cu121 for CUDA 12.2).
+    # Check PyTorch's official installation guide for the latest command:
+    # https://pytorch.org/get-started/locally/
+    python3 -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+    echo "Installing wandb..."
+    python3 -m pip install wandb
+
+    echo "Installing Mayavi and PyQt5 dependencies..."
+    python3 -m pip install mayavi pyqt5
+    # Install X11 and GL dependencies required for headless rendering with Mayavi/PyQt
+    apt update && apt install -y libxkbcommon-x11-0 libxcb-render0 libxcb-shape0 libxcb-xfixes0 libxcb-randr0 libxcb-sync1 libxcb-glx0 libxcb-icccm4 libxcb-image0 libxcb-shm0 libxcb-util1 libxcb-xinerama0 libxcb-composite0 libxcb-damage0 libxcb-dpms0 libxcb-dri2-0 libxcb-dri3-0 libxcb-res0 libxcb-render-util0 libxcb-ewmh2 libxcb-present0 libxcb-xf86dri0 xvfb
+
+    echo "Installing libboost-all-dev..."
+    apt-get install -y libboost-all-dev
+
+    echo "Installing CMake 3.13.2..."
+    apt-get install -y cmake
+
+    # echo "Cloning and installing spconv 1.2..."
+    # # --- COMMENT OUT OR REMOVE ALL OF THIS SECTION FOR SPCONV 1.2 SOURCE BUILD ---
+    # cd "$WORK_DIR" # Ensure we are in WORK_DIR before cloning
+    # git clone https://github.com/nagisa-koyama/spconv.git --recursive
+    # cd "$WORK_DIR/spconv/"
+    # git checkout v1.2.1_commentout
+    # cd "./third_party/pybind11/" && git submodule update --init # Initialize pybind11 submodule
+    # cd "$WORK_DIR/spconv/" # Change back to spconv root for setup.py
+    # python3 setup.py bdist_wheel
+    # cd "./dist" && pip3 install spconv*.whl
+    # cd "$WORK_DIR" # Return to WORK_DIR
+
+    # --- NEW: Install pre-built spconv wheel for CUDA 12.1/12.2 ---
+    echo "Installing spconv (pre-built wheel for CUDA 12.1)..."
+    # Check spconv's GitHub releases or PyPI for the exact wheel name.
+    # Look for spconv-cuxxx where xxx is your CUDA version.
+    # For CUDA 12.x, spconv 2.x is usually recommended.
+    # You might need to specify the spconv version if it's not the latest.
+    python3 -m pip install spconv-cu121 # This is the most likely wheel name for CUDA 12.1/12.2
+
+    # If the above fails, you might need to try a specific spconv 2.x version that ships a cu121 wheel:
+    # python3 -m pip install spconv-cu121==2.x.y # Replace 2.x.y with a known version
+
+    #echo "Installing Waymo and Lyft Open Dataset SDKs..."
+    #python3 -m pip install -U waymo-open-dataset-tf-2-5-0
+    #python3 -m pip install -U lyft_dataset_sdk==0.0.8
+
+    #echo "Installing nuscenes-devkit..."
+    #pip install nuscenes-devkit==1.0.5
+
+    echo "Cloning and installing pandaset-devkit..."
+    cd "$WORK_DIR"
+    # git clone https://github.com/lea-v/pandaset-devkit.git
+    git clone https://github.com/scaleapi/pandaset-devkit.git
+    cd "$WORK_DIR/pandaset-devkit"
+    #git checkout feature/addPointCloudTransformations
+    cd "$WORK_DIR/pandaset-devkit/python"
+    python3 -m pip install .
+    cd "$WORK_DIR" # Return to WORK_DIR
+
+    echo "Cloning and installing ST3D dependencies..."
+    # --- TORCH_CUDA_ARCH_LIST should ideally be set in %environment ---
+    export TORCH_CUDA_ARCH_LIST="7.0 7.5 8.0 8.6 8.9 9.0" # Example: covering a wider range
+    # export TORCH_CUDA_ARCH_LIST="8.6" # Example: covering a wider range
+
+    cd "$WORK_DIR"
+    git clone https://github.com/nagisa-koyama/ST3D.git --recursive
+    cd "$WORK_DIR/ST3D"
+    git fetch --all -p
+    git checkout v20250507_multi_dataset_sampling_update # Hardcoded branch as per Dockerfile ARG logic
+    python3 -m pip install -r requirements.txt
+    python3 setup.py develop # Uncomment if ST3D is a Python package that needs to be installed in editable mode
+
+    echo "Installing additional pips (torchinfo)..."
+    python3 -m pip install torchinfo
+
+    echo "Installing display libraries..."
+    apt install -y libgl1-mesa-glx libgl1-mesa-dri
+
+    echo "Upgrading wandb again (as in Dockerfile)..."
+    python3 -m pip install wandb --upgrade
+
+    echo "Installing specific numpy and configobj versions..."
+    # --- NOTE: numpy==1.22 might be old for Python 3.10 / newer PyTorch. ---
+    # If you hit dependency conflicts, try removing specific numpy version and letting pip resolve.
+    # If ST3D truly needs 1.22, keep it.
+    pip install numpy==1.22
+    pip install configobj
+
+    pip install scikit-learn
+
+    pip install torchjd
+
+    echo "Setting final WORKDIR for ST3D tools..."
+    # The original Dockerfile finished with 'cd ST3D/tools' and then 'CMD'.
+    # This `cd` is generally handled by the `%runscript` or the command executed.
+    # For build integrity, it's often better to stay in the main WORK_DIR.
+    cd "$WORK_DIR/ST3D/tools" # Move this logic to %runscript if needed for execution
+
+    # Clean up apt cache to reduce image size
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+    # Also remove downloaded installers if they are large
+    rm -f /tmp/*.sh # For cmake installer
+
+# SECTION 4: Labels
+%labels
+    Author "Generated by Gemini"
+    Version "1.0-cuda12.2"
+    Description "Singularity image for ST3D project with CUDA 12.2.0, Python 3.10, and dependencies for ML development. Designed to work with host CUDA 12.x drivers."
+    BaseImage "nvcr.io/nvidia/cuda:12.2.0-cudnn8-devel-ubuntu22.04"
+    Project "ST3D"
+    Contact "nagisa.koyama@gmail.com" # Please replace with your actual contact
+
+# SECTION 5: Runscript
+%runscript
+    echo "Starting ST3D environment."
+    echo "Remember to bind-mount your local ST3D code and datasets if needed."
+    echo "Example: singularity run --nv --bind /your/local/ST3D_path:${WORK_DIR}/ST3D --bind /your/local/datasets_path:/storage \$SINGULARITY_CONTAINER python3 ${WORK_DIR}/ST3D/tools/train.py"
+
+    # Set CUDA_VISIBLE_DEVICES here if not set via SINGULARITYENV_ at runtime
+    # This will be overridden by SINGULARITYENV_ if it's set.
+    # export CUDA_VISIBLE_DEVICES="0,1" # Uncomment if you want this default
+    cd "$WORK_DIR/ST3D" # Change to ST3D directory for execution context
+
+    # Execute any command line arguments passed to 'singularity run'
+    exec "$@"
+
+# SECTION 6: Test
+%test
+    echo "Running basic tests..."
+    python3 --version
+    pip --version
+    nvidia-smi
+    # Check if PyTorch can see CUDA
+    python3 -c "import torch; print(f'Torch Version: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA Device Count: {torch.cuda.device_count() if torch.cuda.is_available() else 0}'); print(f'CUDA Current Device: {torch.cuda.current_device() if torch.cuda.is_available() else \"N/A\"}'); print(f'CUDA Device Name: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"N/A\"}')"
+    python3 -c "import wandb; print('wandb imported')"
+    python3 -c "import mayavi; print('mayavi imported')"
+    python3 -c "import spconv; print('spconv imported')"
+    python3 -c "import pcdet; print('pcdet imported')"
+    python3 -c "import torchjd; print('torchjd imported')"
+    python3 -c "from pcdet.ops.roiaware_pool3d import roiaware_pool3d_cuda; print('roiaware_pool3d_cuda imported')"
+    echo "Tests complete."
