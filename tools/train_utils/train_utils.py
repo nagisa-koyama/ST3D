@@ -136,10 +136,13 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
                 tbar.set_postfix(disp_dict)
             tbar.refresh()
 
+            if epoch_id is not None:
+                wandb.log({'train/' + 'epoch': epoch_id})
+
             if tb_log is not None:
                 tb_log.add_scalar('train/loss', loss, accumulated_iter)
                 tb_log.add_scalar('meta_data/learning_rate', cur_lr, accumulated_iter)
-                wandb.log({'train/' +  dataset_ontology + '/loss': loss})
+                wandb.log({'train/' + dataset_ontology + '/loss': loss})
                 wandb.log({'train/' + dataset_ontology + '/learning_rate': cur_lr})
                 if backward_together == True:
                     if dataset_index ==  len(dataloader_iters) - 1:
@@ -204,7 +207,8 @@ def train_model(model, model_teacher, optimizer, train_loaders, target_loader, m
                 rank=rank, tbar=tbar, tb_log=tb_log,
                 leave_pbar=(cur_epoch + 1 == total_epochs),
                 total_it_each_epochs=total_it_each_epochs,
-                dataloader_iters=dataloader_iters
+                dataloader_iters=dataloader_iters,
+                epoch_id=cur_epoch
             )
 
             # save trained model

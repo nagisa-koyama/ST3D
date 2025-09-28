@@ -214,6 +214,9 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
             tbar.refresh()
 
             wandb.log({'train/learning_rate': cur_lr})
+            if cur_epoch is not None:
+                wandb.log({'train/' + 'epoch': cur_epoch})
+
 
             if cfg.SELF_TRAIN.TAR.USE_DATA:
                 wandb.log({'train/st_loss': st_loss})
