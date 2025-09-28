@@ -78,9 +78,6 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
         except:
             cur_lr = optimizer.param_groups[0]['lr']
 
-        if tb_log is not None:
-            tb_log.add_scalar('meta_data/learning_rate', cur_lr, accumulated_iter)
-
         model.train()
 
         outputs = model_func(model, batch)
@@ -139,20 +136,16 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
             if epoch_id is not None:
                 wandb.log({'train/' + 'epoch': epoch_id})
 
-            if tb_log is not None:
-                tb_log.add_scalar('train/loss', loss, accumulated_iter)
-                tb_log.add_scalar('meta_data/learning_rate', cur_lr, accumulated_iter)
-                wandb.log({'train/' + dataset_ontology + '/loss': loss})
-                wandb.log({'train/' + dataset_ontology + '/learning_rate': cur_lr})
-                if backward_together == True:
-                    if dataset_index ==  len(dataloader_iters) - 1:
-                        wandb.log({'train/loss': loss_total})
-                else:
-                    wandb.log({'train/loss': loss})
+            wandb.log({'train/' + dataset_ontology + '/loss': loss})
+            wandb.log({'train/' + dataset_ontology + '/learning_rate': cur_lr})
+            if backward_together == True:
+                if dataset_index ==  len(dataloader_iters) - 1:
+                    wandb.log({'train/loss': loss_total})
+            else:
+                wandb.log({'train/loss': loss})
 
-                for key, val in tb_dict.items():
-                    tb_log.add_scalar('train/' + dataset_ontology + '/' + key, val, accumulated_iter)
-                    wandb.log({'train/' + dataset_ontology + '/' + key: val})
+            for key, val in tb_dict.items():
+                wandb.log({'train/' + dataset_ontology + '/' + key: val})
 
             if draw_scene == False:
                 mlab.options.offscreen = True

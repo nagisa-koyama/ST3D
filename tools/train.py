@@ -9,7 +9,6 @@ import subprocess
 
 import torch
 import torch.nn as nn
-from tensorboardX import SummaryWriter
 import torch.distributed as dist
 from test import repeat_eval_ckpt, get_all_configs, get_eval_configs
 
@@ -115,8 +114,6 @@ def main():
     log_config_to_file(cfg, logger=logger)
     if cfg.LOCAL_RANK == 0:
         os.system('cp %s %s' % (args.cfg_file, output_dir))
-
-    tb_log = SummaryWriter(log_dir=str(output_dir / 'tensorboard')) if cfg.LOCAL_RANK == 0 else None
 
     # -----------------------create dataloaders---------------------------
     if cfg.get('DATA_CONFIG', None):
@@ -287,7 +284,7 @@ def main():
         total_epochs=args.epochs,
         start_iter=it,
         rank=cfg.LOCAL_RANK,
-        tb_log=tb_log,
+        tb_log=None,
         ckpt_save_dir=ckpt_dir,
         ps_label_dir=ps_label_dir,
         source_samplers=source_samplers,
