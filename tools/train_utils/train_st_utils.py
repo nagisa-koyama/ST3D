@@ -47,6 +47,9 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
 
         loss_total = None
         dann_loss_total = None
+        loss_src_list = []
+        dann_loss_list = []
+        st_loss_list = []
         domain_preds_accuracy = None
         if cfg.SELF_TRAIN.SRC.USE_DATA:
             # Equal dataset-weight sampling.
@@ -81,19 +84,21 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
             loss = cfg.SELF_TRAIN.SRC.get('LOSS_WEIGHT', 1.0) * loss
             loss_meter.update(loss.item())
             loss_total = loss if loss_total is None else loss_total + loss
+            loss_src_list.append(loss)
 
             # dann_loss is summed with tar later.
             if dann_loss is not None:
                 dann_loss *= 0.5 # 0.5 is the weight for source domain
                 dann_loss_total = dann_loss if dann_loss_total is None else dann_loss_total + dann_loss
+                dann_loss_list.append(dann_loss)
 
-            # If backward together, postpone backward to the end of the loop
-            if not backward_together_src:
-                # Here, we do backward for each source separately.
-                loss.backward()
-                disp_dict.update({'src_loss_' + source_ontology: "{:.2f}".format(loss.item())})
-                if not cfg.SELF_TRAIN.SRC.get('USE_GRAD', None):
-                    optimizer.zero_grad()
+            # # If backward together, postpone backward to the end of the loop
+            # if not backward_together_src:
+            #     # Here, we do backward for each source separately.
+            #     loss.backward()
+            #     disp_dict.update({'src_loss_' + source_ontology: "{:.2f}".format(loss.item())})
+            #     if not cfg.SELF_TRAIN.SRC.get('USE_GRAD', None):
+            #         optimizer.zero_grad()
 
             if rank == 0:
                 wandb.log({'train/' + source_ontology + '/loss': loss})
@@ -109,11 +114,11 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
             wandb.log({'train/' + 'src_loss_total': loss_total})
             wandb.log({'train/' + 'src_loss_total_learning_rate': cur_lr})
 
-            # If backward together with sources is true, do backward here, but postpones if backward together with target.
-            if backward_together_src and not backward_together_tar:
-                loss_total.backward()
-                if not cfg.SELF_TRAIN.SRC.get('USE_GRAD', None):
-                    optimizer.zero_grad()
+            # # If backward together with sources is true, do backward here, but postpones if backward together with target.
+            # if backward_together_src and not backward_together_tar:
+            #     loss_total.backward()
+            #     if not cfg.SELF_TRAIN.SRC.get('USE_GRAD', None):
+            #         optimizer.zero_grad()
 
         if cfg.SELF_TRAIN.TAR.USE_DATA:
             try:
@@ -137,25 +142,28 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
             st_loss_meter.update(st_loss.item())
 
             loss_total = st_loss if loss_total is None else loss_total + st_loss
+            st_loss_list.append(st_loss)
 
             if st_dann_loss:
                 if dann_loss_total:
-                    dann_loss_total += st_dann_loss * 0.5  # 0.5 is the weight for target domain
+                    st_dann_loss *= 0.5  # 0.5 is the weight for target domain
+                    dann_loss_total += st_dann_loss
                     # Reflects dann_loss into loss_total here.
                     loss_total += dann_loss_total
+                    dann_loss_list.append(st_dann_loss)
                 else:
                     logger.info("dann_loss was summed in SELF_TRAIN.TAR but not in SRC, skipping it from loss_total.")
             else:
                 if dann_loss_total:
                     logger.info("dann_loss was summed in SELF_TRAIN.SRC but not in TAR, skipping it from loss_total.")
 
-            # If backward together with target is true, do backward with loss_total here.
-            if backward_together_tar:
-                loss_total.backward()
-            else:
-                st_loss.backward()
-                if dann_loss_total:
-                    dann_loss_total.backward()
+            # # If backward together with target is true, do backward with loss_total here.
+            # if backward_together_tar:
+            #     loss_total.backward()
+            # else:
+            #     st_loss.backward()
+            #     if dann_loss_total:
+            #         dann_loss_total.backward()
 
             # count number of used ps bboxes in this batch
             pos_pseudo_bbox = target_batch['pos_ps_bbox'].mean(dim=0).cpu().numpy()
@@ -175,30 +183,82 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
             assert loss_total is not None
             disp_dict.update({'loss_total': "{:.2f}".format(loss_total.item())})
 
-            if rank == 0 and draw_scene == False:
-                with torch.no_grad():
-                    model.eval()
-                    # load_data_to_gpu(target_batch)
-                    pred_dicts, _ = model.forward(target_batch)
+        if rank == 0 and draw_scene == False:
+            with torch.no_grad():
+                model.eval()
+                # load_data_to_gpu(target_batch)
+                pred_dicts, _ = model.forward(target_batch)
 
-                    mlab.options.offscreen = True
-                    first_elem_index = 0
-                    first_elem_mask = target_batch['points'][:, 0] == first_elem_index
-                    gt_scores = None
-                    if target_batch.keys().__contains__('gt_scores'):
-                        gt_scores = target_batch['gt_scores'][first_elem_index]
-                    target_loader.dataset.__vis__(
-                        points=target_batch['points'][first_elem_mask,
-                                                      1:], gt_boxes=target_batch['gt_boxes'][first_elem_index],
-                        ref_boxes=pred_dicts[0]['pred_boxes'], gt_scores=gt_scores, ref_scores=pred_dicts[0]['pred_scores']
-                    )
-                    filename = "scene_self_train_epoch{}_{}.png".format(
-                        cur_epoch, target_loader.dataset.dataset_ontology)
-                    mlab.savefig(filename=filename)
-                    wandb.save(filename)
-                    wandb.log({'train/{}/self_train_scene'.format(target_loader.dataset.dataset_ontology): wandb.Image(filename)})
-                    model.train()
-                    draw_scene = True
+                mlab.options.offscreen = True
+                first_elem_index = 0
+                first_elem_mask = target_batch['points'][:, 0] == first_elem_index
+                gt_scores = None
+                if target_batch.keys().__contains__('gt_scores'):
+                    gt_scores = target_batch['gt_scores'][first_elem_index]
+                target_loader.dataset.__vis__(
+                    points=target_batch['points'][first_elem_mask,
+                                                    1:], gt_boxes=target_batch['gt_boxes'][first_elem_index],
+                    ref_boxes=pred_dicts[0]['pred_boxes'], gt_scores=gt_scores, ref_scores=pred_dicts[0]['pred_scores']
+                )
+                filename = "scene_self_train_epoch{}_{}.png".format(
+                    cur_epoch, target_loader.dataset.dataset_ontology)
+                mlab.savefig(filename=filename)
+                wandb.save(filename)
+                wandb.log({'train/{}/self_train_scene'.format(target_loader.dataset.dataset_ontology): wandb.Image(filename)})
+                model.train()
+                draw_scene = True
+
+        # Control backward and optimization
+        if not backward_together_src:
+            # Here, we do backward for each source separately.
+            if len(loss_src_list) > 0:
+                for loss in loss_src_list:
+                    loss.backward()
+                    if not cfg.SELF_TRAIN.SRC.get('USE_GRAD', None):
+                        optimizer.zero_grad()
+
+        if not backward_together_tar:
+            # Here, we do backward for target separately.
+            if len(st_loss_list) > 0:
+                for st_loss in st_loss_list:
+                    st_loss.backward()
+                    if not cfg.SELF_TRAIN.TAR.get('USE_GRAD', None):
+                        optimizer.zero_grad()
+            if len(dann_loss_list) > 0:
+                # dann_loss should be summed.
+                dann_loss_sum = sum(dann_loss_list)
+                dann_loss_sum.backward()
+                if not cfg.SELF_TRAIN.TAR.get('USE_GRAD', None):
+                    optimizer.zero_grad()
+
+        if backward_together_src and not backward_together_tar:
+            if len(loss_src_list) > 0:
+                loss_sum = sum(loss_src_list)
+                loss_sum.backward()
+                if not cfg.SELF_TRAIN.SRC.get('USE_GRAD', None):
+                    optimizer.zero_grad()
+
+        if not backward_together_src and backward_together_tar:
+            loss_sum = 0
+            if (len(st_loss_list) > 0):
+                loss_sum += sum(st_loss_list)
+            if (len(dann_loss_list) > 0):
+                loss_sum += sum(dann_loss_list)
+            loss_sum.backward()
+            if not cfg.SELF_TRAIN.TAR.get('USE_GRAD', None):
+                optimizer.zero_grad()
+
+        if backward_together_src and backward_together_tar:
+            loss_sum = 0
+            if (len(loss_src_list) > 0):
+                loss_sum += sum(loss_src_list)
+            if (len(st_loss_list) > 0):
+                loss_sum += sum(st_loss_list)
+            if (len(dann_loss_list) > 0):
+                loss_sum += sum(dann_loss_list)
+            loss_sum.backward()
+            if not cfg.SELF_TRAIN.SRC.get('USE_GRAD', None) and not cfg.SELF_TRAIN.TAR.get('USE_GRAD', None):
+                optimizer.zero_grad()
 
         clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
         optimizer.step()
@@ -216,7 +276,6 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
             wandb.log({'train/learning_rate': cur_lr})
             if cur_epoch is not None:
                 wandb.log({'train/' + 'epoch': cur_epoch})
-
 
             if cfg.SELF_TRAIN.TAR.USE_DATA:
                 wandb.log({'train/st_loss': st_loss})
