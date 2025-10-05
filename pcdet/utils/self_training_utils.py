@@ -77,9 +77,9 @@ def save_pseudo_label_epoch(model, val_loader, rank, leave_pbar, ps_label_dir, c
         cur_epoch
     """
     # Override point feature encoder to use only xyz
-    point_feature_encoder_orig = val_loader.dataset.point_feature_encoder
-    val_loader.dataset.point_feature_encoder.point_encoding_config.used_feature_list = ['x', 'y', 'z']
-    val_loader.dataset.point_feature_encoder.used_feature_list = ['x', 'y', 'z']
+    point_feature_encoder_orig = val_loader.dataset.dataset.point_feature_encoder
+    val_loader.dataset.dataset.point_feature_encoder.point_encoding_config.used_feature_list = ['x', 'y', 'z']
+    val_loader.dataset.dataset.point_feature_encoder.used_feature_list = ['x', 'y', 'z']
 
     val_dataloader_iter = iter(val_loader)
     total_it_each_epoch = len(val_loader)
@@ -134,7 +134,7 @@ def save_pseudo_label_epoch(model, val_loader, rank, leave_pbar, ps_label_dir, c
         pbar.close()
 
     # Set original point feature encoder back
-    val_loader.dataset.point_feature_encoder = point_feature_encoder_orig
+    val_loader.dataset.dataset.point_feature_encoder = point_feature_encoder_orig
 
     gather_and_dump_pseudo_label_result(rank, ps_label_dir, cur_epoch)
 

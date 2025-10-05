@@ -165,7 +165,7 @@ def repeat_eval_ckpt(model, test_loaders, args, eval_output_dir, logger, ckpt_di
 
         # start evaluation
         for test_loader, data_config_eval in zip(test_loaders, data_config_evals):
-            print('Evaluating %s' % test_loader.dataset.__class__.__name__)
+            print('Evaluating %s' % test_loader.dataset.dataset.__class__.__name__)
             cur_result_dir = eval_output_dir / ('epoch_%s' % cur_epoch_id) / data_config_eval.DATA_SPLIT['test']
             tb_dict = eval_utils.eval_one_epoch(
                 cfg, model, test_loader, cur_epoch_id, logger, dist_test=dist_test,

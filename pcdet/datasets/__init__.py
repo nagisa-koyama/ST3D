@@ -1,5 +1,5 @@
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from torch.utils.data import DistributedSampler as _DistributedSampler
 from pcdet.utils import common_utils
 
@@ -45,7 +45,7 @@ class DistributedSampler(_DistributedSampler):
 
 
 def build_dataloader(dataset_cfg, class_names, batch_size, dist, root_path=None, workers=4,
-                     logger=None, training=True, merge_all_iters_to_one_epoch=False, total_epochs=0, model_ontology=None, force_no_shuffle=None):
+                     logger=None, training=True, merge_all_iters_to_one_epoch=False, total_epochs=0, model_ontology=None, force_no_shuffle=None, use_subset=False):
 
     dataset = __all__[dataset_cfg.DATASET](
         dataset_cfg=dataset_cfg,
@@ -71,8 +71,12 @@ def build_dataloader(dataset_cfg, class_names, batch_size, dist, root_path=None,
     shuffle = (sampler is not None) and training
     if force_no_shuffle is not None:
         shuffle = shuffle and not force_no_shuffle # TODO: check if this works as intended with demo.py
+    length = len(dataset) if not use_subset else min(100, len(dataset))
+    if logger is not None:
+        logger.info(f'Total number of samples: {length}, using subset: {use_subset}')
+    subset = Subset(dataset, indices=list(range(length)))
     dataloader = DataLoader(
-        dataset, batch_size=batch_size, pin_memory=True, num_workers=workers,
+        subset, batch_size=batch_size, pin_memory=True, num_workers=workers,
         shuffle=shuffle, collate_fn=dataset.collate_batch,
         drop_last=False, sampler=sampler, timeout=0
     )

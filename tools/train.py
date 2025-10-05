@@ -54,6 +54,7 @@ def parse_config():
     parser.add_argument('--eval_src', action='store_true', default=False, help='')
     parser.add_argument('--num_epochs_to_eval', type=int, default=100, help='number of checkpoints to be evaluated')
     parser.add_argument('--run_name', type=str, default=None, help='run name for wandb')
+    parser.add_argument('--use_subset', action='store_true', help='use subset of data for quick test')
 
     args = parser.parse_args()
 
@@ -145,7 +146,8 @@ def main():
             training=True,
             merge_all_iters_to_one_epoch=args.merge_all_iters_to_one_epoch,
             total_epochs=args.epochs,
-            model_ontology=source_model_ontology
+            model_ontology=source_model_ontology,
+            use_subset=args.use_subset
         )
         dataset = dict(dataset_class=source_set, loader=source_loader, sampler=source_sampler)
         source_datasets.append(dataset)
@@ -154,7 +156,8 @@ def main():
         target_set, target_loader, target_sampler = build_dataloader(
             cfg.DATA_CONFIG_TAR, cfg.CLASS_NAMES, args.batch_size,
             dist_train, workers=args.workers, logger=logger, training=True,
-            model_ontology=cfg.get('ONTOLOGY', None)
+            model_ontology=cfg.get('ONTOLOGY', None),
+            use_subset=args.use_subset
         )
     else:
         target_set = target_loader = target_sampler = None
@@ -335,7 +338,8 @@ def main():
             batch_size=min(args.batch_size, 10),
             dist=dist_train, workers=args.workers,
             logger=logger, training=False,
-            model_ontology=model_ontology_eval
+            model_ontology=model_ontology_eval,
+            use_subset=args.use_subset
         )
         test_dataset = dict(dataset_class=test_set, loader=test_loader, sampler=test_sampler)
         test_datasets.append(test_dataset)

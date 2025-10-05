@@ -12,6 +12,8 @@ from pcdet.models import load_data_to_gpu
 from pcdet.models.model_utils.dsnorm import set_ds_source, set_ds_target
 
 import wandb
+import torchjd
+from torchjd.aggregation import UPGrad, PCGrad
 
 from .train_utils import save_checkpoint, checkpoint_state
 
@@ -43,9 +45,11 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
             cur_lr = optimizer.param_groups[0]['lr']
 
         model.train()
-        optimizer.zero_grad()
+
         backward_together_src = cfg.SELF_TRAIN.SRC.get('BACKWARD_TOGETHER', None)
         backward_together_tar = cfg.SELF_TRAIN.TAR.get('BACKWARD_TOGETHER', None)
+        assert backward_together_src, "backward_together_src is False, cfg.SELF_TRAIN.SRC.BACKWARD_TOGETHER: {}".format(cfg.SELF_TRAIN.SRC.BACKWARD_TOGETHER)
+        assert backward_together_tar, "backward_together_tar is False, cfg.SELF_TRAIN.TAR.BACKWARD_TOGETHER: {}".format(cfg.SELF_TRAIN.TAR.BACKWARD_TOGETHER)
 
         loss_src_list = []
         dann_loss_list = []
@@ -68,7 +72,7 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                     break
             assert source_index is not None, "source_index is None, random_0to1: {}".format(random_0to1)
 
-            source_ontology = source_readers[source_index].dataloader.dataset.dataset_ontology
+            source_ontology = source_readers[source_index].dataloader.dataset.dataset.dataset_ontology
 
             # forward source data with labels
             source_batch = source_readers[source_index].read_data()
@@ -141,6 +145,10 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                         domain_preds_accuracy += val * 0.5  # 0.5 is the weight for target domain
 
         # Control backward and optimization
+        # aggregator = UPGrad()
+        aggregator = PCGrad()
+        optimizer.zero_grad()
+
         if not backward_together_src:
             # Here, we do backward for each source separately.
             if len(loss_src_list) > 0:
@@ -182,15 +190,17 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
 
         if backward_together_src and backward_together_tar:
             loss_sum = 0
-            if (len(loss_src_list) > 0):
-                loss_sum += sum(loss_src_list)
-            if (len(st_loss_list) > 0):
-                loss_sum += sum(st_loss_list)
-            if (len(dann_loss_list) > 0):
-                loss_sum += sum(dann_loss_list)
-            loss_sum.backward()
-            if not cfg.SELF_TRAIN.SRC.get('USE_GRAD', None) and not cfg.SELF_TRAIN.TAR.get('USE_GRAD', None):
-                optimizer.zero_grad()
+            upgrad = False
+            if upgrad is False:
+                if (len(loss_src_list) > 0):
+                    loss_sum += sum(loss_src_list)
+                if (len(st_loss_list) > 0):
+                    loss_sum += sum(st_loss_list)
+                if (len(dann_loss_list) > 0):
+                    loss_sum += sum(dann_loss_list)
+                loss_sum.backward()
+            else:
+                torchjd.backward([sum(loss_src_list), sum(st_loss_list), sum(dann_loss_list)], aggregator)
 
         clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
         optimizer.step()
@@ -246,22 +256,22 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                 gt_scores = None
                 if target_batch.keys().__contains__('gt_scores'):
                     gt_scores = target_batch['gt_scores'][first_elem_index]
-                target_loader.dataset.__vis__(
+                target_loader.dataset.dataset.__vis__(
                     points=target_batch['points'][first_elem_mask,
                                                     1:], gt_boxes=target_batch['gt_boxes'][first_elem_index],
                     ref_boxes=pred_dicts[0]['pred_boxes'], gt_scores=gt_scores, ref_scores=pred_dicts[0]['pred_scores']
                 )
                 filename = "scene_self_train_epoch{}_{}.png".format(
-                    cur_epoch, target_loader.dataset.dataset_ontology)
+                    cur_epoch, target_loader.dataset.dataset.dataset_ontology)
                 mlab.savefig(filename=filename)
                 wandb.save(filename)
-                wandb.log({'train/{}/self_train_scene'.format(target_loader.dataset.dataset_ontology): wandb.Image(filename)})
+                wandb.log({'train/{}/self_train_scene'.format(target_loader.dataset.dataset.dataset_ontology): wandb.Image(filename)})
                 model.train()
                 draw_scene = True
 
     if rank == 0:
         pbar.close()
-        for i, class_names in enumerate(target_loader.dataset.class_names):
+        for i, class_names in enumerate(target_loader.dataset.dataset.class_names):
             wandb.log({'ps_box/pos_' + class_names: ps_bbox_nmeter.meters[i].avg})
             wandb.log({'ps_box/ign_' + class_names: ign_ps_bbox_nmeter.meters[i].avg})
 
@@ -293,15 +303,15 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
             start_epoch > 0:
         for cur_epoch in range(start_epoch):
             if cur_epoch in cfg.SELF_TRAIN.PROG_AUG.UPDATE_AUG:
-                target_loader.dataset.data_augmentor.re_prepare(
+                target_loader.dataset.dataset.data_augmentor.re_prepare(
                     augmentor_configs=None, intensity=cfg.SELF_TRAIN.PROG_AUG.SCALE)
 
     with tqdm.trange(start_epoch, total_epochs, desc='epochs', dynamic_ncols=True,
                      leave=(rank == 0)) as tbar:
         total_it_each_epoch = len(target_loader)
         if merge_all_iters_to_one_epoch:
-            assert hasattr(target_loader.dataset, 'merge_all_iters_to_one_epoch')
-            target_loader.dataset.merge_all_iters_to_one_epoch(merge=True, epochs=total_epochs)
+            assert hasattr(target_loader.dataset.dataset, 'merge_all_iters_to_one_epoch')
+            target_loader.dataset.dataset.merge_all_iters_to_one_epoch(merge=True, epochs=total_epochs)
             total_it_each_epoch = len(target_loader) // max(total_epochs, 1)
 
         dataloader_iter = iter(target_loader)
@@ -320,17 +330,17 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
             if (cur_epoch in cfg.SELF_TRAIN.UPDATE_PSEUDO_LABEL) or \
                     ((cur_epoch % cfg.SELF_TRAIN.UPDATE_PSEUDO_LABEL_INTERVAL == 0)
                      and cur_epoch != 0):
-                target_loader.dataset.eval()
+                target_loader.dataset.dataset.eval()
                 self_training_utils.save_pseudo_label_epoch(
                     model_teacher, target_loader, rank,
                     leave_pbar=True, ps_label_dir=ps_label_dir, cur_epoch=cur_epoch
                 )
-                target_loader.dataset.train()
+                target_loader.dataset.dataset.train()
 
             # curriculum data augmentation
             if cfg.SELF_TRAIN.get('PROG_AUG', None) and cfg.SELF_TRAIN.PROG_AUG.ENABLED and \
                     (cur_epoch in cfg.SELF_TRAIN.PROG_AUG.UPDATE_AUG):
-                target_loader.dataset.data_augmentor.re_prepare(
+                target_loader.dataset.dataset.data_augmentor.re_prepare(
                     augmentor_configs=None, intensity=cfg.SELF_TRAIN.PROG_AUG.SCALE)
 
             accumulated_iter = train_one_epoch_st(

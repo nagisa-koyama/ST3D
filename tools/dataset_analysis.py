@@ -223,7 +223,7 @@ def main():
                                                                                        ax_height_pred_ped_all)) = init_pred_ped_plot()
 
     for eval_dataset in eval_datasets:
-        dataset_name = eval_dataset['loader'].dataset.dataset_ontology
+        dataset_name = eval_dataset['loader'].dataset.dataset.dataset_ontology
         print("dataset onotology:", dataset_name)
         hist_x = None
         bins_x = None
@@ -295,7 +295,7 @@ def main():
             with_intensity = data_dict['points'].shape[1] > INTENSITY_INDEX
             if with_intensity:
                 range = RANGE_INTENSITY
-                norm_factor = 256.0 if eval_dataset['loader'].dataset.dataset_ontology in ('lyft', 'nuscenes') else 1
+                norm_factor = 256.0 if eval_dataset['loader'].dataset.dataset.dataset_ontology in ('lyft', 'nuscenes') else 1
                 hist_intensity_curr, bins_intensity_curr = np.histogram(
                     data_dict['points'][:, INTENSITY_INDEX] / norm_factor, bins=BINS, range=RANGE_INTENSITY)
 
@@ -313,7 +313,7 @@ def main():
 
             car_class_index = -1
             pedestrian_class_index = -1
-            for index, class_name in enumerate(eval_dataset['loader'].dataset.class_names):
+            for index, class_name in enumerate(eval_dataset['loader'].dataset.dataset.class_names):
                 if class_name in car_class_list:
                     car_class_index = index + 1  # +1 because of background class
                 if class_name in pedestrian_class_list:
@@ -353,7 +353,7 @@ def main():
                 load_data_to_gpu(data_dict)
                 with torch.no_grad():
                     pred_dicts, _ = model.forward(data_dict)
-                annos = eval_dataset['loader'].dataset.generate_prediction_dicts(
+                annos = eval_dataset['loader'].dataset.dataset.generate_prediction_dicts(
                     data_dict, pred_dicts, cfg.CLASS_NAMES,
                 )
 
@@ -495,7 +495,7 @@ def main():
                     hist_width_ped_pred += hist_width_ped_pred_curr
                     hist_height_ped_pred += hist_height_ped_pred_curr
 
-            dataset_name = eval_dataset['loader'].dataset.dataset_ontology
+            dataset_name = eval_dataset['loader'].dataset.dataset.dataset_ontology
             progress_bar.set_postfix_str(dataset_name)
             progress_bar.update()
 

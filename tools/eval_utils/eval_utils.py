@@ -41,11 +41,11 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         metric['recall_rcnn_%s' % str(cur_thresh)] = 0
 
     dataset = dataloader.dataset
-    class_names = dataset.class_names
+    class_names = dataset.dataset.class_names
     det_annos = []
 
     logger.info('*************** EPOCH {} of {} EVALUATION start.*****************'.format(epoch_id,
-                dataloader.dataset.dataset_ontology))
+                dataset.dataset.dataset_ontology))
     if dist_test:
         num_gpus = torch.cuda.device_count()
         local_rank = cfg.LOCAL_RANK % num_gpus
@@ -71,7 +71,7 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         for pred in pred_dicts:
             num_pred += len(pred['pred_boxes'])
         statistics_info(cfg, ret_dict, metric, disp_dict)
-        annos = dataset.generate_prediction_dicts(
+        annos = dataset.dataset.generate_prediction_dicts(
             batch_dict, pred_dicts, class_names,
             output_path=final_output_dir if save_to_file else None
         )
@@ -81,15 +81,15 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
             #     mlab.options.offscreen = True
             #     first_elem_index = 0
             #     first_elem_mask = batch_dict['points'][:, 0] == first_elem_index
-            #     dataset.__vis__(
+            #     dataset.dataset.__vis__(
             #         points=batch_dict['points'][first_elem_mask, 1:], gt_boxes=batch_dict['gt_boxes'][first_elem_index],
             #         ref_boxes=annos[first_elem_index]['boxes_lidar'],
             #         ref_scores=annos[first_elem_index]['score']
             #     )
-            #     filename = "scene_val_epoch{}_{}.png".format(epoch_id, dataset.dataset_ontology)
+            #     filename = "scene_val_epoch{}_{}.png".format(epoch_id, dataset.dataset.dataset_ontology)
             #     mlab.savefig(filename=filename)
             #     wandb.save(filename)
-            #     wandb.log({'val/{}/scene'.format(dataset.dataset_ontology): wandb.Image(filename)})
+            #     wandb.log({'val/{}/scene'.format(dataset.dataset.dataset_ontology): wandb.Image(filename)})
 
             progress_bar.set_postfix(disp_dict)
             progress_bar.update()
@@ -105,7 +105,7 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         metric = common_utils.merge_results_dist([metric], world_size, tmpdir=result_dir / 'tmpdir')
 
     logger.info('*************** Performance of EPOCH %s *****************' % epoch_id)
-    sec_per_example = (time.time() - start_time) / len(dataloader.dataset)
+    sec_per_example = (time.time() - start_time) / len(dataset)
     logger.info('Generate label finished(sec_per_example: %.4f second).' % sec_per_example)
 
     if cfg.LOCAL_RANK != 0:
@@ -151,13 +151,13 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
     if ":" in class_names[0]:
         class_names_for_evaluation = set()
         model_to_dataset = None
-        if model_ontology is not None and dataset.dataset_ontology is not None and model_ontology != dataset.dataset_ontology:
-            model_to_dataset = get_ontology_mapping(model_ontology, dataset.dataset_ontology)
+        if model_ontology is not None and dataset.dataset.dataset_ontology is not None and model_ontology != dataset.dataset.dataset_ontology:
+            model_to_dataset = get_ontology_mapping(model_ontology, dataset.dataset.dataset_ontology)
         for name in class_names:
             if model_to_dataset:
                 name = model_to_dataset[name]
             ontology, label = name.split(":")
-            if ontology == dataset.dataset_ontology:
+            if ontology == dataset.dataset.dataset_ontology:
                 class_names_for_evaluation.add(label)
         for index in range(len(eval_det_annos)):
             for index2 in range(len(eval_det_annos[index]['name'])):
@@ -165,16 +165,16 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
                 if model_to_dataset:
                     det_annos = model_to_dataset[det_annos]
                 # Remap only dataset-specific inferences to be evaluated. Oher inferences will be ignored for metrics computation.
-                if dataset.dataset_ontology in det_annos:
+                if dataset.dataset.dataset_ontology in det_annos:
                     eval_det_annos[index]['name'][index2] = det_annos.split(":")[-1]
             assert len(eval_det_annos[index]['boxes_lidar']) == len(eval_det_annos[index]['score'])
 
     logger.info('model_ontology in eval_utils is %s' % model_ontology)
-    logger.info('datset.dataset_ontology in eval_utils is %s' % dataset.dataset_ontology)
+    logger.info('datset.dataset_ontology in eval_utils is %s' % dataset.dataset.dataset_ontology)
     logger.info('class_names in eval_utils is %s' % class_names)
     logger.info('class_names_for_evaluation in eval_utils is %s' % list(class_names_for_evaluation))
 
-    result_str, result_dict = dataset.evaluation(
+    result_str, result_dict = dataset.dataset.evaluation(
         eval_det_annos, list(class_names_for_evaluation),
         eval_metric=cfg.MODEL.POST_PROCESSING.EVAL_METRIC,
         output_path=final_output_dir
@@ -188,10 +188,10 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
 
     logger.info('Result is save to %s' % result_dir)
     logger.info('*************** EPOCH {} of {} EVALUATION end.*****************'.format(epoch_id,
-                dataloader.dataset.dataset_ontology))
+                dataset.dataset.dataset_ontology))
 
     for item in ret_dict.items():
-        wandb.log({'val/' + dataset.dataset_ontology + '/' + item[0]: item[1]})
+        wandb.log({'val/' + dataset.dataset.dataset_ontology + '/' + item[0]: item[1]})
 
     return ret_dict
 

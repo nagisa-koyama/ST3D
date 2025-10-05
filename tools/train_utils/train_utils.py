@@ -62,7 +62,7 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
         # else:
         #     dataset_index = 1
 
-        dataset_ontology = train_loaders[dataset_index].dataset.dataset_ontology
+        dataset_ontology = train_loaders[dataset_index].dataset.dataset.dataset_ontology
 
         try:
             batch = next(dataloader_iters[dataset_index])
@@ -151,7 +151,7 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
                 mlab.options.offscreen = True
                 first_elem_index = 0
                 first_elem_mask = batch['points'][:, 0] == first_elem_index
-                train_loaders[dataset_index].dataset.__vis__(
+                train_loaders[dataset_index].dataset.dataset.__vis__(
                     points=batch['points'][first_elem_mask, 1:], gt_boxes=batch['gt_boxes'][first_elem_index],
                     ref_boxes=tb_dict[first_elem_index]['pred_boxes'],
                     ref_scores=tb_dict[first_elem_index]['pred_scores']
@@ -177,7 +177,7 @@ def train_model(model, model_teacher, optimizer, train_loaders, target_loader, m
             total_it_each_epoch = len(train_loader)
             if merge_all_iters_to_one_epoch:
                 assert hasattr(train_loader.dataset, 'merge_all_iters_to_one_epoch')
-                train_loader.dataset.merge_all_iters_to_one_epoch(merge=True, epochs=total_epochs)
+                train_loader.dataset.dataset.merge_all_iters_to_one_epoch(merge=True, epochs=total_epochs)
                 total_it_each_epoch = len(train_loader) // max(total_epochs, 1)
             total_it_each_epochs.append(total_it_each_epoch)
 
