@@ -90,7 +90,11 @@ def main():
     if args.fix_random_seed:
         common_utils.set_random_seed(666)
 
-    output_dir = cfg.ROOT_DIR / 'output' / cfg.EXP_GROUP_PATH / cfg.TAG / args.extra_tag
+    if cfg.LOCAL_RANK == 0:
+        wandb.init(config=vars(cfg), project="st3d", name=args.run_name, dir="/storage")
+        print("W&B run directory:", wandb.run.dir)
+
+    output_dir = Path(wandb.run.dir)
     ckpt_dir = output_dir / 'ckpt'
     ps_label_dir = output_dir / 'ps_label'
     ps_label_dir.mkdir(parents=True, exist_ok=True)
@@ -99,9 +103,6 @@ def main():
 
     log_file = output_dir / ('log_train_%s.txt' % datetime.datetime.now().strftime('%Y%m%d-%H%M%S'))
     logger = common_utils.create_logger(log_file, rank=cfg.LOCAL_RANK)
-
-    if cfg.LOCAL_RANK == 0:
-        wandb.init(config=vars(cfg), project="st3d", name=args.run_name)
 
     # log to file
     logger.info('**********************Start logging**********************')
@@ -306,16 +307,6 @@ def main():
     # pth_list_str = ','.join(pth_list)
     # os.environ['WANDB_IGNORE_GLOBS'] = pth_list_str
 
-    # Copy wandb folder to storage here in case following evaluation fails.
-    if cfg.LOCAL_RANK == 0:
-        copy_cmd = "cp -Lr wandb /storage/"
-        try:
-            subprocess.check_call(copy_cmd.split())
-        except Exception as e:
-            print("copy command showed error")
-
-        subprocess.call(copy_cmd.split())
-
     logger.info('**********************End training %s/%s(%s)**********************\n\n\n'
                 % (cfg.EXP_GROUP_PATH, cfg.TAG, args.extra_tag))
 
@@ -358,14 +349,6 @@ def main():
     )
     logger.info('**********************End evaluation %s/%s(%s)**********************' %
                 (cfg.EXP_GROUP_PATH, cfg.TAG, args.extra_tag))
-
-    # Copy wandb folder to storage again.
-    if cfg.LOCAL_RANK == 0:
-        copy_cmd = "cp -Lr wandb /storage/"
-        try:
-            subprocess.check_call(copy_cmd.split())
-        except Exception as e:
-            print("copy command showed error")
 
 
 if __name__ == '__main__':
