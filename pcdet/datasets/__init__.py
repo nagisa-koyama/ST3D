@@ -71,7 +71,7 @@ def build_dataloader(dataset_cfg, class_names, batch_size, dist, root_path=None,
     shuffle = (sampler is not None) and training
     if force_no_shuffle is not None:
         shuffle = shuffle and not force_no_shuffle # TODO: check if this works as intended with demo.py
-    length = len(dataset) if not use_subset else min(100, len(dataset))
+    length = len(dataset) if not use_subset else min(16, len(dataset))
     if logger is not None:
         logger.info(f'Total number of samples: {length}, using subset: {use_subset}')
     subset = Subset(dataset, indices=list(range(length)))

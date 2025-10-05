@@ -330,7 +330,6 @@ def main():
             dist=dist_train, workers=args.workers,
             logger=logger, training=False,
             model_ontology=model_ontology_eval,
-            use_subset=args.use_subset
         )
         test_dataset = dict(dataset_class=test_set, loader=test_loader, sampler=test_sampler)
         test_datasets.append(test_dataset)
