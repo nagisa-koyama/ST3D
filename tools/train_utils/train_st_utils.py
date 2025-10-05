@@ -145,62 +145,64 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                         domain_preds_accuracy += val * 0.5  # 0.5 is the weight for target domain
 
         # Control backward and optimization
-        # aggregator = UPGrad()
-        aggregator = PCGrad()
+        use_torchjd = True
+        aggregator = UPGrad()
+        # aggregator = PCGrad()
         optimizer.zero_grad()
+
+        loss_src_sum = sum(loss_src_list) if len(loss_src_list) > 0 else None
+        st_loss_sum = sum(st_loss_list) if len(st_loss_list) > 0 else None
+        dann_loss_sum = sum(dann_loss_list) if len(dann_loss_list) > 0 else None
 
         if not backward_together_src:
             # Here, we do backward for each source separately.
-            if len(loss_src_list) > 0:
-                for loss in loss_src_list:
-                    loss.backward()
-                    if not cfg.SELF_TRAIN.SRC.get('USE_GRAD', None):
-                        optimizer.zero_grad()
+            for loss in loss_src_list:
+                loss.backward()
+                if not cfg.SELF_TRAIN.SRC.get('USE_GRAD', None):
+                    optimizer.zero_grad()
+            # Adds dann_loss here since it is paired with loss_src.
+            if dann_loss_sum is not None:
+                # dann_loss should be summed.
+                dann_loss_sum.backward()
+                if not cfg.SELF_TRAIN.SRC.get('USE_GRAD', None):
+                    optimizer.zero_grad()
 
         if not backward_together_tar:
             # Here, we do backward for target separately.
-            if len(st_loss_list) > 0:
-                for st_loss in st_loss_list:
-                    st_loss.backward()
-                    if not cfg.SELF_TRAIN.TAR.get('USE_GRAD', None):
-                        optimizer.zero_grad()
-            if len(dann_loss_list) > 0:
-                # dann_loss should be summed.
-                dann_loss_sum = sum(dann_loss_list)
-                dann_loss_sum.backward()
+            for st_loss in st_loss_list:
+                st_loss.backward()
                 if not cfg.SELF_TRAIN.TAR.get('USE_GRAD', None):
                     optimizer.zero_grad()
 
         if backward_together_src and not backward_together_tar:
-            if len(loss_src_list) > 0:
-                loss_sum = sum(loss_src_list)
-                loss_sum.backward()
-                if not cfg.SELF_TRAIN.SRC.get('USE_GRAD', None):
-                    optimizer.zero_grad()
-
-        if not backward_together_src and backward_together_tar:
             loss_sum = 0
-            if (len(st_loss_list) > 0):
-                loss_sum += sum(st_loss_list)
-            if (len(dann_loss_list) > 0):
-                loss_sum += sum(dann_loss_list)
+            loss_sum += loss_src_sum if loss_src_sum is not None else 0
+            # Adds dann_loss here since it is paired with loss_src.
+            loss_sum += dann_loss_sum if dann_loss_sum is not None else 0
             loss_sum.backward()
-            if not cfg.SELF_TRAIN.TAR.get('USE_GRAD', None):
+            if not cfg.SELF_TRAIN.SRC.get('USE_GRAD', None):
                 optimizer.zero_grad()
 
+        if not backward_together_src and backward_together_tar:
+            if st_loss_sum is not None:
+                st_loss_sum.backward()
+                if not cfg.SELF_TRAIN.TAR.get('USE_GRAD', None):
+                    optimizer.zero_grad()
+
         if backward_together_src and backward_together_tar:
-            loss_sum = 0
-            upgrad = False
-            if upgrad is False:
-                if (len(loss_src_list) > 0):
-                    loss_sum += sum(loss_src_list)
-                if (len(st_loss_list) > 0):
-                    loss_sum += sum(st_loss_list)
-                if (len(dann_loss_list) > 0):
-                    loss_sum += sum(dann_loss_list)
+            if use_torchjd is False:
+                loss_sum = 0
+                loss_sum += loss_src_sum if loss_src_sum is not None else 0
+                loss_sum += st_loss_sum if st_loss_sum is not None else 0
+                loss_sum += dann_loss_sum if dann_loss_sum is not None else 0
                 loss_sum.backward()
             else:
-                torchjd.backward([sum(loss_src_list), sum(st_loss_list), sum(dann_loss_list)], aggregator)
+                assert loss_src_sum is not None
+                assert st_loss_sum is not None
+                assert dann_loss_sum is not None
+                # parallel_chunk_size = 1 is required to avoid "cannot access data pointer of Tensor" issue
+                # https://torchjd.org/stable/docs/autojac/backward/
+                torchjd.backward([loss_src_sum, st_loss_sum, dann_loss_sum], aggregator, parallel_chunk_size=1)
 
         clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
         optimizer.step()
