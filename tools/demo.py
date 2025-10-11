@@ -78,7 +78,7 @@ def main():
         logger.info("Model loaded")
 
     for eval_dataset in eval_datasets:
-        print("eval_dataset onotology:", eval_dataset['loader'].dataset.dataset_ontology)
+        print("eval_dataset onotology:", eval_dataset['loader'].dataset.dataset.dataset_ontology)
         for idx, data_dict in enumerate(eval_dataset['loader']):
             start_time = time.time()
             if idx != args.sample_index:
@@ -94,7 +94,7 @@ def main():
                     pred_dicts, _ = model.forward(data_dict)
                 forward_duration = time.time()
                 print("forward_duration:", forward_duration - load_data_to_gpu_duration)
-                annos = eval_dataset['loader'].dataset.generate_prediction_dicts(
+                annos = eval_dataset['loader'].dataset.dataset.generate_prediction_dicts(
                     data_dict, pred_dicts, cfg.CLASS_NAMES,
                 )
                 generate_prediction_dicts_duration = time.time()
@@ -104,7 +104,7 @@ def main():
             mlab.options.offscreen = True
             first_elem_index = 0
             first_elem_mask = data_dict['points'][:, 0] == first_elem_index
-            eval_dataset['loader'].dataset.__vis__(
+            eval_dataset['loader'].dataset.dataset.__vis__(
                 points=data_dict['points'][first_elem_mask, 1:], gt_boxes=data_dict['gt_boxes'][first_elem_index],
                 ref_boxes=annos[first_elem_index]['boxes_lidar'] if annos else None,
                 ref_scores=annos[first_elem_index]['score'] if annos else None,
@@ -113,14 +113,14 @@ def main():
             vis_duration = time.time()
             print("__vis__duration:", vis_duration - generate_prediction_dicts_duration)
             filename = os.path.join(args.out_dir,
-                                    f'{args.out_filename[:-4]}_{eval_dataset["loader"].dataset.dataset_ontology}_{idx}.png')
+                                    f'{args.out_filename[:-4]}_{eval_dataset["loader"].dataset.dataset.dataset_ontology}_{idx}.png')
             if not OPEN3D_FLAG:
                 mlab.savefig(filename=filename)
             else:
                 img = vis.capture_screen_float_buffer(True)
                 opencd.io.write_image(filename, img)
 
-            wandb.log({f'{eval_dataset["loader"].dataset.dataset_ontology}/scene': wandb.Image(filename)})
+            wandb.log({f'{eval_dataset["loader"].dataset.dataset.dataset_ontology}/scene': wandb.Image(filename)})
 
             break
     wandb.finish()
