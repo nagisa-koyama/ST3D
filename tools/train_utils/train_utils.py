@@ -98,7 +98,7 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
         # elif dataset_ontology == 'nuscenes':
         #     loss = loss * (wd_kitti_and_lyft / (wd_kitti_and_lyft + wd_kitti_and_nuscenes))
 
-        backward_together = optim_cfg.get('BACKWORD_TOGETHER', None)
+        backward_together = optim_cfg.get('BACKWARD_TOGETHER', None)
         if backward_together:
             if dataset_index == 0:
                 # Reset grad only when first dataset is pulled in.

@@ -169,6 +169,15 @@ def main():
     if target_set is not None:
         logger.info('target dataset: %s', target_set.__class__.__name__)
 
+    # -----------------------config validity---------------------------
+    miss_spelled_configs = ['BACKWORD_TOGETHER']
+    for miss_spelled_config in miss_spelled_configs:
+        assert cfg.get(miss_spelled_config, None) is None, "{} is miss-spelled.".format(miss_spelled_config)
+        if cfg.get('SELF_TRAIN', None):
+            assert cfg.SELF_TRAIN.get(miss_spelled_config, None) is None, "SELF_TRAIN.{} is miss-spelled.".format(miss_spelled_config)
+            assert cfg.SELF_TRAIN.SRC.get(miss_spelled_config, None) is None, "SELF_TRAIN.SRC.{} is miss-spelled.".format(miss_spelled_config)
+            assert cfg.SELF_TRAIN.TAR.get(miss_spelled_config, None) is None, "SELF_TRAIN.TAR.{} is miss-spelled.".format(miss_spelled_config)
+
     # -----------------------create networks---------------------------
     for source_dataset in source_datasets:
         model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES),
