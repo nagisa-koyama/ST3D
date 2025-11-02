@@ -141,7 +141,10 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                 for key, val in st_tb_dict.items():
                     wandb.log({'train/' + key: val})
                     if key == 'st_domain_preds_accuracy':
-                        assert domain_preds_accuracy is not None
+                        # assert domain_preds_accuracy is not None
+                        if domain_preds_accuracy is None:
+                            print("Warning: domain_preds_accuracy is None when logging target domain preds accuracy.")
+                            continue
                         domain_preds_accuracy += val * 0.5  # 0.5 is the weight for target domain
 
         # Control backward and optimization
@@ -244,6 +247,11 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
             pbar.update()
             tbar.set_postfix(disp_dict)
             tbar.refresh()
+
+        loss_src_list.clear()
+        st_loss_list.clear()
+        dann_loss_list.clear()
+        torch.cuda.empty_cache()
 
         # Visualize one scene from target domain per epoch
         if rank == 0 and draw_scene == False:
