@@ -276,7 +276,7 @@ SELF_TRAIN:
         USE_DATA: False
         USE_GRAD: False
         LOSS_WEIGHT: 1.0
-        BACKWARD_TOGETHER: False
+        BACKWARD_TOGETHER: True
     TAR:
         USE_DATA: True
         LOSS_WEIGHT: 1.0
