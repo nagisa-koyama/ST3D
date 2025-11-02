@@ -148,7 +148,7 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                         domain_preds_accuracy += val * 0.5  # 0.5 is the weight for target domain
 
         # Control backward and optimization
-        use_torchjd = True
+        use_torchjd = False
         aggregator = UPGrad()
         # aggregator = PCGrad()
         optimizer.zero_grad()
