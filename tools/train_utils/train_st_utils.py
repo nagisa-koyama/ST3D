@@ -1,4 +1,5 @@
 import torch
+from torch.nn.functional import cosine_similarity
 import os
 import glob
 import mayavi.mlab as mlab
@@ -149,8 +150,8 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
 
         # Control backward and optimization
         use_torchjd = False
-        aggregator = UPGrad()
-        # aggregator = PCGrad()
+        # aggregator = UPGrad()
+        aggregator = PCGrad()
         optimizer.zero_grad()
 
         loss_src_sum = sum(loss_src_list) if len(loss_src_list) > 0 else None
@@ -203,9 +204,42 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                 assert loss_src_sum is not None
                 assert st_loss_sum is not None
                 assert dann_loss_sum is not None
+
+                def print_weights(_, __, weights: torch.Tensor) -> None:
+                    """Prints the extracted weights."""
+                    print(f"Weights: {weights}")
+
+                def print_gd_similarity(_, inputs: tuple[torch.Tensor, ...], aggregation: torch.Tensor) -> None:
+                    """Prints the cosine similarity between the aggregation and the average gradient."""
+                    matrix = inputs[0]
+                    gd_output = matrix.mean(dim=0)
+                    similarity_pcgrad_mean = cosine_similarity(gd_output, aggregation, dim=0)
+                    similarity_pcgrad_src = cosine_similarity(matrix[0], aggregation, dim=0)
+                    similarity_prgrad_dann = cosine_similarity(matrix[1], aggregation, dim=0)
+                    similairty_pcgrad_target = cosine_similarity(matrix[2], aggregation, dim=0)
+                    similarity_src_dann = cosine_similarity(matrix[0], matrix[1], dim=0)
+                    similarity_src_target = cosine_similarity(matrix[0], matrix[2], dim=0)
+                    similarity_dann_target = cosine_similarity(matrix[1], matrix[2], dim=0)
+                    wandb.log({'train/grad_similarity_pcgrad_mean': similarity_pcgrad_mean.item()})
+                    wandb.log({'train/grad_similarity_pcgrad_src': similarity_pcgrad_src.item()})
+                    wandb.log({'train/grad_similarity_pcgrad_dann': similarity_prgrad_dann.item()})
+                    wandb.log({'train/grad_similarity_pcgrad_target': similairty_pcgrad_target.item()})
+                    wandb.log({'train/grad_similarity_src_dann': similarity_src_dann.item()})
+                    wandb.log({'train/grad_similarity_src_target': similarity_src_target.item()})
+                    wandb.log({'train/grad_similarity_dann_target': similarity_dann_target.item()})
+                    # for i in range(matrix.shape[0]):
+                    #     print(f"Cosine sim grad {i} and grad {(i+1)%matrix.shape[0]}: {cosine_similarity(matrix[i], matrix[(i+1)%matrix.shape[0]], dim=0).item():.4f}")
+                    # for i in range(matrix.shape[0]):
+                    #     print(f"Cosine sim grad {i} and PCGrad: {cosine_similarity(matrix[i], aggregation, dim=0).item():.4f}")
+                    # print(f"gg_output: {gd_output}")
+                    # print(f"Cosine sim grad mean and PCGrad: {similarity.item():.4f}")
+
+                # aggregator.weighting.register_forward_hook(print_weights)
+                aggregator.register_forward_hook(print_gd_similarity)
+
                 # parallel_chunk_size = 1 is required to avoid "cannot access data pointer of Tensor" issue
                 # https://torchjd.org/stable/docs/autojac/backward/
-                torchjd.backward([loss_src_sum, st_loss_sum, dann_loss_sum], aggregator, parallel_chunk_size=1)
+                torchjd.backward([loss_src_sum, dann_loss_sum, st_loss_sum], aggregator, parallel_chunk_size=1)
 
         clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
         optimizer.step()
