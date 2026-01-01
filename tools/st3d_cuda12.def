@@ -219,6 +219,7 @@ From: nvcr.io/nvidia/cuda:12.2.2-devel-ubuntu22.04
 
     echo "Installing additional pips (torchinfo)..."
     python3 -m pip install torchinfo
+    python3 -m pip install SharedArray
 
     echo "Installing display libraries..."
     apt install -y libgl1-mesa-glx libgl1-mesa-dri
@@ -246,8 +247,6 @@ From: nvcr.io/nvidia/cuda:12.2.2-devel-ubuntu22.04
     # Clean up apt cache to reduce image size
     apt-get clean
     rm -rf /var/lib/apt/lists/*
-    # Also remove downloaded installers if they are large
-    rm -f /tmp/*.sh # For cmake installer
 
 # SECTION 4: Labels
 %labels
