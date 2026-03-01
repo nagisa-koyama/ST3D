@@ -2,7 +2,6 @@ import torch
 from torch.nn.functional import cosine_similarity
 import os
 import glob
-import mayavi.mlab as mlab
 import numpy as np
 import tqdm.auto as tqdm
 from torch.nn.utils import clip_grad_norm_
@@ -294,6 +293,7 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                 # load_data_to_gpu(target_batch)
                 pred_dicts, _ = model.forward(target_batch)
 
+                import mayavi.mlab as mlab
                 mlab.options.offscreen = True
                 first_elem_index = 0
                 first_elem_mask = target_batch['points'][:, 0] == first_elem_index

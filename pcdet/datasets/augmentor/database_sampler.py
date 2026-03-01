@@ -21,6 +21,8 @@ class DataBaseSampler(object):
 
         for db_info_path in sampler_cfg.DB_INFO_PATH:
             db_info_path = self.root_path.resolve() / db_info_path
+            print(str(db_info_path))
+
             with open(str(db_info_path), 'rb') as f:
                 # infos is loaded from file whose label is in dataset ontology.
                 infos = pickle.load(f)

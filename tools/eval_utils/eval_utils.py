@@ -3,7 +3,6 @@ import os
 import pickle
 import time
 
-import mayavi.mlab as mlab
 import numpy as np
 import torch
 import tqdm

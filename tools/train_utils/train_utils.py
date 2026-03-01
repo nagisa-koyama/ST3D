@@ -1,7 +1,6 @@
 import glob
 import os
 
-import mayavi.mlab as mlab
 import numpy as np
 import torch
 import tqdm
@@ -148,6 +147,7 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
                 wandb.log({'train/' + dataset_ontology + '/' + key: val})
 
             if draw_scene == False:
+                import mayavi.mlab as mlab
                 mlab.options.offscreen = True
                 first_elem_index = 0
                 first_elem_mask = batch['points'][:, 0] == first_elem_index
