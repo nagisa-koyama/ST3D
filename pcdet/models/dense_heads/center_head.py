@@ -333,12 +333,30 @@ class CenterHead(nn.Module):
                                                  pred_dicts[0]['dim'], pred_dicts[0]['rot']), 1)
         data_dict['batch_cls_preds'] = pred_dicts[0]['hm']
 
-        if self.training:
-            target_dict = self.assign_targets(
-                data_dict['gt_boxes'], feature_map_size=spatial_features_2d.size()[2:],
-                feature_map_stride=data_dict.get('spatial_features_2d_strides', None)
+        # --- BEGIN new: conditional-discriminator spatial-map export (opt-in, UADA3D port) ---
+        if self.training and self.model_cfg.get('EXPORT_SPATIAL_PREDS', False):
+            data_dict['cls_preds_spatial'] = torch.clamp(
+                pred_dicts[0]['hm'].sigmoid(), min=1e-4, max=1 - 1e-4
             )
-            self.forward_ret_dict['target_dicts'] = target_dict
+            data_dict['box_preds_spatial'] = data_dict['batch_box_preds']
+        # --- END new ---
+
+        if 'domain' in data_dict:
+            # Skip Gaussian target assignment entirely for the (unlabeled) target-domain batch —
+            # its detection loss is discarded anyway by DACenterPoint.get_training_loss().
+            if self.training and data_dict['domain'] != 1:
+                target_dict = self.assign_targets(
+                    data_dict['gt_boxes'], feature_map_size=spatial_features_2d.size()[2:],
+                    feature_map_stride=data_dict.get('spatial_features_2d_strides', None)
+                )
+                self.forward_ret_dict['target_dicts'] = target_dict
+        else:
+            if self.training:
+                target_dict = self.assign_targets(
+                    data_dict['gt_boxes'], feature_map_size=spatial_features_2d.size()[2:],
+                    feature_map_stride=data_dict.get('spatial_features_2d_strides', None)
+                )
+                self.forward_ret_dict['target_dicts'] = target_dict
 
         self.forward_ret_dict['pred_dicts'] = pred_dicts
 

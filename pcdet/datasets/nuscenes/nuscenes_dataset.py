@@ -141,16 +141,26 @@ class NuScenesDataset(DatasetTemplate):
             else:
                 mask = None
 
-            input_dict.update({
-                'gt_names': info['gt_names'] if mask is None else info['gt_names'][mask],
-                'gt_boxes': info['gt_boxes'] if mask is None else info['gt_boxes'][mask]
-            })
+            gt_names = info['gt_names'] if mask is None else info['gt_names'][mask]
+            gt_boxes = info['gt_boxes'] if mask is None else info['gt_boxes'][mask]
+
+            # Remap GT class names (e.g. nuScenes lowercase -> KITTI capitalized). No-op unless
+            # CLASS_MAPPING is set in the dataset cfg (existing ST3D nuScenes configs never set it).
+            # Ported from UADA3D's nuscenes_dataset.py::__getitem__.
+            class_mapping = self.dataset_cfg.get('CLASS_MAPPING', {})
+            if class_mapping:
+                gt_names = np.array([class_mapping.get(n, n) for n in gt_names])
 
             if self.dataset_cfg.get('SHIFT_COOR', None):
-                input_dict['gt_boxes'][:, 0:3] += self.dataset_cfg.SHIFT_COOR
+                gt_boxes[:, 0:3] += self.dataset_cfg.SHIFT_COOR
 
             if self.dataset_cfg.get('USE_PSEUDO_LABEL', None) and self.training:
-                input_dict['gt_boxes'] = None
+                gt_boxes = None
+
+            input_dict.update({
+                'gt_names': gt_names,
+                'gt_boxes': gt_boxes
+            })
 
             # for debug only
             # gt_boxes_mask = np.array([n in self.class_names for n in input_dict['gt_names']], dtype=np.bool_)
@@ -241,6 +251,13 @@ class NuScenesDataset(DatasetTemplate):
             'pedestrian': 'Pedestrian',
             'Pedestrian': 'Pedestrian', # TODO: remove this once proper head-per-dataset eval is set up.
             'truck': 'Truck',
+            # Ported for the UADA3D KITTI<->nuScenes migration (Car/Pedestrian/Cyclist class set):
+            # kitti_eval reads GT names directly from self.infos (raw nuScenes vocabulary), bypassing
+            # __getitem__'s CLASS_MAPPING remap entirely, so this dict is the actual place that must
+            # know about the motorcycle/bicycle -> Cyclist mapping for correct AP computation.
+            'motorcycle': 'Cyclist',
+            'bicycle': 'Cyclist',
+            'Cyclist': 'Cyclist', # passthrough if already remapped upstream
         }
 
         def transform_to_kitti_format(annos, info_with_fakelidar=False, is_gt=False):

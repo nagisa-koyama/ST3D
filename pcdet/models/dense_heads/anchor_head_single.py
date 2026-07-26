@@ -43,6 +43,15 @@ class AnchorHeadSingle(AnchorHeadTemplate):
         cls_preds = self.conv_cls(spatial_features_2d)
         box_preds = self.conv_box(spatial_features_2d)
 
+        # --- BEGIN new: conditional-discriminator spatial-map export (opt-in, UADA3D port) ---
+        if self.training and self.model_cfg.get('EXPORT_SPATIAL_PREDS', False):
+            B, _, H, W = cls_preds.shape
+            data_dict['cls_preds_spatial'] = cls_preds.view(
+                B, self.num_anchors_per_location, self.num_class, H, W
+            ).max(dim=1)[0]
+            data_dict['box_preds_spatial'] = box_preds
+        # --- END new ---
+
         cls_preds = cls_preds.permute(0, 2, 3, 1).contiguous()  # [N, H, W, C]
         box_preds = box_preds.permute(0, 2, 3, 1).contiguous()  # [N, H, W, C]
 

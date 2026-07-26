@@ -61,3 +61,21 @@ def build_scheduler(optimizer, total_iters_each_epoch, total_epochs, last_epoch,
             )
 
     return lr_scheduler, lr_warmup_scheduler
+
+
+class GrlStandard:
+    """Fixed gradient-reversal coefficient scheduler (UADA3D port).
+
+    Matches UADA3D's second-rospm-C / centerpoint-rospm-C: a constant GRL lambda_ rather than
+    the DANN-style annealing schedule (2 / (1 + exp(-10*p)) - 1). Kept intentionally simple;
+    revisit only if a later phase ports UADA3D's annealed variant.
+    """
+    def __init__(self, lambda_=0.1):
+        self.lambda_ = lambda_
+
+    def step(self, accumulated_iter):
+        return self.lambda_
+
+
+def build_grl_scheduler(total_iters_each_epoch, total_epochs, lambda_=0.1):
+    return GrlStandard(lambda_=lambda_)
