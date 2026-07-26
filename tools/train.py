@@ -94,7 +94,14 @@ def main():
         wandb.init(config=vars(cfg), project="st3d", name=args.run_name, dir="/storage")
         print("W&B run directory:", wandb.run.dir)
 
-    output_dir = Path(wandb.run.dir)
+    # Share wandb output dir across all ranks so every process uses the same paths.
+    if dist_train:
+        object_list = [wandb.run.dir if cfg.LOCAL_RANK == 0 else None]
+        dist.broadcast_object_list(object_list, src=0)
+        output_dir = Path(object_list[0])
+    else:
+        output_dir = Path(wandb.run.dir)
+
     ckpt_dir = output_dir / 'ckpt'
     ps_label_dir = output_dir / 'ps_label'
     ps_label_dir.mkdir(parents=True, exist_ok=True)
@@ -247,7 +254,11 @@ def main():
         model_teacher.eval() # model_teacher should not be updated
     if dist_train:
         model = nn.parallel.DistributedDataParallel(model, device_ids=[cfg.LOCAL_RANK % torch.cuda.device_count()])
-        # TODO: should support model_teacher here.
+        if model_teacher is not None:
+            model_teacher = nn.parallel.DistributedDataParallel(
+                model_teacher, device_ids=[cfg.LOCAL_RANK % torch.cuda.device_count()],
+                find_unused_parameters=True
+            )
 
     # -----------------------create scheduler---------------------------
     def total_iters_each_epoch_per_dataloader(dataloader, merge_all_iter_to_one_epoch, epochs):
@@ -315,6 +326,10 @@ def main():
     # pth_list = glob.glob(str(cfg.ROOT_DIR / '**/*.pth'), recursive=True)
     # pth_list_str = ','.join(pth_list)
     # os.environ['WANDB_IGNORE_GLOBS'] = pth_list_str
+
+    # Ensure all ranks finished training before starting evaluation.
+    if dist_train:
+        dist.barrier()
 
     logger.info('**********************End training %s/%s(%s)**********************\n\n\n'
                 % (cfg.EXP_GROUP_PATH, cfg.TAG, args.extra_tag))

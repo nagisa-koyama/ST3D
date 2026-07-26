@@ -125,7 +125,9 @@ def init_dist_slurm(tcp_port, local_rank, backend='nccl'):
         backend:
 
     Returns:
-
+        total_gpus: world size
+        rank: global rank (NOTE: stored in cfg.LOCAL_RANK by caller despite the name;
+              used throughout the codebase for rank==0 gating of wandb/logging/ckpt saving)
     """
     proc_id = int(os.environ['SLURM_PROCID'])
     ntasks = int(os.environ['SLURM_NTASKS'])

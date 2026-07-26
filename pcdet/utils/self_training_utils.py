@@ -167,9 +167,10 @@ def gather_and_dump_pseudo_label_result(rank, ps_label_dir, cur_epoch):
     # print("len(PSEUDO_LABELS.keys()):", len(PSEUDO_LABELS.keys()))
     # print("len(teacher_class_names_concat):", len(teacher_class_names_concat))
     # print(Counter(teacher_class_names_concat))
-    wandb.log({'train/ps_labels_total': len(teacher_class_names_concat)})
-    for key, value in Counter(teacher_class_names_concat).items():
-        wandb.log({'train/ps_labels_{}'.format(key): value})
+    if rank == 0:
+        wandb.log({'train/ps_labels_total': len(teacher_class_names_concat)})
+        for key, value in Counter(teacher_class_names_concat).items():
+            wandb.log({'train/ps_labels_{}'.format(key): value})
 
     NEW_PSEUDO_LABELS.clear()
 

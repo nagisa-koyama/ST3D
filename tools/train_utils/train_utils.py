@@ -3,6 +3,7 @@ import os
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import tqdm
 from torch.nn.utils import clip_grad_norm_
 
@@ -206,20 +207,24 @@ def train_model(model, model_teacher, optimizer, train_loaders, target_loader, m
 
             # save trained model
             trained_epoch = cur_epoch + 1
-            if trained_epoch % ckpt_save_interval == 0 and rank == 0:
+            if trained_epoch % ckpt_save_interval == 0:
+                if dist.is_initialized():
+                    dist.barrier()  # wait for all ranks before checkpoint saving
+                if rank == 0:
+                    ckpt_list = glob.glob(str(ckpt_save_dir / 'checkpoint_epoch_*.pth'))
+                    ckpt_list.sort(key=os.path.getmtime)
 
-                ckpt_list = glob.glob(str(ckpt_save_dir / 'checkpoint_epoch_*.pth'))
-                ckpt_list.sort(key=os.path.getmtime)
+                    if ckpt_list.__len__() >= max_ckpt_save_num:
+                        for cur_file_idx in range(0, len(ckpt_list) - max_ckpt_save_num + 1):
+                            os.remove(ckpt_list[cur_file_idx])
 
-                if ckpt_list.__len__() >= max_ckpt_save_num:
-                    for cur_file_idx in range(0, len(ckpt_list) - max_ckpt_save_num + 1):
-                        os.remove(ckpt_list[cur_file_idx])
-
-                ckpt_name = ckpt_save_dir / ('checkpoint_epoch_%d' % trained_epoch)
-                print("ckpt_name:", ckpt_name)
-                save_checkpoint(
-                    checkpoint_state(model, optimizer, trained_epoch, accumulated_iter), filename=ckpt_name,
-                )
+                    ckpt_name = ckpt_save_dir / ('checkpoint_epoch_%d' % trained_epoch)
+                    print("ckpt_name:", ckpt_name)
+                    save_checkpoint(
+                        checkpoint_state(model, optimizer, trained_epoch, accumulated_iter), filename=ckpt_name,
+                    )
+                if dist.is_initialized():
+                    dist.barrier()  # wait for rank 0 to finish saving
                 
 
 
