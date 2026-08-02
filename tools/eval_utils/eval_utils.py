@@ -173,6 +173,13 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
     logger.info('class_names in eval_utils is %s' % class_names)
     logger.info('class_names_for_evaluation in eval_utils is %s' % list(class_names_for_evaluation))
 
+    # Free PyTorch's cached GPU memory before running the KITTI-metric AP computation.
+    # That computation (rotate_iou_gpu_eval, etc.) uses numba's own CUDA context, which is
+    # a separate memory pool from PyTorch's caching allocator. Releasing PyTorch's cache here
+    # gives numba more headroom, which matters for models (e.g. no-DA source-only baselines)
+    # that produce very large numbers of predicted boxes.
+    torch.cuda.empty_cache()
+
     result_str, result_dict = dataset.dataset.evaluation(
         eval_det_annos, list(class_names_for_evaluation),
         eval_metric=cfg.MODEL.POST_PROCESSING.EVAL_METRIC,
