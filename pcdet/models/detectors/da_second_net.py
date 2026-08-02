@@ -29,7 +29,10 @@ class DASECONDNet(Detector3DTemplate):
         disp_dict = {}
 
         if batch_dict['domain'] == 0:  # only use detection loss in source domain
-            loss_rpn, tb_dict = self.dense_head.get_loss()
+            # AnchorHeadTemplate.get_loss() returns a 3rd value (domain_loss) for ST3D's own
+            # native DANN mechanism (AnchorHeadMulti); it's None/unused here since domain
+            # adaptation is driven through self.discriminator instead, so it's discarded.
+            loss_rpn, tb_dict, _ = self.dense_head.get_loss()
             tb_dict = {'loss_rpn': loss_rpn.item(), **tb_dict}
         else:
             loss_rpn = 0

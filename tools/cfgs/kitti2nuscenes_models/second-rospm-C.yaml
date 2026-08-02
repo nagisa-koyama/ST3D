@@ -10,6 +10,7 @@ CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
 DATA_CONFIG:
     _BASE_CONFIG_: cfgs/dataset_configs/da_kitti_dataset.yaml
     DATA_PATH: '../data/kitti'
+    FOV_POINTS_ONLY: False
     # MAX_SAMPLES: 100  # Uncomment to limit training samples for quick iteration
 
     # Shift Z to ground level (Velodyne HDL-64E mounted at ~1.73m); aligns anchor_bottom_heights across domains
