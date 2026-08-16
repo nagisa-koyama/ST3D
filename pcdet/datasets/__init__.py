@@ -78,7 +78,14 @@ def build_dataloader(dataset_cfg, class_names, batch_size, dist, root_path=None,
     dataloader = DataLoader(
         subset, batch_size=batch_size, pin_memory=True, num_workers=workers,
         shuffle=shuffle, collate_fn=dataset.collate_batch,
-        drop_last=False, sampler=sampler, timeout=0
+        drop_last=False, sampler=sampler, timeout=0,
+        # persistent_workers keeps worker processes alive across epochs instead of tearing
+        # them down and re-forking them at every epoch boundary. Re-forking workers after the
+        # main process has already initialized a CUDA context is a known source of instability
+        # (segfaults with no Python traceback); this was observed deterministically at the
+        # epoch1->epoch2 boundary for centerpoint-sourceonly.yaml regardless of --mem (jobs
+        # 21396/21416). persistent_workers=True is invalid when num_workers=0, hence the guard.
+        persistent_workers=(workers > 0)
     )
 
     return dataset, dataloader, sampler
