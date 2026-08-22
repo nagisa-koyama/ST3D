@@ -51,6 +51,20 @@ def cfg_from_list(cfg_list, config):
             d[subkey] = value
 
 
+def _fill_missing_from_base(child, base):
+    """Recursively fill keys from a `_BASE_CONFIG_` file into `child`, WITHOUT overwriting any
+    key `child` already explicitly defines. This implements proper base-config inheritance
+    (child values always take precedence over the base's); the base only supplies defaults for
+    keys the child doesn't set itself.
+    """
+    for key, val in base.items():
+        if key not in child:
+            child[key] = val
+        elif isinstance(val, dict) and isinstance(child[key], dict):
+            _fill_missing_from_base(child[key], val)
+    return child
+
+
 def merge_new_config(config, new_config):
     if '_BASE_CONFIG_' in new_config:
         with open(new_config['_BASE_CONFIG_'], 'r') as f:
@@ -59,16 +73,7 @@ def merge_new_config(config, new_config):
                 yaml_config = yaml.full_load(f)
             except:
                 yaml_config = yaml.safe_load(f)
-        merge_new_config(new_config, yaml_config)
-        # if '_BASE_CONFIG_' in yaml_config:
-        #     with open(yaml_config['_BASE_CONFIG_'], 'r') as f_nested:
-        #         print("{} is loaded as nest 2".format(yaml_config['_BASE_CONFIG_']))
-        #         try:
-        #             yaml_nested_config = yaml.full_load(f_nested)
-        #         except:
-        #             yaml_nested_config = yaml.safe_load(f_nested)
-        #     yaml_config.update(yaml_nested_config)
-        # config.update(EasyDict(yaml_config))
+        _fill_missing_from_base(new_config, yaml_config)
 
     for key, val in new_config.items():
         if not isinstance(val, dict):

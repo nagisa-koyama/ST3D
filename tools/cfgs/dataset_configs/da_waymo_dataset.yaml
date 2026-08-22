@@ -16,7 +16,7 @@ SAMPLED_INTERVAL: {
     'test': 5
 }
 
-INFO_WITH_FAKELIDAR: True
+INFO_WITH_FAKELIDAR: False
 
 DATA_AUGMENTOR:
     DISABLE_AUG_LIST: ['random_object_rotation', 'random_object_scaling', 'normalize_object_size']
