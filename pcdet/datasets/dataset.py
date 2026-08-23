@@ -26,11 +26,16 @@ class DatasetTemplate(torch_data.Dataset):
         self.dataset_class_names = copy.deepcopy(class_names)
         self.map_ontology_dataset_to_model = None
         self.map_ontology_model_to_dataset = None
-        if model_ontology is not None and self.dataset_ontology is not None and model_ontology != self.dataset_ontology:
-            self.map_ontology_dataset_to_model = get_ontology_mapping(self.dataset_ontology, model_ontology)
-            self.map_ontology_model_to_dataset = get_ontology_mapping(model_ontology, self.dataset_ontology)
-            self.dataset_class_names = [self.map_ontology_model_to_dataset[label] for label in class_names]
-        elif class_names is not None and ":" in class_names[0]:
+        # NOTE: The "dataset:class" multi-head (head_per_dataset) case must be checked BEFORE the
+        # single-ontology cross-mapping case. Both conditions can be true simultaneously (e.g.
+        # model_ontology='head_per_dataset' literally differs from a real per-dataset ONTOLOGY
+        # like 'lyft'/'kitti'), but the cross-mapping branch uses get_ontology_mapping(dataset_ontology,
+        # 'head_per_dataset'), whose maps assume plain (non-prefixed) class names and are not valid for
+        # dataset:class-formatted names (they either KeyError or silently rename every class to the
+        # wrong dataset prefix, causing all GT boxes to be filtered out downstream). The multi-head
+        # branch below already handles the head_per_dataset case correctly and generically, so it must
+        # take precedence whenever class_names use the "dataset:class" convention.
+        if class_names is not None and ":" in class_names[0]:
             # Multi-head setup. Handles only associated labels.
             self.dataset_class_names = copy.deepcopy([])
             for cls in class_names:
@@ -41,7 +46,27 @@ class DatasetTemplate(torch_data.Dataset):
                     print("Added class:", cls)
                 else:
                     print("Skipped class:", cls)
+            assert len(self.dataset_class_names) > 0, (
+                "No class in {} matches this dataset's ONTOLOGY ({!r}). Check for a typo/mismatch "
+                "between the per-dataset ONTOLOGY config and the '<dataset>:<label>' prefixes used "
+                "in CLASS_NAMES.".format(class_names, self.dataset_ontology)
+            )
             assert (self.dataset_class_names[-1].count(":") == 1)
+        elif model_ontology is not None and self.dataset_ontology is not None and model_ontology != self.dataset_ontology:
+            # These ontology-mapping dicts are keyed by plain (non-prefixed) class names and must
+            # never be used with the 'head_per_dataset' sentinel -- that case belongs to the
+            # "dataset:class" branch above. Reaching here with 'head_per_dataset' on either side
+            # would silently corrupt GT class names (see experiments_md/20260823_06_*).
+            assert model_ontology != 'head_per_dataset' and self.dataset_ontology != 'head_per_dataset', (
+                "Refusing to use single-ontology cross-mapping with the 'head_per_dataset' "
+                "sentinel (model_ontology={!r}, dataset_ontology={!r}, class_names={!r}). This "
+                "combination should have been handled by the 'dataset:class' multi-head branch "
+                "above -- check that CLASS_NAMES uses '<dataset>:<label>' formatting.".format(
+                    model_ontology, self.dataset_ontology, class_names)
+            )
+            self.map_ontology_dataset_to_model = get_ontology_mapping(self.dataset_ontology, model_ontology)
+            self.map_ontology_model_to_dataset = get_ontology_mapping(model_ontology, self.dataset_ontology)
+            self.dataset_class_names = [self.map_ontology_model_to_dataset[label] for label in class_names]
         logger.info("Model class names: {}".format(class_names))
         logger.info("Mapping from dataset to model ontology: {}".format(
               self.map_ontology_dataset_to_model if self.map_ontology_dataset_to_model else "None"))
