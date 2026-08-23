@@ -193,9 +193,17 @@ class Discriminator2(nn.Module):
                 if self.regularization:
                     reg_loss = reg_loss + __loss_func__(cond_preds[i], domain_preds[0])
 
-        if self.regularization:
-            tb_dict.update({f"reg_loss{i}": reg_loss.item()})
-            disc_loss_total = disc_loss_total + reg_loss
+            # NOTE: must stay nested under `if self.conditional:` - reg_loss/i are only defined
+            # in that branch's loop above (regularization is a *conditional*-consistency term,
+            # computed against domain_preds[0] from the marginal branch). Previously this was a
+            # sibling `if self.regularization:` block at the same indentation as `if
+            # self.conditional:`, so it ran (and raised NameError/UnboundLocalError on
+            # `reg_loss`/`i`) whenever CONSISTENCY_REGULARIZATION was enabled without
+            # conditional adaptation also being enabled. See
+            # ST3D/tests/test_discriminator_regularization_loss.py.
+            if self.regularization:
+                tb_dict.update({f"reg_loss{i}": reg_loss.item()})
+                disc_loss_total = disc_loss_total + reg_loss
 
         return disc_loss_total, tb_dict
 
