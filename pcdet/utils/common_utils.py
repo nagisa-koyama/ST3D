@@ -296,6 +296,8 @@ def calculate_gradient_norm(model):
 def mask_dict(result_dict, mask):
     new_dict = copy.deepcopy(result_dict)
     for key, value in new_dict.items():
+        if value is None:
+            continue
         new_dict[key] = value[mask]
     return new_dict
 
