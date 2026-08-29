@@ -22,8 +22,8 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'pedestrian': 'Pedestrian',
         'truck': 'Truck',
         'bicycle': 'Cyclist',
-        'motorcycle': 'Cyclist',
-        'bus': 'Car',
+        'motorcycle': 'Misc',  # not merged into Cyclist - standard DA convention only maps bicycle->Cyclist
+        'bus': 'Misc',  # not merged into Car - standard DA convention only maps car->Car
         'emergency_vehicle': 'Misc',
         'other_vehicle': 'Misc',
         'animal': 'Misc'
@@ -40,14 +40,14 @@ def get_ontology_mapping(input_ontology, output_ontology):
         'Medium-sized Truck': 'Truck',
         'Semi-truck': 'Truck',
         'Towed Object': 'Misc',
-        'Motorcycle': 'Cyclist',
+        'Motorcycle': 'Misc',  # not merged into Cyclist - standard DA convention only maps Bicycle->Cyclist
         'Other Vehicle - Construction Vehicle': 'Misc',
         'Other Vehicle - Uncommon': 'Misc',
         'Other Vehicle - Pedicab': 'Misc',
         'Emergency Vehicle': 'Misc',
-        'Bus': 'Car',
+        'Bus': 'Misc',  # not merged into Car - standard DA convention only maps Car->Car
         'Personal Mobility Device': 'Misc',
-        'Motorized Scooter': 'Cyclist',
+        'Motorized Scooter': 'Misc',  # not merged into Cyclist - same reasoning
         'Bicycle': 'Cyclist',
         'Train': 'Tram',
         'Trolley': 'Tram',
@@ -67,9 +67,9 @@ def get_ontology_mapping(input_ontology, output_ontology):
     map_nuscenes_to_kitti = {
         'car': 'Car',
         'truck': 'Truck',
-        'bus': 'Car',
+        'bus': 'Misc',  # not merged into Car - standard DA convention only maps car->Car
         'construction_vehicle': 'Misc',
-        'motorcycle': 'Cyclist',
+        'motorcycle': 'Misc',  # not merged into Cyclist - standard DA convention only maps bicycle->Cyclist
         'bicycle': 'Cyclist',
         'trailer': 'Misc',
         'pedestrian': 'Pedestrian',
