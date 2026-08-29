@@ -6,12 +6,10 @@
 # kept identical to the kitti2nuscenes sibling for a consistent "family" of rospm-C experiments.
 #
 # ASSUMPTIONS TO VERIFY before relying on results:
-# - No SHIFT_COOR override is set for the Waymo DATA_CONFIG (source): this matches this repo's own
-#   existing precedent for Waymo/Lyft/Pandaset-as-source DA configs (see
-#   cfgs/da-waymo-lyft-pandaset-to-kitti_models/domain_attention/*_st3d_car.yaml), which likewise
-#   leave SHIFT_COOR unset for these three source datasets (only the unsupervised target side gets
-#   a ground-level shift). If Waymo's lidar mount height turns out to matter for anchor_bottom_heights
-#   alignment, this may need revisiting.
+# - SHIFT_COOR: [0.0, 0.0, 0.0] is set for the Waymo DATA_CONFIG (source), matching the value used
+#   for Waymo in cfgs/da-post-MIRU2025/da_waymo_dataset_point_calibrated_to_{kitti,nuscenes}[_wo_aug].yaml.
+#   Waymo is the only source dataset in that family that also gets zero shift, so this is consistent
+#   with the repo's established SHIFT_COOR convention rather than an unresolved assumption.
 # - Waymo's native class names (['Vehicle', 'Pedestrian', 'Cyclist']) are used as-is, matching
 #   cfgs/waymo_models/second.yaml (already validated in this repo).
 
@@ -23,6 +21,7 @@ DATA_CONFIG:
     INFO_WITH_FAKELIDAR: False  # da_waymo_dataset.yaml defaults this to True, but the
         # eval pipeline asserts it must be False (see waymo_dataset.py __getitem__); every
         # existing waymo-as-source DA config in this repo overrides it to False too.
+    SHIFT_COOR: [0.0, 0.0, 0.0]  # matches da-post-MIRU2025/da_waymo_dataset_point_calibrated_to_*.yaml
     # MAX_SAMPLES: 100  # Uncomment to limit training samples for quick iteration
 
     DATA_PROCESSOR:

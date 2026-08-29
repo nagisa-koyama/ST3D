@@ -6,12 +6,10 @@
 # kept identical to the kitti2nuscenes sibling for a consistent "family" of rospm-C experiments.
 #
 # ASSUMPTIONS TO VERIFY before relying on results:
-# - No SHIFT_COOR override is set for the Lyft DATA_CONFIG (source): this matches this repo's own
-#   existing precedent for Waymo/Lyft/Pandaset-as-source DA configs (see
-#   cfgs/da-waymo-lyft-pandaset-to-kitti_models/domain_attention/*_st3d_car.yaml), which likewise
-#   leave SHIFT_COOR unset for these three source datasets (only the unsupervised target side gets
-#   a ground-level shift). If Lyft's lidar mount height turns out to matter for
-#   anchor_bottom_heights alignment, this may need revisiting.
+# - SHIFT_COOR: [0.0, 0.0, 1.6] is set for the Lyft DATA_CONFIG (source), matching the value used
+#   for Lyft in cfgs/da-MIRU2025/da_lyft_dataset_point_calibrated_to_{kitti,nuscenes}[_wo_aug].yaml
+#   (also reused as-is by cfgs/da-post-MIRU2025's lyft-involving configs), so this is consistent
+#   with the repo's established SHIFT_COOR convention rather than an unresolved assumption.
 # - Lyft's native class names (lowercase 'car'/'pedestrian'/'bicycle') match
 #   cfgs/lyft_models/second.yaml's full class list (already validated in this repo) and the existing
 #   cfgs/da-waymo-lyft-pandaset-kitti-to-nuscenes_models/domain_attention/*_lyft_to_nuscenes*.yaml
@@ -22,6 +20,7 @@ CLASS_NAMES: ['car', 'pedestrian', 'bicycle']
 DATA_CONFIG:
     _BASE_CONFIG_: cfgs/dataset_configs/da_lyft_dataset.yaml
     DATA_PATH: '../data/lyft'
+    SHIFT_COOR: [0.0, 0.0, 1.6]  # matches da-MIRU2025/da_lyft_dataset_point_calibrated_to_*.yaml
     # MAX_SAMPLES: 100  # Uncomment to limit training samples for quick iteration
 
     DATA_PROCESSOR:
