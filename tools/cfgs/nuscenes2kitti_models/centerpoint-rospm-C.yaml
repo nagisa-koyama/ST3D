@@ -67,6 +67,15 @@ DATA_CONFIG:
 # so ST3D's existing get_eval_configs()/repeat_eval_ckpt() (tools/test.py) pick it up unmodified.
 DATA_CONFIG_TAR:
     _BASE_CONFIG_: cfgs/dataset_configs/da_kitti_dataset.yaml
+    # Map nuScenes-style lowercase predicted names to KITTI capitalized names for evaluation
+    # (kitti_dataset.py's evaluation()/kitti_eval only recognize capitalized native KITTI names).
+    # Ported from UADA3D's TARGET_DATA_CONFIG (was dropped during the ST3D port; see job 22819 crash).
+    CLASS_MAPPING: {'car': 'Car',
+                   'pedestrian': 'Pedestrian',
+                   'bicycle': 'Cyclist',
+                   'Car': 'Car',
+                   'Pedestrian': 'Pedestrian',
+                   'Cyclist': 'Cyclist'}
     DATA_PATH: '../data/kitti'
     FOV_POINTS_ONLY: False
     # MAX_SAMPLES: 100  # Uncomment to limit training samples for quick iteration

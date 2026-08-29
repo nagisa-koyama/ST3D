@@ -350,6 +350,15 @@ class KittiDataset(DatasetTemplate):
         if self.run_conf_calib:
             conf_calib_utils.run_platt_scaling(eval_det_annos, eval_gt_annos, class_names, dataset_name="kitti")
 
+        # Remap predicted names and class_names to KITTI capitalized convention if CLASS_MAPPING is set
+        # (e.g. nuScenes-style lowercase source class names -> KITTI capitalized names for eval).
+        # Ported from UADA3D's kitti_dataset.py::evaluation().
+        class_mapping = self.dataset_cfg.get('CLASS_MAPPING', {})
+        if class_mapping:
+            for anno in eval_det_annos:
+                anno['name'] = np.array([class_mapping.get(n, n) for n in anno['name']])
+            class_names = [class_mapping.get(n, n) for n in class_names]
+
         ap_result_str, ap_dict = kitti_eval.get_official_eval_result(eval_gt_annos, eval_det_annos, class_names)
 
         return ap_result_str, ap_dict
