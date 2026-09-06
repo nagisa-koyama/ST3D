@@ -35,7 +35,10 @@ From: nvcr.io/nvidia/cuda:12.2.2-devel-ubuntu22.04
     # --- RECOMMENDATION: Do not set CUDA_VISIBLE_DEVICES here if you want flexibility at runtime. ---
     # It's better to set this using SINGULARITYENV_CUDA_VISIBLE_DEVICES at runtime.
     # If set here, it's baked into the image.
-    export WANDB_API_KEY="8f252267771b0b737b6b5bcfce56c9e52dc50a99"
+    # WANDB_API_KEY intentionally NOT set here: baking a secret into the image bakes it
+    # into a public artifact. Set it at runtime instead, e.g. via
+    # `SINGULARITYENV_WANDB_API_KEY=... singularity run ...`, or authenticate with
+    # `wandb login` / a mounted `~/.netrc`.
     export WANDB_PROJECT="st3d"
 
     # Define WORK_DIR. If USER_NAME is not set externally, 'default_user' will be used.

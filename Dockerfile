@@ -13,7 +13,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV NVIDIA_DRIVER_CAPABILITIES=all
 # ENV NVIDIA_DRIVER_CAPABILITIES ${NVIDIA_DRIVER_CAPABILITIES:+$NVIDIA_DRIVER_CAPABILITIES,}graphics
 ENV CUDA_VISIBLE_DEVICES 0,1
-ENV WANDB_API_KEY 8f252267771b0b737b6b5bcfce56c9e52dc50a99
+# WANDB_API_KEY intentionally NOT set here: baking a secret into the image would expose it
+# to anyone with the image/Dockerfile. Pass it at `docker run` time instead, e.g.
+# `-e WANDB_API_KEY=...`, or authenticate via `wandb login` / a mounted `~/.netrc`.
 ENV WANDB_PROJECT st3d
 ENV WORK_DIR=/root/${USER_NAME}
 WORKDIR $WORK_DIR
