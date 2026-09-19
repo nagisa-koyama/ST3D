@@ -330,4 +330,12 @@ set -e
 # SCORE_THRESH override, and the final eval. 3 epochs so it crosses epoch boundaries AND
 # triggers at least one pseudo-label refresh (UPDATE_PSEUDO_LABEL_INTERVAL: 2).
 # Not a result - 16 samples produces meaningless AP. Purpose is "does it run".
-singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-post-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2nuscenes_dann_source_target_car_ped_point_label_calibrated.yaml --batch_size 12 --pretrained_model /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --pretrained_model_teacher /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --epochs 3 --use_subset --run_name "phase0_smoke_A1_use_subset" --extra_tag 20260920_smoke --set SELF_TRAIN.USE_TORCHJD False MODEL.POST_PROCESSING.SCORE_THRESH 0.0001
+# NOTE: --use_subset is passed only to the TRAINING dataloaders (train.py:158,168); the
+# eval loader does not receive it, so evaluation still runs on the FULL target val set.
+# --num_epochs_to_eval 1 therefore limits it to the last checkpoint (default is 100, i.e.
+# all of them). Submit with a short wall clock so the scheduler can backfill it:
+#   sbatch --time=02:00:00 scripts/run_experiment.sh
+# The script's own #SBATCH --time=99:00:00 is right for the real 40-epoch runs but makes a
+# smoke test wait for a 99-hour GPU window - on 2026-09-20 every GPU on a6000_ada was
+# allocated (4/4 on all five nodes, node02 down) and job 25484 sat PENDING for 30+ min.
+singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-post-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2nuscenes_dann_source_target_car_ped_point_label_calibrated.yaml --batch_size 12 --pretrained_model /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --pretrained_model_teacher /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --epochs 3 --use_subset --num_epochs_to_eval 1 --run_name "phase0_smoke_A1_use_subset" --extra_tag 20260920_smoke --set SELF_TRAIN.USE_TORCHJD False MODEL.POST_PROCESSING.SCORE_THRESH 0.0001
