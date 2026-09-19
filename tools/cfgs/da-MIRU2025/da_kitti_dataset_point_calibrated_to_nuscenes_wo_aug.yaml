@@ -27,10 +27,14 @@ POINT_FEATURE_ENCODING: {
 }
 
 TEST:
+    # Only FOV_FILTER is honoured here (kitti_dataset.py:288, applied to PREDICTED boxes).
+    # USE_IMAGE_AREA_FILTER and LIMIT_RANGE ([-75.2, -75.2, -2, 75.2, 75.2, 4]) were removed
+    # 2026-09-20: both had zero code references anywhere in the repo, so they silently implied
+    # an image-area and range restriction that evaluation never applied. Ground truth is not
+    # range-filtered at eval by any mechanism. See
+    # experiments_md/20260920_01_evaluation_config_parameter_inventory.md sections 3 and 8.
     BOX_FILTER: {
-        'USE_IMAGE_AREA_FILTER': True,
-        'FOV_FILTER': True,
-        'LIMIT_RANGE': [-75.2, -75.2, -2, 75.2, 75.2, 4]
+        'FOV_FILTER': True
     }
 
 SHIFT_COOR: [0.0, 0.0, 1.7]
