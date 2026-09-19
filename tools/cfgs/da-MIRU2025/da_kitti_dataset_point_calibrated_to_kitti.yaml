@@ -4,6 +4,12 @@ DATASET: 'KittiDataset'
 DATA_PATH: '../data/kitti'
 ONTOLOGY: 'kitti'
 
+# Required: kitti_dataset.py reads this with direct attribute access, so an ABSENT key
+# raises AttributeError at KITTI eval. See da_kitti_dataset.yaml for the full rationale and
+# experiments_md/20260919_05_kitti_metrics_implementation_audit.md sections 11-12.
+FOV_POINTS_ONLY: False
+
+
 DATA_SPLIT: {
     'train': train,
     'test': val

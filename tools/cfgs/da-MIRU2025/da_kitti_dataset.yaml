@@ -4,6 +4,15 @@ DATASET: 'KittiDataset'
 DATA_PATH: '../data/kitti'
 ONTOLOGY: 'kitti'
 
+# Required, not optional: kitti_dataset.py's __getitem__ reads this with DIRECT attribute access
+# (`if self.dataset_cfg.FOV_POINTS_ONLY:`, no .get() fallback, present since the initial release),
+# so an ABSENT key raises AttributeError at KITTI eval - not just a True value. False is also the
+# only value that can be used, because the same line is followed by an assert(0) canary (1d20716)
+# that hard-blocks FOV cropping for KITTI. See
+# experiments_md/20260919_05_kitti_metrics_implementation_audit.md sections 11-12; same remedy as
+# the kitti2nuscenes migration configs after job 20604 hit this.
+FOV_POINTS_ONLY: False
+
 DATA_SPLIT: {
     'train': train,
     'test': val
