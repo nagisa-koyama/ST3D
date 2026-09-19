@@ -246,6 +246,22 @@ set -e
 # KITTI annotations and are genuinely difficulty-stratified. Do not mix the two regimes in one
 # table without saying so. Ignore the bbox/aos columns entirely for non-KITTI targets.
 #
+# SCORE_THRESH / --set FIXES (2026-09-20)
+# Two corrections to the A1/A2 lines below:
+#   1. `--set` uses nargs=argparse.REMAINDER, so it consumes EVERY remaining token. Placing
+#      --run_name/--extra_tag after it made cfg_from_list receive them as config keys
+#      (AssertionError: NotFoundKey: --run_name) and dropped both args. --set must be LAST.
+#   2. This config's MODEL.POST_PROCESSING.SCORE_THRESH is 0.1 - 1000x the 0.0001 used by the
+#      C1-C3 runs it will be tabled against, and high enough to truncate the R40 PR curve:
+#      eval_class() fills only len(thresholds) of 41 precision slots and averages the rest as
+#      zero, so discarding sub-0.1 detections before scoring caps achievable recall and
+#      depresses AP. Overridden to 0.0001 to match the S1 comparison group. The YAML is left
+#      untouched so the published-config provenance is preserved and the override is visible
+#      in the launch command and the W&B record.
+# Comparison groups and their eval SCORE_THRESH (internally consistent within each):
+#   S1 (A1/A2/C1/C2/C3) = 0.0001 | S2 (C4/C5/C6) = 0.0001 | S3+S4 (B1-B4, +24180/24181) = 0.01
+# See experiments_md/20260920_01_evaluation_config_parameter_inventory.md section 2.
+
 # ---------- WAVE 1: the two branch points ----------
 # A1/A2 are a matched pair (PCGrad off vs on) and must be compared to each other - rows 10 and 11
 # of the paper's matrix for dense->sparse, the first time those rows exist in one of the four
@@ -258,10 +274,10 @@ set -e
 # remaining programme is ~36 runs or ~44. Expected targets: C1 ~27.4, C4 ~14.1 BEV Car AP.
 
 # A1 - S1 full method, PCGrad OFF
-#singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-post-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2nuscenes_dann_source_target_car_ped_point_label_calibrated.yaml --batch_size 12 --pretrained_model /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --pretrained_model_teacher /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --set SELF_TRAIN.USE_TORCHJD False --run_name "phase0_A1_lyft2nuscenes_full_method_pcgrad_off" --extra_tag 20260919_phase0
+#singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-post-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2nuscenes_dann_source_target_car_ped_point_label_calibrated.yaml --batch_size 12 --pretrained_model /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --pretrained_model_teacher /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --run_name "phase0_A1_lyft2nuscenes_full_method_pcgrad_off" --extra_tag 20260919_phase0 --set SELF_TRAIN.USE_TORCHJD False MODEL.POST_PROCESSING.SCORE_THRESH 0.0001
 
 # A2 - S1 full method, PCGrad ON
-#singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-post-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2nuscenes_dann_source_target_car_ped_point_label_calibrated.yaml --batch_size 12 --pretrained_model /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --pretrained_model_teacher /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --set SELF_TRAIN.USE_TORCHJD True --run_name "phase0_A2_lyft2nuscenes_full_method_pcgrad_on" --extra_tag 20260919_phase0
+#singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-post-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2nuscenes_dann_source_target_car_ped_point_label_calibrated.yaml --batch_size 12 --pretrained_model /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --pretrained_model_teacher /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --run_name "phase0_A2_lyft2nuscenes_full_method_pcgrad_on" --extra_tag 20260919_phase0 --set SELF_TRAIN.USE_TORCHJD True MODEL.POST_PROCESSING.SCORE_THRESH 0.0001
 
 # C1 - S1 naive (reproduction check vs MIRU2025 Table 2 = 27.4 BEV Car AP). Config default: batch 16, 50 epochs.
 #singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-MIRU2025/second_old_anchor_basebev_multi_lyft2nuscenes_car_ped_default.yaml --run_name "phase0_C1_lyft2nuscenes_naive" --extra_tag 20260919_phase0
@@ -306,3 +322,12 @@ set -e
 
 # C5 - S2 point-only calibrated (vs MIRU2025 = 13.8 BEV Car AP)
 #singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-MIRU2025/second_old_anchor_basebev_multi_nuscenes2kitti_car_ped_point_calibrated.yaml --run_name "phase0_C5_nuscenes2kitti_point_calibrated" --extra_tag 20260919_phase0
+
+# ---------- SMOKE TEST (2026-09-20): functionality confirmation before Wave 1 ----------
+# Exercises the full A1 path end-to-end on 16 samples (--use_subset caps the dataloader at
+# min(16, len(dataset))): config load, teacher checkpoint load, dual source/target loaders,
+# combined source+self-training+DANN loss, the new SELF_TRAIN.USE_TORCHJD switch, the
+# SCORE_THRESH override, and the final eval. 3 epochs so it crosses epoch boundaries AND
+# triggers at least one pseudo-label refresh (UPDATE_PSEUDO_LABEL_INTERVAL: 2).
+# Not a result - 16 samples produces meaningless AP. Purpose is "does it run".
+singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-post-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2nuscenes_dann_source_target_car_ped_point_label_calibrated.yaml --batch_size 12 --pretrained_model /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --pretrained_model_teacher /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --epochs 3 --use_subset --run_name "phase0_smoke_A1_use_subset" --extra_tag 20260920_smoke --set SELF_TRAIN.USE_TORCHJD False MODEL.POST_PROCESSING.SCORE_THRESH 0.0001
