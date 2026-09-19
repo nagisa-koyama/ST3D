@@ -227,3 +227,82 @@ set -e
 # third time per the "don't blindly retry" guidance; next step is defensive NaN/degenerate-box
 # filtering in database_sampler.py, not yet implemented.
 #singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/kitti2kitti_models/second-sourceonly-gtsampling.yaml --epochs 40 --run_name "train_second_sourceonly_kitti2kitti_gtsampling_full40ep_retry1" --extra_tag 20260830_kitti2kitti_gtsampling_retry1
+
+# =====================================================================================
+# 2026-09-19: PHASE 0 of the IEEE Access paper experiment programme (12 runs).
+# Plan: experiments_md/20260919_03_ieee_access_paper_experiment_gap_analysis.md section 6.
+# Audit motivating it: experiments_md/20260919_01_lidar_to_lidar_da_research_summary.md section 5.
+#
+# Purpose: fill the cheap cells that need no new training-loop code, and decide how large the
+# remaining programme is. Cluster caps are 4 running / 8 queued, so run in waves of 4 and keep
+# exactly ONE line uncommented at a time, per this file's existing convention.
+#
+# METRIC NOTE (verified 2026-09-19 by reading pcdet/datasets/kitti/kitti_object_eval_python/eval.py
+# and kitti_utils.transform_annotations_to_kitti_format): the BEV AP math is standard (R40
+# interpolation, rotated BEV IoU on the camera x-z plane), BUT non-KITTI eval targets (nuScenes,
+# PandaSet) have their 2D bbox faked as [0,0,50,50] with truncation/occlusion 0, so every GT box
+# passes all three difficulty levels and nothing is ignored - easy==moderate==hard, and the numbers
+# are "all objects, no difficulty filter", NOT "moderate". KITTI-target runs (C4/C5/C6) DO use real
+# KITTI annotations and are genuinely difficulty-stratified. Do not mix the two regimes in one
+# table without saying so. Ignore the bbox/aos columns entirely for non-KITTI targets.
+#
+# ---------- WAVE 1: the two branch points ----------
+# A1/A2 are a matched pair (PCGrad off vs on) and must be compared to each other - rows 10 and 11
+# of the paper's matrix for dense->sparse, the first time those rows exist in one of the four
+# claimed settings. Both REQUIRE the source-pretrained Lyft checkpoint: train.py guards
+# --pretrained_model/--pretrained_model_teacher with plain `if not None`, so omitting them does not
+# error, it silently trains a randomly-initialised frozen teacher and emits garbage pseudo-labels.
+# Checkpoint verified present: 65MB, 2025-04-07.
+# C1/C4 decide whether MIRU2025's published numbers reproduce under the bugfixed codebase
+# (_BASE_CONFIG_ merge fix de9f9d7, --batch_size default fix 5456291), which determines whether the
+# remaining programme is ~36 runs or ~44. Expected targets: C1 ~27.4, C4 ~14.1 BEV Car AP.
+
+# A1 - S1 full method, PCGrad OFF
+#singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-post-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2nuscenes_dann_source_target_car_ped_point_label_calibrated.yaml --batch_size 12 --pretrained_model /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --pretrained_model_teacher /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --set SELF_TRAIN.USE_TORCHJD False --run_name "phase0_A1_lyft2nuscenes_full_method_pcgrad_off" --extra_tag 20260919_phase0
+
+# A2 - S1 full method, PCGrad ON
+#singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-post-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2nuscenes_dann_source_target_car_ped_point_label_calibrated.yaml --batch_size 12 --pretrained_model /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --pretrained_model_teacher /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --set SELF_TRAIN.USE_TORCHJD True --run_name "phase0_A2_lyft2nuscenes_full_method_pcgrad_on" --extra_tag 20260919_phase0
+
+# C1 - S1 naive (reproduction check vs MIRU2025 Table 2 = 27.4 BEV Car AP). Config default: batch 16, 50 epochs.
+#singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-MIRU2025/second_old_anchor_basebev_multi_lyft2nuscenes_car_ped_default.yaml --run_name "phase0_C1_lyft2nuscenes_naive" --extra_tag 20260919_phase0
+
+# C4 - S2 naive (reproduction check vs MIRU2025 Table 2 = 14.1 BEV Car AP). Config default: batch 16, 30 epochs.
+#singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-MIRU2025/second_old_anchor_basebev_multi_nuscenes2kitti_car_ped_default.yaml --run_name "phase0_C4_nuscenes2kitti_naive" --extra_tag 20260919_phase0
+
+# ---------- WAVE 2: floors + the reproduction verdict ----------
+# B1/B2 are the unadapted floors for the PandaSet scan<->flash setting. Without them, jobs 24180
+# (Car 3D 4.97 / BEV 7.49) and 24181 (15.67 / 24.28) cannot separate "adaptation worked" from
+# "pandar64 is simply the easier target". PandaSet-as-source needs the /root/ST3D bind mount
+# because pandaset_infos_*.pkl bake in absolute /root/ST3D/... paths.
+
+# B1 - S3 floor: pandar64 -> PandarGT source-only
+#singularity exec --nv --bind /home/koyama/data/:/storage --bind /home/koyama/code/ST3D:/root/ST3D /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/pandaset-pandar64-to-pandargt_models/centerpoint-sourceonly.yaml --run_name "phase0_B1_pandar64_to_pandargt_sourceonly_floor" --extra_tag 20260919_phase0
+
+# B2 - S4 floor: PandarGT -> pandar64 source-only
+#singularity exec --nv --bind /home/koyama/data/:/storage --bind /home/koyama/code/ST3D:/root/ST3D /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/pandaset-pandargt-to-pandar64_models/centerpoint-sourceonly.yaml --run_name "phase0_B2_pandargt_to_pandar64_sourceonly_floor" --extra_tag 20260919_phase0
+
+# C3 - S1 point+label calibrated (vs MIRU2025 = 31.2 BEV Car AP)
+#singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-MIRU2025/second_old_anchor_basebev_multi_lyft2nuscenes_car_ped_point_label_calibrated.yaml --run_name "phase0_C3_lyft2nuscenes_point_label_calibrated" --extra_tag 20260919_phase0
+
+# C6 - S2 point+label calibrated (vs MIRU2025 = 14.2 BEV Car AP; density correction is a KNOWN
+# no-op in this direction since nuScenes is sparser than KITTI at every distance, so min(Pt/Ps,1)
+# does nothing - reproducing the flat/slightly-down result IS the useful outcome, not a failure)
+#singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-MIRU2025/second_old_anchor_basebev_multi_nuscenes2kitti_car_ped_point_label_calibrated.yaml --run_name "phase0_C6_nuscenes2kitti_point_label_calibrated" --extra_tag 20260919_phase0
+
+# ---------- WAVE 3: ceilings + remaining table row ----------
+# B3/B4 are supervised oracles (train AND eval on the same device) - deliberately NOT adaptation
+# results. They are the ceilings that make a floor of ~5 AP and an adapted result of ~7 AP
+# interpretable, and they also quantify how much of the ~3x directional asymmetry between jobs
+# 24180/24181 is intrinsic target difficulty rather than anything about adaptation.
+
+# B3 - S3 ceiling: oracle on PandarGT
+#singularity exec --nv --bind /home/koyama/data/:/storage --bind /home/koyama/code/ST3D:/root/ST3D /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/pandaset-pandar64-to-pandargt_models/centerpoint-oracle.yaml --run_name "phase0_B3_pandargt_oracle_ceiling" --extra_tag 20260919_phase0
+
+# B4 - S4 ceiling: oracle on pandar64
+#singularity exec --nv --bind /home/koyama/data/:/storage --bind /home/koyama/code/ST3D:/root/ST3D /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/pandaset-pandargt-to-pandar64_models/centerpoint-oracle.yaml --run_name "phase0_B4_pandar64_oracle_ceiling" --extra_tag 20260919_phase0
+
+# C2 - S1 point-only calibrated (vs MIRU2025 = 30.3 BEV Car AP)
+#singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-MIRU2025/second_old_anchor_basebev_multi_lyft2nuscenes_car_ped_point_calibrated.yaml --run_name "phase0_C2_lyft2nuscenes_point_calibrated" --extra_tag 20260919_phase0
+
+# C5 - S2 point-only calibrated (vs MIRU2025 = 13.8 BEV Car AP)
+#singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-MIRU2025/second_old_anchor_basebev_multi_nuscenes2kitti_car_ped_point_calibrated.yaml --run_name "phase0_C5_nuscenes2kitti_point_calibrated" --extra_tag 20260919_phase0

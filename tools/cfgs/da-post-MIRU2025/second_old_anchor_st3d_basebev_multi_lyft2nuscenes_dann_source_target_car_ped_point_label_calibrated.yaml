@@ -166,6 +166,12 @@ MODEL:
 
 # Teacher model
 SELF_TRAIN:
+    # Gradient projection (PCGrad) over the source / self-training / DANN loss gradients.
+    # Declared here so it can be toggled per run from the CLI (`--set SELF_TRAIN.USE_TORCHJD True`)
+    # and so each run's config and W&B record state which variant was trained: pcdet's
+    # cfg_from_list asserts the leaf key already exists, so --set cannot introduce it otherwise.
+    USE_TORCHJD: False
+
     MODEL_TEACHER:
         CLASS_NAMES: ['lyft:car', 'lyft:pedestrian']
         ONTOLOGY: 'head_per_dataset'

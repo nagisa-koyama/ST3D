@@ -148,8 +148,12 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                             continue
                         domain_preds_accuracy += val * 0.5  # 0.5 is the weight for target domain
 
-        # Control backward and optimization
-        use_torchjd = False
+        # Control backward and optimization.
+        # Gradient projection is opt-in per config rather than a hardcoded literal: whether it
+        # was active is an ablation variable (the loss-gradient conflict it addresses is itself
+        # a reported result), so it must be recorded in the run's config and W&B record instead
+        # of requiring a source edit between runs.
+        use_torchjd = cfg.SELF_TRAIN.get('USE_TORCHJD', False)
         # aggregator = UPGrad()
         aggregator = PCGrad()
         optimizer.zero_grad()
