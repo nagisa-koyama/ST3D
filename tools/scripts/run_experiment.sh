@@ -189,8 +189,31 @@ set -e
 # adaptive_train.py pattern as the other *2nuscenes rospm-C configs. Needs the
 # --bind /home/koyama/code/ST3D:/root/ST3D workaround like other Pandaset-as-source configs
 # (pandaset_infos_*.pkl bake in absolute /root/ST3D/... paths from preprocessing time).
-# job 23407 - submitted 2026-08-30.
+# job 23407 - PASSED: ran cleanly through both epochs + both evals, no crash, W&B run
+# https://wandb.ai/nagisa/st3d/runs/t4z49f31. Near-zero BEV/3D AP after 2 epochs is expected for
+# a smoke test, not a real result. This confirms end-to-end correctness (dataset construction for
+# both LIDAR_DEVICE values, DACenterPoint+Discriminator2 training loop, kitti_eval dispatch) but
+# is NOT the real experiment - no full-length run has been done yet.
 #singularity exec --nv --bind /home/koyama/data/:/storage --bind /home/koyama/code/ST3D:/root/ST3D /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 adaptive_train.py --cfg_file cfgs/pandaset-pandar64-to-pandargt_models/centerpoint-rospm-C.yaml --epochs 2 --num_epochs_to_eval 1 --run_name "test_centerpoint_rospm_C_pandaset_pandar64_to_pandargt" --extra_tag 20260830_sensor_gap_smoke_test
+
+# 2026-09-07: CLASS_NAMES ['Car','Pedestrian','Bicycle'] assumption re-verified against real GT
+# box counts for PandarGT (device=1) - all three classes have ample boxes in both train/val splits
+# (Car ~631k/183k, Pedestrian ~73k/29k, Bicycle ~6.8k/3.2k train/val) - see
+# experiments_md/20260907_02_pandaset_pandar64_to_pandargt_classnames_verification.md and
+# tools/verify_pandaset_pandargt_classes.py. No config change needed.
+# job 24180 - submitted 2026-09-07, genuine 40-epoch full training run (config default NUM_EPOCHS).
+#singularity exec --nv --bind /home/koyama/data/:/storage --bind /home/koyama/code/ST3D:/root/ST3D /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 adaptive_train.py --cfg_file cfgs/pandaset-pandar64-to-pandargt_models/centerpoint-rospm-C.yaml --epochs 40 --run_name "train_centerpoint_rospm_C_pandaset_pandar64_to_pandargt_full40ep" --extra_tag 20260907_full_train
+
+# 2026-09-07: REVERSE-direction sibling - PandarGT (device=1) as source, pandar64 (device=0) as
+# unsupervised target (new cfgs/pandaset-pandargt-to-pandar64_models/centerpoint-rospm-C.yaml -
+# see experiments_md/20260907_02_pandaset_pandar64_to_pandargt_classnames_verification.md for the
+# CLASS_NAMES box-count evidence, reused unchanged from the forward direction; both devices already
+# verified to have ample Car/Pedestrian/Bicycle boxes in both splits). Config-load assertions
+# passed; pytest still green. Per explicit instruction, drafted directly as a full 40-epoch run
+# (no 2-epoch smoke test first, unlike the forward direction's job 23407) - NOTE this means it has
+# zero GPU runtime history, unlike the forward direction's config.
+# job 24181 - submitted 2026-09-07, genuine 40-epoch full training run (config default NUM_EPOCHS).
+#singularity exec --nv --bind /home/koyama/data/:/storage --bind /home/koyama/code/ST3D:/root/ST3D /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 adaptive_train.py --cfg_file cfgs/pandaset-pandargt-to-pandar64_models/centerpoint-rospm-C.yaml --epochs 40 --run_name "train_centerpoint_rospm_C_pandaset_pandargt_to_pandar64_full40ep" --extra_tag 20260907_full_train
 
 # 2026-08-30: retry of job 23371 (second-sourceonly-gtsampling, kitti2kitti), which segfaulted
 # (no Python traceback, core dumped) at epoch 31/40 with zero preceding warnings/errors - see
@@ -200,4 +223,7 @@ set -e
 # before failing - profile consistent with a rare native-crash edge case, not a systematic
 # config/resource bug. Plan: retry as-is first (cheapest option); only pursue defensive
 # NaN/degenerate-box filtering in database_sampler.py if this retry also fails.
-singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/kitti2kitti_models/second-sourceonly-gtsampling.yaml --epochs 40 --run_name "train_second_sourceonly_kitti2kitti_gtsampling_full40ep_retry1" --extra_tag 20260830_kitti2kitti_gtsampling_retry1
+# job 23475 (retry1) - SEGFAULTED again (see experiments_md/active_context.md) - not retried a
+# third time per the "don't blindly retry" guidance; next step is defensive NaN/degenerate-box
+# filtering in database_sampler.py, not yet implemented.
+#singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/kitti2kitti_models/second-sourceonly-gtsampling.yaml --epochs 40 --run_name "train_second_sourceonly_kitti2kitti_gtsampling_full40ep_retry1" --extra_tag 20260830_kitti2kitti_gtsampling_retry1

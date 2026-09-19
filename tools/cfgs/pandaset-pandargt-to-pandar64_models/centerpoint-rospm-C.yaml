@@ -1,0 +1,225 @@
+# REVERSE-direction sibling of
+# cfgs/pandaset-pandar64-to-pandargt_models/centerpoint-rospm-C.yaml - same within-dataset
+# SENSOR-only domain gap (no scene/geography shift at all), with source and target swapped:
+#   - device 1 (source): PandarGT, solid-state forward-facing "flash" lidar
+#   - device 0 (target): pandar64, mechanical 360-degree spinning lidar
+# Source and target are still the SAME Pandaset sequences, recorded simultaneously from the SAME
+# ego vehicle, differing only in which lidar the points/GT-visibility come from (see
+# da_pandaset_dataset.yaml's LIDAR_DEVICE comment and
+# pcdet/datasets/pandaset/pandaset_dataset.py's `_get_lidar_points`/`_get_annotations`, which
+# filter points/cuboids by `cuboids.sensor_id`/`lidar_frame.d` at __getitem__ time from the SAME
+# .pkl infos - no separate info generation needed per device).
+#
+# This direction exists to check whether the sensor-gap DA benefit (or domain-gap magnitude) is
+# symmetric: the forward direction adapts a spinning-360-lidar-trained model to a narrower,
+# denser front-only lidar; this direction instead adapts a narrow-FOV-trained model out to the
+# full 360-degree spinning lidar it's never fully seen.
+#
+# Everything else carries over unchanged from the forward-direction sibling, for the same
+# reasons (see that file's own header for the full rationale):
+# - No SHIFT_COOR: both lidars share one ego coordinate frame regardless of which is source.
+# - No CLASS_MAPPING: source and target share the exact same raw label vocabulary either way.
+# - CLASS_NAMES ['Car', 'Pedestrian', 'Bicycle']: re-verified (not just carried over blindly) via
+#   tools/verify_pandaset_pandargt_classes.py in the forward-direction session - BOTH devices have
+#   ample GT boxes for all three classes in both train/val splits (device=0/pandar64: Car
+#   640,600/184,434, Pedestrian 81,912/33,410, Bicycle 7,072/3,236; device=1/PandarGT: Car
+#   630,952/182,608, Pedestrian 72,913/29,265, Bicycle 6,807/3,213 - train/val). No new
+#   verification run was needed for this direction since both devices were already covered.
+#
+# IMPORTANT - the two DATA_CONFIG/DATA_CONFIG_TAR blocks are not symmetric beyond LIDAR_DEVICE:
+# the source block carries full supervision (mask_points_and_boxes_outside_range box-masking +
+# per-class random_object_scaling + world-level augmentations); the target block is
+# UNSUPERVISED: True with no box-masking and no augmentor override. This file assigns the
+# source-style block to device 1 and the target-style (unsupervised) block to device 0 - i.e. the
+# blocks themselves are swapped, not just the LIDAR_DEVICE values within them unchanged.
+
+CLASS_NAMES: ['Car', 'Pedestrian', 'Bicycle']
+
+DATA_CONFIG:
+    _BASE_CONFIG_: cfgs/dataset_configs/da_pandaset_dataset.yaml
+    DATA_PATH: '../data/pandaset'
+    LIDAR_DEVICE: 1  # PandarGT, solid-state forward-facing "flash" lidar (source)
+    # MAX_SAMPLES: 100  # Uncomment to limit training samples for quick iteration
+
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+
+        - NAME: transform_points_to_voxels
+          VOXEL_SIZE: [0.1, 0.1, 0.15]
+          MAX_POINTS_PER_VOXEL: 10
+          MAX_NUMBER_OF_VOXELS: {
+            'train': 150000,
+            'test': 150000
+          }
+
+    DATA_AUGMENTOR:
+        AUG_CONFIG_LIST:
+            - NAME: random_object_scaling
+              SCALE_UNIFORM_NOISE: {
+                  'Car': [0.8, 1.2],
+                  'Pedestrian': [0.9, 1.1],
+                  'Bicycle': [0.9, 1.1]
+              }
+
+            - NAME: random_world_flip
+              ALONG_AXIS_LIST: ['x', 'y']
+
+            - NAME: random_world_rotation
+              WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+
+            - NAME: random_world_scaling
+              WORLD_SCALE_RANGE: [0.95, 1.05]
+
+# Named DATA_CONFIG_TAR (not UADA3D's TARGET_DATA_CONFIG) to match ST3D's own naming convention,
+# so ST3D's existing get_eval_configs()/repeat_eval_ckpt() (tools/test.py) pick it up unmodified.
+DATA_CONFIG_TAR:
+    _BASE_CONFIG_: cfgs/dataset_configs/da_pandaset_dataset.yaml
+    DATA_PATH: '../data/pandaset'
+    LIDAR_DEVICE: 0  # pandar64, mechanical 360-degree spinning lidar (target)
+    # MAX_SAMPLES: 100  # Uncomment to limit training samples for quick iteration
+
+    UNSUPERVISED: True
+
+    DATA_PROCESSOR: # disable mask_points_and_boxes_outside_range for unlabeled dataset
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+
+        - NAME: transform_points_to_voxels
+          VOXEL_SIZE: [0.1, 0.1, 0.15]
+          MAX_POINTS_PER_VOXEL: 10
+          MAX_NUMBER_OF_VOXELS: {
+            'train': 150000,
+            'test': 150000
+          }
+
+MODEL:
+    NAME: DACenterPoint
+
+    VFE:
+        NAME: MeanVFE
+
+    BACKBONE_3D:
+        NAME: VoxelResBackBone8x
+
+    MAP_TO_BEV:
+        NAME: HeightCompression
+        NUM_BEV_FEATURES: 256
+
+    BACKBONE_2D:
+        NAME: BaseBEVBackbone
+
+        LAYER_NUMS: [5]
+        LAYER_STRIDES: [1]
+        NUM_FILTERS: [128]
+        UPSAMPLE_STRIDES: [2]
+        NUM_UPSAMPLE_FILTERS: [256]
+
+    DISCRIMINATOR:
+        NAME: Discriminator2
+
+        CONDITIONAL_ADAPTATION:
+            # Keys saved by CenterHead (opt-in via DENSE_HEAD.EXPORT_SPATIAL_PREDS below):
+            # cls_preds_spatial [B,3,H,W] (sigmoid), box_preds_spatial [B,8,H,W]
+            INPUT_DICT_KEYS: ['cls_preds_spatial', 'box_preds_spatial', 'spatial_features_2d']
+            MLP_TYPE: Conv2d
+            MLPS: [256, 128]       # prepended with NUM_FEATURES+BOX_REGRESSION_PARAMS=264 at init
+            NUM_CLASSES: 3
+            BOX_REGRESSION_PARAMS: 8   # 2 center + 1 center_z + 3 dim + 2 rot
+            NUM_FEATURES: 256          # spatial_features_2d channels
+            KERNEL_SIZE: 3
+            USE_SIGMOID: True
+
+        LOSS_CONFIG:
+            LOSS_CONDITIONAL: LeastSquares
+
+    DENSE_HEAD:
+        NAME: CenterHead
+        CLASS_AGNOSTIC: False
+
+        # New opt-in hook (ST3D port): exports cls_preds_spatial/box_preds_spatial into the batch
+        # dict for the conditional discriminator above. No-op / absent for every other ST3D config.
+        EXPORT_SPATIAL_PREDS: True
+
+        CLASS_NAMES_EACH_HEAD: [
+            ['Car', 'Pedestrian', 'Bicycle'],
+        ]
+
+        SHARED_CONV_CHANNEL: 64
+        USE_BIAS_BEFORE_NORM: True
+        NUM_HM_CONV: 2 #  heatmap
+        SEPARATE_HEAD_CFG:
+            HEAD_ORDER: ['center', 'center_z', 'dim', 'rot']
+            HEAD_DICT: {
+                'center': {'out_channels': 2, 'num_conv': 2}, # offset
+                'center_z': {'out_channels': 1, 'num_conv': 2},
+                'dim': {'out_channels': 3, 'num_conv': 2},
+                'rot': {'out_channels': 2, 'num_conv': 2},
+            }
+
+        TARGET_ASSIGNER_CONFIG:
+            FEATURE_MAP_STRIDE: 4
+            NUM_MAX_OBJS: 500
+            GAUSSIAN_OVERLAP: 0.1
+            MIN_RADIUS: 2
+
+        LOSS_CONFIG:
+            LOSS_WEIGHTS: {
+                'cls_weight': 1.0,
+                'loc_weight': 2.0,
+                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+            }
+        POST_PROCESSING:
+            SCORE_THRESH: 0.01
+            POST_CENTER_LIMIT_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+            MAX_OBJ_PER_SAMPLE: 500
+            NMS_CONFIG:
+                NMS_TYPE: nms_gpu
+                NMS_THRESH: 0.5
+                NMS_PRE_MAXSIZE: 4096
+                NMS_POST_MAXSIZE: 500
+
+    POST_PROCESSING:
+        RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+        SCORE_THRESH: 0.01
+        OUTPUT_RAW_SCORE: False
+
+        EVAL_METRIC: kitti
+
+        NMS_CONFIG:
+            MULTI_CLASSES_NMS: False
+            NMS_TYPE: nms_gpu
+            NMS_THRESH: 0.5
+            NMS_PRE_MAXSIZE: 4096
+            NMS_POST_MAXSIZE: 500
+
+
+OPTIMIZATION:
+    BATCH_SIZE_PER_GPU: 6
+    NUM_EPOCHS: 40
+
+    OPTIMIZER: adam_onecycle
+    LR: 0.003
+    WEIGHT_DECAY: 0.01
+    MOMENTUM: 0.9
+
+    MOMS: [0.95, 0.85]
+    PCT_START: 0.4
+    DIV_FACTOR: 10
+    DECAY_STEP_LIST: [30, 38]
+    LR_DECAY: 0.1
+    LR_CLIP: 0.0000001
+
+    LR_WARMUP: False
+    WARMUP_EPOCH: 1
+
+    GRAD_NORM_CLIP: 10
