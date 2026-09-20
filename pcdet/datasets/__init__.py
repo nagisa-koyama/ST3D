@@ -89,3 +89,55 @@ def build_dataloader(dataset_cfg, class_names, batch_size, dist, root_path=None,
     )
 
     return dataset, dataloader, sampler
+
+
+def build_inference_dataloader(dataloader, sampler=None):
+    """Build a SECOND DataLoader over an already-built dataset, for an inference-mode pass.
+
+    Why this exists: `persistent_workers` above means a DataLoader's worker processes hold a
+    forked snapshot of the dataset, taken when the loader is first iterated, and no later
+    mutation in the main process ever reaches them - not `dataset.eval()`, not
+    `data_augmentor.re_prepare()`. PyTorch's DataLoader.__iter__ returns the *same* iterator
+    for a persistent-worker loader and `_reset` does not re-send the dataset.
+
+    So a training loader and an inference pass cannot share one loader: whichever mode the
+    workers forked with is the mode they keep for the run's lifetime. Self-training's
+    pseudo-label generation needs the dataset in eval mode while training needs it in train
+    mode, and from 77b1baa (2026-08-17) until 2026-09-21 it used the training loader for both -
+    so generation ran with training=True workers, which called fill_pseudo_labels() and died
+    asking for the very labels it was about to create. See
+    experiments_md/20260921_02_persistent_workers_stale_dataset_state.md.
+
+    This returns a loader with its OWN worker pool over the SAME dataset object, so nothing is
+    re-read from disk. Iterate it for the first time while the dataset is in the mode you want
+    its workers frozen in - after that the mode is fixed, which is exactly what makes it safe.
+    """
+    return DataLoader(
+        dataloader.dataset,  # the Subset wrapper build_dataloader already created
+        batch_size=dataloader.batch_size,
+        pin_memory=True,
+        num_workers=dataloader.num_workers,
+        shuffle=False,
+        collate_fn=dataloader.collate_fn,
+        drop_last=False,
+        sampler=sampler,
+        timeout=0,
+        persistent_workers=(dataloader.num_workers > 0),
+    )
+
+
+def restart_persistent_workers(loader):
+    """Drop a DataLoader's persistent worker pool so the next `iter()` re-forks it.
+
+    Worker processes hold a snapshot of the dataset taken when the loader was first iterated;
+    a later mutation in the main process is invisible to them (see
+    pcdet/datasets/__init__.py::build_inference_dataloader). Call this after mutating the
+    dataset - e.g. `data_augmentor.re_prepare()` - if the change has to reach the workers.
+    """
+    it = getattr(loader, '_iterator', None)
+    if it is not None:
+        loader._iterator = None
+        try:
+            it._shutdown_workers()
+        except Exception:
+            pass  # already torn down; the next iter() re-forks regardless

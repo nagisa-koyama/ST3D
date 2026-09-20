@@ -358,4 +358,12 @@ set -e
 # correction) were silently missing. Fixed in e107939 (2026-09-21); pre-flight now confirms
 # sample_points_hist_based resolves in both DATA_CONFIG_TAR and DATA_CONFIGS.LYFT_CONFIG.
 # This resubmission is the first run of this config with the base chain actually intact.
-singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-post-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2nuscenes_dann_source_target_car_ped_point_label_calibrated.yaml --batch_size 12 --pretrained_model /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --pretrained_model_teacher /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --epochs 3 --use_subset --num_epochs_to_eval 1 --run_name "phase0_smoke_A1_use_subset_basecfg_fixed" --extra_tag 20260921_smoke --set SELF_TRAIN.USE_TORCHJD False MODEL.POST_PROCESSING.SCORE_THRESH 0.0001
+#
+# Job 25502 (2026-09-21) then FAILED after 1:54 with "Cannot find pseudo label for frame: ..."
+# raised DURING pseudo-label generation. Unrelated to the config fix - that part was confirmed
+# working in its log (sample_points_hist_based and POINT_CLOUD_RANGE both resolved). Cause was
+# persistent_workers (77b1baa): train_model_st iterated the target loader before the epoch
+# loop, so its workers forked with training=True, and dataset.eval() before generation only
+# mutated the main process. Generation therefore ran with train-mode workers, which call
+# fill_pseudo_labels(). Fixed by giving generation its own eval-mode loader.
+singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-post-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2nuscenes_dann_source_target_car_ped_point_label_calibrated.yaml --batch_size 12 --pretrained_model /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --pretrained_model_teacher /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --epochs 3 --use_subset --num_epochs_to_eval 1 --run_name "phase0_smoke_A1_use_subset_psgen_fixed" --extra_tag 20260921_smoke2 --set SELF_TRAIN.USE_TORCHJD False MODEL.POST_PROCESSING.SCORE_THRESH 0.0001

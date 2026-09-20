@@ -11,6 +11,7 @@ from pcdet.utils import self_training_utils
 from pcdet.config import cfg
 from pcdet.models import load_data_to_gpu
 from pcdet.models.model_utils.dsnorm import set_ds_source, set_ds_target
+from pcdet.datasets import build_inference_dataloader, restart_persistent_workers
 
 import wandb
 import torchjd
@@ -363,7 +364,18 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
             target_loader.dataset.dataset.merge_all_iters_to_one_epoch(merge=True, epochs=total_epochs)
             total_it_each_epoch = len(target_loader) // max(total_epochs, 1)
 
-        dataloader_iter = iter(target_loader)
+        # Pseudo-label generation is an INFERENCE pass: it needs the target dataset in eval
+        # mode, while training needs it in train mode. Persistent workers freeze whichever mode
+        # they forked with, so one loader cannot serve both - give generation its own loader
+        # over the same dataset object. Its workers fork on the first iter() inside
+        # save_pseudo_label_epoch, i.e. after dataset.eval() below, and stay in eval mode.
+        ps_gen_loader = build_inference_dataloader(target_loader, sampler=target_sampler)
+
+        # Deliberately lazy: the training loader must NOT be iterated before the first
+        # generation pass, or its workers would fork while the dataset is still in train mode
+        # and then be reused for generation. Set back to None whenever the dataset is mutated
+        # in a way the training workers have to observe.
+        dataloader_iter = None
         for cur_epoch in tbar:
             if target_sampler is not None:
                 target_sampler.set_epoch(cur_epoch)
@@ -381,7 +393,7 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
                      and cur_epoch != 0):
                 target_loader.dataset.dataset.eval()
                 self_training_utils.save_pseudo_label_epoch(
-                    model_teacher, target_loader, rank,
+                    model_teacher, ps_gen_loader, rank,
                     leave_pbar=True, ps_label_dir=ps_label_dir, cur_epoch=cur_epoch
                 )
                 target_loader.dataset.dataset.train()
@@ -391,6 +403,17 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
                     (cur_epoch in cfg.SELF_TRAIN.PROG_AUG.UPDATE_AUG):
                 target_loader.dataset.dataset.data_augmentor.re_prepare(
                     augmentor_configs=None, intensity=cfg.SELF_TRAIN.PROG_AUG.SCALE)
+                # The training workers hold a frozen copy of the augmentor, so re_prepare()
+                # alone would be a no-op for them. Force a re-fork. This is bounded to the few
+                # epochs in PROG_AUG.UPDATE_AUG rather than every epoch, which is what 77b1baa
+                # was avoiding when it enabled persistent_workers.
+                restart_persistent_workers(target_loader)
+                dataloader_iter = None
+
+            if dataloader_iter is None:
+                # Forks the training workers in TRAIN mode, after any generation pass and any
+                # augmentor update for this epoch.
+                dataloader_iter = iter(target_loader)
 
             accumulated_iter = train_one_epoch_st(
                 model, optimizer, source_readers, target_loader, model_func,
