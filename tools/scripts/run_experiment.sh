@@ -376,6 +376,9 @@ set -e
 # Re-run again after the 2026-09-21 shuffle fix (training loaders now actually shuffle),
 # tag 20260921_smoke3: the target training loader is now shuffled while pseudo-labels are
 # looked up by frame_id, so this confirms that lookup still resolves.
+# Job 25504 (2026-09-21) PASSED: COMPLETED exit 0, 19:48, wandb run cpd38mc1. Both
+# generate_ps_e0 and generate_ps_e2 at 100%, zero tracebacks, 4 AP tables. The shuffled
+# target loader does not disturb the frame_id-keyed pseudo-label lookup.
 #singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-post-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2nuscenes_dann_source_target_car_ped_point_label_calibrated.yaml --batch_size 12 --pretrained_model /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --pretrained_model_teacher /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --epochs 3 --use_subset --num_epochs_to_eval 1 --run_name "phase0_smoke_A1_use_subset_shuffle_fixed" --extra_tag 20260921_smoke3 --set SELF_TRAIN.USE_TORCHJD False MODEL.POST_PROCESSING.SCORE_THRESH 0.0001
 
 
