@@ -51,29 +51,53 @@ def cfg_from_list(cfg_list, config):
             d[subkey] = value
 
 
-def _fill_missing_from_base(child, base):
+def _load_base_yaml(base_path):
+    """Load a `_BASE_CONFIG_` file, mirroring cfg_from_yaml_file's loader fallback."""
+    with open(base_path, 'r') as f:
+        print("{} is loaded".format(base_path))
+        try:
+            return yaml.full_load(f)
+        except Exception:
+            f.seek(0)
+            return yaml.safe_load(f)
+
+
+def _fill_missing_from_base(child, base, _chain=()):
     """Recursively fill keys from a `_BASE_CONFIG_` file into `child`, WITHOUT overwriting any
     key `child` already explicitly defines. This implements proper base-config inheritance
     (child values always take precedence over the base's); the base only supplies defaults for
     keys the child doesn't set itself.
+
+    A base file may itself declare `_BASE_CONFIG_`. Such chains are expanded to arbitrary depth,
+    with the nearest definition winning at every level. Expanding only one level was a real
+    regression between `de9f9d7` (2026-08-23) and this fix: configs reaching their dataset via
+    `DATA_CONFIGS.<NAME>._BASE_CONFIG_` -> another config with its own `_BASE_CONFIG_` silently
+    lost the whole second hop (`DATA_PROCESSOR`, `POINT_CLOUD_RANGE`, ...). See
+    experiments_md/20260921_01_base_config_recursion_regression_fix.md.
     """
+    if '_BASE_CONFIG_' in base:
+        base_path = base['_BASE_CONFIG_']
+        if base_path in _chain:
+            raise ValueError('Cyclic _BASE_CONFIG_ chain: {}'.format(
+                ' -> '.join(list(_chain) + [base_path])))
+        _fill_missing_from_base(base, _load_base_yaml(base_path), _chain + (base_path,))
+
     for key, val in base.items():
+        if key == '_BASE_CONFIG_':
+            # Bookkeeping key only. `child` keeps its own, so a resolved config records the file
+            # it actually declared rather than an inherited ancestor's path.
+            continue
         if key not in child:
             child[key] = val
         elif isinstance(val, dict) and isinstance(child[key], dict):
-            _fill_missing_from_base(child[key], val)
+            _fill_missing_from_base(child[key], val, _chain)
     return child
 
 
 def merge_new_config(config, new_config):
     if '_BASE_CONFIG_' in new_config:
-        with open(new_config['_BASE_CONFIG_'], 'r') as f:
-            print("{} is loaded".format(new_config['_BASE_CONFIG_']))
-            try:
-                yaml_config = yaml.full_load(f)
-            except:
-                yaml_config = yaml.safe_load(f)
-        _fill_missing_from_base(new_config, yaml_config)
+        base_path = new_config['_BASE_CONFIG_']
+        _fill_missing_from_base(new_config, _load_base_yaml(base_path), (base_path,))
 
     for key, val in new_config.items():
         if not isinstance(val, dict):

@@ -55,12 +55,24 @@ Full migration plan and deep-dive reports live in the separate
 Any yaml block can set `_BASE_CONFIG_: <path>` to inherit defaults from
 another yaml file. Semantics: **the block's own keys always win**; the base
 file only supplies values for keys the block doesn't set itself (recursing
-into nested dicts). This is implemented via `_fill_missing_from_base()` in
-`pcdet/config.py`. If you add an override in a config that uses
-`_BASE_CONFIG_`, it will be respected — this was NOT always true before the
-2026-08-23 fix (see `experiments_md/20260823_01_merge_new_config_base_override_bug.md`
-for the full bug writeup and `tests/test_config_merge.py` for the
-regression test).
+into nested dicts). A base file may declare its **own** `_BASE_CONFIG_`, and
+such chains are followed to arbitrary depth, with the **nearest** definition
+winning at each level; a cyclic chain raises `ValueError`. Implemented by
+`_fill_missing_from_base()` in `pcdet/config.py`.
+
+Two regressions have hit this code, both silent:
+- Until 2026-08-23 the base **overwrote** the child, so per-config overrides
+  were ignored (`de9f9d7`; writeup in
+  `experiments_md/20260823_01_merge_new_config_base_override_bug.md`).
+- From `de9f9d7` until 2026-09-21 chains expanded only **one** level, so
+  `DATA_PROCESSOR`/`POINT_CLOUD_RANGE` silently vanished from the whole
+  `da-MIRU2025` family while the config still loaded without error (writeup
+  in `experiments_md/20260921_01_base_config_recursion_regression_fix.md`).
+
+Because of the second one, `tests/test_config_merge.py` pins the semantics
+and `tests/test_config_real_configs.py` asserts the repo's own multi-level
+configs resolve to **complete** dataset blocks — a config that loads is not
+evidence that it is intact.
 
 ## Experiment launching process
 
