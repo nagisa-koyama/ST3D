@@ -366,4 +366,10 @@ set -e
 # loop, so its workers forked with training=True, and dataset.eval() before generation only
 # mutated the main process. Generation therefore ran with train-mode workers, which call
 # fill_pseudo_labels(). Fixed by giving generation its own eval-mode loader.
+#
+# Job 25503 (2026-09-21) PASSED: COMPLETED exit 0, 19:53, wandb run vpv8yet9. Both
+# generate_ps_e0 and generate_ps_e2 reached 100% (so the epoch-2 refresh and the memory-ensemble
+# path are exercised too), 3 epochs trained, final eval produced KITTI R40 tables, zero
+# tracebacks. The AP values are meaningless by design - 16 training samples. Phase 0 Wave 1
+# (A1, A2, C1, C4) is clear to submit.
 singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-post-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2nuscenes_dann_source_target_car_ped_point_label_calibrated.yaml --batch_size 12 --pretrained_model /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --pretrained_model_teacher /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --epochs 3 --use_subset --num_epochs_to_eval 1 --run_name "phase0_smoke_A1_use_subset_psgen_fixed" --extra_tag 20260921_smoke2 --set SELF_TRAIN.USE_TORCHJD False MODEL.POST_PROCESSING.SCORE_THRESH 0.0001
