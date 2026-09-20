@@ -372,4 +372,34 @@ set -e
 # path are exercised too), 3 epochs trained, final eval produced KITTI R40 tables, zero
 # tracebacks. The AP values are meaningless by design - 16 training samples. Phase 0 Wave 1
 # (A1, A2, C1, C4) is clear to submit.
-singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-post-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2nuscenes_dann_source_target_car_ped_point_label_calibrated.yaml --batch_size 12 --pretrained_model /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --pretrained_model_teacher /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --epochs 3 --use_subset --num_epochs_to_eval 1 --run_name "phase0_smoke_A1_use_subset_psgen_fixed" --extra_tag 20260921_smoke2 --set SELF_TRAIN.USE_TORCHJD False MODEL.POST_PROCESSING.SCORE_THRESH 0.0001
+#
+# Re-run again after the 2026-09-21 shuffle fix (training loaders now actually shuffle),
+# tag 20260921_smoke3: the target training loader is now shuffled while pseudo-labels are
+# looked up by frame_id, so this confirms that lookup still resolves.
+#singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-post-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2nuscenes_dann_source_target_car_ped_point_label_calibrated.yaml --batch_size 12 --pretrained_model /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --pretrained_model_teacher /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --epochs 3 --use_subset --num_epochs_to_eval 1 --run_name "phase0_smoke_A1_use_subset_shuffle_fixed" --extra_tag 20260921_smoke3 --set SELF_TRAIN.USE_TORCHJD False MODEL.POST_PROCESSING.SCORE_THRESH 0.0001
+
+
+# ---------- SHUFFLE A/B (2026-09-21): does restoring shuffling change results? ----------
+# build_dataloader had `shuffle = (sampler is not None) and training` from 032aa5c (2025-01-30)
+# until 2026-09-21, so single-GPU training used a FIXED sample order every epoch. Severity is
+# dataset-dependent, because it depends on how the *_infos_*.pkl happen to be ordered:
+#   nuScenes  strictly scene-sequential (99.8% of adjacent samples share a scene) -> batch ~= 1 scene
+#   PandaSet  strictly sequence-ordered (014/00, 014/01, ...)                     -> batch ~= 1 scene
+#   KITTI     temporally decorrelated (1.2% adjacent-box match, ~chance)          -> ~no effect
+#   Lyft      already randomly ordered on disk (hosts interleaved, ts non-monotonic) -> ~no effect
+# That is why recent KITTI-source runs (e.g. job 23367, BEV 76.28) looked fine despite the bug.
+#
+# C4 is the ideal probe: source-only (no SELF_TRAIN), nuScenes source -> the affected regime, and
+# it doubles as the Phase 0 reproduction check against MIRU2025's 14.1 BEV Car AP, which was
+# itself produced unshuffled. Two arms differing ONLY in --no_shuffle, both with --fix_random_seed
+# so initialisation is identical.
+#
+# Expected: the --no_shuffle arm should land near 14.1 (reproducing MIRU2025); the shuffled arm is
+# the measurement. A KITTI-source control pair would test the "decorrelated -> no effect"
+# prediction but is not submitted yet.
+
+# C4-shuffled - nuScenes->KITTI source-only WITH shuffling (the fix)
+#singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-MIRU2025/second_old_anchor_basebev_multi_nuscenes2kitti_car_ped_default.yaml --fix_random_seed --run_name "shuffleAB_C4_nuscenes2kitti_shuffled" --extra_tag 20260921_shuffle_ab
+
+# C4-unshuffled - identical except --no_shuffle (reproduces the pre-fix behaviour)
+singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-MIRU2025/second_old_anchor_basebev_multi_nuscenes2kitti_car_ped_default.yaml --fix_random_seed --no_shuffle --run_name "shuffleAB_C4_nuscenes2kitti_unshuffled" --extra_tag 20260921_shuffle_ab

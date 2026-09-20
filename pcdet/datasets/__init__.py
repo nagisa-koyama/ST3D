@@ -68,9 +68,18 @@ def build_dataloader(dataset_cfg, class_names, batch_size, dist, root_path=None,
             sampler = DistributedSampler(dataset, world_size, rank, shuffle=False)
     else:
         sampler = None
-    shuffle = (sampler is not None) and training
+    # `sampler is None`, NOT `is not None`. A sampler and shuffle=True are mutually exclusive in
+    # DataLoader, so the DataLoader's own shuffling is only available when no sampler is passed;
+    # under DDP the DistributedSampler does the shuffling instead (its default is shuffle=True,
+    # and the eval branch above disables it explicitly).
+    #
+    # This read `is not None` from 032aa5c (2025-01-30) until 2026-09-21, which meant single-GPU
+    # training fed samples in a FIXED order every epoch, and DDP training could not construct a
+    # DataLoader at all. See
+    # experiments_md/20260921_03_dataloader_shuffle_disabled_in_training.md.
+    shuffle = (sampler is None) and training
     if force_no_shuffle is not None:
-        shuffle = shuffle and not force_no_shuffle # TODO: check if this works as intended with demo.py
+        shuffle = shuffle and not force_no_shuffle
     length = len(dataset) if not use_subset else min(16, len(dataset))
     if logger is not None:
         logger.info(f'Total number of samples: {length}, using subset: {use_subset}')

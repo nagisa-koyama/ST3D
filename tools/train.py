@@ -55,6 +55,11 @@ def parse_config():
     parser.add_argument('--num_epochs_to_eval', type=int, default=100, help='number of checkpoints to be evaluated')
     parser.add_argument('--run_name', type=str, default=None, help='run name for wandb')
     parser.add_argument('--use_subset', action='store_true', help='use subset of data for quick test')
+    parser.add_argument('--no_shuffle', action='store_true',
+                        help='disable training-set shuffling. Only for A/B-ing the 2026-09-21 '
+                             'shuffle fix against runs made while it was broken - see '
+                             'experiments_md/20260921_03_dataloader_shuffle_disabled_in_training.md. '
+                             'Not for normal training.')
 
     args = parser.parse_args()
 
@@ -155,7 +160,8 @@ def main():
             merge_all_iters_to_one_epoch=args.merge_all_iters_to_one_epoch,
             total_epochs=args.epochs,
             model_ontology=source_model_ontology,
-            use_subset=args.use_subset
+            use_subset=args.use_subset,
+            force_no_shuffle=args.no_shuffle
         )
         dataset = dict(dataset_class=source_set, loader=source_loader, sampler=source_sampler)
         source_datasets.append(dataset)
@@ -165,7 +171,8 @@ def main():
             cfg.DATA_CONFIG_TAR, cfg.CLASS_NAMES, args.batch_size,
             dist_train, workers=args.workers, logger=logger, training=True,
             model_ontology=cfg.get('ONTOLOGY', None),
-            use_subset=args.use_subset
+            use_subset=args.use_subset,
+            force_no_shuffle=args.no_shuffle
         )
     else:
         target_set = target_loader = target_sampler = None
