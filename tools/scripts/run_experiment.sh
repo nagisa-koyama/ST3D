@@ -15,6 +15,18 @@
 #SBATCH --error=logs/error_%j_a6000_ada.txt
 #SBATCH --time=99:00:00
 
+# PARTITION FALLBACK: the #SBATCH --partition above is a default, overridable at submit time.
+# a6000_ada is often saturated; a6000 (node11-13), a100 (node21-22), pro6000 (node23) and
+# rtx8000 (node61-62) are all usable, and the container's extensions were compiled with
+# TORCH_CUDA_ARCH_LIST="7.0 7.5 8.0 8.6 8.9 9.0", which covers Turing (rtx8000), A100 (8.0),
+# A6000 (8.6) and Ada (8.9) - so there is no arch mismatch on any of them. Slurm accepts a
+# comma-separated list and takes whichever frees first:
+#   sbatch --partition=a6000_ada,a6000,a100 --time=02:00:00 scripts/run_experiment.sh
+# Keep --gres=gpu:1 untyped when doing this: each partition holds a single GPU type, so the
+# typed form (--gres=gpu:a6000_ada:1) would pin the job back to one partition.
+# Check headroom first with:
+#   sinfo -N -O "Partition:20,NodeList:10,StateLong:12,Gres:20,GresUsed:25"
+
 #SLACK: notify-start
 #SLACK: notify-end
 #SLACK: notify-error
@@ -338,4 +350,12 @@ set -e
 # The script's own #SBATCH --time=99:00:00 is right for the real 40-epoch runs but makes a
 # smoke test wait for a 99-hour GPU window - on 2026-09-20 every GPU on a6000_ada was
 # allocated (4/4 on all five nodes, node02 down) and job 25484 sat PENDING for 30+ min.
-singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-post-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2nuscenes_dann_source_target_car_ped_point_label_calibrated.yaml --batch_size 12 --pretrained_model /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --pretrained_model_teacher /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --epochs 3 --use_subset --num_epochs_to_eval 1 --run_name "phase0_smoke_A1_use_subset" --extra_tag 20260920_smoke --set SELF_TRAIN.USE_TORCHJD False MODEL.POST_PROCESSING.SCORE_THRESH 0.0001
+#
+# History: job 25484 (2026-09-20) was the first attempt. Job 25485 was CANCELLED before it
+# ran, on discovering that de9f9d7 had broken recursive _BASE_CONFIG_ expansion - this config
+# reaches its dataset through DATA_CONFIGS.LYFT_CONFIG._BASE_CONFIG_ -> a dataset yaml with
+# its own _BASE_CONFIG_, so DATA_PROCESSOR and POINT_CLOUD_RANGE (and hence the density
+# correction) were silently missing. Fixed in e107939 (2026-09-21); pre-flight now confirms
+# sample_points_hist_based resolves in both DATA_CONFIG_TAR and DATA_CONFIGS.LYFT_CONFIG.
+# This resubmission is the first run of this config with the base chain actually intact.
+singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-post-MIRU2025/second_old_anchor_st3d_basebev_multi_lyft2nuscenes_dann_source_target_car_ped_point_label_calibrated.yaml --batch_size 12 --pretrained_model /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --pretrained_model_teacher /storage/wandb/run-20250303_153658-ggpm88cg/files/ckpt/checkpoint_epoch_50.pth --epochs 3 --use_subset --num_epochs_to_eval 1 --run_name "phase0_smoke_A1_use_subset_basecfg_fixed" --extra_tag 20260921_smoke --set SELF_TRAIN.USE_TORCHJD False MODEL.POST_PROCESSING.SCORE_THRESH 0.0001
