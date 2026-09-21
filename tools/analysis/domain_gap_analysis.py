@@ -473,6 +473,112 @@ def analysis_shift_coor(P, frames, **_):
 CONFIGURED_SHIFT = {'KITTI': 1.7, 'nuScenes': 1.75, 'Lyft': 1.6, 'PandaSet': 0.3, 'Waymo': 0.0}
 
 
+def analysis_ros_sn(P, frames, **_):
+    """Derive Random-Object-Scaling and Statistical-Normalization parameters from the data.
+
+    SN (`normalize_object_size`, SIZE_RES) is an ADDITIVE per-dimension offset, target minus
+    source. It needs target size statistics, so it presumes labelled target data - which a strict
+    UDA setup does not have.
+
+    ROS (`random_object_scaling`, SCALE_UNIFORM_NOISE) draws ONE isotropic multiplier per box and
+    applies it to all three dimensions (`scale_pre_object`). It only perturbs the source, so it is
+    UDA-legal. Two intervals are reported:
+
+      * matched  - maps the source onto the target's p5..p95 scale range. Uses target statistics,
+                   so it is information-equivalent to SN and is NOT strictly UDA-legal; useful as
+                   an upper bound on what ROS could achieve.
+      * transfer - derived WITHOUT the target: the spread of median object scale across the other
+                   source domains, which is what "regional vehicle size varies" means empirically.
+                   This is the UDA-legal choice.
+
+    Both augmentations are class-blind in this repo, so a per-class interval cannot be configured
+    today; the per-class rows show what a class-aware implementation would want.
+    """
+    scale = lambda d: np.cbrt(d[:, 0] * d[:, 1] * d[:, 2])       # isotropic size of a box
+    dims = {}
+    for name, plat in P.items():
+        if name == 'Waymo':
+            src = plat.infos
+        else:
+            src = plat.sample(frames * 5) if name.startswith('PandaSet') else plat.infos
+        per_class = {c: [] for c in ('Car', 'Pedestrian', 'Cyclist')}
+        for info in src:
+            if name.startswith('PandaSet'):
+                fr = plat.frame(info)
+                boxes, names = fr.boxes, fr.names
+            elif 'gt_boxes' in info:
+                boxes, names = np.asarray(info['gt_boxes']), np.asarray(info['gt_names'])
+            elif 'annos' in info:
+                boxes = np.asarray(info['annos']['gt_boxes_lidar'])
+                names = np.asarray(info['annos']['name'])[:len(boxes)]
+            else:
+                continue
+            for c in per_class:
+                m = np.isin(names, list(CLASS_ALIASES[name.split()[0]][c]))
+                if m.sum():
+                    per_class[c].append(np.asarray(boxes)[m][:, 3:6])
+        dims[name] = {c: (np.concatenate(v) if v else np.zeros((0, 3)))
+                      for c, v in per_class.items()}
+
+    tgt = dims['KITTI']
+    print('=== SN (normalize_object_size) SIZE_RES = KITTI mean - source mean, metres ===')
+    print(f"{'source':26s} {'class':11s} {'d_length':>9s} {'d_width':>8s} {'d_height':>9s}")
+    for c in ('Car', 'Pedestrian', 'Cyclist'):
+        if not len(tgt[c]):
+            continue
+        t = tgt[c].mean(0)
+        for name in dims:
+            if name == 'KITTI' or not len(dims[name][c]):
+                continue
+            d = t - dims[name][c].mean(0)
+            print(f'{name:26s} {c:11s} {d[0]:9.2f} {d[1]:8.2f} {d[2]:9.2f}')
+    print(f"\n  repo hardcodes SIZE_RES = [-0.91, -0.49, -0.26] for every pair AND every class")
+
+    print('\n=== ROS (random_object_scaling) SCALE_UNIFORM_NOISE ===')
+    print(f"{'source':26s} {'class':11s} {'src median':>11s} {'matched interval':>19s} "
+          f"{'centre':>7s}")
+    for c in ('Car', 'Pedestrian', 'Cyclist'):
+        if len(tgt[c]) < 50:
+            continue
+        ts = scale(tgt[c])
+        lo_t, hi_t = np.percentile(ts, [5, 95])
+        for name in dims:
+            if name == 'KITTI' or len(dims[name][c]) < 50:
+                continue
+            ss = scale(dims[name][c])
+            med = np.median(ss)
+            print(f'{name:26s} {c:11s} {med:11.3f} '
+                  f'{"[%.2f, %.2f]" % (lo_t / med, hi_t / med):>19s} '
+                  f'{np.median(ts) / med:7.2f}')
+
+    print('\n=== ROS, strictly UDA-legal: spread across the SOURCE pool only (KITTI excluded) ===')
+    for c in ('Car', 'Pedestrian', 'Cyclist'):
+        meds = {n: np.median(scale(dims[n][c]))
+                for n in dims if n != 'KITTI' and len(dims[n][c]) >= 50}
+        if len(meds) < 3:
+            continue
+        vals = np.array(list(meds.values()))
+        ref = np.median(vals)
+        with_k = np.median(scale(dims['KITTI'][c])) / ref if len(dims['KITTI'][c]) else np.nan
+        print(f'  {c:11s} source medians {np.round(vals, 2).tolist()}')
+        print(f'  {"":11s} -> source-only interval [{vals.min() / ref:.2f}, {vals.max() / ref:.2f}]'
+              f'   but KITTI actually sits at {with_k:.2f} of the source median')
+    print('\n  Every available source is a large-vehicle (US) domain, so the source pool carries')
+    print('  almost no signal about a smaller-vehicle target. A target-free ROS interval therefore')
+    print('  has to encode a PRIOR about regional vehicle size, not a measured source spread -')
+    print('  which is exactly the justification UADA3D gives (USA vs Europe).')
+
+
+CLASS_ALIASES = {
+    'KITTI': {'Car': {'Car'}, 'Pedestrian': {'Pedestrian'}, 'Cyclist': {'Cyclist'}},
+    'nuScenes': {'Car': {'car'}, 'Pedestrian': {'pedestrian'}, 'Cyclist': {'bicycle'}},
+    'Lyft': {'Car': {'car'}, 'Pedestrian': {'pedestrian'}, 'Cyclist': {'bicycle'}},
+    'PandaSet': {'Car': {'Car'}, 'Pedestrian': {'Pedestrian', 'Pedestrian with Object'},
+                 'Cyclist': {'Bicycle'}},
+    'Waymo': {'Car': {'Vehicle'}, 'Pedestrian': {'Pedestrian'}, 'Cyclist': {'Cyclist'}},
+}
+
+
 def analysis_platforms(P, frames, **_):
     print(f"{'platform':26s} {'frames':>8s} {'pts/frame':>11s}")
     for name, plat in P.items():
@@ -480,7 +586,7 @@ def analysis_platforms(P, frames, **_):
         print(f'{name:26s} {len(plat):8d} {h:11,.0f}')
 
 
-ANALYSES = dict(shift_coor=analysis_shift_coor, range=analysis_range, boxes=analysis_boxes, intensity=analysis_intensity,
+ANALYSES = dict(ros_sn=analysis_ros_sn, shift_coor=analysis_shift_coor, range=analysis_range, boxes=analysis_boxes, intensity=analysis_intensity,
                 beams=analysis_beams, accumulate=analysis_accumulate,
                 correction=analysis_correction, platforms=analysis_platforms)
 
