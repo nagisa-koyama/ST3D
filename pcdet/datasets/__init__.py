@@ -4,6 +4,7 @@ from torch.utils.data import DistributedSampler as _DistributedSampler
 from pcdet.utils import common_utils
 
 from .dataset import DatasetTemplate
+from .point_calibration import compute_range_histogram, link_point_calibration  # noqa: F401
 from .kitti.kitti_dataset import KittiDataset
 from .waymo.waymo_dataset import WaymoDataset
 from .nuscenes.nuscenes_dataset import NuScenesDataset

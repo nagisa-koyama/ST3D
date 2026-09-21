@@ -12,7 +12,7 @@ from test import repeat_eval_ckpt
 import wandb
 
 from pcdet.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_file
-from pcdet.datasets import build_dataloader
+from pcdet.datasets import build_dataloader, link_point_calibration
 from pcdet.models import build_network, model_fn_decorator
 from pcdet.utils import common_utils
 from train_utils.optimization import build_optimizer, build_scheduler, build_grl_scheduler
@@ -138,6 +138,18 @@ def main():
     )
     logger.info('source dataset: %s', source_set.__class__.__name__)
     logger.info('target dataset: %s', target_set.__class__.__name__)
+
+    # Measure the density-correction histograms from the datasets actually being trained on,
+    # rather than loading hist_dist_*.npy files whose frame counts, preprocessing and
+    # POINT_CLOUD_RANGE may no longer match. Must happen before either loader is iterated:
+    # DataLoader workers fork a copy of the dataset and never see later mutations.
+    if cfg.DATA_CONFIG.get('HIST_DIST_ON_THE_FLY', False):
+        link_point_calibration(
+            source_set, target_set,
+            num_frames=cfg.DATA_CONFIG.get('HIST_DIST_FRAMES', 200),
+            num_bins=cfg.DATA_CONFIG.get('HIST_DIST_BINS', 50),
+            logger=logger
+        )
 
     # -----------------------create networks---------------------------
     model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=source_set)

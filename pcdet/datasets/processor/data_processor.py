@@ -77,6 +77,15 @@ class DataProcessor(object):
             cur_processor = getattr(self, cur_cfg.NAME)(config=cur_cfg)
             self.data_processor_queue.append(cur_processor)
 
+    def set_hist_dist(self, hist_dist_src, hist_dist_tgt):
+        """Install measured histograms after construction (see datasets/point_calibration.py).
+
+        Must be called before the dataloader is first iterated: workers fork a copy of the dataset
+        and never see later mutations.
+        """
+        self.hist_dist_src = hist_dist_src
+        self.hist_dist_tgt = hist_dist_tgt
+
     def mask_boxes_outside_length(self, data_dict=None, config=None):
         if data_dict is None:
             return partial(self.mask_boxes_outside_length, config=config)
