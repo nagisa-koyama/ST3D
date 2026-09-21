@@ -198,10 +198,33 @@ class DataProcessor(object):
         MAX_DIST = 75.0
         bin_num = len(self.hist_dist_src)
         indexes = np.floor(np.clip(points_dist, 0, MAX_DIST - 0.0001) / MAX_DIST * bin_num).astype(np.int32)
-        sample_rate = self.hist_dist_tgt[indexes] / self.hist_dist_src[indexes]
+        sample_rate = self.per_bin_sample_rate(config)[indexes]
         points_mask = np.random.rand(len(points)) < sample_rate
         data_dict['points'] = points[points_mask]
         return data_dict
+
+    def per_bin_sample_rate(self, config=None):
+        """target/source density ratio per radial bin, with under-populated bins left alone.
+
+        A bin the source barely reaches gives a ratio estimated from a handful of points. Worse,
+        `hist_src == 0` makes the ratio inf or nan, and `rand() < nan` is False - so a zero source
+        bin silently DROPS EVERY POINT that lands in it. That cannot happen when both histograms
+        are measured on the same frames, but the shipped hist_dist_*.npy files were measured under
+        different preprocessing, which is exactly when it can.
+
+        Bins whose source count falls below MIN_HIST_BIN_FRACTION of the mean source bin are left
+        uncorrected (rate 1) rather than corrected from noise. The fraction is scale-free, so it
+        behaves the same for per-frame histograms and for the shipped raw counts.
+        """
+        src = np.asarray(self.hist_dist_src, dtype=np.float64)
+        tgt = np.asarray(self.hist_dist_tgt, dtype=np.float64)
+        frac = 0.01 if config is None else config.get('MIN_HIST_BIN_FRACTION', 0.01)
+        floor = frac * src.mean()
+        trusted = src > max(floor, 0.0)
+        rate = np.ones_like(src)
+        np.divide(tgt, src, out=rate, where=trusted)
+        rate[~np.isfinite(rate)] = 1.0
+        return rate
 
 
     def forward(self, data_dict):

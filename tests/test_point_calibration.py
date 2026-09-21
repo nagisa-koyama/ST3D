@@ -109,3 +109,47 @@ def test_correction_is_a_noop_until_linked():
     assert ds.data_processor.hist_dist_src is None
     out = ds.data_processor.sample_points_hist_based(data_dict={'points': np.zeros((6, 4))})
     assert len(out['points']) == 6
+
+
+def _processor(src, tgt):
+    p = DataProcessor([], point_cloud_range=np.array([-75.2, -75.2, -2, 75.2, 75.2, 4]),
+                      training=True, num_point_features=4)
+    p.set_hist_dist(np.asarray(src, dtype=float), np.asarray(tgt, dtype=float))
+    return p
+
+
+def test_rate_is_the_plain_ratio_for_well_populated_bins():
+    p = _processor([10, 10, 10, 10], [5, 20, 10, 10])
+    assert np.allclose(p.per_bin_sample_rate(), [0.5, 2.0, 1.0, 1.0])
+
+
+def test_a_zero_source_bin_does_not_drop_every_point():
+    """rand() < nan is False, so an unguarded zero source bin silently deletes the whole bin."""
+    p = _processor([10, 0, 10, 10], [5, 5, 10, 10])
+    rate = p.per_bin_sample_rate()
+    assert np.isfinite(rate).all()
+    assert rate[1] == 1.0
+
+
+def test_under_populated_bins_are_left_uncorrected():
+    """The 4th bin holds 0.5% of the mean, far too few points to estimate a ratio from."""
+    p = _processor([100, 100, 100, 0.02], [50, 50, 50, 0.0001])
+    rate = p.per_bin_sample_rate()
+    assert np.allclose(rate[:3], 0.5)
+    assert rate[3] == 1.0
+
+
+def test_the_guard_threshold_is_configurable():
+    p = _processor([100, 100, 100, 40], [50, 50, 50, 10])
+    # mean source bin is 85. Default floor is 1% of that, 0.85, so bin 3 (40) is trusted.
+    assert p.per_bin_sample_rate()[3] == pytest.approx(0.25)
+    # raising the fraction to 0.5 lifts the floor to 42.5, which now excludes bin 3.
+    cfg = EasyDict({'MIN_HIST_BIN_FRACTION': 0.5})
+    assert p.per_bin_sample_rate(cfg)[3] == 1.0
+
+
+def test_the_guard_is_scale_free():
+    """Per-frame histograms and raw counts over N frames must give the same rates."""
+    a = _processor([100, 100, 100, 0.02], [50, 50, 50, 0.0001]).per_bin_sample_rate()
+    b = _processor([100e3, 100e3, 100e3, 20], [50e3, 50e3, 50e3, 0.1]).per_bin_sample_rate()
+    assert np.allclose(a, b)

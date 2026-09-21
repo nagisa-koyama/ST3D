@@ -79,10 +79,11 @@ def link_point_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
     tgt = compute_range_histogram(target_set, num_frames, num_bins, logger=logger)
     source_set.data_processor.set_hist_dist(src, tgt)
     if logger is not None:
-        with np.errstate(divide='ignore', invalid='ignore'):
-            rate = np.where(src > 0, tgt / np.maximum(src, 1e-9), 1.0)
-        logger.info('point calibration: sample rate %.2f..%.2f, below 1 in %d of %d bins'
-                    % (rate.min(), rate.max(), int((rate < 1).sum()), num_bins))
+        rate = source_set.data_processor.per_bin_sample_rate()
+        guarded = int((src <= 0.01 * src.mean()).sum())
+        logger.info('point calibration: sample rate %.2f..%.2f, below 1 in %d of %d bins, '
+                    '%d bin(s) left uncorrected as under-populated'
+                    % (rate.min(), rate.max(), int((rate < 1).sum()), num_bins, guarded))
         if (rate >= 1).all():
             logger.warning('point calibration: rate >= 1 in every bin - the correction is a no-op. '
                            'The source is sparser than the target everywhere; accumulate sweeps '
