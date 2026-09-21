@@ -66,7 +66,8 @@ class DataAugmentor(object):
         points, gt_boxes = augmentor_utils.scale_pre_object(
             data_dict['gt_boxes'], data_dict['points'],
             gt_boxes_mask=data_dict['gt_boxes_mask'],
-            scale_perturb=config['SCALE_UNIFORM_NOISE']
+            scale_perturb=config['SCALE_UNIFORM_NOISE'],
+            gt_names=data_dict.get('gt_names', None)
         )
 
         data_dict['gt_boxes'] = gt_boxes
@@ -130,7 +131,8 @@ class DataAugmentor(object):
         if data_dict is None:
             return partial(self.normalize_object_size, config=config)
         points, gt_boxes = augmentor_utils.normalize_object_size(
-            data_dict['gt_boxes'], data_dict['points'], data_dict['gt_boxes_mask'], config['SIZE_RES']
+            data_dict['gt_boxes'], data_dict['points'], data_dict['gt_boxes_mask'],
+            config['SIZE_RES'], gt_names=data_dict.get('gt_names', None)
         )
         data_dict['gt_boxes'] = gt_boxes
         data_dict['points'] = points

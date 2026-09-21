@@ -126,7 +126,38 @@ def global_sampling(gt_boxes, points, gt_boxes_mask, sample_ratio_range, prob):
     return gt_boxes, points, gt_boxes_mask
 
 
-def scale_pre_object(gt_boxes, points, gt_boxes_mask, scale_perturb, num_try=50):
+def resolve_per_object_param(param, gt_names, num_values):
+    """Per-box parameter lookup accepting either one setting for every class or a per-class dict.
+
+    ROS and SN were class-blind: one interval, one offset, applied to every object. That is wrong
+    in direction, not just magnitude - KITTI pedestrians are LONGER than nuScenes ones while its
+    cars are much shorter, so a car-derived offset moves pedestrians the wrong way.
+
+    A dict is keyed by class name. head-per-dataset configs carry prefixed names such as
+    'nuscenes:car', so the bare suffix is tried too, and a 'DEFAULT' key covers the rest. Classes
+    with no entry come back as NaN and are skipped by the caller, leaving those objects untouched.
+    """
+    n = len(gt_names) if gt_names is not None else 0
+    if not isinstance(param, dict):
+        row = np.asarray(param, dtype=np.float64).reshape(1, -1)
+        return np.tile(row, (n, 1)) if n else row
+    assert gt_names is not None, 'a per-class %s needs gt_names' % type(param).__name__
+    lookup = {str(k): np.asarray(v, dtype=np.float64).ravel() for k, v in param.items()}
+    out = np.full((n, num_values), np.nan)
+    for i, name in enumerate(gt_names):
+        key = str(name)
+        val = lookup.get(key)
+        if val is None and ':' in key:
+            val = lookup.get(key.split(':', 1)[1])
+        if val is None:
+            val = lookup.get('DEFAULT')
+        if val is not None:
+            out[i] = val
+    return out
+
+
+def scale_pre_object(gt_boxes, points, gt_boxes_mask, scale_perturb, num_try=50,
+                     gt_names=None):
     """
     uniform sacle object with given range
     Args:
@@ -138,13 +169,19 @@ def scale_pre_object(gt_boxes, points, gt_boxes_mask, scale_perturb, num_try=50)
     Returns:
     """
     num_boxes = gt_boxes.shape[0]
-    if not isinstance(scale_perturb, (list, tuple, np.ndarray)):
+    if not isinstance(scale_perturb, (list, tuple, np.ndarray, dict)):
         scale_perturb = [-scale_perturb, scale_perturb]
 
-    # boxes wise scale ratio
-    scale_noises = np.random.uniform(scale_perturb[0], scale_perturb[1], size=[num_boxes, num_try])
+    # boxes wise scale ratio, one [lo, hi] per box so the interval can differ by class
+    bounds = resolve_per_object_param(scale_perturb, gt_names, 2)
+    if bounds.shape[0] != num_boxes:
+        bounds = np.tile(bounds.reshape(1, 2), (num_boxes, 1))
+    scale_noises = np.empty((num_boxes, num_try))
     for k in range(num_boxes):
-        if gt_boxes_mask[k] == 0:
+        lo, hi = bounds[k]
+        scale_noises[k] = 1.0 if np.isnan(lo) else np.random.uniform(lo, hi, size=num_try)
+    for k in range(num_boxes):
+        if gt_boxes_mask[k] == 0 or np.isnan(bounds[k, 0]):
             continue
 
         scl_box = copy.deepcopy(gt_boxes[k])
@@ -199,26 +236,30 @@ def scale_pre_object(gt_boxes, points, gt_boxes_mask, scale_perturb, num_try=50)
     return points, gt_boxes
 
 
-def normalize_object_size(boxes, points, boxes_mask, size_res):
+def normalize_object_size(boxes, points, boxes_mask, size_res, gt_names=None):
     """
     :param boxes: (N, 7) under unified boxes
     :param points: (N, 3 + C)
     :param boxes_mask
-    :param size_res: (3) [l, w, h]
+    :param size_res: (3) [l, w, h], or a per-class dict of those
+    :param gt_names: (N) class names, required when size_res is a per-class dict
     :return:
     """
     points = copy.deepcopy(points)
     boxes = copy.deepcopy(boxes)
+    res = resolve_per_object_param(size_res, gt_names, 3)
+    if res.shape[0] != boxes.shape[0]:
+        res = np.tile(res.reshape(1, 3), (boxes.shape[0], 1))
     for k in range(boxes.shape[0]):
-        # skip boxes that not need to normalize
-        if boxes_mask[k] == 0:
+        # skip boxes that not need to normalize, and classes with no entry in a per-class size_res
+        if boxes_mask[k] == 0 or np.isnan(res[k, 0]):
             continue
         masks = roiaware_pool3d_utils.points_in_boxes_cpu(points[:, 0:3], boxes[k:k+1]).squeeze(0)
         obj_points = points[masks > 0]
         obj_center, lwh, ry = boxes[k, 0:3], boxes[k, 3:6], boxes[k, 6]
         obj_points[:, 0:3] -= obj_center
         obj_points = common_utils.rotate_points_along_z(np.expand_dims(obj_points, axis=0), -ry).squeeze(0)
-        new_lwh = lwh + np.array(size_res)
+        new_lwh = lwh + res[k]
         # skip boxes that shift to have negative
         if (new_lwh < 0).any():
             boxes_mask[k] = False
@@ -228,14 +269,14 @@ def normalize_object_size(boxes, points, boxes_mask, size_res):
         obj_points[:, 0:3] = obj_points[:, 0:3] * scale_lwh
         obj_points = common_utils.rotate_points_along_z(np.expand_dims(obj_points, axis=0), ry).squeeze(0)
         # calculate new object center to avoid object float over the road
-        obj_center[2] += size_res[2] / 2
+        obj_center[2] += res[k][2] / 2
 
         obj_points[:, 0:3] += obj_center
         points[masks > 0] = obj_points
         boxes[k, 3:6] = new_lwh
 
         # if enlarge boxes, remove bg points
-        if (np.array(size_res) > 0).any():
+        if (res[k] > 0).any():        # this box was enlarged, so drop the background it swallowed
             points_dst_mask = roiaware_pool3d_utils.points_in_boxes_cpu(points[:, 0:3],
                                                                         np.expand_dims(boxes[k],
                                                                                        axis=0)).squeeze(0)
