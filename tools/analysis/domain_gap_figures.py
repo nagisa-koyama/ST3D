@@ -470,41 +470,64 @@ def fig_xyz(D, out):
 
 def fig_scene(L, out):
     names = [n for n in ORDER if n not in NO_BOXES]
-    fig, axes = grid(3, 2, (13.5, 9.4))
+    fig, axes = grid(3, 2, (14.5, 9.6))
     for i, cls in enumerate(CLASSES):
-        for j, (kind, title) in enumerate([('z', 'box centre height  z  (m)'),
-                                           ('n', 'objects of this class per frame')]):
-            ax = axes[i, j]
-            style(ax, 'x')
-            if kind == 'z':
-                data = [L[n][0][cls][:, 3] if len(L[n][0][cls]) else np.array([np.nan])
-                        for n in names]
-            else:
-                data = [L[n][1][cls] for n in names]
-            bp = ax.boxplot(data, vert=False, showfliers=False, patch_artist=True, widths=.6,
-                            medianprops=dict(color=SURFACE, lw=1.5))
-            for k, box in enumerate(bp['boxes']):
-                box.set_facecolor(DARK if names[k] == 'KITTI' else BLUE)
-                box.set_edgecolor('none')
-            for el in ('whiskers', 'caps'):
-                for it in bp[el]:
-                    it.set_color(INK2)
-                    it.set_lw(1)
-            ax.set_yticklabels(names if j == 0 else [''] * len(names), fontsize=8, color=INK)
-            ax.invert_yaxis()
-            if kind == 'n':
-                ax.set_xscale('symlog', linthresh=1)
-                ax.text(1.02, .5, cls, transform=ax.transAxes, rotation=270, va='center',
-                        fontsize=11.5, color=INK)
-            if i == 0:
-                ax.set_title(title, fontsize=11.5, color=INK, pad=8)
+        # left: box centre height - these distributions are never degenerate, so a box plot works
+        ax = axes[i, 0]
+        style(ax, 'x')
+        data = [L[n][0][cls][:, 3] if len(L[n][0][cls]) else np.array([np.nan]) for n in names]
+        bp = ax.boxplot(data, vert=False, showfliers=False, patch_artist=True, widths=.6,
+                        medianprops=dict(color=SURFACE, lw=1.5))
+        for k, box in enumerate(bp['boxes']):
+            box.set_facecolor(DARK if names[k] == 'KITTI' else BLUE)
+            box.set_edgecolor('none')
+        for el in ('whiskers', 'caps'):
+            for it in bp[el]:
+                it.set_color(INK2)
+                it.set_lw(1)
+        kd = L['KITTI'][0][cls]
+        if len(kd):
+            ax.axvline(np.median(kd[:, 3]), color=INK2, lw=1.1, ls='--', zorder=0)
+        ax.set_yticklabels(names, fontsize=8, color=INK)
+        ax.invert_yaxis()
+        if i == 0:
+            ax.set_title('box centre height  z  (m)', fontsize=11.5, color=INK, pad=8)
+        if i == 2:
+            ax.set_xlabel("metres in that platform's own frame", color=INK2, fontsize=9)
+
+        # right: objects per frame. A box plot collapses to nothing for the sparse classes -
+        # Cyclist is absent from 80%+ of frames, so p25 = median = p75 = 0 - hence bars of the
+        # MEAN, annotated with the median and how often the class is absent entirely.
+        ax2 = axes[i, 1]
+        style(ax2, 'x')
+        counts = [L[n][1][cls] for n in names]
+        means = [c.mean() if len(c) else 0.0 for c in counts]
+        ypos = np.arange(len(names))
+        ax2.barh(ypos, means, height=.6, linewidth=0,
+                 color=[DARK if n == 'KITTI' else BLUE for n in names])
+        ax2.set_xscale('log')
+        ax2.set_xlim(0.01, max(max(means) * 40, 1))
+        ax2.set_yticks(ypos)
+        ax2.set_yticklabels([''] * len(names))
+        ax2.invert_yaxis()
+        for y, (c, m) in enumerate(zip(counts, means)):
+            empty = 100 * (c == 0).mean() if len(c) else 100.0
+            ax2.text(m * 1.3, y, '%.2f/frame   median %d   %.0f%% of frames have none'
+                     % (m, np.median(c) if len(c) else 0, empty),
+                     va='center', fontsize=7.5, color=INK2)
+        if i == 0:
+            ax2.set_title('mean objects of this class per frame', fontsize=11.5, color=INK, pad=8)
+        if i == 2:
+            ax2.set_xlabel('objects per frame (log)', color=INK2, fontsize=9)
+        ax2.text(1.015, .5, cls, transform=ax2.transAxes, rotation=270, va='center',
+                 fontsize=11.5, color=INK)
     fig.suptitle('Scene-level gaps, per capture platform', fontsize=13, color=INK, y=.975)
-    fig.text(.5, .012, 'Dark bar = KITTI. Object counts are symlog; outliers hidden. Cyclist = '
-                       'bicycle only (motorcycle maps to Misc and is excluded).',
+    fig.text(.5, .012, 'Dark bar = KITTI. Right column is the MEAN per frame on a log axis, because '
+                       'the sparse classes have median 0 and a box plot would vanish.\n'
+                       'Cyclist = bicycle only (motorcycle maps to Misc and is excluded).',
              ha='center', fontsize=8.5, color=INK2)
     fig.tight_layout(rect=[0, .035, 1, .94])
     fig.savefig(out / 'platform_scene.png', dpi=150, facecolor=SURFACE)
-
 
 def fig_label_range(L, out):
     edges = np.arange(0, 160, 10)
