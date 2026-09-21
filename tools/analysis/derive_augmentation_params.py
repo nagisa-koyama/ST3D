@@ -97,15 +97,57 @@ def road_z(platform, frames):
     return float(np.median(vals)) if vals else float('nan')
 
 
+def all_pairs_ros(P, frames):
+    """The ROS interval that works for EVERY source/target pair, not just one chosen target.
+
+    ROS has to make the detector size-invariant across whatever domain it will be evaluated on, so
+    with no fixed target the interval must span every ratio that could be required. Two criteria:
+
+      * median-to-median - covers the systematic size shift between domains. This is the part ROS
+        exists to absorb.
+      * full p5..p95 - additionally covers within-target size spread. Wider, and mostly redundant:
+        a detector already sees that spread inside its own source.
+    """
+    sizes = {name: collect_sizes(plat, frames)[0] for name, plat in P.items()}
+    for c in CLASSES:
+        have = {n: sizes[n][c] for n in sizes if len(sizes[n][c]) >= MIN_BOXES}
+        if len(have) < 3:
+            continue
+        med = {n: float(np.median(isotropic_scale(d))) for n, d in have.items()}
+        p5 = {n: float(np.percentile(isotropic_scale(d), 5)) for n, d in have.items()}
+        p95 = {n: float(np.percentile(isotropic_scale(d), 95)) for n, d in have.items()}
+        print('\n' + '=' * 94)
+        print('%s  - median isotropic scale (l*w*h)^(1/3) per platform' % c)
+        print('=' * 94)
+        for n in sorted(med, key=med.get):
+            print(f'  {n:26s} {med[n]:6.3f}   p5 {p5[n]:6.3f}   p95 {p95[n]:6.3f}   '
+                  f'n={len(have[n]):7d}')
+        lo_m = min(med[t] / med[s] for s in med for t in med)
+        hi_m = max(med[t] / med[s] for s in med for t in med)
+        lo_f = min(p5[t] / med[s] for s in med for t in med)
+        hi_f = max(p95[t] / med[s] for s in med for t in med)
+        smallest = min(med, key=med.get)
+        largest = max(med, key=med.get)
+        print(f'  median-to-median over every pair : [{lo_m:.2f}, {hi_m:.2f}]   '
+              f'(driven by {smallest} vs {largest})')
+        print(f'  full p5..p95 over every pair     : [{lo_f:.2f}, {hi_f:.2f}]')
+    print('\n  Pick from the median-to-median row: it is the systematic domain shift, which is what')
+    print('  ROS is for. The full-spread row additionally covers within-domain variation that the')
+    print('  detector already sees in its own source, so it mostly widens the interval for nothing.')
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--target', default='KITTI')
+    ap.add_argument('--target', default='KITTI',
+                    help="a platform name, or 'all' for the every-pair ROS interval")
     ap.add_argument('--frames', type=int, default=40)
     ap.add_argument('--yaml', action='store_true', help='emit pasteable config blocks')
     args = ap.parse_args()
 
     P = build_platforms()
+    if args.target == 'all':
+        return all_pairs_ros(P, args.frames)
     if args.target not in P:
         sys.exit('unknown target %r; choose from %s' % (args.target, sorted(P)))
     sizes, bases, roads = {}, {}, {}
