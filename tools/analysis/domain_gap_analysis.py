@@ -242,7 +242,10 @@ def build_platforms(which=None):
                     ('%04d.npy' % pc['sample_idx']))
         f = f[f[:, 5] == -1]
         pts = np.column_stack([f[:, :3], np.tanh(f[:, 3])])
-        return Frame(pts, np.zeros((0, 7)), np.array([]))
+        a = info.get('annos', {})
+        g = np.asarray(a.get('gt_boxes_lidar', np.zeros((0, 7))))
+        return Frame(pts, g[:, :7] if len(g) else np.zeros((0, 7)),
+                     np.asarray(a.get('name', [])))
 
     P['Waymo'] = Platform('Waymo', 'Vehicle', wa_infos[::200], wa_load, rate_hz=10)
 
@@ -425,6 +428,51 @@ def analysis_correction(P, frames, **_):
                   + ' '.join('  nan' if np.isnan(v) else f'{v:5.2f}' for v in b / kbm))
 
 
+def analysis_shift_coor(P, frames, **_):
+    """Estimate the z shift that puts each platform's ground plane at z = 0.
+
+    `anchor_bottom_heights: [0]` places anchors with their base on z = 0, and anchors have to match
+    GT boxes - so the AUTHORITATIVE target is the median base of the Car boxes (z_centre - h/2),
+    not the road surface. The road is measured too, as an independent sanity check: the two should
+    sit within a few centimetres of each other, since cars rest on the road.
+
+    The road estimate uses a low percentile of z in a 3-15 m annulus rather than the modal z. The
+    mode is unstable in dense urban scenes, where vehicles and structures can out-vote the road
+    surface inside the annulus.
+    """
+    print(f"{'platform':26s} {'road z':>14s} {'Car box base z':>16s} {'SHIFT_COOR':>12s} "
+          f"{'configured':>11s} {'delta':>7s}")
+    for name, plat in P.items():
+        road, bases = [], []
+        for info in plat.sample(frames):
+            fr = plat.frame(info)
+            r = np.linalg.norm(fr.points[:, :2], axis=1)
+            m = (r > 3) & (r < 15)
+            if m.sum() > 500:
+                road.append(np.percentile(fr.points[m, 2], 10))
+            sel = fr.names == plat.car_class
+            if sel.sum():
+                bases.append(fr.boxes[sel][:, 2] - fr.boxes[sel][:, 5] / 2)
+        road_z = float(np.median(road)) if road else float('nan')
+        road_mad = float(np.median(np.abs(np.array(road) - road_z))) if road else float('nan')
+        if bases:
+            bb = np.concatenate(bases)
+            base_z = float(np.median(bb))
+            base_mad = float(np.median(np.abs(bb - base_z)))
+        else:
+            base_z = base_mad = float('nan')
+        shift = -base_z if not np.isnan(base_z) else -road_z
+        cfg = CONFIGURED_SHIFT.get(name.split()[0], 0.0)
+        print(f'{name:26s} {road_z:9.2f} +-{road_mad:.2f} {base_z:11.2f} +-{base_mad:.2f} '
+              f'{shift:12.2f} {cfg:11.2f} {shift - cfg:+7.2f}')
+    print('\n  road z   = 10th percentile of z in a 3-15 m annulus, median over frames (+- MAD)')
+    print('  base z   = median Car box base, z_centre - height/2, over every sampled box (+- MAD)')
+    print('  SHIFT_COOR = -base z, i.e. what puts Car box bases on z = 0 to match')
+    print('               anchor_bottom_heights: [0]')
+
+CONFIGURED_SHIFT = {'KITTI': 1.7, 'nuScenes': 1.75, 'Lyft': 1.6, 'PandaSet': 0.3, 'Waymo': 0.0}
+
+
 def analysis_platforms(P, frames, **_):
     print(f"{'platform':26s} {'frames':>8s} {'pts/frame':>11s}")
     for name, plat in P.items():
@@ -432,7 +480,7 @@ def analysis_platforms(P, frames, **_):
         print(f'{name:26s} {len(plat):8d} {h:11,.0f}')
 
 
-ANALYSES = dict(range=analysis_range, boxes=analysis_boxes, intensity=analysis_intensity,
+ANALYSES = dict(shift_coor=analysis_shift_coor, range=analysis_range, boxes=analysis_boxes, intensity=analysis_intensity,
                 beams=analysis_beams, accumulate=analysis_accumulate,
                 correction=analysis_correction, platforms=analysis_platforms)
 
