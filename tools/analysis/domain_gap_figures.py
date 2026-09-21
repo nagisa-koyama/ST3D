@@ -342,6 +342,47 @@ def fig_intensity(D, out):
     fig.savefig(out / 'platform_intensity.png', dpi=150, facecolor=SURFACE)
 
 
+def beam_spacing_break(hist, centres, expected_beams):
+    """Locate the elevation where ring spacing changes most, and the medians either side.
+
+    Multi-beam lidars concentrate beams near the horizon, where distant objects are, and spread
+    them out below, where the beams hit nearby ground. The HDL-64E does this with two discrete
+    32-laser blocks, so the change is a hard step; other sensors ramp.
+    """
+    from scipy.signal import find_peaks
+    bin_deg = float(centres[1] - centres[0])
+    best = None
+    for prom in (0.02, 0.04, 0.06, 0.08, 0.12, 0.18, 0.25):
+        for sep_deg in (0.12, 0.16, 0.2, 0.3, 0.4, 0.5):        # minimum ring separation
+            dist = max(1, int(round(sep_deg / bin_deg)))
+            pk, _ = find_peaks(hist, prominence=hist.max() * prom, distance=dist)
+            if best is None or abs(len(pk) - expected_beams) < abs(best[0] - expected_beams):
+                best = (len(pk), centres[pk])
+    ang = np.sort(best[1])
+    if len(ang) < 12:
+        return None
+    gaps = np.diff(ang)
+    mid = (ang[:-1] + ang[1:]) / 2
+    # A ratio-maximising scan drifts upward, because spacing tightens continuously towards the
+    # horizon. Find the largest STEP in the gap profile instead - for a two-block sensor like the
+    # HDL-64E that lands on the boundary between the laser blocks.
+    k = 5
+    best = None
+    for i in range(k, len(gaps) - k):
+        lo_med, hi_med = np.median(gaps[i - k:i]), np.median(gaps[i:i + k])
+        if hi_med > 0 and (best is None or lo_med / hi_med > best[0]):
+            best = (lo_med / hi_med, mid[i])
+    if best is None:
+        return None
+    cut = best[1]
+    lo, hi = ang[:-1] < cut, ang[:-1] >= cut
+    if lo.sum() < 3 or hi.sum() < 3:
+        return None
+    return dict(cut=cut, below=np.median(gaps[lo]), above=np.median(gaps[hi]),
+                ratio=np.median(gaps[lo]) / np.median(gaps[hi]), n=len(ang),
+                n_below=int((ang < cut).sum()), n_above=int((ang >= cut).sum()))
+
+
 def fig_beams(D, out):
     names = [n for n in ORDER if n in SENSOR_FRAME]
     centres = (EL[:-1] + EL[1:]) / 2
@@ -353,16 +394,29 @@ def fig_beams(D, out):
         ax.fill_between(centres, 0, h, color=BLUE, lw=0)
         ax.set_xlim(-12, 2)
         ax.set_ylim(0, None)
-        ax.set_ylabel(name, color=INK, fontsize=9.5)
+        ax.set_ylabel(name.replace(' ', '\n', 1), color=INK, fontsize=8.5)
         span = centres[h > h.max() * 0.005]
-        ax.text(.995, .82, 'full span %.1f to %.1f deg' % (span.min(), span.max()),
-                transform=ax.transAxes, ha='right', fontsize=8.5, color=INK2)
+        expected = 64 if ('KITTI' in name or '64' in name) else (40 if '40' in name else 32)
+        brk = beam_spacing_break(h, centres, expected)
+        note = 'full span %.1f to %.1f deg' % (span.min(), span.max())
+        if brk is not None and brk['ratio'] > 1.2:
+            ax.axvline(brk['cut'], color=RED, lw=1.2, ls='--', zorder=6)
+            bbox = dict(facecolor=SURFACE, edgecolor='none', alpha=.85, pad=1.5)
+            ax.text(brk['cut'] - .15, ax.get_ylim()[1] * .62, '%.2f deg apart' % brk['below'],
+                    ha='right', fontsize=7.5, color=RED, bbox=bbox)
+            ax.text(brk['cut'] + .15, ax.get_ylim()[1] * .62, '%.2f deg apart' % brk['above'],
+                    ha='left', fontsize=7.5, color=RED, bbox=bbox)
+            note += '   |   spacing breaks at %.1f deg (%.1fx coarser below)' % (brk['cut'],
+                                                                                 brk['ratio'])
+        ax.text(.995, .84, note, transform=ax.transAxes, ha='right', fontsize=8, color=INK2)
     np.atleast_1d(axes)[-1].set_xlabel('elevation angle from the sensor (degrees)',
                                        color=INK2, fontsize=10)
     fig.suptitle('Beam structure, per capture platform — elevation angle, 0.1 deg bins',
                  fontsize=13, color=INK, y=.985)
-    fig.text(.5, .01, 'Only platforms whose point frame IS the sensor frame. PandaSet and Waymo '
-                      'use ground-origin vehicle frames and need the sensor extrinsic.',
+    fig.text(.5, .01, 'Only platforms whose point frame IS the sensor frame. PandaSet and Waymo use '
+                      'ground-origin vehicle frames and need the sensor extrinsic.\nRed line marks where '
+                      'ring spacing changes most - beams are concentrated near the horizon and spread out '
+                      'below, where they hit nearby ground.',
              ha='center', fontsize=8.5, color=INK2)
     fig.tight_layout(rect=[0, .045, 1, .955])
     fig.savefig(out / 'platform_beams.png', dpi=150, facecolor=SURFACE)
