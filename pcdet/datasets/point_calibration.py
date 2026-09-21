@@ -10,8 +10,13 @@ three problems:
   * they go stale the moment anything upstream changes - a different MAX_SWEEPS, a platform subset,
     a different POINT_CLOUD_RANGE - with nothing to detect that they have.
 
-Measuring them from the datasets actually being trained on removes all three. It costs a few
-seconds at startup and is normalised per frame by construction.
+Measuring them from the datasets actually being trained on removes all three, and is normalised
+per frame by construction.
+
+It runs ONCE per training run, before the dataloaders are first iterated, so the default sample of
+1000 frames per domain is affordable against a multi-hour job. There is no incremental or
+per-epoch update: a histogram measured mid-training would not reach the forked DataLoader workers
+anyway (see 20260921_02).
 
 See experiments_md/20260922_02_dataset_and_platform_domain_gap_analysis.md, defect 3.
 """
@@ -19,7 +24,7 @@ import numpy as np
 
 MAX_DIST = 75.0
 DEFAULT_BINS = 50
-DEFAULT_FRAMES = 200
+DEFAULT_FRAMES = 1000
 
 
 def compute_range_histogram(dataset, num_frames=DEFAULT_FRAMES, num_bins=DEFAULT_BINS,

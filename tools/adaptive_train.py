@@ -146,7 +146,7 @@ def main():
     if cfg.DATA_CONFIG.get('HIST_DIST_ON_THE_FLY', False):
         link_point_calibration(
             source_set, target_set,
-            num_frames=cfg.DATA_CONFIG.get('HIST_DIST_FRAMES', 200),
+            num_frames=cfg.DATA_CONFIG.get("HIST_DIST_FRAMES", 1000),
             num_bins=cfg.DATA_CONFIG.get('HIST_DIST_BINS', 50),
             logger=logger
         )
