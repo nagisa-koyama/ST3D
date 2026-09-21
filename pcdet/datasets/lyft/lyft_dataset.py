@@ -36,6 +36,27 @@ class LyftDataset(DatasetTemplate):
 
         self.infos.extend(lyft_infos)
         self.logger.info('Total samples for lyft dataset: %d' % (len(lyft_infos)))
+        self.infos = self.filter_by_lidar_config(self.infos)
+
+    # Lyft ships two vehicle configurations: BETA_V0 carries 40-beam lidars,
+    # BETA_PLUS_PLUS carries 64-beam ones. The host is the first token of the
+    # lidar filename ('host-a101_lidar1_<ts>.bin'); the split is host-pure and
+    # also visible as a bimodal point count (~65k vs ~108k per frame).
+    LIDAR_64_HOSTS = ('host-a101', 'host-a102')
+
+    def filter_by_lidar_config(self, infos):
+        cfg = self.dataset_cfg.get('LIDAR_CONFIG', None)
+        if cfg is None or str(cfg).lower() == 'all':
+            return infos
+        assert str(cfg) in ('40', '64'), 'LIDAR_CONFIG must be 40, 64 or "all", got %s' % cfg
+        want_64 = str(cfg) == '64'
+        kept = [
+            info for info in infos
+            if (Path(info['lidar_path']).name.split('_')[0] in self.LIDAR_64_HOSTS) == want_64
+        ]
+        self.logger.info('LIDAR_CONFIG=%s: kept %d of %d lyft samples' % (cfg, len(kept), len(infos)))
+        assert len(kept) > 0, 'LIDAR_CONFIG=%s matched no lyft samples' % cfg
+        return kept
 
     @staticmethod
     def remove_ego_points(points, center_radius=1.0):

@@ -1,4 +1,5 @@
 import copy
+import json
 import pickle
 from pathlib import Path
 
@@ -38,6 +39,48 @@ class NuScenesDataset(DatasetTemplate):
 
         self.infos.extend(nuscenes_infos)
         self.logger.info('Total samples for NuScenes dataset: %d' % (len(nuscenes_infos)))
+        self.infos = self.filter_by_platform(self.infos)
+
+    def sample_token_to_log(self):
+        """Map every sample token to its log record (vehicle, location, date)."""
+        meta = self.root_path / self.dataset_cfg.VERSION
+        with open(meta / 'log.json') as f:
+            logs = {l['token']: l for l in json.load(f)}
+        with open(meta / 'scene.json') as f:
+            scene_log = {s['token']: logs[s['log_token']] for s in json.load(f)}
+        with open(meta / 'sample.json') as f:
+            return {s['token']: scene_log[s['scene_token']] for s in json.load(f)}
+
+    def filter_by_platform(self, infos):
+        """Restrict to given capture vehicle(s) and/or location(s).
+
+        nuScenes was captured by two vehicles and the mapping to city is exact:
+        n008 -> boston-seaport, n015 -> the three singapore maps. Selecting one
+        therefore isolates a sensor-identical but geography/traffic-different subset.
+        """
+        vehicles = self.dataset_cfg.get('VEHICLE', None)
+        locations = self.dataset_cfg.get('LOCATION', None)
+        if not vehicles and not locations:
+            return infos
+        vehicles = [vehicles] if isinstance(vehicles, str) else (vehicles or None)
+        locations = [locations] if isinstance(locations, str) else (locations or None)
+        log_of = self.sample_token_to_log()
+        kept = []
+        for info in infos:
+            log = log_of.get(info['token'])
+            if log is None:
+                continue
+            if vehicles is not None and log['vehicle'] not in vehicles:
+                continue
+            if locations is not None and log['location'] not in locations:
+                continue
+            kept.append(info)
+        self.logger.info(
+            'VEHICLE=%s LOCATION=%s: kept %d of %d nuscenes samples'
+            % (vehicles, locations, len(kept), len(infos))
+        )
+        assert len(kept) > 0, 'VEHICLE/LOCATION filter matched no nuscenes samples'
+        return kept
 
     def balanced_infos_resampling(self, infos):
         """
