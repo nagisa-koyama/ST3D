@@ -124,6 +124,7 @@ def collect_labels(platform, frames):
     """Box dimensions and per-frame counts. Infos carry the boxes except for PandaSet."""
     dims = {c: [] for c in CLASSES}
     counts = {c: [] for c in CLASSES}
+    pos = {c: [] for c in CLASSES}
     source = platform.sample(frames * 5) if platform.name.startswith('PandaSet') else platform.infos
     for info in source:
         if platform.name.startswith('PandaSet'):
@@ -141,8 +142,12 @@ def collect_labels(platform, frames):
             counts[c].append(int(m.sum()))
             if m.sum():
                 dims[c].append(np.asarray(boxes)[m][:, [3, 4, 5, 2]])
+                pos[c].append(np.asarray(boxes)[m][:, :2])
+    n_frames = max(len(counts[CLASSES[0]]), 1)
     return ({c: (np.concatenate(v) if v else np.zeros((0, 4))) for c, v in dims.items()},
-            {c: np.array(v) for c, v in counts.items()})
+            {c: np.array(v) for c, v in counts.items()},
+            {c: (np.concatenate(v) if v else np.zeros((0, 2))) for c, v in pos.items()},
+            n_frames)
 
 
 def kitti_box_reference(platform):
@@ -495,10 +500,88 @@ def fig_scene(L, out):
     fig.savefig(out / 'platform_scene.png', dpi=150, facecolor=SURFACE)
 
 
-FIGURES = dict(range=fig_range, bev=fig_bev, points_per_box=fig_points_per_box,
+def fig_label_range(L, out):
+    edges = np.arange(0, 160, 10)
+    centres = (edges[:-1] + edges[1:]) / 2
+    names = [n for n in ORDER if n not in NO_BOXES]
+    fig, axes = grid(2, 4, (15.5, 8))
+    for ax, name in zip(axes.ravel(), names):
+        style(ax, 'y')
+        dims, counts, pos, nf = L[name]
+        for k, (cls, colour, off) in enumerate([('Car', BLUE, -3.1), ('Pedestrian', ORANGE, 0),
+                                                ('Cyclist', DARK, 3.1)]):
+            p = pos[cls]
+            if not len(p):
+                continue
+            h = np.histogram(np.linalg.norm(p, axis=1), bins=edges)[0].astype(float)
+            ax.bar(centres + off, 100 * h / h.sum(), width=3.0, color=colour, linewidth=0,
+                   label=cls if name == names[0] else None)
+        ax.axvline(75.2, color=INK2, lw=1.1, ls='--')
+        ax.set_xlim(0, 150)
+        ax.set_ylim(0, 62)
+        ax.set_title('%s\n%.1f car + %.1f ped per frame'
+                     % (name, len(pos['Car']) / nf, len(pos['Pedestrian']) / nf),
+                     fontsize=9.5, color=INK, pad=6)
+        ax.set_xlabel('range (m)', color=INK2, fontsize=8.5)
+    axes[0, 0].set_ylabel("% of that platform's boxes", color=INK2, fontsize=9)
+    axes[1, 0].set_ylabel("% of that platform's boxes", color=INK2, fontsize=9)
+    axes[0, 0].legend(frameon=False, fontsize=8.5, labelcolor=INK)
+    for ax in axes.ravel()[len(names):]:
+        ax.axis('off')
+    fig.suptitle('Ground-truth box centres by range, per capture platform — 10 m bins',
+                 fontsize=13, color=INK, y=.975)
+    fig.text(.5, .012, "Each panel normalised to its own platform, so shapes compare despite large "
+                       "differences in boxes per frame.\nDashed line is the POINT_CLOUD_RANGE edge; "
+                       "boxes beyond it are discarded before training.",
+             ha='center', fontsize=8.5, color=INK2)
+    fig.tight_layout(rect=[0, .04, 1, .94])
+    fig.savefig(out / 'platform_label_range.png', dpi=150, facecolor=SURFACE)
+
+
+def fig_label_bev(L, out):
+    names = [n for n in ORDER if n not in NO_BOXES]
+    per = {}
+    for name in names:
+        dims, counts, pos, nf = L[name]
+        pts = np.concatenate([pos['Car'], pos['Pedestrian']]) if len(pos['Car']) else pos['Pedestrian']
+        per[name] = np.histogram2d(pts[:, 0], pts[:, 1], bins=[XY, XY])[0] / nf
+    vmax = max(h.max() for h in per.values())
+    fig, axes = grid(2, 4, (15.5, 8.4))
+    for ax, name in zip(axes.ravel(), names):
+        h = per[name]
+        ax.set_facecolor(SURFACE)
+        im = ax.imshow(np.ma.masked_where(h <= 0, h)[::-1, ::-1], extent=[150, -150, -150, 150],
+                       norm=LogNorm(vmin=1e-3, vmax=vmax), cmap=CMAP, interpolation='nearest',
+                       aspect='equal')
+        ax.add_patch(Rectangle((-75.2, -75.2), 150.4, 150.4, fill=False, ec=INK2, lw=1, ls='--'))
+        for rad in (50, 100):
+            ax.add_patch(plt.Circle((0, 0), rad, fill=False, ec=INK2, lw=.55, alpha=.4))
+        ax.plot(0, 0, marker='+', ms=6, mew=1.3, color=INK)
+        ax.set_xlim(150, -150)
+        ax.set_ylim(-150, 150)
+        ax.set_xticks([-100, 0, 100])
+        ax.set_yticks([-100, 0, 100])
+        ax.tick_params(colors=INK2, labelsize=7.5)
+        for sp in ax.spines.values():
+            sp.set_color(GRID)
+        ax.set_title('%s\n%d of %d cells' % (name, int((h > 0).sum()), h.size),
+                     fontsize=9.5, color=INK, pad=5)
+    for ax in axes.ravel()[len(names):]:
+        ax.axis('off')
+    axes[1, 0].set_xlabel('y — left (m)', color=INK2, fontsize=9)
+    axes[1, 0].set_ylabel('x — forward (m)', color=INK2, fontsize=9)
+    cb = fig.colorbar(im, ax=axes, location='right', fraction=.018, pad=.012, shrink=.6)
+    cb.set_label('Car + Pedestrian boxes per frame in a 10x10 m cell', color=INK2, fontsize=9)
+    cb.ax.tick_params(colors=INK2, labelsize=8)
+    fig.suptitle('Ground-truth box centres in the X-Y plane, per capture platform — '
+                 '10 x 10 m cells', fontsize=13, color=INK, y=.975)
+    fig.savefig(out / 'platform_label_bev.png', dpi=150, facecolor=SURFACE, bbox_inches='tight')
+
+
+FIGURES = dict(label_range=fig_label_range, label_bev=fig_label_bev,range=fig_range, bev=fig_bev, points_per_box=fig_points_per_box,
                dimensions=fig_dimensions, intensity=fig_intensity, beams=fig_beams,
                xyz=fig_xyz, scene=fig_scene)
-NEEDS_LABELS = {'dimensions', 'scene'}
+NEEDS_LABELS = {'dimensions', 'scene', 'label_range', 'label_bev'}
 
 
 def main():
