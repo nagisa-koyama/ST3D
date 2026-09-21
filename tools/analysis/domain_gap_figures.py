@@ -36,7 +36,11 @@ CMAP.set_bad(SURFACE)
 
 ORDER = ['KITTI', 'nuScenes n008 Boston', 'nuScenes n015 Singapore', 'Lyft 40-beam',
          'Lyft 64-beam', 'PandaSet Pandar64', 'PandaSet PandarGT', 'Waymo']
-NO_BOXES = {'Waymo'}                  # annotations disagree with the processed points
+# Waymo's PROCESSED POINTS disagree geometrically with its own annotations in this checkout
+# (median counted/annotated = 0.06), so it cannot appear in any panel that counts points inside
+# boxes. Its annotations themselves are fine, so it belongs in the label-only panels.
+NO_POINT_IN_BOX = {'Waymo'}
+NO_BOXES = set()
 SENSOR_FRAME = {'KITTI', 'nuScenes n008 Boston', 'nuScenes n015 Singapore',
                 'Lyft 40-beam', 'Lyft 64-beam'}
 R10 = np.arange(0, 90, 10)
@@ -108,7 +112,7 @@ def collect(platform, frames):
             m = idx == k
             if m.sum():
                 out['inten'][k].append(p[m, 3])
-        if platform.name not in NO_BOXES:
+        if platform.name not in NO_POINT_IN_BOX:
             m = np.isin(fr.names, list(car))
             if m.sum():
                 out['box'].append(np.stack([np.linalg.norm(fr.boxes[m][:, :2], axis=1),
@@ -245,7 +249,7 @@ def fig_bev(D, out):
 def fig_points_per_box(D, out):
     centres = (R10[:-1] + R10[1:]) / 2
     kitti = med_by_bin(D['KITTI'].get('box_ref', D['KITTI']['box']))
-    names = [n for n in ORDER if n not in NO_BOXES and n != 'KITTI']
+    names = [n for n in ORDER if n not in NO_POINT_IN_BOX and n != 'KITTI']
     fig, axes = grid(2, 4, (15.5, 7.6))
     for ax, name in zip(axes.ravel(), names):
         style(ax)
@@ -308,7 +312,8 @@ def fig_dimensions(L, out):
                 ax.set_xlabel('metres', color=INK2, fontsize=9)
     fig.suptitle('Ground-truth box dimensions, per capture platform', fontsize=13, color=INK,
                  y=.975)
-    fig.text(.5, .012, 'Dark bar = KITTI (the target); dashed line marks its median.',
+    fig.text(.5, .012, 'Dark bar = KITTI (the target); dashed line marks its median. Cyclist = '
+                       'bicycle only (motorcycle maps to Misc and is excluded).',
              ha='center', fontsize=8.5, color=INK2)
     fig.tight_layout(rect=[0, .035, 1, .94])
     fig.savefig(out / 'platform_box_dimensions.png', dpi=150, facecolor=SURFACE)
@@ -494,7 +499,8 @@ def fig_scene(L, out):
             if i == 0:
                 ax.set_title(title, fontsize=11.5, color=INK, pad=8)
     fig.suptitle('Scene-level gaps, per capture platform', fontsize=13, color=INK, y=.975)
-    fig.text(.5, .012, 'Dark bar = KITTI. Object counts are symlog; outliers hidden.',
+    fig.text(.5, .012, 'Dark bar = KITTI. Object counts are symlog; outliers hidden. Cyclist = '
+                       'bicycle only (motorcycle maps to Misc and is excluded).',
              ha='center', fontsize=8.5, color=INK2)
     fig.tight_layout(rect=[0, .035, 1, .94])
     fig.savefig(out / 'platform_scene.png', dpi=150, facecolor=SURFACE)
@@ -531,8 +537,10 @@ def fig_label_range(L, out):
     fig.suptitle('Ground-truth box centres by range, per capture platform — 10 m bins',
                  fontsize=13, color=INK, y=.975)
     fig.text(.5, .012, "Each panel normalised to its own platform, so shapes compare despite large "
-                       "differences in boxes per frame.\nDashed line is the POINT_CLOUD_RANGE edge; "
-                       "boxes beyond it are discarded before training.",
+                       "differences in boxes per frame. Dashed line is the POINT_CLOUD_RANGE edge.\n"
+                       "Cyclist = bicycle only, following pcdet/utils/ontology_mapping.py; motorcycle "
+                       "maps to Misc and is deliberately excluded (nuScenes has 8,846 of them against "
+                       "8,185 bicycles).",
              ha='center', fontsize=8.5, color=INK2)
     fig.tight_layout(rect=[0, .04, 1, .94])
     fig.savefig(out / 'platform_label_range.png', dpi=150, facecolor=SURFACE)
