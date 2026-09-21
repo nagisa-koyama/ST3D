@@ -21,7 +21,10 @@
 # TORCH_CUDA_ARCH_LIST="7.0 7.5 8.0 8.6 8.9 9.0", which covers Turing (rtx8000), A100 (8.0),
 # A6000 (8.6) and Ada (8.9) - so there is no arch mismatch on any of them. Slurm accepts a
 # comma-separated list and takes whichever frees first:
-#   sbatch --partition=a6000_ada,a6000,a100 --time=02:00:00 scripts/run_experiment.sh
+#   sbatch --partition=a6000_ada,a6000 --time=02:00:00 scripts/run_experiment.sh
+# CORRECTION (2026-09-21): do NOT include a100 with an untyped gres. Job 25536 was allocated
+# node21 and died instantly with 'RuntimeError: No CUDA GPUs are available', while the same
+# job on a6000/a6000_ada ran fine. Name the GPU type explicitly if a100 is wanted.
 # Keep --gres=gpu:1 untyped when doing this: each partition holds a single GPU type, so the
 # typed form (--gres=gpu:a6000_ada:1) would pin the job back to one partition.
 # Check headroom first with:
@@ -405,4 +408,30 @@ set -e
 #singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-MIRU2025/second_old_anchor_basebev_multi_nuscenes2kitti_car_ped_default.yaml --fix_random_seed --run_name "shuffleAB_C4_nuscenes2kitti_shuffled" --extra_tag 20260921_shuffle_ab
 
 # C4-unshuffled - identical except --no_shuffle (reproduces the pre-fix behaviour)
-singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-MIRU2025/second_old_anchor_basebev_multi_nuscenes2kitti_car_ped_default.yaml --fix_random_seed --no_shuffle --run_name "shuffleAB_C4_nuscenes2kitti_unshuffled" --extra_tag 20260921_shuffle_ab
+#singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-MIRU2025/second_old_anchor_basebev_multi_nuscenes2kitti_car_ped_default.yaml --fix_random_seed --no_shuffle --run_name "shuffleAB_C4_nuscenes2kitti_unshuffled" --extra_tag 20260921_shuffle_ab
+
+
+# ---------- SHUFFLE A/B EVALUATION (2026-09-21) ----------
+# Jobs 25505/25506 trained 30/30 epochs but their post-training eval died: the eval loader is built
+# with cfg.CLASS_NAMES (nuscenes:*) against a KITTI target, and DatasetTemplate asserted because no
+# class carried the 'kitti' prefix. That assert (2026-08-23) had made the whole naive/calibrated
+# cross-dataset eval path unreachable - map_head_per_dataset_to_kitti exists for exactly this case
+# and is keyed by PREFIXED names ('nuscenes:car' -> 'kitti:Car'). Restored 2026-09-21.
+# Checkpoints are intact, so no retraining: evaluate epoch 30 of each arm with test.py, which is
+# also how MIRU2025's published 14.1 was produced (run 2tgllha8).
+CKPT_SHUF=/storage/wandb/run-20260921_031539-mxdvmi16/files/ckpt/checkpoint_epoch_30.pth
+CKPT_UNSHUF=/storage/wandb/run-20260921_031521-o213w6bw/files/ckpt/checkpoint_epoch_30.pth
+
+# eval of the SHUFFLED arm
+#singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 test.py --cfg_file cfgs/da-MIRU2025/second_old_anchor_basebev_multi_nuscenes2kitti_car_ped_default.yaml --batch_size 20 --ckpt $CKPT_SHUF --run_name "shuffleAB_C4_eval_shuffled" --extra_tag 20260921_shuffle_ab_eval
+
+# eval of the UNSHUFFLED arm
+#singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 test.py --cfg_file cfgs/da-MIRU2025/second_old_anchor_basebev_multi_nuscenes2kitti_car_ped_default.yaml --batch_size 20 --ckpt $CKPT_UNSHUF --run_name "shuffleAB_C4_eval_unshuffled" --extra_tag 20260921_shuffle_ab_eval
+
+# RESULT (2026-09-21) - Car BEV AP_R40 on the KITTI target, epoch 30 of each arm:
+#   shuffled   (job 25535, wandb xk9qjzoh): easy 43.28 / moderate 33.45 / hard 31.64, 3D mod 7.01
+#   unshuffled (job 25538, wandb icpwppn2): easy 20.49 / moderate 16.75 / hard 16.51, 3D mod 0.99
+#   MIRU2025 published (unshuffled, 2tgllha8): 14.1 moderate
+# Shuffling is worth +16.70 BEV moderate - nearly a doubling. The unshuffled arm landing near the
+# published 14.1 is what validates the control. Job 25536 was a failed first attempt at the
+# unshuffled eval (allocated node21/a100, no GPU); 25538 is the real one.

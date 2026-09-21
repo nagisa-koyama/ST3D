@@ -26,42 +26,68 @@ class DatasetTemplate(torch_data.Dataset):
         self.dataset_class_names = copy.deepcopy(class_names)
         self.map_ontology_dataset_to_model = None
         self.map_ontology_model_to_dataset = None
-        # NOTE: The "dataset:class" multi-head (head_per_dataset) case must be checked BEFORE the
-        # single-ontology cross-mapping case. Both conditions can be true simultaneously (e.g.
-        # model_ontology='head_per_dataset' literally differs from a real per-dataset ONTOLOGY
-        # like 'lyft'/'kitti'), but the cross-mapping branch uses get_ontology_mapping(dataset_ontology,
-        # 'head_per_dataset'), whose maps assume plain (non-prefixed) class names and are not valid for
-        # dataset:class-formatted names (they either KeyError or silently rename every class to the
-        # wrong dataset prefix, causing all GT boxes to be filtered out downstream). The multi-head
-        # branch below already handles the head_per_dataset case correctly and generically, so it must
-        # take precedence whenever class_names use the "dataset:class" convention.
+        # Two distinct situations both use "dataset:class" CLASS_NAMES, and they need different
+        # handling. The discriminator is NOT "do the names contain ':'" - both do - but whether any
+        # class is prefixed with THIS dataset's ontology:
+        #
+        #   (a) the model has a head for this dataset (e.g. CLASS_NAMES spans lyft:* and nuscenes:*
+        #       and we are evaluating on nuScenes) -> keep just this dataset's classes;
+        #   (b) it does not (e.g. a naive nuScenes-trained model, CLASS_NAMES = nuscenes:*, scored
+        #       against KITTI GT) -> cross-map the model's class names into this dataset's
+        #       namespace via map_head_per_dataset_to_<dataset>.
+        #
+        # (b) is a real, intended configuration - it is how every `*_default` / `*_calibrated`
+        # cross-dataset row in da-MIRU2025 is evaluated, and the map exists for exactly it, keyed by
+        # PREFIXED names ('nuscenes:car' -> 'kitti:Car'). An earlier revision of this code asserted
+        # here instead, on the mistaken premise that those maps take plain names; that made the
+        # whole naive/calibrated eval path unreachable. See
+        # experiments_md/20260921_04_head_per_dataset_cross_dataset_eval.md and 20260823_06.
         if class_names is not None and ":" in class_names[0]:
-            # Multi-head setup. Handles only associated labels.
-            self.dataset_class_names = copy.deepcopy([])
             for cls in class_names:
                 assert (cls.count(":") == 1)
-                ontology, label = cls.split(":")
-                if ontology == self.dataset_ontology:
-                    self.dataset_class_names.append(cls)
-                    print("Added class:", cls)
-                else:
-                    print("Skipped class:", cls)
+            self.dataset_class_names = [
+                cls for cls in class_names if cls.split(":")[0] == self.dataset_ontology
+            ]
+            model_ontologies = {cls.split(":")[0] for cls in class_names}
+            if len(self.dataset_class_names) == 0 and len(model_ontologies) == 1:
+                # Case (b): a SINGLE-ontology model scored against a different dataset's GT.
+                # Restricted to one prefix on purpose: if CLASS_NAMES spans several heads and none
+                # matches this dataset, the mapping is ambiguous (two heads would collapse onto the
+                # same target class), which is a misconfiguration rather than a cross-dataset eval,
+                # so it must keep falling through to the assert below.
+                assert model_ontology is not None and self.dataset_ontology is not None, (
+                    "No class in {} matches this dataset's ONTOLOGY ({!r}), and no ontology "
+                    "mapping is available to cross-map them (model_ontology={!r}). Check for a "
+                    "typo/mismatch between the per-dataset ONTOLOGY config and the "
+                    "'<dataset>:<label>' prefixes used in CLASS_NAMES.".format(
+                        class_names, self.dataset_ontology, model_ontology)
+                )
+                # Only the model->dataset direction is set. The reverse
+                # (map_<dataset>_to_head_per_dataset) is used further down to REWRITE GT names, and
+                # those dicts are known-broken -- they emit 'waymo:...' whatever the real dataset is
+                # and are marked "not used" in ontology_mapping.py. Leaving it None lets the
+                # multi-head block in prepare_data() prefix plain GT names with this dataset's own
+                # ontology ('Car' -> 'kitti:Car'), which is what dataset_class_names below expects.
+                self.map_ontology_model_to_dataset = get_ontology_mapping(
+                    model_ontology, self.dataset_ontology)
+                self.dataset_class_names = [
+                    self.map_ontology_model_to_dataset[label] for label in class_names
+                ]
             assert len(self.dataset_class_names) > 0, (
-                "No class in {} matches this dataset's ONTOLOGY ({!r}). Check for a typo/mismatch "
-                "between the per-dataset ONTOLOGY config and the '<dataset>:<label>' prefixes used "
-                "in CLASS_NAMES.".format(class_names, self.dataset_ontology)
+                "No class in {} matches this dataset's ONTOLOGY ({!r}), and they span {} model "
+                "ontologies so they cannot be unambiguously cross-mapped. Check for a "
+                "typo/mismatch between the per-dataset ONTOLOGY config and the "
+                "'<dataset>:<label>' prefixes used in CLASS_NAMES.".format(
+                    class_names, self.dataset_ontology, len(model_ontologies))
             )
-            assert (self.dataset_class_names[-1].count(":") == 1)
         elif model_ontology is not None and self.dataset_ontology is not None and model_ontology != self.dataset_ontology:
-            # These ontology-mapping dicts are keyed by plain (non-prefixed) class names and must
-            # never be used with the 'head_per_dataset' sentinel -- that case belongs to the
-            # "dataset:class" branch above. Reaching here with 'head_per_dataset' on either side
-            # would silently corrupt GT class names (see experiments_md/20260823_06_*).
+            # Plain (non-prefixed) class names. These maps ARE keyed by plain names, so the
+            # 'head_per_dataset' sentinel has no place here - it belongs to the branch above.
             assert model_ontology != 'head_per_dataset' and self.dataset_ontology != 'head_per_dataset', (
                 "Refusing to use single-ontology cross-mapping with the 'head_per_dataset' "
                 "sentinel (model_ontology={!r}, dataset_ontology={!r}, class_names={!r}). This "
-                "combination should have been handled by the 'dataset:class' multi-head branch "
-                "above -- check that CLASS_NAMES uses '<dataset>:<label>' formatting.".format(
+                "combination should have been handled by the 'dataset:class' branch above -- "
+                "check that CLASS_NAMES uses '<dataset>:<label>' formatting.".format(
                     model_ontology, self.dataset_ontology, class_names)
             )
             self.map_ontology_dataset_to_model = get_ontology_mapping(self.dataset_ontology, model_ontology)

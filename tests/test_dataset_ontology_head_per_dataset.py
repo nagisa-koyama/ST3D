@@ -153,3 +153,59 @@ def test_head_per_dataset_sentinel_reaching_cross_mapping_branch_raises():
             dataset_ontology='waymo',
             model_ontology='head_per_dataset',
         )
+
+
+# ---------------------------------------------------------------------------
+# Cross-dataset evaluation of a SINGLE-head model (added 2026-09-21).
+#
+# The 2026-08-23 fix above made the "dataset:class" branch unconditional and asserted when no class
+# carried the eval dataset's prefix. That premise was too strong: a naive / source-only model has
+# heads for its SOURCE dataset only, and scoring it against a different dataset's GT is the entire
+# point of the da-MIRU2025 `*_default` / `*_calibrated` rows. `map_head_per_dataset_to_<dataset>`
+# exists for exactly that and, unlike the `map_<dataset>_to_head_per_dataset` direction the module
+# docstring above describes, IS keyed by prefixed names ('nuscenes:car' -> 'kitti:Car').
+#
+# The assert therefore made all six of Phase 0's C1-C6 evaluations unreachable. Restored as a
+# fallback that fires only when the model's CLASS_NAMES come from ONE ontology, so genuine
+# misconfigurations (several prefixes, none matching) still raise.
+# See experiments_md/20260921_04_head_per_dataset_cross_dataset_eval.md.
+# ---------------------------------------------------------------------------
+
+
+def test_single_head_model_cross_maps_onto_a_different_dataset():
+    """A nuScenes-trained naive model scored against KITTI GT (the C4 case)."""
+    dataset = _build_dataset(
+        class_names=['nuscenes:car', 'nuscenes:pedestrian'],
+        dataset_ontology='kitti',
+        model_ontology='head_per_dataset',
+    )
+    assert dataset.dataset_class_names == ['kitti:Car', 'kitti:Pedestrian']
+    assert dataset.map_ontology_model_to_dataset == get_ontology_mapping('head_per_dataset', 'kitti')
+    # The reverse direction must stay None: map_<dataset>_to_head_per_dataset is known-broken (it
+    # emits 'waymo:...' for every dataset) and is used to REWRITE GT names in prepare_data().
+    # Leaving it None lets the multi-head block prefix plain GT names with this dataset's own
+    # ontology instead, which is what dataset_class_names above expects.
+    assert dataset.map_ontology_dataset_to_model is None
+
+
+def test_single_head_model_cross_maps_onto_nuscenes():
+    """The mirror direction: a Lyft-trained naive model scored against nuScenes GT (C1)."""
+    dataset = _build_dataset(
+        class_names=['lyft:car', 'lyft:pedestrian'],
+        dataset_ontology='nuscenes',
+        model_ontology='head_per_dataset',
+    )
+    assert dataset.dataset_class_names == ['nuscenes:car', 'nuscenes:pedestrian']
+    assert dataset.map_ontology_dataset_to_model is None
+
+
+def test_matching_head_still_wins_over_cross_mapping():
+    """When the model DOES have a head for this dataset, filter -- never cross-map."""
+    dataset = _build_dataset(
+        class_names=['lyft:car', 'lyft:pedestrian', 'nuscenes:car', 'nuscenes:pedestrian'],
+        dataset_ontology='nuscenes',
+        model_ontology='head_per_dataset',
+    )
+    assert dataset.dataset_class_names == ['nuscenes:car', 'nuscenes:pedestrian']
+    assert dataset.map_ontology_model_to_dataset is None
+    assert dataset.map_ontology_dataset_to_model is None
