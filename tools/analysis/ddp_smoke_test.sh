@@ -4,10 +4,20 @@
 # tqdm iteration rate so it is directly comparable to the profile_throughput.py single-GPU
 # numbers.
 #
-# --batch_size TOTAL is passed explicitly (not left to default to BATCH_SIZE_PER_GPU) so
-# train.py divides it across GPUs (train.py:87-91) rather than multiplying it - that is what
-# keeps the effective batch size, LR schedule and iteration count IDENTICAL to the single-GPU
-# run, isolating "more GPUs" as the only variable. TOTAL must be evenly divisible by NGPUS.
+# --batch_size is the TOTAL across all ranks: train.py divides it by the GPU count
+# (train.py:104-107), so 12 on 2 GPUs gives 6 per rank. TOTAL must divide evenly by NGPUS.
+#
+# CORRECTED 2026-09-22: an earlier version of this comment claimed passing 12 explicitly "keeps
+# the effective batch size, LR schedule and iteration count IDENTICAL to the single-GPU run".
+# Both halves of that are wrong. Passing 12 is identical to OMITTING the flag (omitted =>
+# args.batch_size = BATCH_SIZE_PER_GPU = 6 PER RANK; passing 12 => 12//2 = 6 per rank) - the two
+# differ in nothing. And neither reproduces the single-GPU recipe: single-GPU at
+# BATCH_SIZE_PER_GPU 6 has a GLOBAL batch of 6, while either of these has a global batch of 12,
+# so the optimizer takes HALF the steps over the same presentation budget.
+#
+# To actually reproduce the single-GPU recipe on 2 GPUs, pass --batch_size 6 (=> 3 per rank).
+# For a pure throughput measurement this does not matter, since samples/s is what is compared -
+# but it matters a great deal for a real training run.
 #
 # Runs for a short, fixed WALL-CLOCK duration (not a full epoch) and is killed after: this is a
 # rate measurement, not a training run, and CenterPoint-sourceonly budgets are 92k-158k

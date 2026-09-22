@@ -47,7 +47,11 @@ def parse_config():
     parser.add_argument('--max_waiting_mins', type=int, default=0, help='max waiting minutes')
     parser.add_argument('--start_epoch', type=int, default=0, help='')
     parser.add_argument('--save_to_file', action='store_true', default=False, help='')
-    parser.add_argument('--num_epochs_to_eval', type=int, default=100, help='number of checkpoints to be evaluated')
+    # default=None so OPTIMIZATION.NUM_EPOCHS_TO_EVAL is reachable; 100 if neither is set,
+    # which preserves the historical behaviour for every config that does not declare it.
+    parser.add_argument('--num_epochs_to_eval', type=int, default=None,
+                        help='how many trailing checkpoints to evaluate; default comes from '
+                             'OPTIMIZATION.NUM_EPOCHS_TO_EVAL, else 100')
     parser.add_argument('--run_name', type=str, default=None, help='run name for wandb')
 
     args = parser.parse_args()
@@ -89,6 +93,13 @@ def main():
     # stalls the GPU - measured in experiments_md/20260922_06. Absent key keeps the old 4.
     if args.workers is None:
         args.workers = cfg.get('OPTIMIZATION', {}).get('NUM_WORKERS', 4)
+
+    # Evaluation is NOT free: one evaluation costs about as much as one KITTI training epoch
+    # (299.5 s vs 300.2 s, job 25730), and over half of that is single-threaded AP
+    # computation on rank 0. At the historical default of 100 that is ~12 h per long run.
+    # See experiments_md/20260922_06 section 4d.
+    if args.num_epochs_to_eval is None:
+        args.num_epochs_to_eval = cfg.get('OPTIMIZATION', {}).get('NUM_EPOCHS_TO_EVAL', 100)
 
     args.epochs = cfg.OPTIMIZATION.NUM_EPOCHS if args.epochs is None else args.epochs
 

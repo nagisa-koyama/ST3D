@@ -150,7 +150,33 @@ MODEL:
 
 
 OPTIMIZATION:
+
+    # This family runs on ONE GPU. BATCH_SIZE_PER_GPU 6 is therefore also the GLOBAL batch, giving
+    # 93,766 optimizer steps over the shared 562,600-presentation budget.
+    #
+    # 2-GPU DDP was measured (1.47x KITTI, 1.93x PandaSet) and declined. It does not reduce the
+    # global batch: `--batch_size 12` on 2 GPUs and omitting the flag both give 6 per rank, i.e. a
+    # global batch of 12 and HALF the optimizer steps, and LR 0.003 was tuned at global batch 6.
+    # Holding the global batch at 6 instead would mean 3 per rank, which is below anything that was
+    # measured - the saturation result only covers bs>=6. On top of that, evaluation's AP half does
+    # not parallelize at all, and a 2-GPU job needs both GPUs free on one node, which on a
+    # saturated cluster can cost more queue time than it saves. See 20260922_06 sections 4a-4d.
     BATCH_SIZE_PER_GPU: 6
+
+    # Evaluate only the tail of training, not every checkpoint.
+    #
+    # The repo default is 100, and evaluation is NOT cheap: measured on job 25730, one evaluation
+    # of the 6019-frame nuScenes target costs 299.5 s against 300.2 s for one KITTI training
+    # epoch - the same price - and 162 s of that is KITTI-metric AP computation running
+    # single-threaded on rank 0, which no amount of parallelism touches. At the default this
+    # family would spend ~30.8 h evaluating on top of ~95 h training, and for KITTI evaluation
+    # would nearly double the run. See experiments_md/20260922_06 section 4d.
+    #
+    # NOTE the off-by-one: `start_epoch = max(NUM_EPOCHS - NUM_EPOCHS_TO_EVAL, 0)` and the
+    # checkpoint filter is `>= start_epoch`, so 1 evaluates the last TWO checkpoints, not one.
+    # That is deliberate here - a cheap sanity pair showing whether the final epoch is anomalous -
+    # and costs ~14 min. Set 0 for exactly one.
+    NUM_EPOCHS_TO_EVAL: 1
 
     # Measured, not defaulted. KITTI's loader is already ahead of the GPU - the data-wait fraction
     # is 0.13% at bs=6 - so there is no stall for extra workers to remove and they only add

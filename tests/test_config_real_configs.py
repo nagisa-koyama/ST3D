@@ -194,6 +194,17 @@ def test_ieee_access_sourceonly_family_is_internally_consistent(in_tools_dir):
         # source's loader actually stalls the GPU: Waymo (8.98% data-wait) and PandaSet (46.54%)
         # need 8, and the other three measure SLOWER at 8 because they have no stall to remove.
         # See experiments_md/20260922_06 section 1b, and the comment at each config's own key.
+        # Evaluation costs roughly one training epoch per checkpoint (20260922_06 section 4d), and
+        # the repo default of 100 would add ~30.8 h across this family. Uniform across sources so
+        # the five runs stay comparable in what they spend on eval as well as on training.
+        assert cfg.OPTIMIZATION.NUM_EPOCHS_TO_EVAL == 1, (
+            '%s: NUM_EPOCHS_TO_EVAL is %s, expected 1'
+            % (cfg_file, cfg.OPTIMIZATION.get('NUM_EPOCHS_TO_EVAL', None)))
+        # Single GPU: BATCH_SIZE_PER_GPU is also the global batch, so the shared budget gives the
+        # same optimizer-step count for every source. Pinned because running this family under a
+        # launcher would silently double the global batch and halve the steps.
+        assert cfg.OPTIMIZATION.BATCH_SIZE_PER_GPU == 6, cfg_file
+        assert budget // cfg.OPTIMIZATION.BATCH_SIZE_PER_GPU == 93766, cfg_file
         assert cfg.OPTIMIZATION.NUM_WORKERS == expected_workers[src], (
             '%s: NUM_WORKERS %s does not match the measured recommendation %s'
             % (cfg_file, cfg.OPTIMIZATION.get('NUM_WORKERS', None), expected_workers[src]))
@@ -230,3 +241,43 @@ def test_workers_argparse_default_is_none(entry_point):
     assert len(defaults) == 1, '%s: expected exactly one --workers argument' % entry_point
     assert isinstance(defaults[0], ast.Constant) and defaults[0].value is None, (
         '%s: --workers default must be None so the config can supply it' % entry_point)
+
+
+@pytest.mark.parametrize('entry_point', ['train.py', 'adaptive_train.py'])
+def test_num_epochs_to_eval_argparse_default_is_none(entry_point):
+    """Same reachability guard as `--workers`: a non-None default hides the config value."""
+    import ast
+
+    path = Path(__file__).resolve().parent.parent / 'tools' / entry_point
+    tree = ast.parse(path.read_text())
+    defaults = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not (isinstance(node.func, ast.Attribute) and node.func.attr == 'add_argument'):
+            continue
+        if not (node.args and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == '--num_epochs_to_eval'):
+            continue
+        for kw in node.keywords:
+            if kw.arg == 'default':
+                defaults.append(kw.value)
+
+    assert len(defaults) == 1, '%s: expected exactly one --num_epochs_to_eval argument' % entry_point
+    assert isinstance(defaults[0], ast.Constant) and defaults[0].value is None, (
+        '%s: --num_epochs_to_eval default must be None so the config can supply it' % entry_point)
+
+
+@pytest.mark.parametrize('num_epochs_to_eval,expected_checkpoints', [(0, 1), (1, 2), (3, 4)])
+def test_num_epochs_to_eval_is_off_by_one(num_epochs_to_eval, expected_checkpoints):
+    """`n` evaluates n+1 checkpoints, not n. Pinned so the configs' arithmetic stays honest.
+
+    `train.py` computes `start_epoch = max(NUM_EPOCHS - NUM_EPOCHS_TO_EVAL, 0)` and
+    `get_no_evaluated_ckpt` keeps checkpoints with `epoch_id >= start_epoch`, which is inclusive at
+    both ends. So `NUM_EPOCHS_TO_EVAL: 1` on a 152-epoch run evaluates epochs 151 AND 152. The
+    da-ieee-access configs say so at the key; this test is what keeps that comment true.
+    """
+    num_epochs = 152
+    start_epoch = max(num_epochs - num_epochs_to_eval, 0)
+    evaluated = [e for e in range(1, num_epochs + 1) if e >= start_epoch]
+    assert len(evaluated) == expected_checkpoints
