@@ -141,6 +141,8 @@ def test_the_message_says_why_each_dataset_cannot():
     msg = str(e.value)
     assert 'no sequences' in msg, 'KITTI cannot ever support it, for a different reason'
     assert 'uuid' in msg and 'obj_ids' in msg, 'PandaSet and Waymo could, and the note should say so'
+    assert 'no accumulation path' in msg or 'accumulation path' in msg, \
+        'the reason they cannot YET must be the missing accumulation, not the track ids'
 
 
 def test_absent_or_false_is_silent():
@@ -268,3 +270,79 @@ def test_find_devkit_meta_dir_names_what_it_tried(tmp_path):
     with pytest.raises(FileNotFoundError) as e:
         find_devkit_meta_dir(tmp_path, 'v1.0-trainval')
     assert 'sample_annotation.json' in str(e.value) and str(tmp_path) in str(e.value)
+
+
+# --------------------------------------------------------------------------------------------
+# The rule: accumulation and compensation ship together.
+
+from pcdet.datasets.motion_compensation import should_compensate  # noqa: E402
+
+
+class _Log:
+    def __init__(self):
+        self.info_msgs, self.warnings = [], []
+
+    def info(self, m):
+        self.info_msgs.append(m)
+
+    def warning(self, m):
+        self.warnings.append(m)
+
+
+def test_accumulation_turns_compensation_on_without_being_asked():
+    """The point of the rule: a config that accumulates cannot forget to compensate."""
+    assert should_compensate(_Cfg(MAX_SWEEPS=15), training=True) is True
+
+
+def test_a_single_frame_does_not_compensate():
+    assert should_compensate(_Cfg(MAX_SWEEPS=1), training=True) is False
+    assert should_compensate(_Cfg(), training=True) is False
+
+
+def test_an_eval_dataset_never_compensates():
+    assert should_compensate(_Cfg(MAX_SWEEPS=15), training=False) is False
+
+
+def test_a_pseudo_label_target_never_compensates_even_at_depth():
+    """USE_PSEUDO_LABEL marks the unlabelled target, which is also built with training=True."""
+    assert should_compensate(_Cfg(MAX_SWEEPS=15, USE_PSEUDO_LABEL=True), training=True) is False
+
+
+def test_asking_for_it_on_a_pseudo_label_target_RAISES():
+    """Not a warning: its infos carry real gt_boxes, so this would consume the target's labels."""
+    with pytest.raises(ValueError) as e:
+        should_compensate(_Cfg(MAX_SWEEPS=15, USE_PSEUDO_LABEL=True,
+                               GT_BOXES_MOTION_COMPENSATION=True), training=True)
+    assert 'USE_PSEUDO_LABEL' in str(e.value) and 'SOURCE' in str(e.value)
+
+
+def test_explicit_false_is_honoured_but_warns():
+    log = _Log()
+    cfg = _Cfg(MAX_SWEEPS=15, GT_BOXES_MOTION_COMPENSATION=False)
+    assert should_compensate(cfg, training=True, logger=log) is False
+    assert len(log.warnings) == 1 and 'ablation' in log.warnings[0]
+
+
+def test_turning_it_on_by_default_is_logged():
+    log = _Log()
+    assert should_compensate(_Cfg(MAX_SWEEPS=15), training=True, logger=log) is True
+    assert any('ON by default' in m for m in log.info_msgs)
+
+
+def test_asking_when_it_cannot_apply_says_why():
+    log = _Log()
+    should_compensate(_Cfg(MAX_SWEEPS=1, GT_BOXES_MOTION_COMPENSATION=True),
+                      training=True, logger=log)
+    assert any('nothing to compensate' in m for m in log.info_msgs)
+
+
+@pytest.mark.parametrize('mod', [
+    'pcdet/datasets/nuscenes/nuscenes_dataset.py',
+    'pcdet/datasets/lyft/lyft_dataset.py',
+])
+def test_both_accumulating_loaders_go_through_the_rule(mod):
+    """A loader with its own inline condition would drift from the rule the tests above pin."""
+    src = (Path(__file__).resolve().parent.parent / mod).read_text(encoding='utf-8')
+    assert 'if should_compensate(self.dataset_cfg, self.training, self.logger):' in src
+    assert "self.dataset_cfg.get('GT_BOXES_MOTION_COMPENSATION'" not in src, \
+        'the loader must not re-implement the decision'

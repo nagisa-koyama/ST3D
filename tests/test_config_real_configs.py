@@ -350,3 +350,61 @@ def test_lyft2lyft_differs_from_the_lyft_source_row_only_in_its_target(in_tools_
     assert oracle.ONTOLOGY == base.ONTOLOGY == 'kitti'
     assert oracle.MODEL == base.MODEL, 'model/thresholds must not drift between the pair'
     assert oracle.OPTIMIZATION == base.OPTIMIZATION, 'schedule and budget must not drift'
+
+
+# --------------------------------------------------------------------------------------------
+# Accumulation and motion compensation ship together - asserted over the repo's OWN configs.
+
+from pcdet.datasets.motion_compensation import should_compensate  # noqa: E402
+
+ACCUMULATING_DATASETS = ('NuScenesDataset', 'LyftDataset')
+
+# Configs allowed to accumulate WITHOUT compensation, each with the reason. An entry here is a
+# deliberate ablation that wants the smearing artefact, not a config someone forgot to update.
+UNCOMPENSATED_ABLATIONS = {}
+
+
+def _experiment_configs():
+    root = TOOLS_DIR / 'cfgs'
+    for path in sorted(root.rglob('*.yaml')):
+        text = path.read_text(encoding='utf-8', errors='ignore')
+        # a full experiment config, not a dataset/preprocessing fragment
+        if '\nMODEL:' in text and 'MAX_SWEEPS' in text:
+            yield path
+
+
+def test_every_accumulating_source_compensates(in_tools_dir):
+    """The guarantee, over real configs: if it accumulates, it compensates.
+
+    Accumulating without compensating is not a weaker version of the same thing - it drags a
+    moving object's returns along its trajectory, so density ends up correlated with *not moving*
+    (x7.39 against a static car's x14.61 at MAX_SWEEPS 15). Nothing in a global density statistic
+    shows that, which is exactly why it wants an assertion over the configs rather than a habit.
+    """
+    offenders = []
+    for path in _experiment_configs():
+        cfg = EasyDict()
+        cfg_from_yaml_file(str(path), cfg)
+        rel = str(path.relative_to(TOOLS_DIR))
+        for where, blk in _dataset_blocks(cfg):
+            if blk.get('DATASET', None) not in ACCUMULATING_DATASETS:
+                continue
+            if (blk.get('MAX_SWEEPS', 1) or 1) <= 1:
+                continue
+            if blk.get('USE_PSEUDO_LABEL', False) or where == 'DATA_CONFIG_TAR':
+                continue        # the unlabelled target: compensation there would read its labels
+            if rel in UNCOMPENSATED_ABLATIONS:
+                continue
+            if not should_compensate(blk, training=True):
+                offenders.append('%s :: %s (MAX_SWEEPS=%d)'
+                                 % (rel, where, blk.get('MAX_SWEEPS')))
+    assert not offenders, (
+        'these accumulate without compensating:\n  ' + '\n  '.join(offenders)
+        + '\nEither remove GT_BOXES_MOTION_COMPENSATION: False, or add the config to '
+          'UNCOMPENSATED_ABLATIONS with the reason.')
+
+
+def test_the_scan_actually_finds_accumulating_configs():
+    """Guards the test above against silently passing because its filter matched nothing."""
+    found = [p for p in _experiment_configs()]
+    assert len(found) >= 3, 'the config scan matched almost nothing - check the MODEL: filter'

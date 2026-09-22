@@ -123,6 +123,68 @@ def boxes_to_frame(boxes, names, track_ids, S_from, S_to, classes=None):
     return out
 
 
+def should_compensate(dataset_cfg, training, logger=None):
+    """Whether this dataset compensates object motion. ON BY DEFAULT WHENEVER IT ACCUMULATES.
+
+    Accumulation and compensation are one operation, not a feature plus an option. Stacking sweeps
+    without compensating drags a moving object's returns along its trajectory instead of onto it,
+    so the objects that end up densest are the ones that did not move: at MAX_SWEEPS 15 a moving
+    Car gains x7.39 over its own N=1 count against a static car's x14.61. That is a
+    label-correlated density artefact - the detector learns "dense == parked" - and it is worse
+    than not accumulating at all, because no global density statistic shows it.
+
+    Hence the default is ON and the burden is on turning it OFF. Three conditions decide it:
+
+      - `MAX_SWEEPS > 1`. With one frame there is nothing to compensate.
+      - `training`. It reads GT boxes, so it is a source-side operation.
+      - **not `USE_PSEUDO_LABEL`**. That flag marks the unlabelled TARGET, which is also built
+        with `training=True` for augmentation and pseudo-labels. Its infos still carry the real
+        `gt_boxes`, so compensating there would read the very labels UDA forbids - silently, and
+        on the exact dataset the method is evaluated against. Asking for it on such a dataset
+        raises rather than warns.
+
+    An explicit `False` while accumulating is honoured and logged as a warning; the only
+    legitimate reason is an ablation that wants the artefact.
+    """
+    sweeps = dataset_cfg.get('MAX_SWEEPS', 1) or 1
+    asked = dataset_cfg.get('GT_BOXES_MOTION_COMPENSATION', None)
+    pseudo = bool(dataset_cfg.get('USE_PSEUDO_LABEL', False))
+
+    if pseudo:
+        if asked:
+            raise ValueError(
+                'GT_BOXES_MOTION_COMPENSATION is set on a USE_PSEUDO_LABEL dataset. That flag '
+                'marks the unlabelled TARGET; its infos still carry real gt_boxes, so '
+                'compensating there would consume the labels the method is not allowed to see, '
+                'on the dataset it is evaluated against. Compensation belongs on the labelled '
+                'SOURCE only.')
+        return False
+
+    if not training or sweeps <= 1:
+        # Say so only when someone asked and is not getting it, so the reason is on the record
+        # rather than inferred from a missing log line.
+        if asked and logger is not None:
+            logger.info('motion compensation not applied: %s'
+                        % ('MAX_SWEEPS=%d, nothing to compensate' % sweeps if training
+                           else 'not a training dataset, and it reads GT boxes'))
+        return False
+
+    if asked is False:
+        if logger is not None:
+            logger.warning(
+                'GT_BOXES_MOTION_COMPENSATION is explicitly False while MAX_SWEEPS=%d. Moving '
+                'objects will smear along their trajectories and reach roughly HALF the density '
+                'of static ones (0.51 measured at 15), which teaches the detector that a '
+                'densely-sampled car is a parked one. Only do this as a deliberate ablation.'
+                % sweeps)
+        return False
+
+    if asked is None and logger is not None:
+        logger.info('motion compensation ON by default (MAX_SWEEPS=%d, labelled training source)'
+                    % sweeps)
+    return True
+
+
 def find_devkit_meta_dir(root_path, version=None):
     """Directory holding the devkit json tables, given a dataset root.
 
@@ -262,9 +324,11 @@ def assert_not_supported(dataset_cfg, dataset_name):
         'and LyftDataset do, both via nuScenes-devkit track ids (instance_token in '
         'sample_annotation.json).\n'
         '  KITTI    cannot: it has no sequences, so there is nothing to accumulate or compensate.\n'
-        '  PandaSet could: every frame is annotated and cuboids carry a persistent uuid - but its\n'
-        '           loader has no sweep accumulation at all, so there is nothing to compensate\n'
-        '           until one exists.\n'
-        '  Waymo    could: annos carry obj_ids per frame and infos carry pose - same caveat, no\n'
-        '           accumulation path in the loader.\n'
+        '  PandaSet could: 103 sequences x 80 frames at exactly 10 Hz, every frame annotated,\n'
+        '           cuboids carry a `uuid` that is 100%% persistent frame to frame (and a\n'
+        '           `stationary` flag), and lidar/poses.json gives a pose per frame. What is\n'
+        '           missing is a sweep-accumulation path in the loader.\n'
+        '  Waymo    could: 798 train sequences x ~198 frames, annos carry `obj_ids` (100%%\n'
+        '           persistent between consecutive frames, 94%% over 10) and each info carries a\n'
+        '           4x4 `pose`. Same caveat - no accumulation path in the loader.\n'
         'Remove the key, or implement accumulation for this dataset first.' % dataset_name)

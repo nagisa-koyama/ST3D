@@ -20,19 +20,24 @@ class LyftDataset(DatasetTemplate):
         self.infos = []
         self.include_lyft_data(self.mode)
 
-        # Per-object motion compensation. Off unless asked for, and only for a TRAINING dataset:
-        # it consumes GT boxes, so it is a source-side operation and must never touch the target.
-        # Built here rather than lazily so the annotation map is created once in the parent process
-        # and shared with DataLoader workers by copy-on-write, instead of once per worker.
+        # Per-object motion compensation. ON whenever this dataset accumulates, because
+        # accumulation without it is a label-correlated artefact rather than a weaker version of
+        # the same thing - see should_compensate for the rule and the numbers. Built here rather
+        # than lazily so the annotation map is created once in the parent process and shared with
+        # DataLoader workers by copy-on-write, instead of once per worker.
         self._sweep_compensator = None
-        if self.dataset_cfg.get('GT_BOXES_MOTION_COMPENSATION', False) and self.training \
-                and self.dataset_cfg.get('MAX_SWEEPS', 1) > 1:
-            from ..motion_compensation import DevkitSweepCompensator, find_devkit_meta_dir
+        from ..motion_compensation import (
+            DevkitSweepCompensator, find_devkit_meta_dir, should_compensate)
+        if should_compensate(self.dataset_cfg, self.training, self.logger):
             classes = set(self.dataset_cfg.get('GT_BOXES_MOTION_COMPENSATION_CLASSES', [])) or None
             self._sweep_compensator = DevkitSweepCompensator(
-                self.infos,
-                find_devkit_meta_dir(self.root_path, self.dataset_cfg.get('VERSION', None)),
+                self.infos, find_devkit_meta_dir(self.root_path, self.dataset_cfg.get('VERSION', None)),
                 classes=classes, logger=self.logger)
+            # Accumulation and compensation ship together, so a compensator that failed to build
+            # must never degrade into plain accumulation - that is the artefact, silently.
+            assert self._sweep_compensator is not None, \
+                'compensation is required at MAX_SWEEPS=%d but no compensator was built' \
+                % self.dataset_cfg.get('MAX_SWEEPS', 1)
         self.draw_conf_calib_curve = self.dataset_cfg.get('DRAW_CONF_CALIB_CURVE', False)
         self.run_conf_calib = self.dataset_cfg.get('RUN_CONF_CALIB', False)
 
