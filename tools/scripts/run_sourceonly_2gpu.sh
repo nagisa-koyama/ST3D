@@ -31,9 +31,15 @@
 # and PandaSet whose loaders stall), so it is deliberately NOT passed here.
 set -euo pipefail
 
-SOURCE=${1:?usage: sbatch scripts/run_sourceonly_2gpu.sh <kitti|lyft|nuscenes|pandaset|waymo> [extra_tag]}
+# $1 is either one of the five source names, or a path to any config in the family - the latter
+# so one-off rows (e.g. the Lyft->Lyft oracle, which is not an `X -> nuScenes` source) get the same
+# 2-GPU recipe and the same frozen-code guarantee instead of a hand-rolled invocation.
+SOURCE=${1:?usage: sbatch scripts/run_sourceonly_2gpu.sh <kitti|lyft|nuscenes|pandaset|waymo|path/to.yaml> [extra_tag]}
 TAG=${2:-$(date +%Y%m%d)_sourceonly}
-CFG=cfgs/da-ieee-access/centerpoint-sourceonly-${SOURCE}.yaml
+case "$SOURCE" in
+  *.yaml) CFG=$SOURCE; SOURCE=$(basename "$CFG" .yaml) ;;
+  *)      CFG=cfgs/da-ieee-access/centerpoint-sourceonly-${SOURCE}.yaml ;;
+esac
 SIF=/home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif
 REPO=/home/koyama/code/ST3D
 cd "$REPO/tools"

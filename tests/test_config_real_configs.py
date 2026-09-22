@@ -53,9 +53,14 @@ MULTI_LEVEL_CONFIGS = [
     # da-MIRU2025, so the same regression would empty it the same way. No density correction.
     ('cfgs/da-ieee-access/centerpoint-sourceonly-%s.yaml' % src, False)
     for src in ('kitti', 'lyft', 'nuscenes', 'pandaset', 'waymo')
+] + [
+    # The Lyft->Lyft oracle has the same two-hop shape and needs the same resolution check, but it
+    # is NOT part of the X->nuScenes column, so it is deliberately excluded from
+    # IEEE_ACCESS_SOURCEONLY below - its target is Lyft, which those assertions forbid.
+    ('cfgs/da-ieee-access/centerpoint-oracle-lyft2lyft.yaml', False),
 ]
 
-IEEE_ACCESS_SOURCEONLY = [c for c, _ in MULTI_LEVEL_CONFIGS if 'da-ieee-access' in c]
+IEEE_ACCESS_SOURCEONLY = [c for c, _ in MULTI_LEVEL_CONFIGS if 'da-ieee-access/centerpoint-sourceonly-' in c]
 
 
 @pytest.mark.parametrize('cfg_file,expect_hist', MULTI_LEVEL_CONFIGS)
@@ -318,3 +323,27 @@ def test_two_gpu_launch_script_passes_an_explicit_global_batch():
     # --workers must NOT be passed: it is per-rank and comes from each config's NUM_WORKERS,
     # which differs by source (8 for Waymo and PandaSet, 4 otherwise).
     assert '--workers' not in code, '--workers would override the per-source NUM_WORKERS'
+
+
+def test_lyft_oracle_differs_from_the_lyft_source_row_only_in_its_target(in_tools_dir):
+    """The Lyft->Lyft oracle must be the Lyft source-only row with the eval target swapped.
+
+    Its whole purpose is to bound `X -> Lyft` rows, and that reading only holds if the recipe is
+    otherwise identical - same model, schedule, augmentation, SHIFT_COOR, budget and thresholds -
+    so that the difference between the two numbers is the domain gap and not a config drift. This
+    compares the RESOLVED configs rather than the file text, since the two carry different headers.
+    """
+    base, oracle = EasyDict(), EasyDict()
+    cfg_from_yaml_file('cfgs/da-ieee-access/centerpoint-sourceonly-lyft.yaml', base)
+    cfg_from_yaml_file('cfgs/da-ieee-access/centerpoint-oracle-lyft2lyft.yaml', oracle)
+
+    assert base.DATA_CONFIG_TAR.DATASET == 'NuScenesDataset'
+    assert oracle.DATA_CONFIG_TAR.DATASET == 'LyftDataset', 'the oracle must evaluate on Lyft'
+    # Source side untouched: same dataset, same platform blend, same sensor-height constant.
+    assert oracle.DATA_CONFIG.DATASET == base.DATA_CONFIG.DATASET == 'LyftDataset'
+    assert oracle.DATA_CONFIG.SHIFT_COOR == base.DATA_CONFIG.SHIFT_COOR
+    # Recipe identical, so the gap is the domain gap.
+    assert oracle.CLASS_NAMES == base.CLASS_NAMES
+    assert oracle.ONTOLOGY == base.ONTOLOGY == 'kitti'
+    assert oracle.MODEL == base.MODEL, 'model/thresholds must not drift between the pair'
+    assert oracle.OPTIMIZATION == base.OPTIMIZATION, 'schedule and budget must not drift'
