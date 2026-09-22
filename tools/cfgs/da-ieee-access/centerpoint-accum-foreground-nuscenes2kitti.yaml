@@ -24,7 +24,24 @@
 # before committing GPU time to it.
 
 DATA_CONFIG:
-    _BASE_CONFIG_: cfgs/da-ieee-access/da_nuscenes_dataset_accum.yaml
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_nuscenes_dataset.yaml
+
+    # Accumulation depth. N counts frames INCLUDING the keyframe, so MAX_SWEEPS: 9 is 9 frames -
+    # 1 keyframe plus 8 of the 9 stored sweeps - spanning ~0.40 s.
+    #
+    # 9 is DERIVED, not a ceiling: it is the smallest depth at which nuScenes n015's mean radial
+    # histogram meets KITTI's in every one of the 13 bins spanning 5-70 m (8 gives 12/13). That is
+    # the global criterion, and it is the only one usable here - the object criterion needs the
+    # TARGET's boxes to set its reference, which UDA does not have. See
+    # experiments_md/20260922_07 for the derivation and 20260922_08 for what it leaves on the
+    # table: global parity still leaves objects at 0.87x KITTI, and per 10 m ring the object
+    # requirement runs 5 (0-10 m) to 150 (60-70 m), so no single depth is right everywhere.
+    #
+    # The ceiling, separately, is 10 - get_lidar_with_sweeps() indexes info['sweeps'][k] with no
+    # clamp and the infos store 9, so MAX_SWEEPS > 10 raises IndexError. Going deeper means
+    # regenerating them with create_nuscenes_info(max_sweeps=N); it is a metadata-only pass, and
+    # it should be submitted with sbatch so it outlives the ssh session.
+    MAX_SWEEPS: 9
 
     # Measured once, after the first pseudo-label pass - the target's boxes do not exist before it.
     HIST_DIST_ON_THE_FLY: True
@@ -67,32 +84,6 @@ DATA_CONFIG:
 DATA_CONFIG_TAR:
     _BASE_CONFIG_: cfgs/da-ieee-access/da_kitti_dataset.yaml
 
-    # mask -> shuffle -> correction -> voxelise, the order used by every da-MIRU2025
-    # point-calibrated config. The list is restated in full because YAML lists replace rather than
-    # merge, so adding one entry means writing all of them.
-    DATA_PROCESSOR:
-        - NAME: mask_points_and_boxes_outside_range
-          REMOVE_OUTSIDE_BOXES: True
-
-        - NAME: shuffle_points
-          SHUFFLE_ENABLED: {
-            'train': True,
-            'test': False
-          }
-
-        - NAME: sample_points_hist_based
-          # Bins below this fraction of the mean are left uncorrected rather than corrected from
-          # noise, on BOTH sides - a zero target bin would otherwise give rate 0 and delete every
-          # source point in it.
-          MIN_HIST_BIN_FRACTION: 0.01
-
-        - NAME: transform_points_to_voxels
-          VOXEL_SIZE: [0.1, 0.1, 0.15]
-          MAX_POINTS_PER_VOXEL: 10
-          MAX_NUMBER_OF_VOXELS: {
-            'train': 150000,
-            'test': 150000
-          }
 
 CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
 ONTOLOGY: 'kitti'
@@ -318,14 +309,10 @@ OPTIMIZATION:
     MOMS: [0.95, 0.85]
     PCT_START: 0.4
     DIV_FACTOR: 10
-    # Dead keys under adam_onecycle - build_scheduler()'s onecycle branch computes total_steps from
-    # the runtime epoch count and never reads them. Kept only to match the sibling configs.
-    DECAY_STEP_LIST: [15, 19]
-    LR_DECAY: 0.1
-    LR_CLIP: 0.0000001
-
-    LR_WARMUP: False
-    WARMUP_EPOCH: 1
+    # DECAY_STEP_LIST / LR_DECAY / LR_CLIP / LR_WARMUP / WARMUP_EPOCH are deliberately ABSENT.
+    # build_scheduler() reads them only in its LambdaLR branch; adam_onecycle takes the OneCycle
+    # branch and derives everything from total_steps = iters_per_epoch * NUM_EPOCHS. Carrying them
+    # would state a schedule that never runs.
 
     GRAD_NORM_CLIP: 10
 
