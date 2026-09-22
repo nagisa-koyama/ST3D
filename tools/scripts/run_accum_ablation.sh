@@ -3,12 +3,14 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=200G               # NOT the 96G the N=1 sourceonly configs use. MAX_SWEEPS 9 makes
-                                 # each sample ~224k points against ~22k at N=1, a 10x rise in what
-                                 # every DataLoader worker holds and ships through /dev/shm - and
-                                 # 64G already segfaulted centerpoint-sourceonly at N=1 (see
-                                 # run_experiment.sh's header). Raise further if epoch 2 dies at a
-                                 # worker respawn; that is the signature.
+#SBATCH --mem=320G               # NOT the 96G the N=1 sourceonly configs use. MAX_SWEEPS 15 makes
+                                 # each sample ~374k points against ~22k at N=1 (measured), a 17x
+                                 # rise in what every DataLoader worker holds and ships through
+                                 # /dev/shm - and 64G already segfaulted centerpoint-sourceonly at
+                                 # N=1 (see run_experiment.sh's header). Raise further if epoch 2
+                                 # dies at a worker respawn; that is the signature, and it arrives
+                                 # as SIGSEGV rather than a clean OOM because the shm pages count
+                                 # against the cgroup.
 #SBATCH --gres=gpu:1             # untyped on purpose: each partition holds one GPU type, so the
                                  # typed form would pin this back to a single partition
 #SBATCH --partition=a6000_ada,a6000   # NOT a100 - job 25536 died instantly there with an untyped

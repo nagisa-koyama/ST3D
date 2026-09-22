@@ -24,22 +24,40 @@
 DATA_CONFIG:
     _BASE_CONFIG_: cfgs/da-ieee-access/da_nuscenes_dataset.yaml
 
-    # Accumulation depth. N counts frames INCLUDING the keyframe, so MAX_SWEEPS: 9 is 9 frames -
-    # 1 keyframe plus 8 of the 9 stored sweeps - spanning ~0.40 s.
+    # Accumulation depth. N counts frames INCLUDING the keyframe, so MAX_SWEEPS: 15 is 15 frames,
+    # spanning ~0.70 s.
     #
-    # 9 is DERIVED, not a ceiling: it is the smallest depth at which nuScenes n015's mean radial
-    # histogram meets KITTI's in every one of the 13 bins spanning 5-70 m (8 gives 12/13). That is
-    # the global criterion, and it is the only one usable here - the object criterion needs the
-    # TARGET's boxes to set its reference, which UDA does not have. See
-    # experiments_md/20260922_07 for the derivation and 20260922_08 for what it leaves on the
-    # table: global parity still leaves objects at 0.87x KITTI, and per 10 m ring the object
-    # requirement runs 5 (0-10 m) to 150 (60-70 m), so no single depth is right everywhere.
+    # 15, not the 9 the global criterion alone gives, because a density correction is a
+    # keep-probability: it can only REMOVE points. Where the source sits below the target in a bin
+    # the rate clips at 1 and the correction does nothing at all. Measured per bin against KITTI
+    # (experiments_md/20260922_08): at N=9 nuScenes is at 0.69 of the target and the
+    # foreground-aware correction returns 0.69 - byte-identical to uncorrected, a null result
+    # caused by the depth rather than by the method. At N=15 the source reaches 1.06 and the
+    # correction returns 0.99-1.00.
     #
-    # The ceiling, separately, is 10 - get_lidar_with_sweeps() indexes info['sweeps'][k] with no
-    # clamp and the infos store 9, so MAX_SWEEPS > 10 raises IndexError. Going deeper means
-    # regenerating them with create_nuscenes_info(max_sweeps=N); it is a metadata-only pass, and
-    # it should be submitted with sbatch so it outlives the ssh session.
-    MAX_SWEEPS: 9
+    # All three configs in the ablation use the SAME depth so the comparison stays one-variable.
+    # 15 also still satisfies the global criterion, which only needs >= 9.
+    #
+    # KNOWN RISK at this depth: with the source only 1.06x the target, pseudo-label noise biases
+    # the rate DOWNWARD - min(F_t/F_s, 1) is concave at the kink, so noise in the target estimate
+    # over-thins. The correction degrades 0.98 -> 0.67 as simulated teacher recall falls to 0.2.
+    # Sources with real surplus (Lyft and PandaSet at ~2.2x) degrade UPWARD instead, the mild
+    # direction. N~30 would put nuScenes in that regime and is now reachable, but doubles the
+    # points per sample again and is unmeasured for this pair.
+    #
+    # Requires the 200-sweep infos below: get_lidar_with_sweeps() indexes info['sweeps'][k] with
+    # no clamp, so MAX_SWEEPS 15 against the shipped 10-sweep infos raises IndexError - verified,
+    # along with the new infos reproducing the old ones to within 0.4% at N=1/9/10.
+    MAX_SWEEPS: 15
+
+    # Regenerated with create_nuscenes_info(max_sweeps=200) - a metadata-only pass, 39.5 min, via
+    # tools/scripts/create_nuscenes_infos_deep.sh. max_sweeps is part of the filename, so these sit
+    # BESIDE the shipped 10-sweep infos and every other config is unaffected. Overridden here
+    # rather than in da_nuscenes_dataset.yaml, which the source-only family shares.
+    INFO_PATH: {
+        'train': [nuscenes_infos_200sweeps_train.pkl],
+        'test': [nuscenes_infos_200sweeps_val.pkl],
+    }
 
 # KITTI is the unlabelled target. Its labels are used for EVALUATION only - no target label ever
 # reaches training, which is what keeps this a UDA setup.
