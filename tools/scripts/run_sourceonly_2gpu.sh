@@ -3,7 +3,12 @@
 #SBATCH --partition=a6000_ada,a6000,rtx8000
 #SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=20
-#SBATCH --mem=96G
+#SBATCH --mem=96G               # enough for the five N=1 source-only rows. An accumulating row
+                                # needs more (the 200-sweep nuScenes infos are 2.75 GB per
+                                # process, and 2 ranks means twice as many of them), so override
+                                # it on the command line: `sbatch --mem=250G ...`. Keep the value
+                                # under the SMALLEST node of whatever --partition list is in
+                                # force - 239G rtx8000, 299G a6000, 478G a6000_ada.
 #SBATCH --time=48:00:00
 #SBATCH --output=logs/output_%j_%x.txt
 #SBATCH --error=logs/error_%j_%x.txt
@@ -34,11 +39,17 @@ set -euo pipefail
 # $1 is either one of the five source names, or a path to any config in the family - the latter
 # so one-off rows (e.g. the Lyft->Lyft oracle, which is not an `X -> nuScenes` source) get the same
 # 2-GPU recipe and the same frozen-code guarantee instead of a hand-rolled invocation.
-SOURCE=${1:?usage: sbatch scripts/run_sourceonly_2gpu.sh <kitti|lyft|nuscenes|pandaset|waymo|path/to.yaml> [extra_tag]}
+SOURCE=${1:?usage: sbatch scripts/run_sourceonly_2gpu.sh <kitti|lyft|nuscenes|pandaset|waymo|path/to.yaml> [extra_tag] [run_name]}
 TAG=${2:-$(date +%Y%m%d)_sourceonly}
 case "$SOURCE" in
-  *.yaml) CFG=$SOURCE; SOURCE=$(basename "$CFG" .yaml) ;;
-  *)      CFG=cfgs/da-ieee-access/centerpoint-sourceonly-${SOURCE}.yaml ;;
+  # A config PATH names itself. The five-source shorthand keeps the "X -> nuScenes" run name it
+  # has always had, but a path can be any row in the family - an ablation, an oracle - and
+  # calling those "sourceonly_<x>2nuscenes" would put a wrong claim in the W&B run name, which is
+  # what a reader sorts by. $3 overrides either.
+  *.yaml) CFG=$SOURCE; SOURCE=$(basename "$CFG" .yaml)
+          RUN_NAME=${3:-$(basename "$CFG" .yaml | sed 's/^centerpoint-//')} ;;
+  *)      CFG=cfgs/da-ieee-access/centerpoint-sourceonly-${SOURCE}.yaml
+          RUN_NAME=${3:-sourceonly_${SOURCE}2nuscenes} ;;
 esac
 SIF=/home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif
 REPO=/home/koyama/code/ST3D
@@ -97,5 +108,5 @@ singularity exec --nv \
         --cfg_file "$CFG" \
         --batch_size 6 \
         --fix_random_seed \
-        --run_name "sourceonly_${SOURCE}2nuscenes" \
+        --run_name "$RUN_NAME" \
         --extra_tag "$TAG"
