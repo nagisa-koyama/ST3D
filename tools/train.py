@@ -156,6 +156,14 @@ def main():
 
     if dist_train:
         logger.info('total_batch_size: %d' % (total_gpus * args.batch_size))
+    # The GLOBAL batch is derived (per-GPU x GPU count) and appears in no config file and in no
+    # argparse value, so it is the one number a reader cannot check anywhere else - and getting it
+    # wrong is silent. Launching the da-ieee-access family on 2 GPUs without `--batch_size 6` gives
+    # a global batch of 12 and half the optimizer steps, with no error. Log it, and the step count
+    # it implies, so a wrong recipe is visible in the first screen of every job log.
+    logger.info('global batch size: %d (%d per GPU x %d GPU%s)'
+                % (total_gpus * args.batch_size, args.batch_size, total_gpus,
+                   '' if total_gpus == 1 else 's'))
     for key, val in vars(args).items():
         logger.info('{:16} {}'.format(key, val))
     log_config_to_file(cfg, logger=logger)

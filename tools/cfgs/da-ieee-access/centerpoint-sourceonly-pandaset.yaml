@@ -150,16 +150,33 @@ MODEL:
 
 OPTIMIZATION:
 
-    # This family runs on ONE GPU. BATCH_SIZE_PER_GPU 6 is therefore also the GLOBAL batch, giving
-    # 93,766 optimizer steps over the shared 562,600-presentation budget.
+    # This family runs on TWO GPUs at a GLOBAL batch of 6 - i.e. 3 per rank - which is the fastest
+    # completion available without changing the optimization recipe at all. Launch it with
+    # tools/scripts/run_sourceonly_2gpu.sh, and see the batch-size warning below.
     #
-    # 2-GPU DDP was measured (1.47x KITTI, 1.93x PandaSet) and declined. It does not reduce the
-    # global batch: `--batch_size 12` on 2 GPUs and omitting the flag both give 6 per rank, i.e. a
-    # global batch of 12 and HALF the optimizer steps, and LR 0.003 was tuned at global batch 6.
-    # Holding the global batch at 6 instead would mean 3 per rank, which is below anything that was
-    # measured - the saturation result only covers bs>=6. On top of that, evaluation's AP half does
-    # not parallelize at all, and a 2-GPU job needs both GPUs free on one node, which on a
-    # saturated cluster can cost more queue time than it saves. See 20260922_06 sections 4a-4d.
+    # Measured on ONE node in ONE allocation, so GPU count is the only variable (jobs 25734
+    # PandaSet / 25735 KITTI, node61; 20260922_06 section 2e):
+    #
+    #   * 2 GPUs scale ~LINEARLY: 2.06x on PandaSet, 2.03x on KITTI. An earlier cross-node
+    #     comparison put this at 1.93x, and a hardware "correction" then put it at 1.40x; both
+    #     were wrong, because the nodes were shared and the rtx8000/a6000 factor was measuring
+    #     co-tenancy. Only a same-node A/B answers this.
+    #   * bs=3 per rank is STILL SATURATED - 0.944x (KITTI) to 0.965x (PandaSet) of bs=6's
+    #     samples/s - so splitting a global batch of 6 across two GPUs costs ~4-6%, not a
+    #     collapse. That is what makes the recipe-preserving option viable.
+    #   * 3/rank BEATS 6/rank: 15.0 h vs 15.2 h on PandaSet, while keeping TWICE the optimizer
+    #     steps. Going to 6/rank would double the global batch to 12, halve the steps to 46,883
+    #     and put LR 0.003 - tuned at global batch 6 - out of calibration, for no time saved.
+    #
+    # BATCH_SIZE_PER_GPU stays 6 because it is the correct PER-GPU value for a ONE-GPU run, which
+    # is what this key means when no launcher is used. Under `torch.distributed.launch` the launch
+    # script passes `--batch_size 6` explicitly, which train.py:104-107 divides by the GPU count to
+    # give 3 per rank. Both paths therefore produce a global batch of 6 and 93,766 optimizer steps.
+    #
+    # THE FOOTGUN: launching on 2 GPUs and OMITTING --batch_size does NOT do this. The flag's
+    # absence makes args.batch_size = BATCH_SIZE_PER_GPU = 6 PER RANK, i.e. a global batch of 12
+    # and half the steps - silently, with no warning. train.py logs the resolved global batch and
+    # step count at startup; check it reads 6 and 93766.
     BATCH_SIZE_PER_GPU: 6
 
     # Evaluate only the tail of training, not every checkpoint.

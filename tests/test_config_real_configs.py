@@ -203,6 +203,11 @@ def test_ieee_access_sourceonly_family_is_internally_consistent(in_tools_dir):
         # Single GPU: BATCH_SIZE_PER_GPU is also the global batch, so the shared budget gives the
         # same optimizer-step count for every source. Pinned because running this family under a
         # launcher would silently double the global batch and halve the steps.
+        # BATCH_SIZE_PER_GPU is the correct value for a ONE-GPU run and, via the launch script's
+        # explicit `--batch_size 6`, also yields a global batch of 6 on two GPUs (3 per rank).
+        # Either way the global batch is 6 and the step count is 93,766 - the property the family
+        # is built on. Pinned because the 2-GPU path silently doubles the batch if the flag is
+        # dropped; see run_sourceonly_2gpu.sh.
         assert cfg.OPTIMIZATION.BATCH_SIZE_PER_GPU == 6, cfg_file
         assert budget // cfg.OPTIMIZATION.BATCH_SIZE_PER_GPU == 93766, cfg_file
         assert cfg.OPTIMIZATION.NUM_WORKERS == expected_workers[src], (
@@ -281,3 +286,22 @@ def test_num_epochs_to_eval_is_off_by_one(num_epochs_to_eval, expected_checkpoin
     start_epoch = max(num_epochs - num_epochs_to_eval, 0)
     evaluated = [e for e in range(1, num_epochs + 1) if e >= start_epoch]
     assert len(evaluated) == expected_checkpoints
+
+
+def test_two_gpu_launch_script_passes_an_explicit_global_batch():
+    """The 2-GPU launch must pass `--batch_size 6`, or it silently halves the optimizer steps.
+
+    `--batch_size` is the TOTAL across ranks and train.py divides it by the GPU count, so 6 gives
+    3 per rank and a global batch of 6 - the single-GPU recipe. Omitting it instead makes
+    args.batch_size = BATCH_SIZE_PER_GPU = 6 PER rank: global batch 12, 46,883 steps, and LR 0.003
+    out of calibration. Nothing errors. This test is the guard.
+    """
+    script = (Path(__file__).resolve().parent.parent
+              / 'tools' / 'scripts' / 'run_sourceonly_2gpu.sh').read_text()
+    # Comments explain these flags at length, so test what the shell actually runs.
+    code = '\n'.join(l for l in script.splitlines() if not l.lstrip().startswith('#'))
+    assert '--nproc_per_node=2' in code
+    assert '--batch_size 6' in code, 'the 2-GPU launch must pin the global batch to 6'
+    # --workers must NOT be passed: it is per-rank and comes from each config's NUM_WORKERS,
+    # which differs by source (8 for Waymo and PandaSet, 4 otherwise).
+    assert '--workers' not in code, '--workers would override the per-source NUM_WORKERS'

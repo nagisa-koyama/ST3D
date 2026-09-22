@@ -1,0 +1,6 @@
+node=node61 gpus=0,1
+RESULT cfg=centerpoint-sourceonly-kitti.yaml bs=3 workers=4 it_s=2.6763 samples_s=8.0289 data_frac=0.0021 peak_alloc_gb=4.96 peak_reserved_gb=8.93 hours=19.464 iters=187533 loss=11.140
+RESULT cfg=centerpoint-sourceonly-kitti.yaml bs=6 workers=4 it_s=1.4170 samples_s=8.5020 data_frac=0.0022 peak_alloc_gb=9.82 peak_reserved_gb=18.39 hours=18.381 iters=93766 loss=10.153
+RESULT cfg=centerpoint-sourceonly-kitti.yaml bs=12 workers=4 it_s=0.7047 samples_s=8.4568 data_frac=0.0007 peak_alloc_gb=19.03 peak_reserved_gb=44.10 hours=18.479 iters=46883 loss=9.206
+DDP total_bs=6 per_rank=3 workers=4 rate=2.88it/s max_it=607
+DDP total_bs=12 per_rank=6 workers=4 rate=1.44it/s max_it=284

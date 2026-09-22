@@ -19,20 +19,24 @@
 # Each single-GPU arm is its own `singularity exec` (one process per combo, same
 # no-shm-accumulation principle as sweep_throughput.sh) and is pinned to GPU 0 so the idle second
 # GPU cannot flatter it.
+#
+# Usage: gpu_scaling_ab.sh [cfg_file] [workers]   (defaults: PandaSet, 8)
 set -u
 cd /home/koyama/code/ST3D/tools
 SIF=/home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif
-CFG=cfgs/da-ieee-access/centerpoint-sourceonly-pandaset.yaml
-OUT=analysis/throughput_results/gpu_scaling_ab.tsv
+CFG=${1:-cfgs/da-ieee-access/centerpoint-sourceonly-pandaset.yaml}
+W=${2:-8}
+NAME=$(basename "$CFG" .yaml)
+OUT=analysis/throughput_results/gpu_scaling_ab_${NAME}_w${W}.tsv
 : > "$OUT"
 echo "node=$(hostname) gpus=${CUDA_VISIBLE_DEVICES:-unset}" | tee -a "$OUT" 1>&2
 
 for bs in 3 6 12; do
-  echo "=== 1 GPU, bs=$bs, w8 ===" 1>&2
+  echo "=== 1 GPU, bs=$bs, w$W ===" 1>&2
   LINE=$(SINGULARITYENV_CUDA_VISIBLE_DEVICES=0 timeout --signal=KILL 600 singularity exec --nv \
       --bind /home/koyama/data/:/storage --bind /home/koyama/code/ST3D:/root/ST3D "$SIF" \
       python analysis/profile_throughput.py --cfg_file "$CFG" \
-      --batch_size "$bs" --workers 8 --warmup 10 --measure 40 \
+      --batch_size "$bs" --workers "$W" --warmup 10 --measure 40 \
       2>&1 | tee /dev/stderr | grep '^RESULT ')
   echo "${LINE:-FAILED 1gpu bs=$bs}" >> "$OUT"
   sleep 5
@@ -41,14 +45,14 @@ done
 # DDP arms. ddp_smoke_test.sh takes <cfg> <ngpus> <TOTAL batch> <seconds> <workers>; TOTAL is
 # divided across ranks by train.py, so 6 -> 3/rank and 12 -> 6/rank.
 for total in 6 12; do
-  echo "=== 2 GPU, total_bs=$total ($((total/2))/rank), w8 ===" 1>&2
-  bash analysis/ddp_smoke_test.sh "$CFG" 2 "$total" 300 8 > /dev/null 2>&1
-  LOG=analysis/throughput_results/ddp_centerpoint-sourceonly-pandaset_ngpu2_bs${total}_w8.log
+  echo "=== 2 GPU, total_bs=$total ($((total/2))/rank), w$W ===" 1>&2
+  bash analysis/ddp_smoke_test.sh "$CFG" 2 "$total" 300 "$W" > /dev/null 2>&1
+  LOG=analysis/throughput_results/ddp_${NAME}_ngpu2_bs${total}_w${W}.log
   # Read the RAW log, not the smoke script's summary - its regex stops at "]" and never captures
   # the per-iteration counter (the second harness bug recorded in 20260922_06 section 6).
   RATE=$(tr '\r' '\n' < "$LOG" 2>/dev/null | grep -oE '[0-9.]+(it/s|s/it)' | tail -1)
   ITERS=$(tr '\r' '\n' < "$LOG" 2>/dev/null | grep -oE 'total_it=[0-9]+' | grep -oE '[0-9]+' | sort -n | tail -1)
-  echo "DDP total_bs=$total per_rank=$((total/2)) workers=8 rate=${RATE:-none} max_it=${ITERS:-0}" >> "$OUT"
+  echo "DDP total_bs=$total per_rank=$((total/2)) workers=$W rate=${RATE:-none} max_it=${ITERS:-0}" >> "$OUT"
   sleep 5
 done
 
