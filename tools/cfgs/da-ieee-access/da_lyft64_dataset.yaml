@@ -1,0 +1,18 @@
+# Lyft Level 5, 64-BEAM configuration only, as a labelled source.
+#
+# Lyft ships two vehicle configurations and they are different sensors, not a nuisance split:
+# host-a101/a102 are 64-beam (BETA_PLUS_PLUS for this one), the other ten hosts 40-beam. The
+# 64-beam subset is 3402 of 18,900 train frames (18%), ~108k points/frame, vertical FOV
+# -26.8 to +15.0 deg. The split is host-pure and independently visible as a bimodal point count with
+# nothing between 70k and 84k. See experiments_md/20260922_02.
+#
+# da_lyft_dataset.yaml deliberately omits LIDAR_CONFIG - one config per dataset - and therefore
+# has to pick ONE SHIFT_COOR for both platforms. These per-platform files exist because that
+# compromise is measurable: the two want 1.87 and 2.04 respectively (experiments_md/20260922_03),
+# a 17 cm difference against an anchor plane that anchor_bottom_heights: [0] places at z=0.
+_BASE_CONFIG_: cfgs/da-ieee-access/da_lyft_dataset.yaml
+
+LIDAR_CONFIG: 64
+
+# The 64-beam value, not the 82%-weighted compromise the shared config carries.
+SHIFT_COOR: [0.0, 0.0, 2.04]
