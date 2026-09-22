@@ -252,8 +252,13 @@ OPTIMIZATION:
     # free: KITTI now makes 152 passes over 3,712 frames. Watch its train/val gap - if it overfits,
     # reintroduce a cap rather than abandon the budget.
     #
-    # nuScenes (28,130 frames): nuScenes IS the anchor - 20 epochs is the value the budget is defined from.
-    NUM_EPOCHS: 20
+    # Lyft (18,900 frames across BOTH platform sources): 562,600 / 18,900 = 29.77 -> 30 epochs,
+    # 567,000 presentations, +0.78% of the anchor. NOT the anchor's own 20 - that is nuScenes'
+    # number, and here nuScenes is the TARGET while Lyft is the source. An epoch is one pass over
+    # the source in every arm of this ablation (train.py sums its source loaders; the
+    # foreground-aware arm sets SELF_TRAIN.EPOCH_FOLLOWS: source to match), so the budget has to be
+    # read off the SOURCE row of the table above.
+    NUM_EPOCHS: 30
 
     OPTIMIZER: adam_onecycle
     LR: 0.003

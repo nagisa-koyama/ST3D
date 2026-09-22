@@ -278,7 +278,9 @@ OPTIMIZATION:
     # free: KITTI now makes 152 passes over 3,712 frames. Watch its train/val gap - if it overfits,
     # reintroduce a cap rather than abandon the budget.
     #
-    # nuScenes (28,130 frames): nuScenes IS the anchor - 20 epochs is the value the budget is defined from.
+    # nuScenes (28,130 frames) is the SOURCE here and is the anchor: 20 epochs is the value the
+    # budget is defined from. Accumulation does not change it - the table is in frames, and
+    # MAX_SWEEPS alters points per frame, not how many frames a pass presents.
     NUM_EPOCHS: 20
 
     OPTIMIZER: adam_onecycle
