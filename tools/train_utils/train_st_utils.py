@@ -340,8 +340,14 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
 
     # Trying to support self training with muliple sources data.
     # Measured after the first pseudo-label pass below, not here - see the hook in the epoch loop.
-    ps_label_fg_calibration_pending = bool(cfg.DATA_CONFIG.get('HIST_DIST_ON_THE_FLY', False)
-                                  and cfg.DATA_CONFIG.get('HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS', False))
+    # ONCE is the right cadence, not a compromise: with a separate frozen teacher
+    # (--pretrained_model_teacher) generation is deterministic - eval mode, no augmentation, no
+    # weight updates - so a later pass would re-measure the same histogram. It is only when no
+    # teacher is passed, and `model_teacher = model` above aliases it to the evolving student,
+    # that repeated measurement would say anything new.
+    ps_label_fg_calibration_pending = bool(
+        cfg.DATA_CONFIG.get('HIST_DIST_ON_THE_FLY', False)
+        and cfg.DATA_CONFIG.get('HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS', False))
     source_readers = [common_utils.DataReader(source_loader, source_sampler)
                       for source_loader, source_sampler in zip(source_loaders, source_samplers)]
     [source_reader.construct_iter() for source_reader in source_readers]
