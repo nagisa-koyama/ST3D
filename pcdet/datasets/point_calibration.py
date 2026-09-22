@@ -96,7 +96,7 @@ def link_point_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
 
 
 def compute_foreground_histograms(dataset, num_frames=DEFAULT_FRAMES, num_bins=DEFAULT_BINS,
-                                  max_dist=MAX_DIST, logger=None, label=''):
+                                  max_dist=MAX_DIST, logger=None, label='', min_points_in_box=1):
     """Mean points per frame per radial bin, split into inside-box and outside-box channels.
 
     Boxes come from `dataset[idx]['gt_boxes']`, which is real annotation for a source domain and
@@ -107,6 +107,14 @@ def compute_foreground_histograms(dataset, num_frames=DEFAULT_FRAMES, num_bins=D
 
     Ignored pseudo-labels (negative class index, the ones memory voting has demoted) are excluded,
     so the target foreground channel counts only boxes the teacher currently stands behind.
+
+    A box containing NO POINTS is excluded from the per-box denominator (`min_points_in_box`).
+    It contributes nothing to the numerator by definition, so counting it can only drag the mean
+    down, and what it measures is not density: an empty box records annotation policy, occlusion or
+    sensor coverage. PandarGT makes the size of that plain - it labels the full 360 degrees while
+    seeing about +-30, so 80.2% of its Car boxes are empty, and including them would put the
+    foreground estimate a factor of five below the density any detector actually sees. This is the
+    same confound as counting foreground per FRAME, one level down.
 
     The foreground channel is POINTS PER BOX; the background channel is points per frame. That
     asymmetry is deliberate and load-bearing. Foreground points per *frame* conflates how densely
@@ -128,7 +136,7 @@ def compute_foreground_histograms(dataset, num_frames=DEFAULT_FRAMES, num_bins=D
     bg = np.zeros(num_bins, dtype=np.float64)
     nbox = np.zeros(num_bins, dtype=np.float64)
     total = np.zeros(num_bins, dtype=np.float64)
-    used, with_boxes = 0, 0
+    used, with_boxes, empty_boxes, seen_boxes = 0, 0, 0, 0
     for idx in range(0, n, step):
         if used >= num_frames:
             break
@@ -142,14 +150,21 @@ def compute_foreground_histograms(dataset, num_frames=DEFAULT_FRAMES, num_bins=D
             if boxes.shape[1] > 7:                       # drop ignored pseudo-labels
                 boxes = boxes[boxes[:, 7] > 0]
             with_boxes += 1 if len(boxes) else 0
-        mask = dataset.data_processor.points_in_any_box(points, boxes)
+        mask, per_box, kept = dataset.data_processor.box_occupancy(points, boxes)
         dist = np.clip(np.linalg.norm(points[:, 0:2], axis=1), 0, max_dist - 1e-4)
         fg += np.histogram(dist[mask], bins=edges)[0]
         bg += np.histogram(dist[~mask], bins=edges)[0]
         total += np.histogram(dist, bins=edges)[0]
-        if boxes is not None and len(boxes):
-            bdist = np.clip(np.linalg.norm(np.asarray(boxes)[:, 0:2], axis=1), 0, max_dist - 1e-4)
-            nbox += np.histogram(bdist, bins=edges)[0]
+        if len(kept):
+            # `kept` rather than `boxes`: degenerate boxes were dropped before counting, so using
+            # the original array here would put boxes in the denominator that contributed no
+            # points to the numerator - the very error this exclusion exists to remove.
+            occupied = kept[per_box >= min_points_in_box]
+            seen_boxes += len(kept)
+            empty_boxes += len(kept) - len(occupied)
+            if len(occupied):
+                bdist = np.clip(np.linalg.norm(occupied[:, 0:2], axis=1), 0, max_dist - 1e-4)
+                nbox += np.histogram(bdist, bins=edges)[0]
         used += 1
     if used == 0:
         raise ValueError('no usable frames while measuring a histogram')
@@ -164,6 +179,17 @@ def compute_foreground_histograms(dataset, num_frames=DEFAULT_FRAMES, num_bins=D
                     '%.0f pts/box peak, %.0f bg pts/frame, foreground share %.2f%%'
                     % (label, used, with_boxes, nbox.sum() / used, fg.max(), bg.sum(),
                        100 * share))
+        if seen_boxes:
+            logger.info('point calibration [%s]: %d of %d boxes held fewer than %d points and are '
+                        'excluded from the per-box mean (%.1f%%)'
+                        % (label, empty_boxes, seen_boxes, min_points_in_box,
+                           100.0 * empty_boxes / seen_boxes))
+            if empty_boxes == seen_boxes:
+                logger.warning(
+                    'point calibration [%s]: EVERY box was empty, so the foreground channel has no '
+                    'denominator and its rate will be 1 everywhere. For a flash or forward-facing '
+                    'sensor check the FOV; for a self-training target check that pseudo-labels '
+                    'exist and are not all ignored.' % label)
         if with_boxes == 0:
             logger.warning('point calibration [%s]: NO boxes in any sampled frame - the foreground '
                            'channel is empty and its rate will be 1 everywhere. For a target '
@@ -173,7 +199,7 @@ def compute_foreground_histograms(dataset, num_frames=DEFAULT_FRAMES, num_bins=D
 
 def link_foreground_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
                                 num_bins=DEFAULT_BINS, max_dist=MAX_DIST, logger=None,
-                                source_hist=None):
+                                source_hist=None, min_points_in_box=1):
     """Foreground-aware calibration: correct inside-box and outside-box points separately.
 
     A single per-bin rate cannot change a bin's foreground SHARE - it scales the points on objects
@@ -198,16 +224,17 @@ def link_foreground_calibration(source_set, target_set, num_frames=DEFAULT_FRAME
     the first iteration of any loader over either dataset, since workers fork a copy.
     """
     if source_hist is None:
-        fg_s, bg_s, tot_s = compute_foreground_histograms(source_set, num_frames, num_bins,
-                                                          max_dist, logger=logger, label='source')
+        fg_s, bg_s, tot_s = compute_foreground_histograms(
+            source_set, num_frames, num_bins, max_dist, logger=logger, label='source',
+            min_points_in_box=min_points_in_box)
     else:
         # Re-measuring the source on a refresh would read points the correction installed last time
         # has ALREADY thinned, compounding the rate on every pass. The source distribution does not
         # change anyway, so it is measured once and passed back in.
         fg_s, bg_s, tot_s = source_hist
-    fg_t, bg_t, tot_t = compute_foreground_histograms(target_set, num_frames, num_bins, max_dist,
-                                                      logger=logger,
-                                                      label='target (pseudo-labels)')
+    fg_t, bg_t, tot_t = compute_foreground_histograms(
+        target_set, num_frames, num_bins, max_dist, logger=logger,
+        label='target (pseudo-labels)', min_points_in_box=min_points_in_box)
     # The whole-cloud pair is the per-FRAME total. It cannot be fg + bg any more: fg is per box.
     source_set.data_processor.set_hist_dist(tot_s, tot_t, max_dist=max_dist)
     source_set.data_processor.set_foreground_hist(fg_s, bg_s, fg_t, bg_t)

@@ -498,7 +498,9 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
                             num_frames=cfg.DATA_CONFIG.get('HIST_DIST_FRAMES', 1000),
                             num_bins=cfg.DATA_CONFIG.get('HIST_DIST_BINS', 50),
                             max_dist=cfg.DATA_CONFIG.get('HIST_DIST_MAX_DIST', 75.0),
-                            logger=logger, source_hist=ps_label_fg_source_hist)
+                            logger=logger, source_hist=ps_label_fg_source_hist,
+                            min_points_in_box=cfg.DATA_CONFIG.get(
+                                'HIST_DIST_MIN_POINTS_IN_BOX', 1))
                         # The source workers forked at construct_iter() holding the dataset as it
                         # was before this, and a forked worker never sees a later mutation. Re-fork
                         # them or the correction silently never runs.

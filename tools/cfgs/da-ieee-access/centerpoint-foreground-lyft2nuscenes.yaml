@@ -39,6 +39,12 @@ DATA_CONFIGS:
         HIST_DIST_MAX_DIST: 75.0    # must cover POINT_CLOUD_RANGE
         # The target foreground channel comes from PSEUDO-LABELS, which is what makes this UDA-legal.
         HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS: True
+        # A box holding fewer than this many points is left OUT of the per-box mean. It adds nothing
+        # to the numerator by definition, so counting it only drags the mean down, and what it records
+        # is annotation policy, occlusion or sensor coverage rather than density. PandarGT shows the
+        # scale: 80.2% of its Car boxes are empty, which would put the estimate ~5x below what a
+        # detector sees. 1 is the meaningful floor.
+        HIST_DIST_MIN_POINTS_IN_BOX: 1
         # mask -> shuffle -> correction -> voxelise, the order used by every da-MIRU2025
         # point-calibrated config. The list is restated in full because YAML lists replace rather than
         # merge, so adding one entry means writing all of them.
@@ -77,6 +83,12 @@ DATA_CONFIGS:
         HIST_DIST_MAX_DIST: 75.0    # must cover POINT_CLOUD_RANGE
         # The target foreground channel comes from PSEUDO-LABELS, which is what makes this UDA-legal.
         HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS: True
+        # A box holding fewer than this many points is left OUT of the per-box mean. It adds nothing
+        # to the numerator by definition, so counting it only drags the mean down, and what it records
+        # is annotation policy, occlusion or sensor coverage rather than density. PandarGT shows the
+        # scale: 80.2% of its Car boxes are empty, which would put the estimate ~5x below what a
+        # detector sees. 1 is the meaningful floor.
+        HIST_DIST_MIN_POINTS_IN_BOX: 1
         # mask -> shuffle -> correction -> voxelise, the order used by every da-MIRU2025
         # point-calibrated config. The list is restated in full because YAML lists replace rather than
         # merge, so adding one entry means writing all of them.

@@ -279,23 +279,32 @@ class DataProcessor(object):
         return data_dict
 
     @staticmethod
-    def points_in_any_box(points, boxes):
-        """Boolean mask: is each point inside at least one of `boxes`?
+    def box_occupancy(points, boxes):
+        """(point-in-any-box mask, points per box, the boxes those counts refer to).
 
-        Degenerate boxes are dropped first. A zero- or negative-extent box reaching the C++
-        geometry kernel is the same failure mode as the still-open `gt_sampling` segfault in
-        `database_sampler.py`, and costs nothing to rule out here.
+        Returns the surviving boxes as well as the counts because degenerate boxes are dropped
+        first, which renumbers them - a caller that histograms box positions must use THESE boxes
+        or its per-box denominator will not match its per-box numerator. A zero- or
+        negative-extent box reaching the C++ geometry kernel is the same failure mode as the
+        still-open `gt_sampling` segfault in `database_sampler.py`, and costs nothing to rule out.
         """
+        empty = (np.zeros(len(points), dtype=bool), np.zeros(0, dtype=np.int64),
+                 np.zeros((0, 7), dtype=np.float32))
         if boxes is None or len(boxes) == 0:
-            return np.zeros(len(points), dtype=bool)
+            return empty
         boxes = np.asarray(boxes, dtype=np.float32)[:, :7]
         boxes = boxes[(boxes[:, 3:6] > 1e-3).all(axis=1)]
         if len(boxes) == 0:
-            return np.zeros(len(points), dtype=bool)
+            return empty
         from ...ops.roiaware_pool3d import roiaware_pool3d_utils
         inside = roiaware_pool3d_utils.points_in_boxes_cpu(
             np.ascontiguousarray(points[:, 0:3], dtype=np.float32), boxes)
-        return inside.any(axis=0) > 0
+        return inside.any(axis=0) > 0, inside.sum(axis=1), boxes
+
+    @staticmethod
+    def points_in_any_box(points, boxes):
+        """Boolean mask: is each point inside at least one of `boxes`?"""
+        return DataProcessor.box_occupancy(points, boxes)[0]
 
     def per_bin_sample_rate(self, config=None, channel='all'):
         """target/source density ratio per radial bin, with under-populated bins left alone.

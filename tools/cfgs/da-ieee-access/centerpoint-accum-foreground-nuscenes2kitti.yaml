@@ -64,6 +64,11 @@ DATA_CONFIGS:
         # The target foreground channel comes from pseudo-labels. The key is named for that because it
         # is the whole reason the method is admissible under UDA.
         HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS: True
+        # A box holding fewer than this many points is left OUT of the per-box mean. It adds
+        # nothing to the numerator by definition, so counting it only drags the mean down, and
+        # what it records is annotation policy, occlusion or sensor coverage rather than density.
+        # 1 is the meaningful floor; raise it only to exclude barely-sampled boxes deliberately.
+        HIST_DIST_MIN_POINTS_IN_BOX: 1
         HIST_DIST_FRAMES: 1000
         HIST_DIST_BINS: 50          # resolution is MAX_DIST / BINS = 1.5 m
         HIST_DIST_MAX_DIST: 75.0    # must cover POINT_CLOUD_RANGE
@@ -135,6 +140,11 @@ DATA_CONFIGS:
         # The target foreground channel comes from pseudo-labels. The key is named for that because it
         # is the whole reason the method is admissible under UDA.
         HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS: True
+        # A box holding fewer than this many points is left OUT of the per-box mean. It adds
+        # nothing to the numerator by definition, so counting it only drags the mean down, and
+        # what it records is annotation policy, occlusion or sensor coverage rather than density.
+        # 1 is the meaningful floor; raise it only to exclude barely-sampled boxes deliberately.
+        HIST_DIST_MIN_POINTS_IN_BOX: 1
         HIST_DIST_FRAMES: 1000
         HIST_DIST_BINS: 50          # resolution is MAX_DIST / BINS = 1.5 m
         HIST_DIST_MAX_DIST: 75.0    # must cover POINT_CLOUD_RANGE
