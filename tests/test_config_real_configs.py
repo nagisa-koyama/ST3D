@@ -357,7 +357,10 @@ def test_lyft2lyft_differs_from_the_lyft_source_row_only_in_its_target(in_tools_
 
 from pcdet.datasets.motion_compensation import should_compensate  # noqa: E402
 
-ACCUMULATING_DATASETS = ('NuScenesDataset', 'LyftDataset')
+# Every dataset whose loader can accumulate. PandaSet and Waymo joined on 2026-09-23; leaving
+# them out would have let an accumulating PandaSet config skip compensation unnoticed, which
+# is the exact failure this test exists to catch.
+ACCUMULATING_DATASETS = ('NuScenesDataset', 'LyftDataset', 'PandasetDataset', 'WaymoDataset')
 
 # Configs allowed to accumulate WITHOUT compensation, each with the reason. An entry here is a
 # deliberate ablation that wants the smearing artefact, not a config someone forgot to update.

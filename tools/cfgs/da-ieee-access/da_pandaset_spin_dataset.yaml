@@ -1,0 +1,15 @@
+# PandaSet's SPINNING lidar (Pandar64, device 0), as its own platform.
+#
+# Exists so PandaSet's two sensors can be used as a source/target PAIR. They ride the same vehicle
+# through the same scenes at the same timestamps, so everything except the sensor is held constant
+# - the cleanest sensor-only domain gap available anywhere in this study. No weather, route or
+# traffic confound can explain a difference between them.
+#
+# Every PandaSet job also needs `--bind /home/koyama/code/ST3D:/root/ST3D`; its infos bake absolute
+# /root/ST3D paths from preprocessing time.
+_BASE_CONFIG_: cfgs/da-ieee-access/da_pandaset_dataset.yaml
+
+# 64-beam mechanical spinning lidar, full 360 degrees, out to +-150 m. 95,735 points per frame in
+# the 5-70 m band against the flash sensor's 51,475, and 35 points per Car box at N=1 against the
+# flash sensor's 0 - see da_pandaset_flash_dataset.yaml for why that zero is structural.
+LIDAR_DEVICE: 0

@@ -1,0 +1,21 @@
+# PandaSet's FORWARD FLASH lidar (PandarGT, device 1), as its own platform.
+#
+# Pairs with da_pandaset_spin_dataset.yaml: same vehicle, same scenes, same timestamps, different
+# sensor. See that file for why the pair is worth having.
+#
+# READ THIS BEFORE USING IT AS A TARGET. PandarGT is a forward-facing flash lidar covering roughly
+# +-29 degrees, while PandaSet's labels span the full 360 - and `cuboids.sensor_id` does NOT
+# restrict labels to what a device can see (device-0 and device-1 GT are near-identical, 3623 vs
+# 3570 boxes). So 41.7% of its GT boxes contain ZERO points, and the zero-point GT filter in
+# dataset.py:374 is guarded by `if self.training:`, so at evaluation those boxes survive and score
+# as false negatives. **Recall against this target is capped near 58% no matter how good the
+# detector is**, and no accumulation depth changes that - a box outside the cone is never
+# illuminated at any N (measured: 0 points per Car box at both N=1 and N=10).
+#
+# Consequence for a results table: a number with PandarGT as the TARGET is not comparable to one
+# with Pandar64 as the target, and the two must not be tabled side by side until the eval-time
+# zero-point filter is addressed. As a SOURCE it is fine - the training-mode filter drops those
+# boxes, which is exactly what it is there for.
+_BASE_CONFIG_: cfgs/da-ieee-access/da_pandaset_dataset.yaml
+
+LIDAR_DEVICE: 1

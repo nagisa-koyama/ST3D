@@ -99,6 +99,29 @@ TARGETS = ['KITTI', 'nuScenes (all)', 'nuScenes n008 Boston', 'nuScenes n015 Sin
 SOURCES = ['KITTI', 'nuScenes (all)', 'nuScenes n008 Boston', 'nuScenes n015 Singapore',
            'Lyft (all)', 'Lyft 40-beam', 'Lyft 64-beam',
            'PandaSet Pandar64', 'PandaSet PandarGT', 'Waymo']
+
+# The default lists answer "what must each source do to reach the three DA targets in the study".
+# A same-dataset pair - PandaSet's spin sensor against its flash sensor - is not in them, because
+# neither PandaSet platform is a default TARGET. Restrict or extend either list from the command
+# line rather than editing them, so one run can answer one question:
+#
+#   python3 analysis/accumulation_matrix.py \
+#       --sources 'PandaSet Pandar64,PandaSet PandarGT' --targets 'PandaSet Pandar64,PandaSet PandarGT'
+#
+# Names must match the platform registry exactly; an unknown one fails loudly rather than being
+# silently dropped, which is how a matrix ends up quietly measuring fewer pairs than it prints.
+def _override(flag, default):
+    if flag not in sys.argv:
+        return default
+    names = [x.strip() for x in sys.argv[sys.argv.index(flag) + 1].split(',') if x.strip()]
+    unknown = [n for n in names if n not in P]
+    if unknown:
+        raise SystemExit('%s: unknown platform(s) %s\nknown: %s'
+                         % (flag, unknown, ', '.join(sorted(P))))
+    return names
+
+TARGETS = _override('--targets', TARGETS)
+SOURCES = _override('--sources', SOURCES)
 NO_OBJ = {'Waymo'}                     # points-in-box is broken in this checkout
 
 # ---- target references (single frame) --------------------------------------------------

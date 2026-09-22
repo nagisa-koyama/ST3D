@@ -1,0 +1,322 @@
+# PandaSet PandarGT (flash) -> PandaSet Pandar64 (spinning), + global density correction
+#
+# Variant 2 of 3 in the PandaSet sensor-to-sensor ablation for this direction:
+#
+#   1  centerpoint-accum-pandaset-flash2spin.yaml         no density correction
+#   2  centerpoint-accum-global-pandaset-flash2spin.yaml  + global density correction
+#   3  centerpoint-accum-foreground-pandaset-flash2spin.yaml + foreground-aware correction, from pseudo-labels
+#
+# The three differ ONLY in the correction. Source, target, depth, model and optimisation are held
+# fixed so any difference in AP is attributable.
+#
+# WHY THIS PAIR. Both sensors ride the SAME vehicle through the SAME scenes at the SAME timestamps,
+# so the only thing that varies is the sensor - no weather, route, traffic or annotation-policy
+# confound is available to explain a gap, which no other pair in this study can claim. It is also
+# the pair that justifies dropping intensity: the two report OPPOSITE-SIGN intensity-vs-range
+# trends on identical scenes, so `used_feature_list: ['x','y','z']` is a measured decision here
+# rather than a convention.
+#
+# WHY N=5. Measured on the UDA-legal GLOBAL criterion - the source's mean radial histogram meeting
+# the target's in every 5-70 m bin - with tools/analysis/accumulation_matrix.py:
+#
+#     --sources 'PandaSet PandarGT' --targets 'PandaSet Pandar64'   ->  N=5
+#
+# The flash sensor puts 51,475 points per frame in the band against the spinning sensor's 95,735,
+# so it is the sparser of the two and has something to gain from depth. This is the direction in
+# which an accumulation ablation is not vacuous.
+#
+# The OBJECT criterion is undefined here and is NOT used: PandarGT reads 0 points per Car box at
+# both N=1 and N=10, because over half its in-band Car boxes lie outside the +-29 degree flash cone
+# and are never illuminated at any depth. That is sensor coverage against 360-degree labels, not
+# something accumulation can repay. Depth was therefore chosen on the global criterion alone -
+# which UDA legality requires anyway, since the object criterion needs the target's GT boxes.
+#
+# One keep-probability per radial bin, min(P_target/P_source, 1), measured on the fly from the two
+# datasets actually being trained on rather than from a shipped hist_dist_*.npy.
+#
+# KNOWN COST, measured in experiments_md/20260922_08: a uniform per-bin rate scales the points on
+# objects and the points on everything else by the same factor, so it cannot change a bin's
+# foreground SHARE. Matching the global profile therefore takes objects DOWN. This config exists to
+# measure what that costs in AP, which is the open question the foreground variant answers.
+#
+# ENTRY POINT: train.py
+#
+# Every PandaSet job needs `--bind /home/koyama/code/ST3D:/root/ST3D` on the singularity
+# invocation; the infos bake absolute /root/ST3D paths from preprocessing time.
+
+DATA_CONFIG:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_pandaset_flash_dataset.yaml
+
+    MAX_SWEEPS: 5
+
+    HIST_DIST_ON_THE_FLY: True
+    HIST_DIST_FRAMES: 1000
+    HIST_DIST_BINS: 50          # resolution is MAX_DIST / BINS = 1.5 m
+    HIST_DIST_MAX_DIST: 75.0    # must cover POINT_CLOUD_RANGE; points beyond are clipped into the
+                                # last bin, not dropped, so too small merges the whole far field
+
+    # mask -> shuffle -> correction -> voxelise, the order used by every point-calibrated config
+    # in this repo. The list is restated in full because YAML lists replace rather than merge, so
+    # adding one entry means writing all of them.
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+
+        - NAME: sample_points_hist_based
+          # Bins below this fraction of the mean are left uncorrected rather than corrected from
+          # noise, on BOTH sides - a zero target bin would otherwise give rate 0 and delete every
+          # source point in it.
+          MIN_HIST_BIN_FRACTION: 0.01
+
+        - NAME: transform_points_to_voxels
+          VOXEL_SIZE: [0.1, 0.1, 0.15]
+          MAX_POINTS_PER_VOXEL: 10
+          MAX_NUMBER_OF_VOXELS: {
+            'train': 150000,
+            'test': 150000
+          }
+
+# The other sensor is the unlabelled target. Its labels are used for EVALUATION only - no target
+# label reaches training, which is what keeps this a UDA setup.
+DATA_CONFIG_TAR:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_pandaset_spin_dataset.yaml
+
+
+CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
+ONTOLOGY: 'kitti'
+
+MODEL:
+    NAME: CenterPoint
+
+    VFE:
+        NAME: MeanVFE
+
+    BACKBONE_3D:
+        NAME: VoxelResBackBone8x
+
+    MAP_TO_BEV:
+        NAME: HeightCompression
+        NUM_BEV_FEATURES: 256
+
+    BACKBONE_2D:
+        NAME: BaseBEVBackbone
+
+        LAYER_NUMS: [5]
+        LAYER_STRIDES: [1]
+        NUM_FILTERS: [128]
+        UPSAMPLE_STRIDES: [2]
+        NUM_UPSAMPLE_FILTERS: [256]
+
+    DENSE_HEAD:
+        NAME: CenterHead
+        CLASS_AGNOSTIC: False
+
+        CLASS_NAMES_EACH_HEAD: [
+            ['Car', 'Pedestrian', 'Cyclist'],
+        ]
+
+        SHARED_CONV_CHANNEL: 64
+        USE_BIAS_BEFORE_NORM: True
+        NUM_HM_CONV: 2
+        SEPARATE_HEAD_CFG:
+            HEAD_ORDER: ['center', 'center_z', 'dim', 'rot']
+            HEAD_DICT: {
+                'center': {'out_channels': 2, 'num_conv': 2},
+                'center_z': {'out_channels': 1, 'num_conv': 2},
+                'dim': {'out_channels': 3, 'num_conv': 2},
+                'rot': {'out_channels': 2, 'num_conv': 2},
+            }
+
+        TARGET_ASSIGNER_CONFIG:
+            FEATURE_MAP_STRIDE: 4
+            NUM_MAX_OBJS: 500
+            GAUSSIAN_OVERLAP: 0.1
+            MIN_RADIUS: 2
+
+        LOSS_CONFIG:
+            LOSS_WEIGHTS: {
+                'cls_weight': 1.0,
+                'loc_weight': 2.0,
+                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+            }
+
+        # CenterPoint has TWO live POST_PROCESSING blocks - this one and the model-level one below -
+        # each with its own SCORE_THRESH and NMS_CONFIG. Both are set to 0.0001 here; changing only
+        # one is a common way to get an unexplained AP shift.
+        POST_PROCESSING:
+            SCORE_THRESH: 0.0001
+            POST_CENTER_LIMIT_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+            MAX_OBJ_PER_SAMPLE: 500
+            NMS_CONFIG:
+                NMS_TYPE: nms_gpu
+                NMS_THRESH: 0.5
+                NMS_PRE_MAXSIZE: 4096
+                NMS_POST_MAXSIZE: 500
+
+    POST_PROCESSING:
+        RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+
+        # 0.0001, uniform across this whole family, and NOT the 0.01 the existing sourceonly
+        # configs use. eval_class() fills only len(thresholds) of its 41 R40 precision slots and
+        # averages the rest as ZERO, so discarding low-confidence detections before scoring caps
+        # achievable recall and biases AP DOWNWARD - worst exactly in the weak cross-domain regime
+        # a source-only floor lives in. Never raise this to relieve eval-time OOM; if numba's
+        # separate CUDA pool runs out (it is not PyTorch's allocator), add
+        # torch.cuda.empty_cache() before dataset.evaluation() in tools/eval_utils/eval_utils.py.
+        # See experiments_md/20260920_01 and 20260920_02.
+        SCORE_THRESH: 0.0001
+        OUTPUT_RAW_SCORE: False
+
+        # KITTI R40 AP. Note what this means with a NON-KITTI evaluation target: nuscenes_dataset.py
+        # fabricates the 2D bbox as [0, 0, 50, 50] with truncation/occlusion 0, so every GT passes
+        # all three difficulty levels, nothing is ever ignored, and easy == moderate == hard
+        # identically. Three identical AP values in the log is the expected output, not a bug. Those
+        # numbers are "all objects, no difficulty filter" - stricter than KITTI hard, and NOT
+        # comparable with a KITTI-target row's "moderate". The bbox/aos columns are meaningless here
+        # (all boxes identical, so 2D IoU is trivially 1). See experiments_md/20260919_05 sections 6-8.
+        EVAL_METRIC: kitti
+
+        NMS_CONFIG:
+            MULTI_CLASSES_NMS: False
+            NMS_TYPE: nms_gpu
+            NMS_THRESH: 0.5
+            NMS_PRE_MAXSIZE: 4096
+            NMS_POST_MAXSIZE: 500
+
+
+OPTIMIZATION:
+
+    # PER-GPU batch. This family runs on TWO GPUs, so 3 per GPU is a GLOBAL batch of 6 - the same
+    # global batch, the same 93,766 optimizer steps and the same LR 0.003 as a one-GPU run at 6.
+    # Launch with tools/scripts/run_sourceonly_2gpu.sh.
+    #
+    # Why the key says 3 and not 6: this is a PER-GPU value (train.py:104-107), so on the
+    # deployment these configs describe it must read 3 for the arithmetic above to hold. It also
+    # removes a silent failure mode - under `torch.distributed.launch --nproc_per_node=2`, BOTH
+    # passing `--batch_size 6` (divided by the GPU count -> 3) and omitting the flag entirely
+    # (-> BATCH_SIZE_PER_GPU = 3 per rank) now give a global batch of 6. With 6 here, forgetting
+    # the flag silently doubled the global batch and halved the steps. The launch script still
+    # passes it explicitly, so the two agree rather than one covering for the other.
+    #
+    # The remaining sharp edge is the opposite one: running this config on ONE GPU gives a global
+    # batch of 3 and 187,533 steps, which is NOT the intended recipe. train.py logs the resolved
+    # global batch at startup - it must read 6.
+    #
+    # Measured on ONE node in ONE allocation, so GPU count is the only variable (jobs 25734
+    # PandaSet / 25735 KITTI, node61; 20260922_06 section 2e):
+    #
+    #   * 2 GPUs scale ~LINEARLY: 2.06x on PandaSet, 2.03x on KITTI. An earlier cross-node
+    #     comparison put this at 1.93x, and a hardware "correction" then put it at 1.40x; both
+    #     were wrong, because the nodes were shared and the rtx8000/a6000 factor was measuring
+    #     co-tenancy. Only a same-node A/B answers this.
+    #   * bs=3 per rank is STILL SATURATED - 0.944x (KITTI) to 0.965x (PandaSet) of bs=6's
+    #     samples/s - so splitting a global batch of 6 across two GPUs costs ~4-6%, not a
+    #     collapse. That is what makes this recipe-preserving option viable at all.
+    #   * 3/rank BEATS 6/rank: 15.0 h vs 15.2 h on PandaSet, while keeping TWICE the optimizer
+    #     steps. Going to 6/rank would double the global batch to 12, halve the steps to 46,883
+    #     and put LR 0.003 - tuned at global batch 6 - out of calibration, for no time saved.
+    #   * memory is roughly linear in batch, so 3/rank costs about half of the one-GPU recipe:
+    #     ~5.0 GB allocated / ~9.2 GB reserved per rank on PandaSet, the heaviest source, against
+    #     48 GB cards. Note DDP does NOT inherit the single-GPU memory profile - PandaSet at
+    #     bs=12 fits solo at 47.0/48 GB but HANGS under 2-GPU DDP (section 3) - so the headroom
+    #     here is deliberate, not incidental.
+    BATCH_SIZE_PER_GPU: 3
+
+    # Evaluate only the tail of training, not every checkpoint.
+    #
+    # The repo default is 100, and evaluation is NOT cheap: measured on job 25730, one evaluation
+    # of the 6019-frame nuScenes target costs 299.5 s against 300.2 s for one KITTI training
+    # epoch - the same price - and 162 s of that is KITTI-metric AP computation running
+    # single-threaded on rank 0, which no amount of parallelism touches. At the default this
+    # family would spend ~30.8 h evaluating on top of ~95 h training, and for KITTI evaluation
+    # would nearly double the run. See experiments_md/20260922_06 section 4d.
+    #
+    # NOTE the off-by-one: `start_epoch = max(NUM_EPOCHS - NUM_EPOCHS_TO_EVAL, 0)` and the
+    # checkpoint filter is `>= start_epoch`, so 1 evaluates the last TWO checkpoints, not one.
+    # That is deliberate here - a cheap sanity pair showing whether the final epoch is anomalous -
+    # and costs ~14 min. Set 0 for exactly one.
+    NUM_EPOCHS_TO_EVAL: 1
+
+    # Data-wait 0.16% at bs=6 - loader already ahead of the GPU. More workers measure slightly
+    # slower: 1.87 it/s at 4, 1.83 at 8 (-1.7%), 1.85 at 12 (-1.0%).
+    # experiments_md/20260922_06 section 1b.
+    NUM_WORKERS: 8
+    # NUM_EPOCHS is the ONE optimization key that is NOT shared across this family, and that is
+    # deliberate. The five sources differ by 21x in size (KITTI 3,712 frames to Waymo 79,041), so a
+    # uniform epoch count would hand Waymo 21x KITTI's optimization budget and the column would be
+    # measuring training length as much as domain gap.
+    #
+    # Every config instead gets the SAME optimization budget, expressed as sample presentations
+    # (epochs x frames). nuScenes at 20 epochs is the anchor, fixing the budget at
+    # 20 x 28,130 = 562,600. Each other source's epoch count is that budget over its frame count:
+    #
+    #     source      frames   exact   used   presentations    dev     iters @ bs 6
+    #     KITTI        3,712  151.56    152         564,224  +0.29%          94,037
+    #     PandaSet     4,880  115.29    115         561,200  -0.25%          93,533
+    #     Lyft        18,900   29.77     30         567,000  +0.78%          94,500
+    #     nuScenes    28,130   20.00     20         562,600   0.00%          93,766
+    #     Waymo       79,041    7.12      7         553,287  -1.66%          92,214
+    #
+    # Rounding to whole epochs costs at most 1.7%. Because the GLOBAL batch is shared across the
+    # family - 6, as BATCH_SIZE_PER_GPU 3 on two GPUs - equal presentations also means equal
+    # ITERATIONS: every config takes about 94k optimizer steps. The last column below is that count
+    # at a global batch of 6, and it is unaffected by how many GPUs the 6 is spread over.
+    #
+    # WHY ITERATIONS, not epochs: these checkpoints are the starting point for the self-training and
+    # DANN runs (passed as --pretrained_model / --pretrained_model_teacher). If one source's floor
+    # had seen 62k steps and another's 158k, the adaptation stage would start from unequally trained
+    # models and the comparison between settings would be confounded before adaptation begins.
+    #
+    # Worth knowing when configuring that next stage, because it does NOT follow automatically:
+    # the self-training schedule is EPOCH-keyed, not iteration-keyed. SELF_TRAIN.UPDATE_PSEUDO_LABEL
+    # is a list of epoch indices, UPDATE_PSEUDO_LABEL_INTERVAL is a modulo on cur_epoch, and
+    # PROG_AUG.UPDATE_AUG is a list of epochs (train_st_utils.py ~line 391-405). An epoch there is
+    # also one pass over the TARGET loader, not the source - `total_it_each_epoch =
+    # len(target_loader)` - which is why the repo's own ST configs set epochs by target, 100 for a
+    # KITTI target and 30 for a nuScenes target off the same Lyft source. So equalising the
+    # baselines' budget aligns the starting checkpoints; aligning the adaptation runs themselves is
+    # a separate matter of their epoch lists.
+    #
+    # REJECTED alternative: the repo's own per-source DA convention (KITTI 100, PandaSet 100,
+    # Lyft 50, nuScenes 30, Waymo 10), which every single-source naive config in da-MIRU2025 /
+    # da-post-MIRU2025 uses. It has the advantage of being directly referable against past MIRU
+    # results, but it holds presentations only roughly constant and effectively CAPS the small
+    # sources - KITTI 0.37 M and PandaSet 0.49 M against 0.79-0.94 M for the large three - so
+    # iteration counts there range 62k to 158k. CONSEQUENCE OF THE CHOICE MADE HERE: none of these
+    # five epoch counts matches any previous run, so these baselines are NOT directly comparable
+    # with published MIRU numbers and must not be tabled beside them without saying so.
+    #
+    # Also note 20 here is NOT upstream's 20. OpenPCDet's nuscenes_models configs set
+    # BALANCED_RESAMPLING (CBGS), which inflates the epoch from 28,130 to 123,580 samples - 4.39x -
+    # so upstream's 20 epochs is 2.47 M presentations. This family runs CBGS off, as the whole da_*
+    # family does. The anchor is our own budget; 20 is just a convenient round number for it.
+    #
+    # Matching the budget exactly also removes the small-source cap the repo convention gave for
+    # free: KITTI now makes 152 passes over 3,712 frames. Watch its train/val gap - if it overfits,
+    # reintroduce a cap rather than abandon the budget.
+    #
+    # nuScenes (28,130 frames) is the SOURCE here and is the anchor: 20 epochs is the value the
+    # budget is defined from. Accumulation does not change it - the table is in frames, and
+    # MAX_SWEEPS alters points per frame, not how many frames a pass presents.
+    NUM_EPOCHS: 115
+
+    OPTIMIZER: adam_onecycle
+    LR: 0.003
+    WEIGHT_DECAY: 0.01
+    MOMENTUM: 0.9
+
+    MOMS: [0.95, 0.85]
+    PCT_START: 0.4
+    DIV_FACTOR: 10
+    # DECAY_STEP_LIST / LR_DECAY / LR_CLIP / LR_WARMUP / WARMUP_EPOCH are deliberately ABSENT.
+    # build_scheduler() reads them only in its LambdaLR branch; adam_onecycle takes the OneCycle
+    # branch and derives everything from total_steps = iters_per_epoch * NUM_EPOCHS. Carrying them
+    # would state a schedule that never runs.
+
+    GRAD_NORM_CLIP: 10
