@@ -315,3 +315,43 @@ def test_ignored_pseudo_labels_reach_column_7_via_prepare_data():
     src = inspect.getsource(DatasetTemplate.prepare_data)
     assert "gt_classes = data_dict['gt_classes'][selected]" in src
     assert 'np.concatenate((data_dict[\'gt_boxes\'], gt_classes.reshape(-1, 1)' in src
+
+
+# --------------------------------------------------------------------------------------------
+# Bin resolution: MAX_DIST / num_bins. Both halves are configurable, and the value that bins the
+# points at correction time must be the one the histogram was measured with.
+# --------------------------------------------------------------------------------------------
+
+def test_max_dist_changes_which_bin_a_point_lands_in():
+    ds = FakeDataset([30.0])
+    assert np.argmax(compute_range_histogram(ds, num_frames=2, num_bins=10, max_dist=75.0)) == 4
+    assert np.argmax(compute_range_histogram(ds, num_frames=2, num_bins=10, max_dist=150.0)) == 2
+
+
+def test_correction_bins_with_the_measured_extent_not_a_hardcoded_one():
+    """The extent is stored with the histogram, so measurement and correction cannot disagree."""
+    src = FakeDataset([80.0] * 4, ontology='src')
+    tgt = FakeDataset([80.0] * 4, ontology='tgt')
+    link_point_calibration(src, tgt, num_frames=2, num_bins=10, max_dist=150.0)
+    assert src.data_processor.hist_max_dist == 150.0
+    pts = np.zeros((1, 4))
+    pts[:, 0] = 80.0
+    # under a 150 m extent an 80 m point is bin 5; under the old hardcoded 75 m it would have been
+    # clipped into the last bin, so this asserts the stored value is the one actually used
+    bins = len(src.data_processor.hist_dist_src)
+    expected = int(80.0 / 150.0 * bins)
+    assert expected != bins - 1
+    src.data_processor.sample_points_hist_based({'points': pts, 'gt_boxes': np.zeros((0, 8))})
+
+
+def test_extent_defaults_are_preserved_when_not_passed():
+    p = _processor([1.0] * 50, [1.0] * 50)
+    assert p.hist_max_dist == 75.0
+
+
+def test_foreground_link_stores_the_extent_too():
+    src = FakeBoxDataset(fg_radii=[10.0], bg_radii=[20.0], ontology='src')
+    tgt = FakeBoxDataset(fg_radii=[10.0], bg_radii=[20.0], ontology='tgt')
+    link_foreground_calibration(src, tgt, num_frames=2, num_bins=10, max_dist=120.0)
+    assert src.data_processor.hist_max_dist == 120.0
+    assert len(src.data_processor.hist_fg_src) == 10

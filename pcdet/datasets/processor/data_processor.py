@@ -76,12 +76,17 @@ class DataProcessor(object):
         # whole-cloud pair above and behaves exactly as before.
         self.hist_fg_src = self.hist_bg_src = None
         self.hist_fg_tgt = self.hist_bg_tgt = None
+        # Radial extent the histogram bins span. Together with the bin count it fixes the
+        # resolution (75 m / 50 bins = 1.5 m). Held here rather than read from config at
+        # correction time so that the value binning the points is by construction the one the
+        # histogram was measured with - the two cannot drift apart.
+        self.hist_max_dist = 75.0
 
         for cur_cfg in processor_configs:
             cur_processor = getattr(self, cur_cfg.NAME)(config=cur_cfg)
             self.data_processor_queue.append(cur_processor)
 
-    def set_hist_dist(self, hist_dist_src, hist_dist_tgt):
+    def set_hist_dist(self, hist_dist_src, hist_dist_tgt, max_dist=None):
         """Install measured histograms after construction (see datasets/point_calibration.py).
 
         Must be called before the dataloader is first iterated: workers fork a copy of the dataset
@@ -89,6 +94,8 @@ class DataProcessor(object):
         """
         self.hist_dist_src = hist_dist_src
         self.hist_dist_tgt = hist_dist_tgt
+        if max_dist is not None:
+            self.hist_max_dist = float(max_dist)
 
     def set_foreground_hist(self, fg_src, bg_src, fg_tgt, bg_tgt):
         """Install the inside-box / outside-box histogram pairs (see point_calibration.py).
@@ -209,10 +216,9 @@ class DataProcessor(object):
 
         points = data_dict['points']
         points_dist = np.linalg.norm(points[:, 0:2], axis=1)
-        # TODO: load MAX_DIST from config
-        MAX_DIST = 75.0
+        max_dist = self.hist_max_dist
         bin_num = len(self.hist_dist_src)
-        indexes = np.floor(np.clip(points_dist, 0, MAX_DIST - 0.0001) / MAX_DIST * bin_num).astype(np.int32)
+        indexes = np.floor(np.clip(points_dist, 0, max_dist - 0.0001) / max_dist * bin_num).astype(np.int32)
 
         if self.hist_fg_src is None:
             sample_rate = self.per_bin_sample_rate(config)[indexes]

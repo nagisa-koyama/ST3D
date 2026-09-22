@@ -22,6 +22,10 @@ See experiments_md/20260922_02_dataset_and_platform_domain_gap_analysis.md, defe
 """
 import numpy as np
 
+# Defaults for the three knobs. Bin RESOLUTION is MAX_DIST / DEFAULT_BINS - 1.5 m as shipped -
+# and both halves are configurable: HIST_DIST_MAX_DIST and HIST_DIST_BINS. The extent must cover
+# POINT_CLOUD_RANGE, since everything beyond it is clipped into the last bin rather than dropped,
+# which would quietly merge the whole far field into one rate.
 MAX_DIST = 75.0
 DEFAULT_BINS = 50
 DEFAULT_FRAMES = 1000
@@ -65,7 +69,7 @@ def compute_range_histogram(dataset, num_frames=DEFAULT_FRAMES, num_bins=DEFAULT
 
 
 def link_point_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
-                           num_bins=DEFAULT_BINS, logger=None):
+                           num_bins=DEFAULT_BINS, max_dist=MAX_DIST, logger=None):
     """Measure both domains and install the pair into the SOURCE dataset's processor.
 
     Only the source is corrected: the target's own calibration target is itself, which makes its
@@ -75,9 +79,9 @@ def link_point_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
     dataset and never see later mutations - the same hazard as
     experiments_md/20260921_02_persistent_workers_stale_dataset_state.md.
     """
-    src = compute_range_histogram(source_set, num_frames, num_bins, logger=logger)
-    tgt = compute_range_histogram(target_set, num_frames, num_bins, logger=logger)
-    source_set.data_processor.set_hist_dist(src, tgt)
+    src = compute_range_histogram(source_set, num_frames, num_bins, max_dist, logger=logger)
+    tgt = compute_range_histogram(target_set, num_frames, num_bins, max_dist, logger=logger)
+    source_set.data_processor.set_hist_dist(src, tgt, max_dist=max_dist)
     if logger is not None:
         rate = source_set.data_processor.per_bin_sample_rate()
         guarded = int((src <= 0.01 * src.mean()).sum())
@@ -146,7 +150,8 @@ def compute_foreground_histograms(dataset, num_frames=DEFAULT_FRAMES, num_bins=D
 
 
 def link_foreground_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
-                                num_bins=DEFAULT_BINS, logger=None, source_hist=None):
+                                num_bins=DEFAULT_BINS, max_dist=MAX_DIST, logger=None,
+                                source_hist=None):
     """Foreground-aware calibration: correct inside-box and outside-box points separately.
 
     A single per-bin rate cannot change a bin's foreground SHARE - it scales the points on objects
@@ -171,16 +176,16 @@ def link_foreground_calibration(source_set, target_set, num_frames=DEFAULT_FRAME
     the first iteration of any loader over either dataset, since workers fork a copy.
     """
     if source_hist is None:
-        fg_s, bg_s = compute_foreground_histograms(source_set, num_frames, num_bins, logger=logger,
-                                                   label='source')
+        fg_s, bg_s = compute_foreground_histograms(source_set, num_frames, num_bins, max_dist,
+                                                   logger=logger, label='source')
     else:
         # Re-measuring the source on a refresh would read points the correction installed last time
         # has ALREADY thinned, compounding the rate on every pass. The source distribution does not
         # change anyway, so it is measured once and passed back in.
         fg_s, bg_s = source_hist
-    fg_t, bg_t = compute_foreground_histograms(target_set, num_frames, num_bins, logger=logger,
-                                               label='target (pseudo-labels)')
-    source_set.data_processor.set_hist_dist(fg_s + bg_s, fg_t + bg_t)
+    fg_t, bg_t = compute_foreground_histograms(target_set, num_frames, num_bins, max_dist,
+                                               logger=logger, label='target (pseudo-labels)')
+    source_set.data_processor.set_hist_dist(fg_s + bg_s, fg_t + bg_t, max_dist=max_dist)
     source_set.data_processor.set_foreground_hist(fg_s, bg_s, fg_t, bg_t)
     if logger is not None:
         proc = source_set.data_processor

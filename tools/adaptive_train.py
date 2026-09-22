@@ -174,6 +174,7 @@ def main():
             source_set, target_set,
             num_frames=cfg.DATA_CONFIG.get("HIST_DIST_FRAMES", 1000),
             num_bins=cfg.DATA_CONFIG.get('HIST_DIST_BINS', 50),
+            max_dist=cfg.DATA_CONFIG.get('HIST_DIST_MAX_DIST', 75.0),
             logger=logger
         )
 

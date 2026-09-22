@@ -1,0 +1,4 @@
+node=node61 gpus=0,1
+RESULT cfg=centerpoint-sourceonly-pandaset.yaml bs=3 workers=8 it_s=1.6265 samples_s=4.8795 data_frac=0.0022 peak_alloc_gb=5.04 peak_reserved_gb=9.15 hours=32.027 iters=187533 loss=9.857
+RESULT cfg=centerpoint-sourceonly-pandaset.yaml bs=6 workers=8 it_s=0.8427 samples_s=5.0565 data_frac=0.0014 peak_alloc_gb=9.90 peak_reserved_gb=18.84 hours=30.906 iters=93766 loss=9.824
+RESULT cfg=centerpoint-sourceonly-pandaset.yaml bs=12 workers=8 it_s=0.3921 samples_s=4.7052 data_frac=0.0008 peak_alloc_gb=19.85 peak_reserved_gb=47.07 hours=33.214 iters=46883 loss=9.770
