@@ -9,7 +9,7 @@ import torch.distributed as dist
 import torchinfo
 from pcdet.config import cfg
 from pcdet.models import load_data_to_gpu
-from pcdet.utils import common_utils, commu_utils, memory_ensemble_utils
+from pcdet.utils import common_utils, commu_utils, memory_ensemble_utils, ptsn_utils
 import pickle as pkl
 import re
 from pcdet.models.model_utils.dsnorm import set_ds_target
@@ -81,12 +81,21 @@ def save_pseudo_label_epoch(model, val_loader, rank, leave_pbar, ps_label_dir, c
     val_loader.dataset.dataset.point_feature_encoder.point_encoding_config.used_feature_list = ['x', 'y', 'z']
     val_loader.dataset.dataset.point_feature_encoder.used_feature_list = ['x', 'y', 'z']
 
+    # DALI PTSN: the generation loader's dataset scales its points in the worker, so the boxes
+    # coming back are in scaled metres and have to be divided by the same factor before anything
+    # stores them. Read it off that dataset rather than from cfg a second time - a forward
+    # transform and an inverse read from two places can drift apart. See pcdet/utils/ptsn_utils.py.
+    ptsn_scale = float(getattr(val_loader.dataset.dataset, 'ptsn_scale', 1.0))
+
     val_dataloader_iter = iter(val_loader)
     total_it_each_epoch = len(val_loader)
 
     if rank == 0:
         pbar = tqdm.tqdm(total=total_it_each_epoch, leave=leave_pbar,
                          desc='generate_ps_e%d' % cur_epoch, dynamic_ncols=True)
+        if ptsn_scale != 1.0:
+            print('self-training: PTSN active, generating pseudo labels at input scale %.4f '
+                  '(predicted boxes divided by it before storage)' % ptsn_scale)
 
     pos_ps_nmeter = common_utils.NAverageMeter(len(cfg.CLASS_NAMES))
     ign_ps_nmeter = common_utils.NAverageMeter(len(cfg.CLASS_NAMES))
@@ -114,7 +123,8 @@ def save_pseudo_label_epoch(model, val_loader, rank, leave_pbar, ps_label_dir, c
             need_update=(cfg.SELF_TRAIN.get('MEMORY_ENSEMBLE', None) and
                          cfg.SELF_TRAIN.MEMORY_ENSEMBLE.ENABLED and
                          cur_epoch > 0),
-            student_ontology=student_ontology
+            student_ontology=student_ontology,
+            ptsn_scale=ptsn_scale
         )
 
         # log to console and tensorboard
@@ -178,7 +188,8 @@ def gather_and_dump_pseudo_label_result(rank, ps_label_dir, cur_epoch):
 def save_pseudo_label_batch(input_dict,
                             pred_dicts=None,
                             need_update=True,
-                            student_ontology=None):
+                            student_ontology=None,
+                            ptsn_scale=1.0):
     """
     Save pseudo label for give batch.
     If model is given, use model to inference pred_dicts,
@@ -190,6 +201,9 @@ def save_pseudo_label_batch(input_dict,
             predict results to be generated pseudo label and saved
         need_update: Bool.
             If set to true, use consistency matching to update pseudo label
+        ptsn_scale: float. DALI PTSN input scale the generation loader applied to the points.
+            Predicted boxes arrive in that scaled frame and are divided by it here, so everything
+            downstream - thresholding, memory ensembling, the stored labels - is in target metres.
     """
     pos_ps_nmeter = common_utils.NAverageMeter(len(cfg.CLASS_NAMES))
     ign_ps_nmeter = common_utils.NAverageMeter(len(cfg.CLASS_NAMES))
@@ -211,6 +225,8 @@ def save_pseudo_label_batch(input_dict,
         if 'pred_boxes' in pred_dicts[b_idx]:
             # Exist predicted boxes passing self-training score threshold
             pred_boxes = pred_dicts[b_idx]['pred_boxes'].detach().cpu().numpy()
+            # Undo the PTSN input scaling. No-op at 1.0, which is every non-PTSN run.
+            pred_boxes = ptsn_utils.unscale_boxes(pred_boxes, ptsn_scale)
             pred_labels = pred_dicts[b_idx]['pred_labels'].detach().cpu().numpy()
 
             # print("pred_labels:", pred_labels)

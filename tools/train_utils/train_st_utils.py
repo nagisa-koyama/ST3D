@@ -395,6 +395,22 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
         # save_pseudo_label_epoch, i.e. after dataset.eval() below, and stay in eval mode.
         ps_gen_loader = build_inference_dataloader(target_loader, sampler=target_sampler)
 
+        # DALI PTSN (IEEE T-RO 2024). One constant for the whole run, so it is installed here -
+        # before either loader has been iterated - and never touched again: no mid-run mutation,
+        # hence no re-fork needed. The scaling is gated on eval mode inside the DataProcessor, so
+        # it reaches the generation pass only; the student still trains on unscaled target points
+        # against pseudo-labels that were already divided by the same factor.
+        #
+        # SCALE comes from tools/analysis/ptsn_search.py. Its UDA legality is inherited from
+        # whatever estimated the target mean size it was matched against - ROS keeps the row
+        # target-free, SN does not. State which, wherever the row is reported.
+        ptsn_cfg = cfg.SELF_TRAIN.get('PTSN', None)
+        if ptsn_cfg is not None and ptsn_cfg.get('ENABLED', False):
+            target_loader.dataset.dataset.set_ptsn_scale(ptsn_cfg.SCALE)
+            if logger is not None:
+                logger.info('self-training: PTSN enabled, pseudo labels will be generated at '
+                            'input scale %.4f' % float(ptsn_cfg.SCALE))
+
         # Deliberately lazy: the training loader must NOT be iterated before the first
         # generation pass, or its workers would fork while the dataset is still in train mode
         # and then be reused for generation. Set back to None whenever the dataset is mutated

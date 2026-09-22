@@ -135,6 +135,10 @@ class DatasetTemplate(torch_data.Dataset):
         )
         self.grid_size = self.data_processor.grid_size
         self.voxel_size = self.data_processor.voxel_size
+        # DALI PTSN. Held on the dataset as well as on the processor so that the inverse applied
+        # to predictions can be read back from the very object that applied the forward transform
+        # (self_training_utils.save_pseudo_label_epoch), rather than from config a second time.
+        self.ptsn_scale = 1.0
         self.total_epochs = 0
         self._merge_all_iters_to_one_epoch = False
 
@@ -472,6 +476,18 @@ class DatasetTemplate(torch_data.Dataset):
 
         ret['batch_size'] = batch_size
         return ret
+
+    def set_ptsn_scale(self, scale):
+        """Install DALI's PTSN input scale on this dataset (see pcdet/utils/ptsn_utils.py).
+
+        Call before any loader over this dataset is first iterated - workers fork a copy. The
+        scaling itself only takes effect in eval mode, so a dataset shared between a training
+        loader and a generation loader gets it on the generation pass alone.
+        """
+        scale = float(scale)
+        assert scale > 0, 'PTSN scale must be positive, got %r' % scale
+        self.ptsn_scale = scale
+        self.data_processor.set_ptsn_scale(scale)
 
     def eval(self):
         self.training = False

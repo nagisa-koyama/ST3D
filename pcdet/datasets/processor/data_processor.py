@@ -3,7 +3,7 @@ from functools import partial
 import numpy as np
 import math
 
-from ...utils import box_utils, common_utils
+from ...utils import box_utils, common_utils, ptsn_utils
 
 tv = None
 try:
@@ -81,6 +81,10 @@ class DataProcessor(object):
         # correction time so that the value binning the points is by construction the one the
         # histogram was measured with - the two cannot drift apart.
         self.hist_max_dist = 75.0
+        # DALI's PTSN input scale (see pcdet/utils/ptsn_utils.py). 1.0 is the identity and is the
+        # only value that can be reached without an explicit set_ptsn_scale() call, so no config
+        # that does not ask for PTSN can be affected by it.
+        self.ptsn_scale = 1.0
 
         for cur_cfg in processor_configs:
             cur_processor = getattr(self, cur_cfg.NAME)(config=cur_cfg)
@@ -107,6 +111,44 @@ class DataProcessor(object):
         """
         self.hist_fg_src, self.hist_bg_src = fg_src, bg_src
         self.hist_fg_tgt, self.hist_bg_tgt = fg_tgt, bg_tgt
+
+    def set_ptsn_scale(self, scale):
+        """Install DALI's PTSN input scale (pcdet/utils/ptsn_utils.py).
+
+        Same forking constraint as `set_hist_dist`: must precede the first iteration of any
+        loader over this dataset, because a worker forks a copy and never sees a later mutation.
+        In practice this is set once, from config, before the pseudo-label generation loader is
+        first iterated, and never changed again - PTSN's scale is a constant for a run.
+        """
+        scale = float(scale)
+        assert scale > 0, 'PTSN scale must be positive, got %r' % scale
+        self.ptsn_scale = scale
+
+    def scale_points_ptsn(self, data_dict):
+        """Scale the cloud's geometry by `ptsn_scale`, for inference passes only.
+
+        Deliberately NOT a configurable entry in DATA_PROCESSOR, and deliberately applied ahead
+        of the queue rather than inside it, for two reasons:
+
+          * It must run before `mask_points_and_boxes_outside_range` and before voxelisation, so
+            that the range crop and the voxel grid are the ones the network actually sees. A
+            consequence worth stating: at s > 1 the far field is cropped harder than it would be
+            at s = 1, because POINT_CLOUD_RANGE is fixed while the scene grows.
+          * The gate is `self.training`, not a config key. Under self-training one dataset object
+            serves both a training loader and a generation loader; their workers fork in train and
+            eval mode respectively, so this gate routes the scaling to the generation pass alone
+            without any mid-run mutation. Scaling the training points too would be wrong: the
+            pseudo-labels handed to the student have already been divided by s.
+
+        GT boxes are left untouched. PTSN is an inference-time transform whose inverse is applied
+        to predictions (`self_training_utils.save_pseudo_label_batch`), and no scored evaluation
+        should ever run with a scale installed - which is why the only wiring is on the target
+        dataset in the self-training loop, never on the eval dataset built for AP.
+        """
+        if self.training or self.ptsn_scale == 1.0:
+            return data_dict
+        data_dict['points'] = ptsn_utils.scale_points(data_dict['points'], self.ptsn_scale)
+        return data_dict
 
     def mask_boxes_outside_length(self, data_dict=None, config=None):
         if data_dict is None:
@@ -304,6 +346,8 @@ class DataProcessor(object):
 
         Returns:
         """
+
+        data_dict = self.scale_points_ptsn(data_dict)
 
         for cur_processor in self.data_processor_queue:
             data_dict = cur_processor(data_dict=data_dict)
