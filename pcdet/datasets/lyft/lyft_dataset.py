@@ -19,6 +19,19 @@ class LyftDataset(DatasetTemplate):
         )
         self.infos = []
         self.include_lyft_data(self.mode)
+
+        # Per-object motion compensation. Off unless asked for, and only for a TRAINING dataset:
+        # it consumes GT boxes, so it is a source-side operation and must never touch the target.
+        # Built here rather than lazily so the annotation map is created once in the parent process
+        # and shared with DataLoader workers by copy-on-write, instead of once per worker.
+        self._sweep_compensator = None
+        if self.dataset_cfg.get('GT_BOXES_MOTION_COMPENSATION', False) and self.training \
+                and self.dataset_cfg.get('MAX_SWEEPS', 1) > 1:
+            from ..motion_compensation import DevkitSweepCompensator
+            self._sweep_compensator = DevkitSweepCompensator(
+                self.infos, self.root_path / 'data', classes=set(self.dataset_cfg.get('GT_BOXES_MOTION_COMPENSATION_CLASSES',
+                                                                 [])) or None,
+                logger=self.logger)
         self.draw_conf_calib_curve = self.dataset_cfg.get('DRAW_CONF_CALIB_CURVE', False)
         self.run_conf_calib = self.dataset_cfg.get('RUN_CONF_CALIB', False)
 
@@ -93,6 +106,11 @@ class LyftDataset(DatasetTemplate):
         # for k in np.random.choice(len(info['sweeps']), max_sweeps - 1, replace=False):
         for k in range(max_sweeps - 1):
             points_sweep, times_sweep = self.get_sweep(info['sweeps'][k])
+            if self._sweep_compensator is not None:
+                # get_sweep has ego-transformed these into the anchor frame; this additionally
+                # moves each tracked object's points onto that object's box in the anchor frame.
+                points_sweep = self._sweep_compensator.compensate_sweep(
+                    info, info['sweeps'][k], points_sweep)
             sweep_points_list.append(points_sweep)
             sweep_times_list.append(times_sweep)
 

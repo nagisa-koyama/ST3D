@@ -51,7 +51,7 @@ def test_target_is_cycled_on_exhaustion():
 
 @pytest.mark.parametrize('cfg_name', [
     'centerpoint-accum-foreground-nuscenes2kitti.yaml',
-    'centerpoint-lyft-foreground-2nuscenes.yaml',
+    'centerpoint-foreground-lyft2nuscenes.yaml',
 ])
 def test_ablation_self_training_arms_follow_the_source(cfg_name):
     """Otherwise the arms of each ablation differ in gradient steps per epoch."""
