@@ -228,8 +228,13 @@ def main():
     # has the same hook; without one here a source-only config that lists sample_points_hist_based
     # would run it with no histograms installed, and the processor early-returns - a silent no-op
     # that makes the corrected run identical to the uncorrected one with nothing to show for it.
-    if cfg.DATA_CONFIG.get('HIST_DIST_ON_THE_FLY', False):
-        assert not cfg.DATA_CONFIG.get('HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS', False), \
+    # Read per SOURCE config, not from cfg.DATA_CONFIG: a multi-source run declares DATA_CONFIGS
+    # instead and has no DATA_CONFIG at all, so reaching for it would raise AttributeError before
+    # training starts. Each source also gets its own histogram against the shared target, which is
+    # the point - two Lyft platforms are different sensors and want different rates.
+    if any(dc.get('HIST_DIST_ON_THE_FLY', False) for dc in data_configs.values()):
+        assert not any(dc.get('HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS', False)
+                       for dc in data_configs.values()), \
             ('HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS needs the target foreground channel, which '
              'comes from pseudo-labels, so it requires a SELF_TRAIN config run through '
              'adaptive_train.py. This is train.py and there are no pseudo-labels.')
@@ -241,20 +246,22 @@ def main():
                 dataset_cfg=cfg.DATA_CONFIG_TAR, class_names=cfg.CLASS_NAMES, batch_size=1,
                 dist=False, workers=0, logger=logger, training=False,
                 model_ontology=cfg.get('ONTOLOGY', None))
-        for source in source_datasets:
+        for dc, source in zip(data_configs.values(), source_datasets):
+            if not dc.get('HIST_DIST_ON_THE_FLY', False):
+                continue
             link_point_calibration(
                 source['dataset_class'], calib_target,
-                num_frames=cfg.DATA_CONFIG.get('HIST_DIST_FRAMES', 1000),
-                num_bins=cfg.DATA_CONFIG.get('HIST_DIST_BINS', 50),
-                max_dist=cfg.DATA_CONFIG.get('HIST_DIST_MAX_DIST', 75.0),
+                num_frames=dc.get('HIST_DIST_FRAMES', 1000),
+                num_bins=dc.get('HIST_DIST_BINS', 50),
+                max_dist=dc.get('HIST_DIST_MAX_DIST', 75.0),
                 logger=logger)
 
     # A correction listed in the pipeline but never given histograms is a no-op that looks like a
     # run. Say so rather than letting the result be quietly identical to the uncorrected arm.
-    for source in source_datasets:
+    for dc, source in zip(data_configs.values(), source_datasets):
         proc = source['dataset_class'].data_processor
         if any(p.get('NAME') == 'sample_points_hist_based'
-               for p in cfg.DATA_CONFIG.get('DATA_PROCESSOR', [])) and proc.hist_dist_src is None:
+               for p in dc.get('DATA_PROCESSOR', [])) and proc.hist_dist_src is None:
             logger.warning('sample_points_hist_based is configured but no histograms were '
                            'installed - the correction will NOT run. Set '
                            'DATA_CONFIG.HIST_DIST_ON_THE_FLY: True.')

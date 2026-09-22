@@ -1,28 +1,111 @@
-# Lyft 64-beam -> nuScenes (no correction)
+# Lyft -> nuScenes + foreground-aware correction from pseudo-labels, both platforms as separate sources
 #
-# One of six: {40-beam, 64-beam} x {no correction, global, foreground-aware}. The platforms are
-# separate configs because they are separate sensors - 40-beam is ~56k points/frame over a
-# -16.7..+7.5 deg vertical FOV, 64-beam ~108k over -26.8..+15.0 - and they want SHIFT_COOR 1.87
-# and 2.04 respectively. Pooling them fits one constant to a blend (experiments_md/20260922_02).
+# One of three: {no correction, global, foreground-aware}. Both Lyft vehicle configurations are
+# declared as SOURCES under DATA_CONFIGS, which train.py turns into one dataloader each and samples
+# from weighted by size.
 #
-# WHY NO ACCUMULATION. This is a DENSE -> SPARSE pair, the mirror of nuScenes -> KITTI. Every
-# source reaches nuScenes at N=1 - it is the sparsest target in the study - so MAX_SWEEPS stays 1
-# and the correction's whole job is downsampling. That also makes this the cleaner test of the
-# correction itself: nothing has to be accumulated first for the rate to have something to thin
-# (experiments_md/20260922_05 section 3, and 20260922_08 section 4.1 for why depth matters at all).
+# WHY TWO SOURCES RATHER THAN ONE LYFT. They are different sensors - 40-beam is 15,498 train frames
+# at ~56k points over a -16.7..+7.5 deg vertical FOV, 64-beam 3,402 at ~108k over -26.8..+15.0 -
+# and, decisively, they want different SHIFT_COOR: 1.87 and 2.04, a 17 cm difference against the
+# plane anchor_bottom_heights: [0] puts at z=0. A single Lyft config cannot express both and has to
+# pick one, which is wrong for 18% of the data by 17 cm. Splitting them here keeps ALL 18,900
+# frames while giving each its correct shift. See experiments_md/20260922_02 and 20260922_03.
 #
-# EXPECT THE FOREGROUND CHANNEL TO THIN, NOT PROTECT. sigma_src/sigma_tgt is ABOVE 1 for every
-# source into nuScenes (1.20-5.14), i.e. Lyft's objects are already over-represented relative to
-# the target, so the correct action on foreground here is to remove points. On Lyft -> KITTI the
-# plain correction overshoots to 1.29 while foreground-aware lands on 1.00, so this pair is where
-# the two should separate most visibly in the opposite direction from the nuScenes source.
+# It also gives each platform its OWN density correction against the shared target, which is
+# right for the same reason: a single hist_dist fitted to a blend of two sensors is fitted to
+# neither.
 #
-# ENTRY POINT: train.py (source-only)
+# WHY NO ACCUMULATION. Dense -> sparse, the mirror of nuScenes -> KITTI. Every source reaches
+# nuScenes at N=1, it being the sparsest target in the study, so MAX_SWEEPS stays 1 and the
+# correction's whole job is downsampling - which makes this the cleaner test of the correction
+# itself, with nothing needing accumulation first for the rate to have anything to thin.
+#
+# EXPECT THE FOREGROUND CHANNEL TO THIN, NOT PROTECT. sigma_src/sigma_tgt is above 1 for every
+# source into nuScenes (1.20-5.14), so the correct action on foreground here is to remove points -
+# the opposite of the nuScenes-source case, and where the two corrections should separate most
+# visibly in the other direction.
+#
+# ENTRY POINT: adaptive_train.py, with --pretrained_model and --pretrained_model_teacher
 
-DATA_CONFIG:
-    _BASE_CONFIG_: cfgs/da-ieee-access/da_lyft64_dataset.yaml
+DATA_CONFIGS:
+    LYFT_40BEAM:
+        _BASE_CONFIG_: cfgs/da-ieee-access/da_lyft40_dataset.yaml
 
-# nuScenes is the unlabelled target. Its labels are used for EVALUATION only.
+        # Measured at startup from this platform and the shared target - each source gets its own
+        # histogram, since a rate fitted to a blend of two sensors fits neither.
+        HIST_DIST_ON_THE_FLY: True
+        HIST_DIST_FRAMES: 1000
+        HIST_DIST_BINS: 50          # resolution is MAX_DIST / BINS = 1.5 m
+        HIST_DIST_MAX_DIST: 75.0    # must cover POINT_CLOUD_RANGE
+        # The target foreground channel comes from PSEUDO-LABELS, which is what makes this UDA-legal.
+        HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS: True
+        # mask -> shuffle -> correction -> voxelise, the order used by every da-MIRU2025
+        # point-calibrated config. The list is restated in full because YAML lists replace rather than
+        # merge, so adding one entry means writing all of them.
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+
+            - NAME: sample_points_hist_based
+              # Bins below this fraction of the mean are left uncorrected rather than corrected from
+              # noise, on BOTH sides - a zero target bin would otherwise give rate 0 and delete every
+              # source point in it.
+              MIN_HIST_BIN_FRACTION: 0.01
+
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }
+
+    LYFT_64BEAM:
+        _BASE_CONFIG_: cfgs/da-ieee-access/da_lyft64_dataset.yaml
+
+        # Measured at startup from this platform and the shared target - each source gets its own
+        # histogram, since a rate fitted to a blend of two sensors fits neither.
+        HIST_DIST_ON_THE_FLY: True
+        HIST_DIST_FRAMES: 1000
+        HIST_DIST_BINS: 50          # resolution is MAX_DIST / BINS = 1.5 m
+        HIST_DIST_MAX_DIST: 75.0    # must cover POINT_CLOUD_RANGE
+        # The target foreground channel comes from PSEUDO-LABELS, which is what makes this UDA-legal.
+        HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS: True
+        # mask -> shuffle -> correction -> voxelise, the order used by every da-MIRU2025
+        # point-calibrated config. The list is restated in full because YAML lists replace rather than
+        # merge, so adding one entry means writing all of them.
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+
+            - NAME: sample_points_hist_based
+              # Bins below this fraction of the mean are left uncorrected rather than corrected from
+              # noise, on BOTH sides - a zero target bin would otherwise give rate 0 and delete every
+              # source point in it.
+              MIN_HIST_BIN_FRACTION: 0.01
+
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }
+
+# nuScenes is the unlabelled target, shared by both sources. Its labels are used for EVALUATION
+# only.
 DATA_CONFIG_TAR:
     _BASE_CONFIG_: cfgs/da-ieee-access/da_nuscenes_dataset.yaml
 
@@ -256,3 +339,155 @@ OPTIMIZATION:
     # would state a schedule that never runs.
 
     GRAD_NORM_CLIP: 10
+
+SELF_TRAIN:
+    # Generated at a HIGH-RECALL threshold on purpose. The foreground channel is measured per box,
+    # so it is insensitive to how many boxes the teacher finds - destroying 80% of its detections
+    # cost 12% of object density in the offline sweep - but a bin the teacher empties entirely
+    # falls back to no correction, so recall still buys robustness.
+    SCORE_THRESH: [0.1, 0.1, 0.1]
+    NEG_THRESH: [0.1, 0.1, 0.1]
+    UPDATE_PSEUDO_LABEL: [0]
+    UPDATE_PSEUDO_LABEL_INTERVAL: 2
+
+    # The teacher is a separate frozen model, loaded with --pretrained_model_teacher and never
+    # written to. Generation is therefore deterministic - eval mode, no augmentation, no weight
+    # update, and memory voting only re-confirms boxes that matched themselves at IoU 1 - so every
+    # pass after the first reproduces the same labels at the cost of a full inference sweep over
+    # the target. At INTERVAL 2 over 20 epochs that is 9 of 10 passes wasted.
+    FROZEN_TEACHER_SINGLE_PASS: True
+
+    INIT_PS: None
+
+    SRC:
+        USE_DATA: True
+        USE_GRAD: True
+        LOSS_WEIGHT: 1.0
+        BACKWARD_TOGETHER: True
+
+    TAR:
+        USE_DATA: True
+        LOSS_WEIGHT: 1.0
+        BACKWARD_TOGETHER: True
+
+    PROG_AUG:
+        ENABLED: True
+        UPDATE_AUG: [5, 10, 15]
+        SCALE: 1.1
+
+    MEMORY_ENSEMBLE:
+        ENABLED: True
+        NAME: nms_ensemble
+        IOU_THRESH: 0.1
+        NMS_CONFIG:
+            NMS_TYPE: nms_gpu
+            MULTI_CLASSES_NMS: False
+            NMS_PRE_MAXSIZE: 512
+            NMS_POST_MAXSIZE: 100
+            NMS_THRESH: 0.1
+        MEMORY_VOTING:
+            ENABLED: True
+            IGNORE_THRESH: 2
+            RM_THRESH: 3
+
+    # Mirrors the student exactly. SCORE_THRESH stays at the high-recall 0.0001 it inherits.
+    MODEL_TEACHER:
+        CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
+        ONTOLOGY: 'kitti'
+        NAME: CenterPoint
+
+        VFE:
+            NAME: MeanVFE
+
+        BACKBONE_3D:
+            NAME: VoxelResBackBone8x
+
+        MAP_TO_BEV:
+            NAME: HeightCompression
+            NUM_BEV_FEATURES: 256
+
+        BACKBONE_2D:
+            NAME: BaseBEVBackbone
+
+            LAYER_NUMS: [5]
+            LAYER_STRIDES: [1]
+            NUM_FILTERS: [128]
+            UPSAMPLE_STRIDES: [2]
+            NUM_UPSAMPLE_FILTERS: [256]
+
+        DENSE_HEAD:
+            NAME: CenterHead
+            CLASS_AGNOSTIC: False
+
+            CLASS_NAMES_EACH_HEAD: [
+                ['Car', 'Pedestrian', 'Cyclist'],
+            ]
+
+            SHARED_CONV_CHANNEL: 64
+            USE_BIAS_BEFORE_NORM: True
+            NUM_HM_CONV: 2
+            SEPARATE_HEAD_CFG:
+                HEAD_ORDER: ['center', 'center_z', 'dim', 'rot']
+                HEAD_DICT: {
+                    'center': {'out_channels': 2, 'num_conv': 2},
+                    'center_z': {'out_channels': 1, 'num_conv': 2},
+                    'dim': {'out_channels': 3, 'num_conv': 2},
+                    'rot': {'out_channels': 2, 'num_conv': 2},
+                }
+
+            TARGET_ASSIGNER_CONFIG:
+                FEATURE_MAP_STRIDE: 4
+                NUM_MAX_OBJS: 500
+                GAUSSIAN_OVERLAP: 0.1
+                MIN_RADIUS: 2
+
+            LOSS_CONFIG:
+                LOSS_WEIGHTS: {
+                    'cls_weight': 1.0,
+                    'loc_weight': 2.0,
+                    'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+                }
+
+            # CenterPoint has TWO live POST_PROCESSING blocks - this one and the model-level one below -
+            # each with its own SCORE_THRESH and NMS_CONFIG. Both are set to 0.0001 here; changing only
+            # one is a common way to get an unexplained AP shift.
+            POST_PROCESSING:
+                SCORE_THRESH: 0.0001
+                POST_CENTER_LIMIT_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+                MAX_OBJ_PER_SAMPLE: 500
+                NMS_CONFIG:
+                    NMS_TYPE: nms_gpu
+                    NMS_THRESH: 0.5
+                    NMS_PRE_MAXSIZE: 4096
+                    NMS_POST_MAXSIZE: 500
+
+        POST_PROCESSING:
+            RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+
+            # 0.0001, uniform across this whole family, and NOT the 0.01 the existing sourceonly
+            # configs use. eval_class() fills only len(thresholds) of its 41 R40 precision slots and
+            # averages the rest as ZERO, so discarding low-confidence detections before scoring caps
+            # achievable recall and biases AP DOWNWARD - worst exactly in the weak cross-domain regime
+            # a source-only floor lives in. Never raise this to relieve eval-time OOM; if numba's
+            # separate CUDA pool runs out (it is not PyTorch's allocator), add
+            # torch.cuda.empty_cache() before dataset.evaluation() in tools/eval_utils/eval_utils.py.
+            # See experiments_md/20260920_01 and 20260920_02.
+            SCORE_THRESH: 0.0001
+            OUTPUT_RAW_SCORE: False
+
+            # KITTI R40 AP. Note what this means with a NON-KITTI evaluation target: nuscenes_dataset.py
+            # fabricates the 2D bbox as [0, 0, 50, 50] with truncation/occlusion 0, so every GT passes
+            # all three difficulty levels, nothing is ever ignored, and easy == moderate == hard
+            # identically. Three identical AP values in the log is the expected output, not a bug. Those
+            # numbers are "all objects, no difficulty filter" - stricter than KITTI hard, and NOT
+            # comparable with a KITTI-target row's "moderate". The bbox/aos columns are meaningless here
+            # (all boxes identical, so 2D IoU is trivially 1). See experiments_md/20260919_05 sections 6-8.
+            EVAL_METRIC: kitti
+
+            NMS_CONFIG:
+                MULTI_CLASSES_NMS: False
+                NMS_TYPE: nms_gpu
+                NMS_THRESH: 0.5
+                NMS_PRE_MAXSIZE: 4096
+                NMS_POST_MAXSIZE: 500
+

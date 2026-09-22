@@ -1,62 +1,107 @@
-# Lyft 64-beam -> nuScenes + global density correction
+# Lyft -> nuScenes + global density correction, both platforms as separate sources
 #
-# One of six: {40-beam, 64-beam} x {no correction, global, foreground-aware}. The platforms are
-# separate configs because they are separate sensors - 40-beam is ~56k points/frame over a
-# -16.7..+7.5 deg vertical FOV, 64-beam ~108k over -26.8..+15.0 - and they want SHIFT_COOR 1.87
-# and 2.04 respectively. Pooling them fits one constant to a blend (experiments_md/20260922_02).
+# One of three: {no correction, global, foreground-aware}. Both Lyft vehicle configurations are
+# declared as SOURCES under DATA_CONFIGS, which train.py turns into one dataloader each and samples
+# from weighted by size.
 #
-# WHY NO ACCUMULATION. This is a DENSE -> SPARSE pair, the mirror of nuScenes -> KITTI. Every
-# source reaches nuScenes at N=1 - it is the sparsest target in the study - so MAX_SWEEPS stays 1
-# and the correction's whole job is downsampling. That also makes this the cleaner test of the
-# correction itself: nothing has to be accumulated first for the rate to have something to thin
-# (experiments_md/20260922_05 section 3, and 20260922_08 section 4.1 for why depth matters at all).
+# WHY TWO SOURCES RATHER THAN ONE LYFT. They are different sensors - 40-beam is 15,498 train frames
+# at ~56k points over a -16.7..+7.5 deg vertical FOV, 64-beam 3,402 at ~108k over -26.8..+15.0 -
+# and, decisively, they want different SHIFT_COOR: 1.87 and 2.04, a 17 cm difference against the
+# plane anchor_bottom_heights: [0] puts at z=0. A single Lyft config cannot express both and has to
+# pick one, which is wrong for 18% of the data by 17 cm. Splitting them here keeps ALL 18,900
+# frames while giving each its correct shift. See experiments_md/20260922_02 and 20260922_03.
 #
-# EXPECT THE FOREGROUND CHANNEL TO THIN, NOT PROTECT. sigma_src/sigma_tgt is ABOVE 1 for every
-# source into nuScenes (1.20-5.14), i.e. Lyft's objects are already over-represented relative to
-# the target, so the correct action on foreground here is to remove points. On Lyft -> KITTI the
-# plain correction overshoots to 1.29 while foreground-aware lands on 1.00, so this pair is where
-# the two should separate most visibly in the opposite direction from the nuScenes source.
+# It also gives each platform its OWN density correction against the shared target, which is
+# right for the same reason: a single hist_dist fitted to a blend of two sensors is fitted to
+# neither.
+#
+# WHY NO ACCUMULATION. Dense -> sparse, the mirror of nuScenes -> KITTI. Every source reaches
+# nuScenes at N=1, it being the sparsest target in the study, so MAX_SWEEPS stays 1 and the
+# correction's whole job is downsampling - which makes this the cleaner test of the correction
+# itself, with nothing needing accumulation first for the rate to have anything to thin.
+#
+# EXPECT THE FOREGROUND CHANNEL TO THIN, NOT PROTECT. sigma_src/sigma_tgt is above 1 for every
+# source into nuScenes (1.20-5.14), so the correct action on foreground here is to remove points -
+# the opposite of the nuScenes-source case, and where the two corrections should separate most
+# visibly in the other direction.
 #
 # ENTRY POINT: train.py (source-only)
 
-DATA_CONFIG:
-    _BASE_CONFIG_: cfgs/da-ieee-access/da_lyft64_dataset.yaml
+DATA_CONFIGS:
+    LYFT_40BEAM:
+        _BASE_CONFIG_: cfgs/da-ieee-access/da_lyft40_dataset.yaml
 
-    # Measured at startup from the two datasets actually being trained on, not a shipped
-    # hist_dist_*.npy - those are raw counts over an unknown frame count and their shape disagrees
-    # with direct measurement by up to 1.8x per bin (experiments_md/20260922_02, defect 3).
-    HIST_DIST_ON_THE_FLY: True
-    HIST_DIST_FRAMES: 1000
-    HIST_DIST_BINS: 50          # resolution is MAX_DIST / BINS = 1.5 m
-    HIST_DIST_MAX_DIST: 75.0    # must cover POINT_CLOUD_RANGE
-    # mask -> shuffle -> correction -> voxelise, the order used by every da-MIRU2025
-    # point-calibrated config. The list is restated in full because YAML lists replace rather than
-    # merge, so adding one entry means writing all of them.
-    DATA_PROCESSOR:
-        - NAME: mask_points_and_boxes_outside_range
-          REMOVE_OUTSIDE_BOXES: True
+        # Measured at startup from this platform and the shared target - each source gets its own
+        # histogram, since a rate fitted to a blend of two sensors fits neither.
+        HIST_DIST_ON_THE_FLY: True
+        HIST_DIST_FRAMES: 1000
+        HIST_DIST_BINS: 50          # resolution is MAX_DIST / BINS = 1.5 m
+        HIST_DIST_MAX_DIST: 75.0    # must cover POINT_CLOUD_RANGE
+        # mask -> shuffle -> correction -> voxelise, the order used by every da-MIRU2025
+        # point-calibrated config. The list is restated in full because YAML lists replace rather than
+        # merge, so adding one entry means writing all of them.
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
 
-        - NAME: shuffle_points
-          SHUFFLE_ENABLED: {
-            'train': True,
-            'test': False
-          }
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
 
-        - NAME: sample_points_hist_based
-          # Bins below this fraction of the mean are left uncorrected rather than corrected from
-          # noise, on BOTH sides - a zero target bin would otherwise give rate 0 and delete every
-          # source point in it.
-          MIN_HIST_BIN_FRACTION: 0.01
+            - NAME: sample_points_hist_based
+              # Bins below this fraction of the mean are left uncorrected rather than corrected from
+              # noise, on BOTH sides - a zero target bin would otherwise give rate 0 and delete every
+              # source point in it.
+              MIN_HIST_BIN_FRACTION: 0.01
 
-        - NAME: transform_points_to_voxels
-          VOXEL_SIZE: [0.1, 0.1, 0.15]
-          MAX_POINTS_PER_VOXEL: 10
-          MAX_NUMBER_OF_VOXELS: {
-            'train': 150000,
-            'test': 150000
-          }
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }
 
-# nuScenes is the unlabelled target. Its labels are used for EVALUATION only.
+    LYFT_64BEAM:
+        _BASE_CONFIG_: cfgs/da-ieee-access/da_lyft64_dataset.yaml
+
+        # Measured at startup from this platform and the shared target - each source gets its own
+        # histogram, since a rate fitted to a blend of two sensors fits neither.
+        HIST_DIST_ON_THE_FLY: True
+        HIST_DIST_FRAMES: 1000
+        HIST_DIST_BINS: 50          # resolution is MAX_DIST / BINS = 1.5 m
+        HIST_DIST_MAX_DIST: 75.0    # must cover POINT_CLOUD_RANGE
+        # mask -> shuffle -> correction -> voxelise, the order used by every da-MIRU2025
+        # point-calibrated config. The list is restated in full because YAML lists replace rather than
+        # merge, so adding one entry means writing all of them.
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+
+            - NAME: sample_points_hist_based
+              # Bins below this fraction of the mean are left uncorrected rather than corrected from
+              # noise, on BOTH sides - a zero target bin would otherwise give rate 0 and delete every
+              # source point in it.
+              MIN_HIST_BIN_FRACTION: 0.01
+
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }
+
+# nuScenes is the unlabelled target, shared by both sources. Its labels are used for EVALUATION
+# only.
 DATA_CONFIG_TAR:
     _BASE_CONFIG_: cfgs/da-ieee-access/da_nuscenes_dataset.yaml
 
