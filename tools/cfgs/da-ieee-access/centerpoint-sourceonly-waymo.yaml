@@ -148,9 +148,21 @@ MODEL:
 
 OPTIMIZATION:
 
-    # This family runs on TWO GPUs at a GLOBAL batch of 6 - i.e. 3 per rank - which is the fastest
-    # completion available without changing the optimization recipe at all. Launch it with
-    # tools/scripts/run_sourceonly_2gpu.sh, and see the batch-size warning below.
+    # PER-GPU batch. This family runs on TWO GPUs, so 3 per GPU is a GLOBAL batch of 6 - the same
+    # global batch, the same 93,766 optimizer steps and the same LR 0.003 as a one-GPU run at 6.
+    # Launch with tools/scripts/run_sourceonly_2gpu.sh.
+    #
+    # Why the key says 3 and not 6: this is a PER-GPU value (train.py:104-107), so on the
+    # deployment these configs describe it must read 3 for the arithmetic above to hold. It also
+    # removes a silent failure mode - under `torch.distributed.launch --nproc_per_node=2`, BOTH
+    # passing `--batch_size 6` (divided by the GPU count -> 3) and omitting the flag entirely
+    # (-> BATCH_SIZE_PER_GPU = 3 per rank) now give a global batch of 6. With 6 here, forgetting
+    # the flag silently doubled the global batch and halved the steps. The launch script still
+    # passes it explicitly, so the two agree rather than one covering for the other.
+    #
+    # The remaining sharp edge is the opposite one: running this config on ONE GPU gives a global
+    # batch of 3 and 187,533 steps, which is NOT the intended recipe. train.py logs the resolved
+    # global batch at startup - it must read 6.
     #
     # Measured on ONE node in ONE allocation, so GPU count is the only variable (jobs 25734
     # PandaSet / 25735 KITTI, node61; 20260922_06 section 2e):
@@ -161,21 +173,16 @@ OPTIMIZATION:
     #     co-tenancy. Only a same-node A/B answers this.
     #   * bs=3 per rank is STILL SATURATED - 0.944x (KITTI) to 0.965x (PandaSet) of bs=6's
     #     samples/s - so splitting a global batch of 6 across two GPUs costs ~4-6%, not a
-    #     collapse. That is what makes the recipe-preserving option viable.
+    #     collapse. That is what makes this recipe-preserving option viable at all.
     #   * 3/rank BEATS 6/rank: 15.0 h vs 15.2 h on PandaSet, while keeping TWICE the optimizer
     #     steps. Going to 6/rank would double the global batch to 12, halve the steps to 46,883
     #     and put LR 0.003 - tuned at global batch 6 - out of calibration, for no time saved.
-    #
-    # BATCH_SIZE_PER_GPU stays 6 because it is the correct PER-GPU value for a ONE-GPU run, which
-    # is what this key means when no launcher is used. Under `torch.distributed.launch` the launch
-    # script passes `--batch_size 6` explicitly, which train.py:104-107 divides by the GPU count to
-    # give 3 per rank. Both paths therefore produce a global batch of 6 and 93,766 optimizer steps.
-    #
-    # THE FOOTGUN: launching on 2 GPUs and OMITTING --batch_size does NOT do this. The flag's
-    # absence makes args.batch_size = BATCH_SIZE_PER_GPU = 6 PER RANK, i.e. a global batch of 12
-    # and half the steps - silently, with no warning. train.py logs the resolved global batch and
-    # step count at startup; check it reads 6 and 93766.
-    BATCH_SIZE_PER_GPU: 6
+    #   * memory is roughly linear in batch, so 3/rank costs about half of the one-GPU recipe:
+    #     ~5.0 GB allocated / ~9.2 GB reserved per rank on PandaSet, the heaviest source, against
+    #     48 GB cards. Note DDP does NOT inherit the single-GPU memory profile - PandaSet at
+    #     bs=12 fits solo at 47.0/48 GB but HANGS under 2-GPU DDP (section 3) - so the headroom
+    #     here is deliberate, not incidental.
+    BATCH_SIZE_PER_GPU: 3
 
     # Evaluate only the tail of training, not every checkpoint.
     #
@@ -213,8 +220,10 @@ OPTIMIZATION:
     #     nuScenes    28,130   20.00     20         562,600   0.00%          93,766
     #     Waymo       79,041    7.12      7         553,287  -1.66%          92,214
     #
-    # Rounding to whole epochs costs at most 1.7%. Because BATCH_SIZE_PER_GPU is shared, equal
-    # presentations also means equal ITERATIONS - every config takes about 94k optimizer steps.
+    # Rounding to whole epochs costs at most 1.7%. Because the GLOBAL batch is shared across the
+    # family - 6, as BATCH_SIZE_PER_GPU 3 on two GPUs - equal presentations also means equal
+    # ITERATIONS: every config takes about 94k optimizer steps. The last column below is that count
+    # at a global batch of 6, and it is unaffected by how many GPUs the 6 is spread over.
     #
     # WHY ITERATIONS, not epochs: these checkpoints are the starting point for the self-training and
     # DANN runs (passed as --pretrained_model / --pretrained_model_teacher). If one source's floor

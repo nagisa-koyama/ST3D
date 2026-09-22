@@ -154,6 +154,10 @@ def test_ieee_access_sourceonly_family_is_internally_consistent(in_tools_dir):
         'NuScenesDataset': 28130,
         'WaymoDataset': 79041,
     }
+    # This family is deployed on two GPUs (scripts/run_sourceonly_2gpu.sh, --nproc_per_node=2).
+    # BATCH_SIZE_PER_GPU is a PER-GPU value, so the global batch is this times GPUS_PER_RUN.
+    GPUS_PER_RUN = 2
+
     # Measured per source rather than defaulted - the two 8s are the sources whose loaders stall.
     expected_workers = {
         'KittiDataset': 4,
@@ -203,13 +207,14 @@ def test_ieee_access_sourceonly_family_is_internally_consistent(in_tools_dir):
         # Single GPU: BATCH_SIZE_PER_GPU is also the global batch, so the shared budget gives the
         # same optimizer-step count for every source. Pinned because running this family under a
         # launcher would silently double the global batch and halve the steps.
-        # BATCH_SIZE_PER_GPU is the correct value for a ONE-GPU run and, via the launch script's
-        # explicit `--batch_size 6`, also yields a global batch of 6 on two GPUs (3 per rank).
-        # Either way the global batch is 6 and the step count is 93,766 - the property the family
-        # is built on. Pinned because the 2-GPU path silently doubles the batch if the flag is
-        # dropped; see run_sourceonly_2gpu.sh.
-        assert cfg.OPTIMIZATION.BATCH_SIZE_PER_GPU == 6, cfg_file
-        assert budget // cfg.OPTIMIZATION.BATCH_SIZE_PER_GPU == 93766, cfg_file
+        # BATCH_SIZE_PER_GPU is PER GPU and this family is deployed on two, so 3 per GPU is a
+        # GLOBAL batch of 6 - the number the family is actually built on, because it fixes the
+        # optimizer-step count at 93,766 for every source. Asserted as the global batch rather
+        # than as the raw key, so the invariant under test is the one that matters.
+        assert cfg.OPTIMIZATION.BATCH_SIZE_PER_GPU == 3, cfg_file
+        global_batch = cfg.OPTIMIZATION.BATCH_SIZE_PER_GPU * GPUS_PER_RUN
+        assert global_batch == 6, cfg_file
+        assert budget // global_batch == 93766, cfg_file
         assert cfg.OPTIMIZATION.NUM_WORKERS == expected_workers[src], (
             '%s: NUM_WORKERS %s does not match the measured recommendation %s'
             % (cfg_file, cfg.OPTIMIZATION.get('NUM_WORKERS', None), expected_workers[src]))
@@ -300,7 +305,9 @@ def test_two_gpu_launch_script_passes_an_explicit_global_batch():
               / 'tools' / 'scripts' / 'run_sourceonly_2gpu.sh').read_text()
     # Comments explain these flags at length, so test what the shell actually runs.
     code = '\n'.join(l for l in script.splitlines() if not l.lstrip().startswith('#'))
-    assert '--nproc_per_node=2' in code
+    assert '--nproc_per_node=2' in code, 'the configs\' BATCH_SIZE_PER_GPU 3 assumes exactly 2 GPUs'
+    # Redundant with BATCH_SIZE_PER_GPU 3 by design: passing 6 is divided by the GPU count back to
+    # 3 per rank, so the flag and the config agree instead of one covering for the other.
     assert '--batch_size 6' in code, 'the 2-GPU launch must pin the global batch to 6'
     # --workers must NOT be passed: it is per-rank and comes from each config's NUM_WORKERS,
     # which differs by source (8 for Waymo and PandaSet, 4 otherwise).
