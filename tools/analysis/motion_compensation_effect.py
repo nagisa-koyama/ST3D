@@ -1,6 +1,10 @@
-"""End-to-end check that GT_BOXES_MOTION_COMPENSATION does what it claims, on real nuScenes.
+"""End-to-end check that GT_BOXES_MOTION_COMPENSATION does what it claims, on the devkit datasets.
 
-Replicates NuScenesDataset.get_lidar_with_sweeps (same ego transform, same ego-point removal, same
+Covers nuScenes and Lyft - the two that annotate at 2 Hz keyframes with points arriving between
+them, so their compensator has to INTERPOLATE a sweep's boxes. (Waymo and PandaSet annotate every
+frame and need no interpolation; they have their own script, frame_accumulation_effect.py.)
+
+Replicates <Dataset>.get_lidar_with_sweeps (same ego transform, same ego-point removal, same
 compensator) and counts points inside each anchor Car box with the compensation on and off.
 
 Two rules this obeys, both learned the hard way (experiments_md/20260922_05, Ablation 7):
@@ -17,7 +21,8 @@ move) and moving rises to meet it. Anything else means the timeline is wrong - w
 the unit bug in _timestamp_seconds was found, when moving sat at 0.51 of static and the median
 displacement was identical at 0.25 s, 0.50 s and 0.75 s of lag.
 
-  python3 analysis/motion_compensation_effect.py [--sweeps 15] [--anchors 60]
+  python3 analysis/motion_compensation_effect.py --dataset nuscenes [--sweeps 15]
+  python3 analysis/motion_compensation_effect.py --dataset lyft --sweeps 5
 """
 import argparse
 import pickle
@@ -32,18 +37,39 @@ from pcdet.datasets.motion_compensation import (  # noqa: E402
     DevkitSweepCompensator, find_devkit_meta_dir)
 
 
+# Per-dataset facts the shared code needs. The ego radii are not cosmetic: nuScenes strips 26% of
+# its in-range cloud as roof self-returns and no other loader does it at all, so borrowing its
+# numbers for Lyft would delete real returns.
+DATASETS = {
+    'nuscenes': dict(root='../data/nuscenes/v1.0-trainval', infos='nuscenes_infos_200sweeps_train.pkl',
+                     version='v1.0-trainval', ego=(1.5, 1.0), car='car', width=5),
+    'lyft': dict(root='../data/lyft/trainval', infos='lyft_infos_train.pkl',
+                 version='trainval', ego=(0.0, 0.0), car='car', width=5),
+}
+
+
 def remove_ego_points(points, radius):
+    if radius <= 0:
+        return points
     return points[~((np.abs(points[:, 0]) < radius) & (np.abs(points[:, 1]) < radius))]
 
 
-def load_points(root, info, n, compensator):
+def _read(path, width):
+    pts = np.fromfile(str(path), dtype=np.float32)
+    # Lyft ships a handful of clouds whose byte count is not a whole number of points; its loader
+    # truncates rather than failing, so this must too or the comparison stops at the first one.
+    pts = pts[:len(pts) - (len(pts) % width)]
+    return pts.reshape(-1, width)[:, :4]
+
+
+def load_points(root, info, n, compensator, spec):
     """The anchor plus n-1 sweeps in the anchor frame, optionally per-object compensated."""
-    pts = np.fromfile(str(root / info['lidar_path']), dtype=np.float32).reshape(-1, 5)[:, :4]
-    out = [remove_ego_points(pts, 1.5)]
+    pts = _read(root / info['lidar_path'], spec['width'])
+    out = [remove_ego_points(pts, spec['ego'][0])]
     for k in range(n - 1):
         sweep = info['sweeps'][k]
-        q = np.fromfile(str(root / sweep['lidar_path']), dtype=np.float32).reshape(-1, 5)[:, :4]
-        q = remove_ego_points(q, 1.0)
+        q = _read(root / sweep['lidar_path'], spec['width'])
+        q = remove_ego_points(q, spec['ego'][1])
         if sweep['transform_matrix'] is not None:
             q[:, :3] = (sweep['transform_matrix'] @ np.vstack((q[:, :3].T, np.ones(len(q)))))[:3].T
         if compensator is not None:
@@ -62,18 +88,20 @@ def count_in_box(points, b):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--root', default='../data/nuscenes/v1.0-trainval')
-    ap.add_argument('--infos', default='nuscenes_infos_200sweeps_train.pkl')
+    ap.add_argument('--dataset', choices=sorted(DATASETS), default='nuscenes')
+    ap.add_argument('--root', default=None)
+    ap.add_argument('--infos', default=None)
     ap.add_argument('--sweeps', type=int, default=15)
     ap.add_argument('--anchors', type=int, default=60)
     ap.add_argument('--moved', type=float, default=1.0, help='metres over the deepest lag')
     ap.add_argument('--seed', type=int, default=3)
     args = ap.parse_args()
 
-    root = Path(args.root)
-    infos = pickle.load(open(root / args.infos, 'rb'))
-    comp = DevkitSweepCompensator(infos, find_devkit_meta_dir(root, 'v1.0-trainval'),
-                                  classes={'car'})
+    spec = DATASETS[args.dataset]
+    root = Path(args.root or spec['root'])
+    infos = pickle.load(open(root / (args.infos or spec['infos']), 'rb'))
+    comp = DevkitSweepCompensator(infos, find_devkit_meta_dir(root, spec['version']),
+                                  classes={spec['car']})
     n = args.sweeps
 
     # position within the scene, so anchors too near its start (where boxes_at clamps to the first
@@ -93,9 +121,9 @@ def main():
             continue
         lag = float(info['sweeps'][n - 2]['time_lag'])
         then = comp.boxes_at(info['token'], t - lag, S)
-        p1 = load_points(root, info, 1, None)
-        pu = load_points(root, info, n, None)
-        pc = load_points(root, info, n, comp)
+        p1 = load_points(root, info, 1, None, spec)
+        pu = load_points(root, info, n, None, spec)
+        pc = load_points(root, info, n, comp, spec)
         for tid, b in now.items():
             if tid not in then:
                 continue
@@ -110,8 +138,8 @@ def main():
 
     a = np.array(rows, dtype=float)
     moving = a[:, 0] > args.moved
-    print('N=%d, %d anchors, %d Car boxes (%d moving >%.1f m over %.2f s)'
-          % (n, used, len(a), moving.sum(), args.moved, lag))
+    print('%s N=%d, %d anchors, %d Car boxes (%d moving >%.1f m over %.2f s)'
+          % (args.dataset, n, used, len(a), moving.sum(), args.moved, lag))
     print('%-8s %7s %8s %10s %8s %10s %9s'
           % ('group', 'boxes', 'N=1', 'uncomp', 'comp', 'uncomp/N1', 'comp/N1'))
     for name, m in (('static', ~moving), ('moving', moving), ('all', np.ones(len(a), bool))):
