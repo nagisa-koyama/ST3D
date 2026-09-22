@@ -146,7 +146,7 @@ def compute_foreground_histograms(dataset, num_frames=DEFAULT_FRAMES, num_bins=D
 
 
 def link_foreground_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
-                                num_bins=DEFAULT_BINS, logger=None):
+                                num_bins=DEFAULT_BINS, logger=None, source_hist=None):
     """Foreground-aware calibration: correct inside-box and outside-box points separately.
 
     A single per-bin rate cannot change a bin's foreground SHARE - it scales the points on objects
@@ -160,13 +160,24 @@ def link_foreground_calibration(source_set, target_set, num_frames=DEFAULT_FRAME
     installed too, as the exact sum of the two channels, because the correction needs it for the
     bin count and for the no-op guard.
 
+    Called again after each pseudo-label update, since the labels define the target foreground
+    channel and the two have to move together. Pass the source pair back in as `source_hist` on
+    every call after the first - see the note in the body for why that is required, not merely
+    faster.
+
     Ordering is load-bearing twice over. The measurement must precede any installation, or the
     source would be measured through a correction that is already running - the histograms are
     taken while every rate is still absent, so the measurement is not circular. And it must precede
     the first iteration of any loader over either dataset, since workers fork a copy.
     """
-    fg_s, bg_s = compute_foreground_histograms(source_set, num_frames, num_bins, logger=logger,
-                                               label='source')
+    if source_hist is None:
+        fg_s, bg_s = compute_foreground_histograms(source_set, num_frames, num_bins, logger=logger,
+                                                   label='source')
+    else:
+        # Re-measuring the source on a refresh would read points the correction installed last time
+        # has ALREADY thinned, compounding the rate on every pass. The source distribution does not
+        # change anyway, so it is measured once and passed back in.
+        fg_s, bg_s = source_hist
     fg_t, bg_t = compute_foreground_histograms(target_set, num_frames, num_bins, logger=logger,
                                                label='target (pseudo-labels)')
     source_set.data_processor.set_hist_dist(fg_s + bg_s, fg_t + bg_t)

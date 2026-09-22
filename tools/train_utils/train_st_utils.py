@@ -337,17 +337,31 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
 
     if model_teacher is None:
         model_teacher = model  # Sharrow copy to share the memory.
+    # A separately loaded teacher is never written to anywhere in this function - it is only read
+    # by save_pseudo_label_epoch - so it stays exactly as it was pretrained on the source. When no
+    # teacher was passed, the line above aliases it to the student, which trains.
+    teacher_is_frozen = model_teacher is not model
 
     # Trying to support self training with muliple sources data.
-    # Measured after the first pseudo-label pass below, not here - see the hook in the epoch loop.
-    # ONCE is the right cadence, not a compromise: with a separate frozen teacher
-    # (--pretrained_model_teacher) generation is deterministic - eval mode, no augmentation, no
-    # weight updates - so a later pass would re-measure the same histogram. It is only when no
-    # teacher is passed, and `model_teacher = model` above aliases it to the evolving student,
-    # that repeated measurement would say anything new.
-    ps_label_fg_calibration_pending = bool(
+    # Re-measured after EVERY pseudo-label pass - the labels define the target foreground channel,
+    # so the two have to move together. With a frozen teacher that is one pass (see
+    # FROZEN_TEACHER_SINGLE_PASS below); with the student acting as its own teacher it tracks.
+    ps_label_fg_calibration = bool(
         cfg.DATA_CONFIG.get('HIST_DIST_ON_THE_FLY', False)
         and cfg.DATA_CONFIG.get('HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS', False))
+    # The SOURCE half is measured once and reused. That is not an optimisation: after the first
+    # install the source dataset is being corrected, so re-measuring it would read points that the
+    # correction has already thinned and compound the rate on every refresh. The target carries no
+    # correction, so it is safe - and necessary - to re-measure.
+    ps_label_fg_source_hist = None
+
+    # Regenerating pseudo-labels from a frozen teacher is deterministic: eval mode, no
+    # augmentation, no weight updates, and memory voting only re-confirms boxes that matched
+    # themselves at IoU 1. Every pass after the first therefore reproduces the same labels at the
+    # cost of a full inference sweep over the target - 14 of the 15 passes an
+    # UPDATE_PSEUDO_LABEL_INTERVAL of 2 makes over 30 epochs. Opt in to skip them.
+    frozen_single_pass = bool(cfg.SELF_TRAIN.get('FROZEN_TEACHER_SINGLE_PASS', False))
+    ps_labels_generated = False
     source_readers = [common_utils.DataReader(source_loader, source_sampler)
                       for source_loader, source_sampler in zip(source_loaders, source_samplers)]
     [source_reader.construct_iter() for source_reader in source_readers]
@@ -398,34 +412,56 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
                 cur_scheduler = lr_scheduler
 
             # update pseudo label
-            if (cur_epoch in cfg.SELF_TRAIN.UPDATE_PSEUDO_LABEL) or \
+            update_ps_label = (cur_epoch in cfg.SELF_TRAIN.UPDATE_PSEUDO_LABEL) or \
                     ((cur_epoch % cfg.SELF_TRAIN.UPDATE_PSEUDO_LABEL_INTERVAL == 0)
-                     and cur_epoch != 0):
+                     and cur_epoch != 0)
+            if update_ps_label and ps_labels_generated and frozen_single_pass:
+                if teacher_is_frozen:
+                    update_ps_label = False
+                    if logger is not None and cur_epoch == 1:
+                        logger.info('self-training: FROZEN_TEACHER_SINGLE_PASS - the teacher is a '
+                                    'separate frozen model, so regeneration is deterministic and '
+                                    'every later pass is skipped.')
+                elif logger is not None and cur_epoch == 1:
+                    logger.warning('self-training: FROZEN_TEACHER_SINGLE_PASS is set but no '
+                                   'separate teacher was loaded, so the student IS the teacher and '
+                                   'its labels change as it trains. Regenerating as normal.')
+            if update_ps_label:
                 target_loader.dataset.dataset.eval()
                 self_training_utils.save_pseudo_label_epoch(
                     model_teacher, ps_gen_loader, rank,
                     leave_pbar=True, ps_label_dir=ps_label_dir, cur_epoch=cur_epoch
                 )
                 target_loader.dataset.dataset.train()
+                ps_labels_generated = True
 
-                # Foreground-aware density calibration, measured once, here and nowhere earlier:
-                # it needs the TARGET's boxes, and under UDA those are pseudo-labels, which do not
-                # exist until this first generation pass has run. A uniform per-bin rate cannot
-                # change a bin's foreground share, so the plain correction leaves source objects
-                # starved; splitting it into inside-box and outside-box channels fixes that without
-                # target annotation. See pcdet/datasets/point_calibration.py.
-                if ps_label_fg_calibration_pending:
+                # save_pseudo_label_epoch rewrites the module-level PSEUDO_LABELS dict in THIS
+                # process (clear() + update()), and fill_pseudo_labels reads that same global.
+                # Training workers forked at the first iter() hold a copy-on-write snapshot of it,
+                # so without a re-fork every update after the first is invisible to them: they keep
+                # serving the epoch-0 labels for the rest of the run and
+                # UPDATE_PSEUDO_LABEL_INTERVAL is silently dead. Same family as 20260921_02.
+                restart_persistent_workers(target_loader)
+                dataloader_iter = None
+
+                # Foreground-aware density calibration. It needs the TARGET's boxes, and under UDA
+                # those are pseudo-labels, so it cannot run before this pass - and it re-runs after
+                # every pass, because the labels define the channel it measures. A uniform per-bin
+                # rate cannot change a bin's foreground share, so the plain correction leaves source
+                # objects starved; two channels fix that without target annotation. See
+                # pcdet/datasets/point_calibration.py.
+                if ps_label_fg_calibration:
                     for reader in source_readers:
-                        link_foreground_calibration(
+                        ps_label_fg_source_hist, _ = link_foreground_calibration(
                             reader.dataloader.dataset.dataset, target_loader.dataset.dataset,
                             num_frames=cfg.DATA_CONFIG.get('HIST_DIST_FRAMES', 1000),
-                            num_bins=cfg.DATA_CONFIG.get('HIST_DIST_BINS', 50), logger=logger)
-                        # The source workers forked back at construct_iter(), before the dataset
-                        # carried any of this, and a forked worker never sees a later mutation.
-                        # Re-fork them or the correction silently never runs.
+                            num_bins=cfg.DATA_CONFIG.get('HIST_DIST_BINS', 50), logger=logger,
+                            source_hist=ps_label_fg_source_hist)
+                        # The source workers forked at construct_iter() holding the dataset as it
+                        # was before this, and a forked worker never sees a later mutation. Re-fork
+                        # them or the correction silently never runs.
                         restart_persistent_workers(reader.dataloader)
                         reader.construct_iter()
-                    ps_label_fg_calibration_pending = False
 
             # curriculum data augmentation
             if cfg.SELF_TRAIN.get('PROG_AUG', None) and cfg.SELF_TRAIN.PROG_AUG.ENABLED and \
