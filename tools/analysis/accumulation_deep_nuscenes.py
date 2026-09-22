@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from domain_gap_analysis import (build_platforms, mask_range, radial_hist, points_in_boxes,
-                                 MAX_DIST, DATA)
+                                 Platform, MAX_DIST, DATA)
 
 NS = DATA / 'nuscenes/v1.0-trainval'
 _meta = NS / 'v1.0-trainval'
@@ -61,8 +61,16 @@ def frames_back(a, nmax):
         k -= 1
 
 
+def aggregate(P, name, parts, car_class, rate_hz):
+    """The whole-dataset mix, which build_platforms does not create - it only splits platforms."""
+    a, b = P[parts[0]], P[parts[1]]
+    P[name] = Platform(name, car_class, list(a.infos) + list(b.infos), a._load,
+                       rate_hz=rate_hz, sweeps=a._sweeps)
+
+
 def main():
     P = build_platforms()
+    aggregate(P, 'Lyft (all)', ['Lyft 40-beam', 'Lyft 64-beam'], 'car', 5)
     TH, TB = {}, {}
     for t in TARGETS + ['nuScenes n008 Boston', 'nuScenes n015 Singapore']:
         plat = P[t]; hs, bc = [], []
