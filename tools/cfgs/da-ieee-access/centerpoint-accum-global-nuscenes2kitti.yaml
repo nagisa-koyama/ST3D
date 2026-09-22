@@ -24,78 +24,110 @@
 # foreground SHARE. Matching the global profile therefore takes objects DOWN - 0.87x -> 0.51x of
 # KITTI at N=9. This config exists to measure what that costs in AP, which is the open question.
 
-DATA_CONFIG:
-    _BASE_CONFIG_: cfgs/da-ieee-access/da_nuscenes_dataset.yaml
+DATA_CONFIGS:
+    NUSCENES_N008:
+        _BASE_CONFIG_: cfgs/da-ieee-access/da_nuscenes_n008_dataset.yaml
 
-    # Accumulation depth. N counts frames INCLUDING the keyframe, so MAX_SWEEPS: 15 is 15 frames,
-    # spanning ~0.70 s.
-    #
-    # 15, not the 9 the global criterion alone gives, because a density correction is a
-    # keep-probability: it can only REMOVE points. Where the source sits below the target in a bin
-    # the rate clips at 1 and the correction does nothing at all. Measured per bin against KITTI
-    # (experiments_md/20260922_08): at N=9 nuScenes is at 0.69 of the target and the
-    # foreground-aware correction returns 0.69 - byte-identical to uncorrected, a null result
-    # caused by the depth rather than by the method. At N=15 the source reaches 1.06 and the
-    # correction returns 0.99-1.00.
-    #
-    # All three configs in the ablation use the SAME depth so the comparison stays one-variable.
-    # 15 also still satisfies the global criterion, which only needs >= 9.
-    #
-    # KNOWN RISK at this depth: with the source only 1.06x the target, pseudo-label noise biases
-    # the rate DOWNWARD - min(F_t/F_s, 1) is concave at the kink, so noise in the target estimate
-    # over-thins. The correction degrades 0.98 -> 0.67 as simulated teacher recall falls to 0.2.
-    # Sources with real surplus (Lyft and PandaSet at ~2.2x) degrade UPWARD instead, the mild
-    # direction. N~30 would put nuScenes in that regime and is now reachable, but doubles the
-    # points per sample again and is unmeasured for this pair.
-    #
-    # Requires the 200-sweep infos below: get_lidar_with_sweeps() indexes info['sweeps'][k] with
-    # no clamp, so MAX_SWEEPS 15 against the shipped 10-sweep infos raises IndexError - verified,
-    # along with the new infos reproducing the old ones to within 0.4% at N=1/9/10.
-    MAX_SWEEPS: 15
+        # Depth is set PER PLATFORM because the two need different amounts. Global parity with
+        # KITTI arrives at N=15 for this one (experiments_md/20260922_05), and the correction needs
+        # the source to exceed the target, not merely reach it: a keep-probability cannot add
+        # points, so at parity the rate sits on the kink where pseudo-label noise biases it
+        # downward (20260922_08 section 5). Singapore measured 1.06x target at N=15, 1.67x its
+        # parity depth of 9; 25 applies the same ratio to this platform's 15. Boston
+        # has not been measured at depth directly, so 25 is an EXTRAPOLATION.
+        MAX_SWEEPS: 25
 
-    # Regenerated with create_nuscenes_info(max_sweeps=200) - a metadata-only pass, 39.5 min, via
-    # tools/scripts/create_nuscenes_infos_deep.sh. max_sweeps is part of the filename, so these sit
-    # BESIDE the shipped 10-sweep infos and every other config is unaffected. Overridden here
-    # rather than in da_nuscenes_dataset.yaml, which the source-only family shares.
-    INFO_PATH: {
-        'train': [nuscenes_infos_200sweeps_train.pkl],
-        'test': [nuscenes_infos_200sweeps_val.pkl],
-    }
-    # Measure both histograms at startup instead of loading a shipped .npy. The shipped files are
-    # raw counts over an unknown frame count and their shape disagrees with direct measurement by
-    # up to 1.8x per bin (experiments_md/20260922_02, defect 3).
-    HIST_DIST_ON_THE_FLY: True
-    HIST_DIST_FRAMES: 1000
-    HIST_DIST_BINS: 50          # resolution is MAX_DIST / BINS = 1.5 m
-    HIST_DIST_MAX_DIST: 75.0    # must cover POINT_CLOUD_RANGE; points beyond are clipped into the
-                                # last bin, not dropped, so too small merges the whole far field
+        # Requires the regenerated 200-sweep infos; the shipped 10-sweep ones raise IndexError
+        # above 10. Overridden here rather than in the shared dataset config, which the
+        # source-only family uses at MAX_SWEEPS 1.
+        INFO_PATH: {
+            'train': [nuscenes_infos_200sweeps_train.pkl],
+            'test': [nuscenes_infos_200sweeps_val.pkl],
+        }
+        HIST_DIST_ON_THE_FLY: True
+        HIST_DIST_FRAMES: 1000
+        HIST_DIST_BINS: 50          # resolution is MAX_DIST / BINS = 1.5 m
+        HIST_DIST_MAX_DIST: 75.0    # must cover POINT_CLOUD_RANGE; points beyond are clipped into the
+                                    # last bin, not dropped, so too small merges the whole far field
 
-    # mask -> shuffle -> correction -> voxelise, the order used by every da-MIRU2025
-    # point-calibrated config. The list is restated in full because YAML lists replace rather than
-    # merge, so adding one entry means writing all of them.
-    DATA_PROCESSOR:
-        - NAME: mask_points_and_boxes_outside_range
-          REMOVE_OUTSIDE_BOXES: True
+        # mask -> shuffle -> correction -> voxelise, the order used by every da-MIRU2025
+        # point-calibrated config. The list is restated in full because YAML lists replace rather than
+        # merge, so adding one entry means writing all of them.
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
 
-        - NAME: shuffle_points
-          SHUFFLE_ENABLED: {
-            'train': True,
-            'test': False
-          }
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
 
-        - NAME: sample_points_hist_based
-          # Bins below this fraction of the mean are left uncorrected rather than corrected from
-          # noise, on BOTH sides - a zero target bin would otherwise give rate 0 and delete every
-          # source point in it.
-          MIN_HIST_BIN_FRACTION: 0.01
+            - NAME: sample_points_hist_based
+              # Bins below this fraction of the mean are left uncorrected rather than corrected from
+              # noise, on BOTH sides - a zero target bin would otherwise give rate 0 and delete every
+              # source point in it.
+              MIN_HIST_BIN_FRACTION: 0.01
 
-        - NAME: transform_points_to_voxels
-          VOXEL_SIZE: [0.1, 0.1, 0.15]
-          MAX_POINTS_PER_VOXEL: 10
-          MAX_NUMBER_OF_VOXELS: {
-            'train': 150000,
-            'test': 150000
-          }
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }
+
+    NUSCENES_N015:
+        _BASE_CONFIG_: cfgs/da-ieee-access/da_nuscenes_n015_dataset.yaml
+
+        # Depth is set PER PLATFORM because the two need different amounts. Global parity with
+        # KITTI arrives at N=9 for this one (experiments_md/20260922_05), and the correction needs
+        # the source to exceed the target, not merely reach it: a keep-probability cannot add
+        # points, so at parity the rate sits on the kink where pseudo-label noise biases it
+        # downward (20260922_08 section 5). Singapore measured 1.06x target at N=15, 1.67x its
+        # parity depth of 9; 15 applies the same ratio to this platform's 9.
+        MAX_SWEEPS: 15
+
+        # Requires the regenerated 200-sweep infos; the shipped 10-sweep ones raise IndexError
+        # above 10. Overridden here rather than in the shared dataset config, which the
+        # source-only family uses at MAX_SWEEPS 1.
+        INFO_PATH: {
+            'train': [nuscenes_infos_200sweeps_train.pkl],
+            'test': [nuscenes_infos_200sweeps_val.pkl],
+        }
+        HIST_DIST_ON_THE_FLY: True
+        HIST_DIST_FRAMES: 1000
+        HIST_DIST_BINS: 50          # resolution is MAX_DIST / BINS = 1.5 m
+        HIST_DIST_MAX_DIST: 75.0    # must cover POINT_CLOUD_RANGE; points beyond are clipped into the
+                                    # last bin, not dropped, so too small merges the whole far field
+
+        # mask -> shuffle -> correction -> voxelise, the order used by every da-MIRU2025
+        # point-calibrated config. The list is restated in full because YAML lists replace rather than
+        # merge, so adding one entry means writing all of them.
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+
+            - NAME: sample_points_hist_based
+              # Bins below this fraction of the mean are left uncorrected rather than corrected from
+              # noise, on BOTH sides - a zero target bin would otherwise give rate 0 and delete every
+              # source point in it.
+              MIN_HIST_BIN_FRACTION: 0.01
+
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }
+
 
 # KITTI is the unlabelled target. Its labels are used for EVALUATION only - no target label ever
 # reaches training, which is what keeps this a UDA setup.

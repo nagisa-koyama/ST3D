@@ -1,0 +1,19 @@
+# nuScenes, n015 capture vehicle only (Singapore (three maps)), as a labelled source.
+#
+# The vehicle-to-city mapping is exact: n008 is every boston-seaport frame (15,695), n015 every
+# Singapore frame (12,435). Selecting one isolates a subset that is SENSOR-IDENTICAL - LIDAR_TOP
+# sits at 1.840 m on one and 1.841 m on the other - but differs in geography and traffic.
+#
+# So unlike the Lyft split, this one is NOT about geometry: both vehicles give the same measured
+# SHIFT_COOR (1.72 against a configured 1.75), and it is inherited unchanged. What differs is
+# content and, consequently, how much accumulation each needs:
+#
+#     n015: 12435 frames, 6.77 Car/frame, median Car length 4.47 m,
+#           global parity with KITTI at N=9
+#
+# Boston carries 16.30 Car/frame against Singapore's 6.77 and its cars are 22 cm longer, which
+# also makes the SN offset differ by 0.23 m WITHIN the dataset - so a single hist_dist or SIZE_RES
+# fitted to the pooled dataset is fitted to neither half. See experiments_md/20260922_02.
+_BASE_CONFIG_: cfgs/da-ieee-access/da_nuscenes_dataset.yaml
+
+VEHICLE: n015
