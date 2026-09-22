@@ -1,0 +1,61 @@
+# PandaSet as a labelled SOURCE.
+#
+# NOTE for job submission: every PandaSet-as-source job additionally needs
+#   --bind /home/koyama/code/ST3D:/root/ST3D
+# on the singularity invocation, because pandaset_infos_*.pkl bake in absolute /root/ST3D/... paths
+# from preprocessing time and /root is not otherwise traversable by the koyama user in-container.
+_BASE_CONFIG_: cfgs/da-ieee-access/preprocess_sourceonly.yaml
+
+DATASET: 'PandasetDataset'
+DATA_PATH: '../data/pandaset'
+ONTOLOGY: 'pandaset'
+
+# Pandar64 only - the 64-beam mechanical 360-degree spinning lidar.
+#
+# NOT -1 (both devices) and NOT 1 (PandarGT). PandarGT is a forward-facing flash lidar that sees
+# only +-29 degrees while PandaSet's labels span the full 360, so 41.7% of its GT boxes contain
+# zero points; the zero-point GT filter in dataset.py:374 is guarded by `if self.training:`, so at
+# evaluation those boxes survive and score as false negatives, capping recall near 58%. Including
+# device 1 would put that artifact into a baseline whose whole job is to be a clean floor.
+LIDAR_DEVICE: 0
+
+# Unchanged. PandaSet's frames are ground-origin like Waymo's (road z = -0.33, median Car box base
+# -0.34 against a configured 0.30) - within the 0.04 m agreement band.
+#
+# Measured through THIS config, PandaSet's Car box bases land further below z = 0 than the other
+# four sources, and the offset grows with range: -0.09 m within 40 m, -0.20 m over the boxes inside
+# POINT_CLOUD_RANGE, -0.23 m over all boxes (against KITTI +0.10, Lyft -0.02, nuScenes +0.02,
+# Waymo -0.09). The near-field figure is in line with the rest of the family, so this is terrain
+# slope rather than a wrong constant - PandaSet's scenes have real elevation change, and its
+# interquartile spread is about 1 m even in range where KITTI's is a few centimetres. No single
+# additive SHIFT_COOR can fix a range-dependent offset; flagged here because it means PandaSet's
+# distant cars sit measurably below the anchor plane and some of this source's recall loss at range
+# may be geometric rather than a density effect.
+SHIFT_COOR: [0.0, 0.0, 0.30]
+
+DATA_SPLIT: {
+    'train': train,
+    'test': val
+}
+
+SEQUENCES: {
+    'train': ['014', '050', '079', '048', '093', '091', '063', '104', '100', '092', '012', '047', '018', '006', '099', '085', '035', '041', '052', '105', '030', '113', '002', '084', '028', '119', '044', '005', '102', '034', '077', '064', '067', '058', '019', '015', '037', '095', '120', '066', '023', '071', '117', '098', '139', '038', '116', '046', '088', '089', '040', '033', '016', '024', '122', '039', '158', '069', '124', '123', '106'], # ~60% of the sequences, randomly chosen
+    'val': ['045', '059', '055', '051', '020', '097', '073', '043', '003', '101', '027', '056', '011', '078', '080', '109', '042', '021', '094', '057'], # ~20% of the sequences, randomly chosen
+    'test': ['074', '004', '086', '062', '068', '008', '001', '110', '053', '115', '054', '065', '017', '103', '072', '013', '029', '090', '112', '149', '070', '032'] # ~20% of the sequences, randomly chosen
+}
+
+INFO_PATH: {
+    'train': [pandaset_infos_train.pkl],
+    'test': [pandaset_infos_val.pkl],
+}
+
+# Left empty on purpose: the ONTOLOGY mechanism (pandaset -> kitti) does the label mapping for this
+# family, so a second, partly-overlapping remap here would be a silent conflict. This matches the
+# empty TRAINING_CATEGORIES in cfgs/dataset_configs/da_pandaset_dataset.yaml.
+TRAINING_CATEGORIES: {}
+
+POINT_FEATURE_ENCODING: {
+    encoding_type: absolute_coordinates_encoding,
+    used_feature_list: ['x', 'y', 'z'],
+    src_feature_list: ['x', 'y', 'z', 'intensity'],
+}

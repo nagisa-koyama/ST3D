@@ -1,0 +1,102 @@
+# Shared preprocessing + augmentation for the IEEE Access source-only baselines.
+#
+# This is layer 1 of a three-layer mixin, deliberately disjoint from the layers above it so that
+# no key is defined twice along a chain (the structure that made the da-MIRU2025 family immune to
+# the 2025-02..2026-08 _BASE_CONFIG_ precedence bug):
+#
+#   layer 1  this file            preprocessing + augmentation, no dataset identity
+#   layer 2  da_<source>_dataset  dataset identity, SHIFT_COOR, feature encoding
+#   layer 3  centerpoint-sourceonly-<source>  model, optimization, source/target wiring
+#
+# Two augmentations are listed but DISABLED, on purpose, as a record of intent:
+#
+#   normalize_object_size (SN)  needs the TARGET's mean object size, so it presumes labelled
+#       target data and is NOT available in a strict UDA setup. The shipped SIZE_RES
+#       [-0.91, -0.49, -0.26] is additionally the Waymo->KITTI *Car* constant applied class-blind;
+#       KITTI pedestrians are 0.84 m long, so -0.91 m would drive that dimension negative. Kept
+#       here only so the reader can see it was considered and rejected. See
+#       experiments_md/20260922_03_deriving_geometry_alignment_parameters.md section 2.
+#
+#   random_object_rotation  off throughout the repo's DA families; left off for comparability.
+#
+# DISABLE_AUG_LIST MUST be stated here and MUST NOT list random_object_scaling. Two traps:
+#   (1) data_augmentor.py reads `augmentor_configs.DISABLE_AUG_LIST` with direct attribute access
+#       (no .get()), so an absent key raises AttributeError.
+#   (2) every cfgs/dataset_configs/da_*_dataset.yaml disables random_object_scaling in its own
+#       DISABLE_AUG_LIST, and a child that overrides only AUG_CONFIG_LIST inherits that list
+#       unchanged. That is why the existing kitti2nuscenes_models/centerpoint-sourceonly.yaml and
+#       pandaset-*/centerpoint-sourceonly.yaml specify a per-class SCALE_UNIFORM_NOISE that never
+#       actually runs. This family does not inherit from those bases, so it does not inherit the
+#       trap either.
+
+POINT_CLOUD_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+MIN_POINTS_OF_GT: 1
+FOV_POINTS_ONLY: False
+
+DATA_AUGMENTOR:
+    DISABLE_AUG_LIST: ['normalize_object_size', 'random_object_rotation']
+    AUG_CONFIG_LIST:
+        - NAME: normalize_object_size  # DISABLED - not UDA-legal, see header
+          SIZE_RES: [-0.91, -0.49, -0.26]
+
+        - NAME: random_object_rotation  # DISABLED
+          ROT_PROB: 1.0
+          ROT_UNIFORM_NOISE: [-0.78539816, 0.78539816]
+
+        # Random Object Scaling. ONE interval per CLASS, and the SAME intervals for every source
+        # dataset in this family - that is what keeps it UDA-legal. Tuning the interval per
+        # source->target pair would require the target's labelled object sizes, exactly the
+        # objection that rules SN out; varying it per class does not, since the classes are the
+        # model's own output vocabulary.
+        #
+        # Values are the target-free, all-pairs intervals from
+        # experiments_md/20260922_03_deriving_geometry_alignment_parameters.md ("Recommended
+        # values", the "any target" rows). They are log-symmetric by construction (0.85 ~ 1/1.20,
+        # 0.80 = 1/1.25) because with no fixed target the augmentation must be able to grow
+        # objects as well as shrink them. The repo default [0.9, 1.1] is both too narrow and
+        # centred too high - it barely overlaps the interval any source actually needs.
+        #
+        # Cyclist is deliberately ABSENT rather than set to some interval: resolve_per_object_param
+        # returns NaN for a class with no entry and scale_pre_object then leaves those boxes
+        # untouched. The class is bicycle-only by the standard DA convention (motorcycle -> Misc),
+        # which drops over half of nuScenes' two-wheelers, and it is missing from 77-86% of frames
+        # in every dataset here, so its measured size spread is as likely to be definition noise as
+        # real variation. It stays in CLASS_NAMES (head capacity, comparability with the existing
+        # sourceonly family) but must not be tabled as a result.
+        #
+        # Keys are MODEL-ontology names ('Car'/'Pedestrian'), not raw dataset names. dataset.py's
+        # prepare_data() applies map_ontology_dataset_to_model BEFORE data_augmentor.forward(), so
+        # by the time this runs a Waymo 'Vehicle' and a Lyft 'car' are both already 'Car'. That is
+        # what lets one identical block serve all five sources.
+        - NAME: random_object_scaling
+          SCALE_UNIFORM_NOISE: {
+              'Car': [0.85, 1.20],
+              'Pedestrian': [0.80, 1.25]
+          }
+
+        - NAME: random_world_flip
+          ALONG_AXIS_LIST: ['x', 'y']
+
+        - NAME: random_world_rotation
+          WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+
+        - NAME: random_world_scaling
+          WORLD_SCALE_RANGE: [0.95, 1.05]
+
+DATA_PROCESSOR:
+    - NAME: mask_points_and_boxes_outside_range
+      REMOVE_OUTSIDE_BOXES: True
+
+    - NAME: shuffle_points
+      SHUFFLE_ENABLED: {
+        'train': True,
+        'test': False
+      }
+
+    - NAME: transform_points_to_voxels
+      VOXEL_SIZE: [0.1, 0.1, 0.15]
+      MAX_POINTS_PER_VOXEL: 10
+      MAX_NUMBER_OF_VOXELS: {
+        'train': 150000,
+        'test': 150000
+      }

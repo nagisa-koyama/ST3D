@@ -1,0 +1,40 @@
+# Waymo Open Dataset as a labelled SOURCE.
+#
+# CAVEAT, read before trusting a Waymo-source number: in this checkout the processed point cloud
+# and the annotations are geometrically inconsistent. Counting points inside boxes exactly gives a
+# median 0.057x the stored num_points_in_gt, and 31% of boxes come out empty. Cause undiagnosed.
+# Label positions, dimensions and per-frame counts are sound, and prepare_data()'s MIN_POINTS_OF_GT
+# filter uses the STORED count, so training proceeds - but a fraction of the boxes it trains on may
+# hold no points in the cloud the network actually sees. See experiments_md/20260922_02.
+_BASE_CONFIG_: cfgs/da-ieee-access/preprocess_sourceonly.yaml
+
+DATASET: 'WaymoDataset'
+DATA_PATH: '../data/waymo'
+PROCESSED_DATA_TAG: 'waymo_processed_data'
+ONTOLOGY: 'waymo'
+
+# Unchanged. Waymo's frames are already ground-origin (measured road z = +0.02, median Car box
+# base -0.03), so no shift is needed - unlike the sensor-origin datasets. Stated explicitly rather
+# than omitted so the zero is visibly a decision, not an oversight.
+SHIFT_COOR: [0.0, 0.0, 0.0]
+
+DATA_SPLIT: {
+    'train': train,
+    'test': val
+}
+
+SAMPLED_INTERVAL: {
+    'train': 2,
+    'test': 5
+}
+
+INFO_WITH_FAKELIDAR: False
+
+# SELECTED_LIDAR_INDEX is NOT set, and setting it would do nothing: waymo_dataset.py's handling of
+# it is commented out (~line 172-183), so the full merged 5-lidar cloud is always used.
+
+POINT_FEATURE_ENCODING: {
+    encoding_type: absolute_coordinates_encoding,
+    used_feature_list: ['x', 'y', 'z'],
+    src_feature_list: ['x', 'y', 'z', 'intensity', 'elongation'],
+}

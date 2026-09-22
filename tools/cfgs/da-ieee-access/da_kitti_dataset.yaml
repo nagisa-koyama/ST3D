@@ -1,0 +1,28 @@
+# KITTI as a labelled SOURCE for the IEEE Access source-only baselines.
+_BASE_CONFIG_: cfgs/da-ieee-access/preprocess_sourceonly.yaml
+
+DATASET: 'KittiDataset'
+DATA_PATH: '../data/kitti'
+ONTOLOGY: 'kitti'
+
+# Left unchanged from the repo's configured value. The derivation in
+# experiments_md/20260922_03 gives 1.53 from the median Car box base and 1.82 from the road
+# surface, i.e. the two estimators BRACKET 1.70 - the apparent disagreement is between methods,
+# not evidence the constant is wrong.
+SHIFT_COOR: [0.0, 0.0, 1.70]
+
+DATA_SPLIT: {
+    'train': train,
+    'test': val
+}
+
+INFO_PATH: {
+    'train': [kitti_infos_train.pkl],
+    'test': [kitti_infos_val.pkl],
+}
+
+POINT_FEATURE_ENCODING: {
+    encoding_type: absolute_coordinates_encoding,
+    used_feature_list: ['x', 'y', 'z'],
+    src_feature_list: ['x', 'y', 'z', 'intensity'],
+}
