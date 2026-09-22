@@ -341,6 +341,11 @@ OPTIMIZATION:
     GRAD_NORM_CLIP: 10
 
 SELF_TRAIN:
+    # An epoch is one pass over the SOURCE, matching what train.py does for the no-correction and
+    # global arms. Without this the self-training arm would count epochs in TARGET passes - this
+    # repo's default - and at the same NUM_EPOCHS the three arms would differ in gradient steps,
+    # so the ablation would partly be measuring training length. The target is cycled instead.
+    EPOCH_FOLLOWS: source
     # Generated at a HIGH-RECALL threshold on purpose. The foreground channel is measured per box,
     # so it is insensitive to how many boxes the teacher finds - destroying 80% of its detections
     # cost 12% of object density in the offline sweep - but a bin the teacher empties entirely

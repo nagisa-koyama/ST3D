@@ -24,6 +24,9 @@ from .train_utils import save_checkpoint, checkpoint_state
 def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_func, lr_scheduler,
                        accumulated_iter, optim_cfg, rank, tbar, total_it_each_epoch,
                        dataloader_iter, tb_log=None, leave_pbar=False, ema_model=None, cur_epoch=None, logger=None):
+    # Restart the target iterator each epoch only when the epoch IS one target pass. When the
+    # epoch follows the source the two lengths differ, and the target is meant to run continuously
+    # across epoch boundaries - the StopIteration handler below cycles it.
     if total_it_each_epoch == len(target_loader):
         dataloader_iter = iter(target_loader)
 
@@ -382,8 +385,30 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
 
     with tqdm.trange(start_epoch, total_epochs, desc='epochs', dynamic_ncols=True,
                      leave=(rank == 0)) as tbar:
-        total_it_each_epoch = len(target_loader)
+        # What an epoch counts. The default is the TARGET loader's length, which is this repo's
+        # long-standing behaviour and what every existing SELF_TRAIN config assumes - changing it
+        # silently would alter the number of gradient steps in every reproduction.
+        #
+        # 'source' counts one pass over all source data instead. That is what train.py does for a
+        # source-only run, so it is the setting that makes a self-training arm comparable with a
+        # source-only arm at the same NUM_EPOCHS - otherwise the two arms differ in steps per
+        # epoch and the comparison silently comes down to training length. The target is cycled
+        # either way: train_one_epoch_st already restarts its iterator on StopIteration.
+        epoch_follows = cfg.SELF_TRAIN.get('EPOCH_FOLLOWS', 'target')
+        assert epoch_follows in ('source', 'target'), \
+            "SELF_TRAIN.EPOCH_FOLLOWS must be 'source' or 'target', got %s" % epoch_follows
+        if epoch_follows == 'source':
+            total_it_each_epoch = sum(len(r.dataloader) for r in source_readers)
+        else:
+            total_it_each_epoch = len(target_loader)
+        if logger is not None:
+            logger.info('epoch length follows %s: %d iterations (source %d, target %d)'
+                        % (epoch_follows, total_it_each_epoch,
+                           sum(len(r.dataloader) for r in source_readers), len(target_loader)))
         if merge_all_iters_to_one_epoch:
+            assert epoch_follows == 'target', \
+                'merge_all_iters_to_one_epoch divides the TARGET length; it has no meaning when ' \
+                'the epoch follows the source'
             assert hasattr(target_loader.dataset.dataset, 'merge_all_iters_to_one_epoch')
             target_loader.dataset.dataset.merge_all_iters_to_one_epoch(merge=True, epochs=total_epochs)
             total_it_each_epoch = len(target_loader) // max(total_epochs, 1)

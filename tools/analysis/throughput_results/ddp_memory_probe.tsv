@@ -1,0 +1,4 @@
+node=node61
+1GPU_bs6_global6 peak_gpu0_MiB=18712 peak_gpu1_MiB=1
+2GPU_3perRank_global6 peak_gpu0_MiB=9266 peak_gpu1_MiB=9786
+2GPU_6perRank_global12 peak_gpu0_MiB=18180 peak_gpu1_MiB=18424
