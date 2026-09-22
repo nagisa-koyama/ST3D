@@ -26,6 +26,7 @@ Gotcha #4). Only that ONE module is stubbed here, so every function under test i
 test_kitti_eval_class_mapping.py stubs the whole of `eval` instead because it needs a different
 thing from it.
 """
+import importlib.util
 import sys
 import types
 from pathlib import Path
@@ -33,15 +34,36 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
-_ROTATE_IOU = 'pcdet.datasets.kitti.kitti_object_eval_python.rotate_iou'
+_PACKAGE = 'pcdet.datasets.kitti.kitti_object_eval_python'
+_ROTATE_IOU = _PACKAGE + '.rotate_iou'
+
+# rotate_iou compiles a numba.cuda kernel at import time and dies without a driver, so stub that
+# ONE module. Everything under test below is then the real implementation.
 if _ROTATE_IOU not in sys.modules:
     _stub = types.ModuleType(_ROTATE_IOU)
     _stub.rotate_iou_gpu_eval = lambda *args, **kwargs: None
     sys.modules[_ROTATE_IOU] = _stub
 
-from pcdet.datasets.kitti.kitti_object_eval_python import eval as kitti_eval  # noqa: E402
+# Load eval.py under a PRIVATE name inside its package rather than as `<package>.eval`.
+#
+# `from <package> import eval` reads the attribute on the package object, and importing a
+# submodule normally sets that attribute. test_kitti_eval_class_mapping.py replaces the module via
+# mock.patch.dict(sys.modules, ...), which reaches the import machinery but NOT an attribute that
+# is already bound - so importing the real eval here under its own name would silently defeat that
+# test's stub and run the real KITTI evaluation against its fixtures. It passed in isolation only
+# because this module is unimportable on a CPU node in the first place. A private name keeps the
+# package attribute unset, so that test behaves exactly as it did before this file existed. The
+# relative `from .rotate_iou import ...` inside eval.py still resolves, because the private name
+# lives in the same package.
+_spec = importlib.util.spec_from_file_location(
+    _PACKAGE + '._eval_under_test',
+    ROOT / 'pcdet' / 'datasets' / 'kitti' / 'kitti_object_eval_python' / 'eval.py')
+kitti_eval = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = kitti_eval
+_spec.loader.exec_module(kitti_eval)
 
 N_SAMPLE_PTS = 41
 
