@@ -17,7 +17,7 @@ import wandb
 from torchinfo import summary
 
 from pcdet.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_file
-from pcdet.datasets import build_dataloader
+from pcdet.datasets import build_dataloader, link_point_calibration
 from pcdet.models.model_utils.dsnorm import DSNorm
 from pcdet.models import build_network, model_fn_decorator
 from pcdet.utils import common_utils
@@ -223,6 +223,41 @@ def main():
         logger.info('source dataset %d: %s', index, source['dataset_class'].__class__.__name__)
     if target_set is not None:
         logger.info('target dataset: %s', target_set.__class__.__name__)
+
+    # Density correction, measured from the datasets actually being trained on. adaptive_train.py
+    # has the same hook; without one here a source-only config that lists sample_points_hist_based
+    # would run it with no histograms installed, and the processor early-returns - a silent no-op
+    # that makes the corrected run identical to the uncorrected one with nothing to show for it.
+    if cfg.DATA_CONFIG.get('HIST_DIST_ON_THE_FLY', False):
+        assert not cfg.DATA_CONFIG.get('HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS', False), \
+            ('HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS needs the target foreground channel, which '
+             'comes from pseudo-labels, so it requires a SELF_TRAIN config run through '
+             'adaptive_train.py. This is train.py and there are no pseudo-labels.')
+        # A measurement-only view of the target: only its point clouds are read, and eval mode
+        # avoids requiring labels the UDA setup does not have.
+        calib_target = target_set
+        if calib_target is None:
+            calib_target, _, _ = build_dataloader(
+                dataset_cfg=cfg.DATA_CONFIG_TAR, class_names=cfg.CLASS_NAMES, batch_size=1,
+                dist=False, workers=0, logger=logger, training=False,
+                model_ontology=cfg.get('ONTOLOGY', None))
+        for source in source_datasets:
+            link_point_calibration(
+                source['dataset_class'], calib_target,
+                num_frames=cfg.DATA_CONFIG.get('HIST_DIST_FRAMES', 1000),
+                num_bins=cfg.DATA_CONFIG.get('HIST_DIST_BINS', 50),
+                max_dist=cfg.DATA_CONFIG.get('HIST_DIST_MAX_DIST', 75.0),
+                logger=logger)
+
+    # A correction listed in the pipeline but never given histograms is a no-op that looks like a
+    # run. Say so rather than letting the result be quietly identical to the uncorrected arm.
+    for source in source_datasets:
+        proc = source['dataset_class'].data_processor
+        if any(p.get('NAME') == 'sample_points_hist_based'
+               for p in cfg.DATA_CONFIG.get('DATA_PROCESSOR', [])) and proc.hist_dist_src is None:
+            logger.warning('sample_points_hist_based is configured but no histograms were '
+                           'installed - the correction will NOT run. Set '
+                           'DATA_CONFIG.HIST_DIST_ON_THE_FLY: True.')
 
     # -----------------------config validity---------------------------
     miss_spelled_configs = ['BACKWORD_TOGETHER']
