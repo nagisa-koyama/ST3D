@@ -1,8 +1,5 @@
 **__pycache__**
-**build**
-# The rule above matches any path CONTAINING 'build', not just build directories, so it
-# silently swallows source files whose names start with build_. Un-ignore them by name.
-!tools/analysis/build_reference_objects.py
+build/
 **egg-info**
 **dist**
 data/
