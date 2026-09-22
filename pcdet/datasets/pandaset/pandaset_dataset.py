@@ -52,6 +52,42 @@ def pose_numpy_to_dict(pose):
     return pose_dict
 
 
+
+def fov_mask(boxes, fov_degree, heading_degree):
+    """Which boxes fall inside a forward cone of `fov_degree` centred on `heading_degree`.
+
+    Thin wrapper over DatasetTemplate.extract_fov_gt so the empty case is handled once:
+    rotate_points_along_z is not safe on a zero-row array.
+    """
+    boxes = np.asarray(boxes)
+    if len(boxes) == 0:
+        return np.zeros(0, dtype=bool)
+    return DatasetTemplate.extract_fov_gt(boxes[:, :7].astype(np.float64),
+                                          fov_degree, heading_degree)
+
+
+def filter_annos_to_fov(annos, box_key, keys, fov_degree, heading_degree):
+    """Restrict each anno's per-box arrays to the cone. Returns (kept, total)."""
+    kept = total = 0
+    for anno in annos:
+        boxes = anno.get(box_key, None)
+        if boxes is None:
+            continue
+        m = fov_mask(boxes, fov_degree, heading_degree)
+        total += len(m)
+        kept += int(m.sum())
+        for k in keys:
+            v = anno.get(k, None)
+            if v is None:
+                continue
+            v = np.asarray(v)
+            # Only arrays indexed BY BOX. A length coincidence would otherwise mangle a
+            # fixed-width field - `pose` is 7 numbers, and a frame can hold 7 boxes.
+            if v.ndim >= 1 and len(v) == len(m):
+                anno[k] = v[m]
+    return kept, total
+
+
 class PandasetDataset(DatasetTemplate):
     def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None, model_ontology=None):
         """
@@ -429,6 +465,38 @@ class PandasetDataset(DatasetTemplate):
             'Motorized Scooter': 'Cyclist',
             'Bicycle': 'Cyclist',
         }
+        # Restrict evaluation to what the sensor can actually see.
+        #
+        # PandaSet labels the full 360 degrees regardless of which device is loaded, and
+        # `cuboids.sensor_id` does not restrict them (device-0 and device-1 GT are near-identical).
+        # For PandarGT, a forward flash lidar covering about +-29 degrees, that means 41.7% of its
+        # GT boxes contain zero points - and the zero-point GT filter in dataset.py is guarded by
+        # `if self.training:`, so at evaluation they survive and score as false negatives. Recall
+        # against that target is capped near 58% no matter how good the detector is, and no
+        # accumulation depth changes it: a box outside the cone is never illuminated at any N.
+        #
+        # This is the same correction KITTI already gets - its GT is camera-FOV-only, and
+        # kitti_dataset.py drops predictions outside that FOV so the model is not charged for a
+        # region its labels never covered. Here the asymmetry runs the other way (labels wider than
+        # the sensor), so the GT is what has to be cut.
+        #
+        # BOTH sides are filtered. Cutting GT alone would leave predictions in the excluded region
+        # with nothing to match, turning them into false positives and charging the model for a
+        # region the metric has just declared out of scope.
+        if self.dataset_cfg.get('EVAL_FOV_FILTER', False):
+            deg = float(self.dataset_cfg.get('EVAL_FOV_DEGREE', 60.0))
+            heading = float(self.dataset_cfg.get('EVAL_FOV_HEADING', 0.0))
+            gk, gt_tot = filter_annos_to_fov(eval_gt_annos, 'gt_boxes',
+                                             ('gt_boxes', 'gt_names'), deg, heading)
+            dk, d_tot = filter_annos_to_fov(eval_det_annos, 'boxes_lidar',
+                                            ('boxes_lidar', 'name', 'score', 'pred_labels'),
+                                            deg, heading)
+            self.logger.info(
+                'EVAL_FOV_FILTER %.1f deg about heading %.1f: GT %d -> %d (%.1f%% dropped), '
+                'predictions %d -> %d (%.1f%% dropped)'
+                % (deg, heading, gt_tot, gk, 100.0 * (1 - gk / max(gt_tot, 1)),
+                   d_tot, dk, 100.0 * (1 - dk / max(d_tot, 1))))
+
         self.logger.info("len(eval_det_annos): {}".format(len(eval_det_annos)))
         # self.logger.info("len(eval_det_annos[name]): {}".format(len(eval_det_annos['name'])))
         kitti_utils.transform_annotations_to_kitti_format(eval_det_annos, map_name_to_kitti=map_name_to_kitti)

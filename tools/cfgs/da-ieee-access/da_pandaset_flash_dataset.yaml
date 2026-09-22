@@ -19,3 +19,24 @@
 _BASE_CONFIG_: cfgs/da-ieee-access/da_pandaset_dataset.yaml
 
 LIDAR_DEVICE: 1
+
+# EVALUATE ONLY WHERE THE SENSOR LOOKS. This is the same correction KITTI already gets, with the
+# asymmetry reversed: KITTI's labels are narrower than its sensor, so kitti_dataset.py drops
+# PREDICTIONS outside the camera FOV; PandarGT's labels are WIDER than its sensor, so the GT is
+# what has to be cut. Both GT and predictions are filtered, because cutting GT alone would leave
+# predictions in the excluded region with nothing to match and charge the model for a region the
+# metric has just declared out of scope.
+#
+# Measured on this data (25 val frames, Car boxes, device 1):
+#   point azimuth   99% within +-29.6 deg, p99.5 at +-29.0  -> a 60 deg cone is the sensor
+#   without it      3,126 Car boxes, 2,507 of them EMPTY (80.2%) - a recall ceiling near 20%
+#   with it         923 Car boxes kept (29.5% of GT), 64.8% of them non-empty
+#
+# So this roughly TRIPLES the achievable recall ceiling. Note 80.2% empty for Car is much worse
+# than the 41.7% figure quoted for all classes together, and note that ~35% of the boxes INSIDE
+# the cone are still empty - occlusion and range, which this filter neither can nor should fix.
+# Numbers from this target are therefore still not comparable to a Pandar64 target; what the
+# filter buys is that they stop being dominated by boxes the sensor never had a chance to see.
+EVAL_FOV_FILTER: True
+EVAL_FOV_DEGREE: 60.0    # FULL angle, so +-30 deg
+EVAL_FOV_HEADING: 0.0    # 0 = +x = forward in the normative frame
