@@ -1,0 +1,15 @@
+RESULT cfg=centerpoint-sourceonly-nuscenes.yaml bs=6 workers=4 it_s=1.8659 samples_s=11.1953 data_frac=0.0016 peak_alloc_gb=7.71 peak_reserved_gb=14.18 hours=13.959 iters=93766 loss=12.071
+RESULT cfg=centerpoint-sourceonly-nuscenes.yaml bs=12 workers=4 it_s=0.9433 samples_s=11.3194 data_frac=0.0006 peak_alloc_gb=15.32 peak_reserved_gb=28.97 hours=13.806 iters=46883 loss=12.104
+RESULT cfg=centerpoint-sourceonly-nuscenes.yaml bs=18 workers=4 it_s=0.5196 samples_s=9.3528 data_frac=0.0004 peak_alloc_gb=22.81 peak_reserved_gb=45.78 hours=16.709 iters=31255 loss=11.738
+RESULT cfg=centerpoint-sourceonly-nuscenes.yaml bs=24 workers=4 it_s=0.3451 samples_s=8.2824 data_frac=0.0002 peak_alloc_gb=30.36 peak_reserved_gb=47.06 hours=18.869 iters=23441 loss=11.874
+RESULT cfg=centerpoint-sourceonly-nuscenes.yaml bs=32 workers=4 it_s=0.2543 samples_s=8.1377 data_frac=0.0005 peak_alloc_gb=40.46 peak_reserved_gb=47.07 hours=19.204 iters=17581 loss=11.746
+RESULT cfg=centerpoint-sourceonly-nuscenes.yaml bs=6 workers=8 it_s=1.8337 samples_s=11.0019 data_frac=0.0011 peak_alloc_gb=7.73 peak_reserved_gb=14.28 hours=14.205 iters=93766 loss=13.000
+RESULT cfg=centerpoint-sourceonly-nuscenes.yaml bs=12 workers=8 it_s=0.9315 samples_s=11.1778 data_frac=0.0007 peak_alloc_gb=15.28 peak_reserved_gb=29.45 hours=13.981 iters=46883 loss=11.380
+RESULT cfg=centerpoint-sourceonly-nuscenes.yaml bs=18 workers=8 it_s=0.5094 samples_s=9.1699 data_frac=0.0005 peak_alloc_gb=22.85 peak_reserved_gb=45.17 hours=17.042 iters=31255 loss=11.402
+RESULT cfg=centerpoint-sourceonly-nuscenes.yaml bs=24 workers=8 it_s=0.3390 samples_s=8.1359 data_frac=0.0003 peak_alloc_gb=30.37 peak_reserved_gb=47.06 hours=19.208 iters=23441 loss=11.483
+RESULT cfg=centerpoint-sourceonly-nuscenes.yaml bs=32 workers=8 it_s=0.2500 samples_s=8.0002 data_frac=0.0002 peak_alloc_gb=40.37 peak_reserved_gb=47.06 hours=19.534 iters=17581 loss=11.405
+RESULT cfg=centerpoint-sourceonly-nuscenes.yaml bs=6 workers=12 it_s=1.8465 samples_s=11.0789 data_frac=0.0012 peak_alloc_gb=7.72 peak_reserved_gb=14.21 hours=14.106 iters=93766 loss=12.650
+RESULT cfg=centerpoint-sourceonly-nuscenes.yaml bs=12 workers=12 it_s=0.9271 samples_s=11.1249 data_frac=0.0009 peak_alloc_gb=15.38 peak_reserved_gb=30.67 hours=14.048 iters=46883 loss=11.680
+RESULT cfg=centerpoint-sourceonly-nuscenes.yaml bs=18 workers=12 it_s=0.5018 samples_s=9.0327 data_frac=0.0003 peak_alloc_gb=22.78 peak_reserved_gb=44.71 hours=17.301 iters=31255 loss=11.693
+RESULT cfg=centerpoint-sourceonly-nuscenes.yaml bs=24 workers=12 it_s=0.3552 samples_s=8.5256 data_frac=0.0002 peak_alloc_gb=30.33 peak_reserved_gb=47.07 hours=18.330 iters=23441 loss=11.188
+RESULT cfg=centerpoint-sourceonly-nuscenes.yaml bs=32 workers=12 it_s=0.2519 samples_s=8.0613 data_frac=0.0002 peak_alloc_gb=40.34 peak_reserved_gb=47.04 hours=19.386 iters=17581 loss=11.446

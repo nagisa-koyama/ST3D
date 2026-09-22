@@ -1,0 +1,15 @@
+RESULT cfg=centerpoint-sourceonly-kitti.yaml bs=6 workers=4 it_s=1.9713 samples_s=11.8275 data_frac=0.0013 peak_alloc_gb=9.13 peak_reserved_gb=18.47 hours=13.213 iters=93766 loss=10.600
+RESULT cfg=centerpoint-sourceonly-kitti.yaml bs=12 workers=4 it_s=0.9911 samples_s=11.8936 data_frac=0.0007 peak_alloc_gb=17.66 peak_reserved_gb=38.02 hours=13.140 iters=46883 loss=9.259
+FAILED bs=18 workers=4 cfg=centerpoint-sourceonly-kitti.yaml
+FAILED bs=24 workers=4 cfg=centerpoint-sourceonly-kitti.yaml
+FAILED bs=32 workers=4 cfg=centerpoint-sourceonly-kitti.yaml
+RESULT cfg=centerpoint-sourceonly-kitti.yaml bs=6 workers=8 it_s=1.8842 samples_s=11.3051 data_frac=0.0011 peak_alloc_gb=9.11 peak_reserved_gb=16.97 hours=13.824 iters=93766 loss=9.999
+RESULT cfg=centerpoint-sourceonly-kitti.yaml bs=12 workers=8 it_s=0.9831 samples_s=11.7969 data_frac=0.0006 peak_alloc_gb=18.14 peak_reserved_gb=45.66 hours=13.247 iters=46883 loss=9.549
+FAILED bs=18 workers=8 cfg=centerpoint-sourceonly-kitti.yaml
+RESULT cfg=centerpoint-sourceonly-kitti.yaml bs=24 workers=8 it_s=0.3023 samples_s=7.2552 data_frac=0.0002 peak_alloc_gb=35.72 peak_reserved_gb=47.09 hours=21.540 iters=23441 loss=9.413
+FAILED bs=32 workers=8 cfg=centerpoint-sourceonly-kitti.yaml
+RESULT cfg=centerpoint-sourceonly-kitti.yaml bs=6 workers=12 it_s=1.8339 samples_s=11.0036 data_frac=0.0011 peak_alloc_gb=9.25 peak_reserved_gb=18.53 hours=14.202 iters=93766 loss=11.101
+RESULT cfg=centerpoint-sourceonly-kitti.yaml bs=12 workers=12 it_s=0.9936 samples_s=11.9227 data_frac=0.0006 peak_alloc_gb=18.14 peak_reserved_gb=42.41 hours=13.108 iters=46883 loss=9.803
+RESULT cfg=centerpoint-sourceonly-kitti.yaml bs=18 workers=12 it_s=0.4613 samples_s=8.3029 data_frac=0.0003 peak_alloc_gb=26.79 peak_reserved_gb=47.09 hours=18.822 iters=31255 loss=9.655
+FAILED bs=24 workers=12 cfg=centerpoint-sourceonly-kitti.yaml
+FAILED bs=32 workers=12 cfg=centerpoint-sourceonly-kitti.yaml

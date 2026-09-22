@@ -41,7 +41,19 @@ def parse_config():
     parser.add_argument('--sync_bn', action='store_true', default=False, help='whether to use sync bn')
     parser.add_argument('--fix_random_seed', action='store_true', default=False, help='')
     parser.add_argument('--ckpt_save_interval', type=int, default=1, help='number of training epochs')
-    parser.add_argument('--local_rank', type=int, default=0, help='local rank for distributed training')
+    # Default falls back to LOCAL_RANK env var, not a hardcoded 0. Modern torch.distributed.launch
+    # /torchrun (torch>=2.x) no longer passes --local_rank to the child process: by default it
+    # passes --local-rank (hyphen), which this argparse does not recognize (argparse does not
+    # treat --local_rank/--local-rank as aliases) and the whole launch fails with "unrecognized
+    # arguments"; with --use-env it passes NEITHER and only sets the LOCAL_RANK env var, which the
+    # old default of 0 ignored - every process then defaulted to local_rank=0 and collided in
+    # init_dist_pytorch's `dist.init_process_group(rank=local_rank, ...)` (rank 0 claimed twice,
+    # world_size mismatch). This default lets --use-env work without every process racing to be
+    # rank 0; explicit --local_rank N on the command line still overrides it as before. Found
+    # 2026-09-22 validating multi-GPU DDP for the da-ieee-access throughput profiling - no DDP job
+    # in this repo appears to have run successfully against this torch version before.
+    parser.add_argument('--local_rank', type=int, default=int(os.environ.get('LOCAL_RANK', 0)),
+                        help='local rank for distributed training')
     parser.add_argument('--max_ckpt_save_num', type=int, default=100, help='max number of saved checkpoint')
     parser.add_argument('--merge_all_iters_to_one_epoch', action='store_true', default=False, help='')
     parser.add_argument('--set', dest='set_cfgs', default=None, nargs=argparse.REMAINDER,

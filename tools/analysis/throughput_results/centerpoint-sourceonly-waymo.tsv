@@ -1,0 +1,8 @@
+RESULT cfg=centerpoint-sourceonly-waymo.yaml bs=6 workers=4 it_s=1.3791 samples_s=8.2747 data_frac=0.0898 peak_alloc_gb=8.35 peak_reserved_gb=15.19 hours=18.886 iters=93766 loss=11.100
+RESULT cfg=centerpoint-sourceonly-waymo.yaml bs=12 workers=4 it_s=0.6807 samples_s=8.1686 data_frac=0.0792 peak_alloc_gb=17.54 peak_reserved_gb=34.87 hours=19.131 iters=46883 loss=10.670
+RESULT cfg=centerpoint-sourceonly-waymo.yaml bs=18 workers=4 it_s=0.4067 samples_s=7.3206 data_frac=0.0003 peak_alloc_gb=24.77 peak_reserved_gb=47.06 hours=21.348 iters=31255 loss=10.711
+RESULT cfg=centerpoint-sourceonly-waymo.yaml bs=24 workers=4 it_s=0.2444 samples_s=5.8650 data_frac=0.0002 peak_alloc_gb=32.85 peak_reserved_gb=47.07 hours=26.646 iters=23441 loss=10.404
+RESULT cfg=centerpoint-sourceonly-waymo.yaml bs=32 workers=4 it_s=0.2059 samples_s=6.5880 data_frac=0.0001 peak_alloc_gb=43.29 peak_reserved_gb=47.07 hours=23.721 iters=17581 loss=10.222
+RESULT cfg=centerpoint-sourceonly-waymo.yaml bs=6 workers=8 it_s=1.4908 samples_s=8.9450 data_frac=0.0009 peak_alloc_gb=8.51 peak_reserved_gb=15.20 hours=17.471 iters=93766 loss=11.181
+RESULT cfg=centerpoint-sourceonly-waymo.yaml bs=12 workers=8 it_s=0.7377 samples_s=8.8528 data_frac=0.0005 peak_alloc_gb=16.45 peak_reserved_gb=33.44 hours=17.653 iters=46883 loss=10.491
+RESULT cfg=centerpoint-sourceonly-waymo.yaml bs=18 workers=8 it_s=0.3935 samples_s=7.0831 data_frac=0.0006 peak_alloc_gb=24.69 peak_reserved_gb=47.06 hours=22.063 iters=31255 loss=10.681

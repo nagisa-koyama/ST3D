@@ -1,0 +1,8 @@
+RESULT cfg=centerpoint-sourceonly-pandaset.yaml bs=6 workers=4 it_s=0.5109 samples_s=3.0655 data_frac=0.4654 peak_alloc_gb=10.13 peak_reserved_gb=18.98 hours=50.979 iters=93766 loss=9.828
+RESULT cfg=centerpoint-sourceonly-pandaset.yaml bs=12 workers=4 it_s=0.2794 samples_s=3.3531 data_frac=0.4276 peak_alloc_gb=19.70 peak_reserved_gb=47.02 hours=46.607 iters=46883 loss=9.670
+FAILED bs=18 workers=4 cfg=centerpoint-sourceonly-pandaset.yaml
+FAILED bs=24 workers=4 cfg=centerpoint-sourceonly-pandaset.yaml
+RESULT cfg=centerpoint-sourceonly-pandaset.yaml bs=6 workers=8 it_s=0.7546 samples_s=4.5279 data_frac=0.0007 peak_alloc_gb=9.99 peak_reserved_gb=18.96 hours=34.515 iters=93766 loss=10.023
+RESULT cfg=centerpoint-sourceonly-pandaset.yaml bs=12 workers=8 it_s=0.3904 samples_s=4.6849 data_frac=0.0011 peak_alloc_gb=19.79 peak_reserved_gb=47.05 hours=33.358 iters=46883 loss=9.557
+FAILED bs=18 workers=8 cfg=centerpoint-sourceonly-pandaset.yaml
+FAILED bs=24 workers=8 cfg=centerpoint-sourceonly-pandaset.yaml

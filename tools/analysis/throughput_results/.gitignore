@@ -1,0 +1,5 @@
+# Raw per-run training/profiler output: large, reproducible, and the DDP ones are on W&B.
+# Only the .tsv measurement summaries are tracked (they are what 20260922_06 cites).
+*.log
+*.err
+*.out

@@ -1,0 +1,2 @@
+bs_per_gpu=8 total=16 OK max_it=20
+bs_per_gpu=10 total=20 OK max_it=5
