@@ -82,6 +82,11 @@ def parse_args():
     parser.add_argument('--score_thresh', type=float, default=None,
                         help='override the per-class SELF_TRAIN.SCORE_THRESH used to select boxes')
     parser.add_argument('--yaml', action='store_true', help='emit a pasteable config block')
+    parser.add_argument('--dry_run', action='store_true',
+                        help='preflight only: resolve everything and load the checkpoint, but run '
+                             'no forward pass. Needs no GPU. Run this before spending the real hour')
+    parser.add_argument('--probe_frames', type=int, default=5,
+                        help='--dry_run: frames used to measure requested-vs-achieved scale')
     args = parser.parse_args()
     if (args.target_size is None) == (args.ros_factor is None):
         parser.error('give exactly one of --target_size or --ros_factor; which one you pick is '
@@ -91,7 +96,24 @@ def parse_args():
 
 def target_config(config):
     """The adaptation target, the same selection test.py's get_eval_configs() makes."""
-    return config.DATA_CONFIG_TAR if config.get('DATA_CONFIG_TAR', None) else config.DATA_CONFIG
+    if config.get('DATA_CONFIG_TAR', None):
+        return config.DATA_CONFIG_TAR
+    sources = source_configs(config)
+    return sources[0]
+
+
+def source_configs(config):
+    """Every labelled source, the same selection train.py makes.
+
+    Two shapes exist in this repo and only one of them is `DATA_CONFIG`: the da-MIRU2025 family
+    is multi-source and carries `DATA_CONFIGS: {<NAME>: {...}}` instead. Reading only
+    `DATA_CONFIG` raises AttributeError on exactly the configs a DALI row would be built from.
+    """
+    if config.get('DATA_CONFIG', None):
+        return [config.DATA_CONFIG]
+    if config.get('DATA_CONFIGS', None):
+        return list(config.DATA_CONFIGS.values())
+    raise AssertionError('config defines neither DATA_CONFIG nor DATA_CONFIGS')
 
 
 def class_indices(class_names, needle):
@@ -118,16 +140,22 @@ def score_thresholds(config, override, num_classes):
     return np.full(num_classes, 0.1)
 
 
-def mean_predicted_size(model, loader, scale, wanted_labels, thresholds, frames):
+def mean_predicted_size(model, loader, scale, wanted_labels, thresholds, frames,
+                        to_device=load_data_to_gpu):
     """Mean unscaled [dx, dy, dz] of the boxes that would be kept as pseudo-labels, at `scale`.
 
     The loader's dataset scales its points in the worker; `unscale_boxes` puts the predictions
     back into real target metres, so every row of the sweep is directly comparable.
+
+    `to_device` is injectable only so that tests can drive this loop with a stub model on a
+    machine with no GPU. This is the function that spends the search's GPU hour, and its
+    plumbing - per-class thresholds, class selection, the unscaling, the frame cap - is exactly
+    the kind of thing that is cheap to get wrong and expensive to discover in a job log.
     """
     dims, seen = [], 0
     with torch.no_grad():
         for batch in loader:
-            load_data_to_gpu(batch)
+            to_device(batch)
             pred_dicts, _ = model(batch)
             for pred in pred_dicts:
                 if 'pred_boxes' not in pred:
@@ -149,31 +177,133 @@ def mean_predicted_size(model, loader, scale, wanted_labels, thresholds, frames)
     return dims.mean(axis=0), len(dims), seen
 
 
+def achieved_scale(dataset_cfg, config, scale, logger, num_frames, batch_size, ontology):
+    """What a requested scale actually costs, measured on real frames without a model.
+
+    POINT_CLOUD_RANGE is fixed while the scene grows, so at s > 1 the far field is cropped
+    harder and the effective scaling is under the requested one. That is correct behaviour - it
+    is the grid the network is trained under - but it means the sweep's `s` is a request, not an
+    achievement, and a target with more far-field returns loses more of it. Measuring this costs
+    seconds of CPU and tells you before the GPU hour whether the sweep's endpoints are real.
+
+    Returns (achieved, kept_fraction), both medians over `num_frames` frames.
+    """
+    base, _, _ = build_dataloader(
+        dataset_cfg=dataset_cfg, class_names=config.CLASS_NAMES, batch_size=batch_size,
+        dist=False, workers=0, logger=logger, training=False, model_ontology=ontology)
+    scaled, _, _ = build_dataloader(
+        dataset_cfg=dataset_cfg, class_names=config.CLASS_NAMES, batch_size=batch_size,
+        dist=False, workers=0, logger=logger, training=False, model_ontology=ontology)
+    scaled.set_ptsn_scale(scale)
+
+    ratios, kept = [], []
+    for idx in range(min(num_frames, len(base))):
+        a, b = base[idx]['points'], scaled[idx]['points']
+        if len(a) == 0 or len(b) == 0:
+            continue
+        ratios.append(np.abs(b[:, 0:3]).mean() / np.abs(a[:, 0:3]).mean())
+        kept.append(len(b) / len(a))
+    if not ratios:
+        return float('nan'), float('nan')
+    return float(np.median(ratios)), float(np.median(kept))
+
+
 def source_mean_size(config, wanted_names, args, logger):
     """Mean GT [dx, dy, dz] of the SOURCE, for the --ros_factor path.
 
     Built in eval mode on purpose: augmentation (random_object_scaling in particular) would
-    perturb exactly the statistic being measured.
+    perturb exactly the statistic being measured. Pooled over every source a multi-source config
+    declares, since the detector's size prior is inherited from all of them.
+
+    Returns (mean, n_boxes, per_source) where per_source is one (name, mean, n) row per source -
+    printed rather than averaged silently, because the two Lyft platforms and the two nuScenes
+    cities have genuinely different mean car sizes (dataset_sensor_and_platform_facts.md).
     """
-    source_set, _, _ = build_dataloader(
-        dataset_cfg=config.DATA_CONFIG, class_names=config.CLASS_NAMES, batch_size=1,
-        dist=False, workers=0, logger=logger, training=False,
-        model_ontology=config.get('ONTOLOGY', None))
-    dims, frames = [], min(args.frames, len(source_set))
-    for idx in range(frames):
-        sample = source_set[idx]
-        if 'gt_boxes' not in sample or len(sample['gt_boxes']) == 0:
-            continue
-        names = np.array(sample.get('gt_names', []))
-        boxes = np.asarray(sample['gt_boxes'])
-        if len(names) == len(boxes):
-            keep = np.array([any(w in n.lower() for w in wanted_names) for n in names])
-            boxes = boxes[keep]
-        if len(boxes):
-            dims.append(boxes[:, 3:6])
+    dims, per_source = [], []
+    for source_cfg in source_configs(config):
+        source_set, _, _ = build_dataloader(
+            dataset_cfg=source_cfg, class_names=config.CLASS_NAMES, batch_size=1,
+            dist=False, workers=0, logger=logger, training=False,
+            model_ontology=config.get('ONTOLOGY', None))
+        source_dims = []
+        for idx in range(min(args.frames, len(source_set))):
+            sample = source_set[idx]
+            if 'gt_boxes' not in sample or len(sample['gt_boxes']) == 0:
+                continue
+            names = np.array(sample.get('gt_names', []))
+            boxes = np.asarray(sample['gt_boxes'])
+            if len(names) == len(boxes):
+                keep = np.array([any(w in n.lower() for w in wanted_names) for n in names])
+                boxes = boxes[keep]
+            if len(boxes):
+                source_dims.append(boxes[:, 3:6])
+        if source_dims:
+            source_dims = np.concatenate(source_dims, axis=0)
+            per_source.append((source_cfg.get('DATASET', '?'), source_dims.mean(axis=0),
+                               len(source_dims)))
+            dims.append(source_dims)
     assert dims, 'no source GT boxes matched --class_name; cannot derive E_est[Size] from ROS'
     dims = np.concatenate(dims, axis=0)
-    return dims.mean(axis=0), len(dims)
+    return dims.mean(axis=0), len(dims), per_source
+
+
+def dry_run_report(args, config, dataset_cfg, test_set, target_size, logger):
+    """Everything the real search does except the forward passes. Needs no GPU.
+
+    This exists because of what this repo has already paid for: a cross-dataset eval assert made
+    six configurations unreachable for a month and cost 16 GPU-hours, two of which trained for
+    eight hours before dying with no AP (20260921_04). Constructing the pieces is seconds of CPU.
+    Getting a clean line here does not promise a good scale - it promises the hour will produce
+    one rather than a traceback.
+    """
+    print('DRY RUN - no forward pass. Checks below are what the real sweep would use.\n')
+    print('  config            %s' % args.cfg_file)
+    print('  checkpoint        %s' % args.ckpt)
+    print('  target frames     %d of %d available' % (min(args.frames, len(test_set)), len(test_set)))
+    print('  candidate scales  %s' % [round(x, 3) for x in args.scales])
+    print('  E_est[Size]       %s' % np.round(target_size, 3).tolist())
+
+    print('\n  checkpoint:')
+    ckpt_path = Path(args.ckpt)
+    if not ckpt_path.is_file():
+        print('    MISSING - %s does not exist. The real run would die here.' % ckpt_path)
+    else:
+        blob = torch.load(str(ckpt_path), map_location='cpu', weights_only=False)
+        state = blob.get('model_state', blob)
+        print('    loads on CPU, epoch %s, %d parameter tensors'
+              % (blob.get('epoch', '?'), len(state)))
+        # The classic silent mismatch is a checkpoint trained under a different class vocabulary.
+        # Its head output channels encode that, and reading them needs no network.
+        for key in sorted(k for k in state if 'conv_cls' in k and k.endswith('weight')):
+            print('    %-52s %s   (config declares %d classes)'
+                  % (key, tuple(state[key].shape), len(config.CLASS_NAMES)))
+
+    # Building the network is what would catch a true architecture mismatch, but SECOND's anchor
+    # generator calls .cuda() at construction, so it cannot run on the login node at all. Say so
+    # rather than printing a check that did not happen.
+    print('\n  network build + state-dict match:')
+    if torch.cuda.is_available():
+        model = build_network(model_cfg=config.MODEL, num_class=len(config.CLASS_NAMES),
+                              dataset=test_set)
+        model.load_params_from_file(filename=args.ckpt, logger=logger, to_cpu=True)
+        print('    OK - the state dict matched the network built from this config')
+    else:
+        print('    SKIPPED - no GPU on this node, and the anchor generator allocates on CUDA at')
+        print('    construction. Re-run this same command on a GPU node to close that check.')
+
+    # The endpoints bound the whole sweep, so probing them bounds how much of it the range crop eats.
+    ontology = config.get('EVAL_ONTOLOGY', None) or config.get('ONTOLOGY', None)
+    print('\n  requested vs achieved scale (POINT_CLOUD_RANGE is fixed while the scene grows):')
+    print('  %10s %12s %12s' % ('requested', 'achieved', 'points kept'))
+    for scale in sorted({args.scales[0], args.scales[-1], 1.0}):
+        got, kept = achieved_scale(dataset_cfg, config, scale, logger, args.probe_frames,
+                                   args.batch_size, ontology)
+        note = '' if not np.isfinite(kept) or kept > 0.98 else '   <- the crop is eating this end'
+        print('  %10.3f %12.4f %11.2f%%%s' % (scale, got, 100 * kept, note))
+
+    print('\n  Next: drop --dry_run and run it for real. One forward pass over %d frames per '
+          'candidate,\n  %d candidates, inference only.' % (args.frames, len(args.scales)))
+    return 0
 
 
 def main():
@@ -193,19 +323,19 @@ def main():
         target_size = np.array(args.target_size, dtype=np.float64)
         provenance = ('given directly (--target_size). NOT target-free if it came from SN.')
     else:
-        src_mean, n_src = source_mean_size(cfg, [args.class_name.lower()], args, logger)
+        src_mean, n_src, per_source = source_mean_size(
+            cfg, [args.class_name.lower()], args, logger)
         target_size = src_mean * args.ros_factor
         provenance = ('source mean %s over %d boxes x ROS factor %.3f - target-free'
                       % (np.round(src_mean, 3).tolist(), n_src, args.ros_factor))
+        for name, mean, n in per_source:
+            print('  source %-18s mean %s over %d boxes'
+                  % (name, np.round(mean, 3).tolist(), n))
 
     test_set, _, _ = build_dataloader(
         dataset_cfg=tgt_cfg, class_names=cfg.CLASS_NAMES, batch_size=args.batch_size,
         dist=False, workers=args.workers, logger=logger, training=False,
         model_ontology=cfg.get('EVAL_ONTOLOGY', None) or cfg.get('ONTOLOGY', None))
-    model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=test_set)
-    model.load_params_from_file(filename=args.ckpt, logger=logger, to_cpu=False)
-    model.cuda()
-    model.eval()
 
     print('\n' + '=' * 94)
     print('PTSN scale search   cfg=%s' % Path(args.cfg_file).stem)
@@ -215,6 +345,15 @@ def main():
     print('  E_est[Size]      %s' % np.round(target_size, 3).tolist())
     print('  provenance       %s' % provenance)
     print('=' * 94)
+
+    if args.dry_run:
+        return dry_run_report(args, cfg, tgt_cfg, test_set, target_size, logger)
+
+    model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=test_set)
+    model.load_params_from_file(filename=args.ckpt, logger=logger, to_cpu=False)
+    model.cuda()
+    model.eval()
+
     print('%8s %10s %10s %10s %10s %8s' % ('scale', 'dx', 'dy', 'dz', 'gap(m)', 'boxes'))
 
     mean_sizes, counts = [], []
