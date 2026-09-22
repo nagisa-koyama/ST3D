@@ -36,9 +36,12 @@
 # ['x','y','z']; and Lyft's infos are already randomly ordered on disk, so unlike the nuScenes
 # oracle this row was never exposed to the pre-2026-09-21 shuffle bug.
 #
-# Runs with tools/train.py on 2 GPUs at a global batch of 6:
-#   sbatch scripts/run_sourceonly_2gpu.sh ... -- see that script; this config is not one of the
-#   five <source> names it accepts, so launch it by editing the CFG path or passing the file.
+# Named `centerpoint-sourceonly-lyft2lyft` rather than `-oracle-`, to match the family: the
+# nuScenes oracle is likewise just `centerpoint-sourceonly-nuscenes.yaml`. An oracle here IS a
+# source-only row - no adaptation of any kind - that happens to have source == target. The `2lyft`
+# suffix is what distinguishes it from `centerpoint-sourceonly-lyft.yaml`, whose target is nuScenes.
+#
+# Launch:  sbatch scripts/run_sourceonly_2gpu.sh lyft2lyft
 #
 DATA_CONFIG:
     _BASE_CONFIG_: cfgs/da-ieee-access/da_lyft_dataset.yaml

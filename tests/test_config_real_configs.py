@@ -54,13 +54,16 @@ MULTI_LEVEL_CONFIGS = [
     ('cfgs/da-ieee-access/centerpoint-sourceonly-%s.yaml' % src, False)
     for src in ('kitti', 'lyft', 'nuscenes', 'pandaset', 'waymo')
 ] + [
-    # The Lyft->Lyft oracle has the same two-hop shape and needs the same resolution check, but it
-    # is NOT part of the X->nuScenes column, so it is deliberately excluded from
-    # IEEE_ACCESS_SOURCEONLY below - its target is Lyft, which those assertions forbid.
-    ('cfgs/da-ieee-access/centerpoint-oracle-lyft2lyft.yaml', False),
+    # Lyft->Lyft: same two-hop shape, same resolution check. It is a source-only row (no
+    # adaptation, source == target) which is why it carries the `sourceonly` name, but it is NOT
+    # part of the X->nuScenes COLUMN, so it is excluded from IEEE_ACCESS_SOURCEONLY below - those
+    # assertions require a nuScenes target, and this one evaluates on Lyft.
+    ('cfgs/da-ieee-access/centerpoint-sourceonly-lyft2lyft.yaml', False),
 ]
 
-IEEE_ACCESS_SOURCEONLY = [c for c, _ in MULTI_LEVEL_CONFIGS if 'da-ieee-access/centerpoint-sourceonly-' in c]
+_X2NUSCENES_COLUMN = 'cfgs/da-ieee-access/centerpoint-sourceonly-%s.yaml'
+IEEE_ACCESS_SOURCEONLY = [_X2NUSCENES_COLUMN % src
+                          for src in ('kitti', 'lyft', 'nuscenes', 'pandaset', 'waymo')]
 
 
 @pytest.mark.parametrize('cfg_file,expect_hist', MULTI_LEVEL_CONFIGS)
@@ -325,7 +328,7 @@ def test_two_gpu_launch_script_passes_an_explicit_global_batch():
     assert '--workers' not in code, '--workers would override the per-source NUM_WORKERS'
 
 
-def test_lyft_oracle_differs_from_the_lyft_source_row_only_in_its_target(in_tools_dir):
+def test_lyft2lyft_differs_from_the_lyft_source_row_only_in_its_target(in_tools_dir):
     """The Lyft->Lyft oracle must be the Lyft source-only row with the eval target swapped.
 
     Its whole purpose is to bound `X -> Lyft` rows, and that reading only holds if the recipe is
@@ -335,7 +338,7 @@ def test_lyft_oracle_differs_from_the_lyft_source_row_only_in_its_target(in_tool
     """
     base, oracle = EasyDict(), EasyDict()
     cfg_from_yaml_file('cfgs/da-ieee-access/centerpoint-sourceonly-lyft.yaml', base)
-    cfg_from_yaml_file('cfgs/da-ieee-access/centerpoint-oracle-lyft2lyft.yaml', oracle)
+    cfg_from_yaml_file('cfgs/da-ieee-access/centerpoint-sourceonly-lyft2lyft.yaml', oracle)
 
     assert base.DATA_CONFIG_TAR.DATASET == 'NuScenesDataset'
     assert oracle.DATA_CONFIG_TAR.DATASET == 'LyftDataset', 'the oracle must evaluate on Lyft'
