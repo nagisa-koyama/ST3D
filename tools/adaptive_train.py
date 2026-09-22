@@ -158,7 +158,7 @@ def main():
     # both double the measurement cost and make that later measurement circular - it would see a
     # source already being corrected.
     if cfg.DATA_CONFIG.get('HIST_DIST_ON_THE_FLY', False) \
-            and not cfg.DATA_CONFIG.get('HIST_DIST_FOREGROUND_AWARE', False):
+            and not cfg.DATA_CONFIG.get('HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS', False):
         link_point_calibration(
             source_set, target_set,
             num_frames=cfg.DATA_CONFIG.get("HIST_DIST_FRAMES", 1000),

@@ -221,10 +221,14 @@ def test_rate_is_computed_per_channel():
 
 
 def test_foreground_and_background_get_different_rates():
-    """fg kept outright, bg dropped outright - so the split is observable exactly."""
+    """fg kept outright, bg dropped with probability 1 - 1e-9, so the split is observable.
+
+    The background target is tiny rather than zero: a zero target bin is now treated as missing
+    evidence and left uncorrected, so exploiting it would test the guard rather than the split.
+    """
     bins = 50
     p = _fg_processor(fg_s=[1.0] * bins, bg_s=[1.0] * bins,
-                      fg_t=[1.0] * bins, bg_t=[0.0] * bins)
+                      fg_t=[1.0] * bins, bg_t=[1e-9] * bins)
     pts = np.zeros((2, 4))
     pts[:, 0] = 10.0
     pts[1, 1] = 50.0                                     # second point is outside the box
@@ -279,3 +283,35 @@ def test_link_foreground_recovers_the_direction_a_uniform_rate_cannot():
     p = src.data_processor
     b = int(10.0 / 75.0 * 15)
     assert p.per_bin_sample_rate(None, 'fg')[b] > p.per_bin_sample_rate(None, 'bg')[b]
+
+
+def test_empty_target_foreground_does_not_delete_the_source_foreground():
+    """The teacher finding nothing must leave the rate at 1, never 0.
+
+    tgt == 0 with a populated src gives a ratio of exactly 0, which would drop EVERY source
+    foreground point - the precise opposite of what the correction is for. Missing pseudo-labels
+    are missing evidence, not evidence of absence.
+    """
+    p = _fg_processor(fg_s=[1, 1], bg_s=[9, 9], fg_t=[0, 0], bg_t=[10, 10])
+    assert np.allclose(p.per_bin_sample_rate(None, 'fg'), [1.0, 1.0])
+
+
+def test_a_single_unpopulated_target_bin_is_left_uncorrected():
+    p = _fg_processor(fg_s=[2, 2], bg_s=[9, 9], fg_t=[1, 0], bg_t=[9, 9])
+    assert np.allclose(p.per_bin_sample_rate(None, 'fg'), [0.5, 1.0])
+
+
+def test_ignored_pseudo_labels_reach_column_7_via_prepare_data():
+    """Pins the provenance the foreground filter depends on.
+
+    fill_pseudo_labels() splits PSEUDO_LABELS[frame_id] ([M, 9] = box, signed class, score) and
+    hands on gt_boxes[:, :7], keeping the SIGN only in data_dict['gt_classes']. prepare_data()
+    then concatenates that signed array back as column 7 - the branch commented
+    '# for pseudo label has ignore labels'. So gt_boxes[:, 7] < 0 marks an ignored box by the time
+    the data processor runs, which is what compute_foreground_histograms filters on.
+    """
+    import inspect
+    from pcdet.datasets.dataset import DatasetTemplate
+    src = inspect.getsource(DatasetTemplate.prepare_data)
+    assert "gt_classes = data_dict['gt_classes'][selected]" in src
+    assert 'np.concatenate((data_dict[\'gt_boxes\'], gt_classes.reshape(-1, 1)' in src

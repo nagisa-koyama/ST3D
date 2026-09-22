@@ -340,8 +340,8 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
 
     # Trying to support self training with muliple sources data.
     # Measured after the first pseudo-label pass below, not here - see the hook in the epoch loop.
-    fg_calibration_pending = bool(cfg.DATA_CONFIG.get('HIST_DIST_ON_THE_FLY', False)
-                                  and cfg.DATA_CONFIG.get('HIST_DIST_FOREGROUND_AWARE', False))
+    ps_label_fg_calibration_pending = bool(cfg.DATA_CONFIG.get('HIST_DIST_ON_THE_FLY', False)
+                                  and cfg.DATA_CONFIG.get('HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS', False))
     source_readers = [common_utils.DataReader(source_loader, source_sampler)
                       for source_loader, source_sampler in zip(source_loaders, source_samplers)]
     [source_reader.construct_iter() for source_reader in source_readers]
@@ -408,7 +408,7 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
                 # change a bin's foreground share, so the plain correction leaves source objects
                 # starved; splitting it into inside-box and outside-box channels fixes that without
                 # target annotation. See pcdet/datasets/point_calibration.py.
-                if fg_calibration_pending:
+                if ps_label_fg_calibration_pending:
                     for reader in source_readers:
                         link_foreground_calibration(
                             reader.dataloader.dataset.dataset, target_loader.dataset.dataset,
@@ -419,7 +419,7 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
                         # Re-fork them or the correction silently never runs.
                         restart_persistent_workers(reader.dataloader)
                         reader.construct_iter()
-                    fg_calibration_pending = False
+                    ps_label_fg_calibration_pending = False
 
             # curriculum data augmentation
             if cfg.SELF_TRAIN.get('PROG_AUG', None) and cfg.SELF_TRAIN.PROG_AUG.ENABLED and \

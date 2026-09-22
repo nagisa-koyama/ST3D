@@ -265,6 +265,13 @@ class DataProcessor(object):
         Bins whose source count falls below MIN_HIST_BIN_FRACTION of the mean source bin are left
         uncorrected (rate 1) rather than corrected from noise. The fraction is scale-free, so it
         behaves the same for per-frame histograms and for the shipped raw counts.
+
+        The TARGET side is guarded the same way, which matters most for the foreground channel.
+        There the target histogram is built from pseudo-labels, so a bin the teacher happened to
+        find nothing in gives tgt == 0 and a rate of exactly 0 - which would drop EVERY source
+        foreground point in that bin, the precise opposite of what this correction is for. An
+        under-populated target bin is missing evidence, not evidence of absence, so it is left
+        uncorrected too.
         """
         pair = {'all': (self.hist_dist_src, self.hist_dist_tgt),
                 'fg': (self.hist_fg_src, self.hist_fg_tgt),
@@ -273,8 +280,7 @@ class DataProcessor(object):
         src = np.asarray(pair[0], dtype=np.float64)
         tgt = np.asarray(pair[1], dtype=np.float64)
         frac = 0.01 if config is None else config.get('MIN_HIST_BIN_FRACTION', 0.01)
-        floor = frac * src.mean()
-        trusted = src > max(floor, 0.0)
+        trusted = (src > max(frac * src.mean(), 0.0)) & (tgt > max(frac * tgt.mean(), 0.0))
         rate = np.ones_like(src)
         np.divide(tgt, src, out=rate, where=trusted)
         rate[~np.isfinite(rate)] = 1.0
