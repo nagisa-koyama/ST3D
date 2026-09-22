@@ -72,6 +72,10 @@ class DataProcessor(object):
         self.voxel_generator = None
         self.hist_dist_src = hist_dist_src
         self.hist_dist_tgt = hist_dist_tgt
+        # Foreground-aware calibration is opt-in; absent these, the correction uses the single
+        # whole-cloud pair above and behaves exactly as before.
+        self.hist_fg_src = self.hist_bg_src = None
+        self.hist_fg_tgt = self.hist_bg_tgt = None
 
         for cur_cfg in processor_configs:
             cur_processor = getattr(self, cur_cfg.NAME)(config=cur_cfg)
@@ -85,6 +89,17 @@ class DataProcessor(object):
         """
         self.hist_dist_src = hist_dist_src
         self.hist_dist_tgt = hist_dist_tgt
+
+    def set_foreground_hist(self, fg_src, bg_src, fg_tgt, bg_tgt):
+        """Install the inside-box / outside-box histogram pairs (see point_calibration.py).
+
+        Same forking constraint as `set_hist_dist`: must precede the first iteration of any loader
+        over this dataset. Unlike `set_hist_dist` this one additionally needs the target's boxes to
+        have existed when it was measured, which under self-training means after the first
+        pseudo-label generation pass.
+        """
+        self.hist_fg_src, self.hist_bg_src = fg_src, bg_src
+        self.hist_fg_tgt, self.hist_bg_tgt = fg_tgt, bg_tgt
 
     def mask_boxes_outside_length(self, data_dict=None, config=None):
         if data_dict is None:
@@ -198,13 +213,48 @@ class DataProcessor(object):
         MAX_DIST = 75.0
         bin_num = len(self.hist_dist_src)
         indexes = np.floor(np.clip(points_dist, 0, MAX_DIST - 0.0001) / MAX_DIST * bin_num).astype(np.int32)
-        sample_rate = self.per_bin_sample_rate(config)[indexes]
+
+        if self.hist_fg_src is None:
+            sample_rate = self.per_bin_sample_rate(config)[indexes]
+        else:
+            # Foreground-aware: correct the inside-box and outside-box channels separately.
+            # A single per-bin rate cannot change a bin's foreground SHARE - it scales numerator
+            # and denominator alike - so matching the global profile leaves source objects
+            # under-sampled by exactly sigma_src/sigma_tgt. Two channels give the correction a
+            # degree of freedom it structurally lacked.
+            fg = self.points_in_any_box(points, data_dict.get('gt_boxes', None))
+            sample_rate = np.where(fg,
+                                   self.per_bin_sample_rate(config, 'fg')[indexes],
+                                   self.per_bin_sample_rate(config, 'bg')[indexes])
         points_mask = np.random.rand(len(points)) < sample_rate
         data_dict['points'] = points[points_mask]
         return data_dict
 
-    def per_bin_sample_rate(self, config=None):
+    @staticmethod
+    def points_in_any_box(points, boxes):
+        """Boolean mask: is each point inside at least one of `boxes`?
+
+        Degenerate boxes are dropped first. A zero- or negative-extent box reaching the C++
+        geometry kernel is the same failure mode as the still-open `gt_sampling` segfault in
+        `database_sampler.py`, and costs nothing to rule out here.
+        """
+        if boxes is None or len(boxes) == 0:
+            return np.zeros(len(points), dtype=bool)
+        boxes = np.asarray(boxes, dtype=np.float32)[:, :7]
+        boxes = boxes[(boxes[:, 3:6] > 1e-3).all(axis=1)]
+        if len(boxes) == 0:
+            return np.zeros(len(points), dtype=bool)
+        from ...ops.roiaware_pool3d import roiaware_pool3d_utils
+        inside = roiaware_pool3d_utils.points_in_boxes_cpu(
+            np.ascontiguousarray(points[:, 0:3], dtype=np.float32), boxes)
+        return inside.any(axis=0) > 0
+
+    def per_bin_sample_rate(self, config=None, channel='all'):
         """target/source density ratio per radial bin, with under-populated bins left alone.
+
+        `channel` selects which pair of histograms to compare: 'all' is the whole cloud, 'fg' only
+        the points inside GT boxes and 'bg' only those outside. The fg/bg pair is installed by
+        `set_foreground_hist` and is absent unless foreground-aware calibration was requested.
 
         A bin the source barely reaches gives a ratio estimated from a handful of points. Worse,
         `hist_src == 0` makes the ratio inf or nan, and `rand() < nan` is False - so a zero source
@@ -216,8 +266,12 @@ class DataProcessor(object):
         uncorrected (rate 1) rather than corrected from noise. The fraction is scale-free, so it
         behaves the same for per-frame histograms and for the shipped raw counts.
         """
-        src = np.asarray(self.hist_dist_src, dtype=np.float64)
-        tgt = np.asarray(self.hist_dist_tgt, dtype=np.float64)
+        pair = {'all': (self.hist_dist_src, self.hist_dist_tgt),
+                'fg': (self.hist_fg_src, self.hist_fg_tgt),
+                'bg': (self.hist_bg_src, self.hist_bg_tgt)}[channel]
+        assert pair[0] is not None, 'no %s histogram installed' % channel
+        src = np.asarray(pair[0], dtype=np.float64)
+        tgt = np.asarray(pair[1], dtype=np.float64)
         frac = 0.01 if config is None else config.get('MIN_HIST_BIN_FRACTION', 0.01)
         floor = frac * src.mean()
         trusted = src > max(floor, 0.0)

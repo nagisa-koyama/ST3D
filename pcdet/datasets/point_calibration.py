@@ -89,3 +89,100 @@ def link_point_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
                            'The source is sparser than the target everywhere; accumulate sweeps '
                            'instead (MAX_SWEEPS).')
     return src, tgt
+
+
+def compute_foreground_histograms(dataset, num_frames=DEFAULT_FRAMES, num_bins=DEFAULT_BINS,
+                                  max_dist=MAX_DIST, logger=None, label=''):
+    """Mean points per frame per radial bin, split into inside-box and outside-box channels.
+
+    Boxes come from `dataset[idx]['gt_boxes']`, which is real annotation for a source domain and
+    PSEUDO-LABELS for a self-training target - the target dataset fills them from `PSEUDO_LABELS`
+    in train mode. That is the whole point: it makes a foreground-aware correction computable
+    without target annotation, and so UDA-legal. It also means this must run AFTER the first
+    pseudo-label generation pass, or the target's boxes do not exist yet.
+
+    Ignored pseudo-labels (negative class index, the ones memory voting has demoted) are excluded,
+    so the target foreground channel counts only boxes the teacher currently stands behind.
+    """
+    n = len(dataset)
+    if n == 0:
+        raise ValueError('cannot measure a histogram from an empty dataset')
+    step = max(1, n // num_frames)
+    edges = np.linspace(0, max_dist, num_bins + 1)
+    fg = np.zeros(num_bins, dtype=np.float64)
+    bg = np.zeros(num_bins, dtype=np.float64)
+    used, with_boxes = 0, 0
+    for idx in range(0, n, step):
+        if used >= num_frames:
+            break
+        data_dict = dataset[idx]
+        points = data_dict.get('points', None)
+        if points is None or not len(points):
+            continue
+        boxes = data_dict.get('gt_boxes', None)
+        if boxes is not None and len(boxes):
+            boxes = np.asarray(boxes)
+            if boxes.shape[1] > 7:                       # drop ignored pseudo-labels
+                boxes = boxes[boxes[:, 7] > 0]
+            with_boxes += 1 if len(boxes) else 0
+        mask = dataset.data_processor.points_in_any_box(points, boxes)
+        dist = np.clip(np.linalg.norm(points[:, 0:2], axis=1), 0, max_dist - 1e-4)
+        fg += np.histogram(dist[mask], bins=edges)[0]
+        bg += np.histogram(dist[~mask], bins=edges)[0]
+        used += 1
+    if used == 0:
+        raise ValueError('no usable frames while measuring a histogram')
+    fg, bg = fg / used, bg / used
+    if logger is not None:
+        share = fg.sum() / max(fg.sum() + bg.sum(), 1e-9)
+        logger.info('point calibration [%s]: %d frames (%d with boxes), %.0f fg + %.0f bg '
+                    'pts/frame, foreground share %.2f%%'
+                    % (label, used, with_boxes, fg.sum(), bg.sum(), 100 * share))
+        if with_boxes == 0:
+            logger.warning('point calibration [%s]: NO boxes in any sampled frame - the foreground '
+                           'channel is empty and its rate will be 1 everywhere. For a target '
+                           'domain this means pseudo-labels had not been generated yet.' % label)
+    return fg, bg
+
+
+def link_foreground_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
+                                num_bins=DEFAULT_BINS, logger=None):
+    """Foreground-aware calibration: correct inside-box and outside-box points separately.
+
+    A single per-bin rate cannot change a bin's foreground SHARE - it scales the points on objects
+    and the points on everything else by the same factor - so matching the global radial profile
+    leaves source objects at exactly sigma_src/sigma_tgt of the target's object density, measured
+    at 0.42-0.76x across the source datasets. Splitting the correction into two channels,
+    `min(F_t/F_s, 1)` inside boxes and `min(B_t/B_s, 1)` outside, gives it the degree of freedom it
+    structurally lacked, and derives the direction per bin from data rather than assuming one.
+
+    Replaces `link_point_calibration` rather than supplementing it: the whole-cloud pair is
+    installed too, as the exact sum of the two channels, because the correction needs it for the
+    bin count and for the no-op guard.
+
+    Ordering is load-bearing twice over. The measurement must precede any installation, or the
+    source would be measured through a correction that is already running - the histograms are
+    taken while every rate is still absent, so the measurement is not circular. And it must precede
+    the first iteration of any loader over either dataset, since workers fork a copy.
+    """
+    fg_s, bg_s = compute_foreground_histograms(source_set, num_frames, num_bins, logger=logger,
+                                               label='source')
+    fg_t, bg_t = compute_foreground_histograms(target_set, num_frames, num_bins, logger=logger,
+                                               label='target (pseudo-labels)')
+    source_set.data_processor.set_hist_dist(fg_s + bg_s, fg_t + bg_t)
+    source_set.data_processor.set_foreground_hist(fg_s, bg_s, fg_t, bg_t)
+    if logger is not None:
+        proc = source_set.data_processor
+        r_fg, r_bg = proc.per_bin_sample_rate(None, 'fg'), proc.per_bin_sample_rate(None, 'bg')
+        s_src = fg_s.sum() / max(fg_s.sum() + bg_s.sum(), 1e-9)
+        s_tgt = fg_t.sum() / max(fg_t.sum() + bg_t.sum(), 1e-9)
+        logger.info('point calibration: foreground-aware. fg rate %.2f..%.2f, bg rate %.2f..%.2f'
+                    % (r_fg.min(), r_fg.max(), r_bg.min(), r_bg.max()))
+        logger.info('point calibration: foreground share src %.2f%% vs tgt %.2f%% (ratio %.2f) - '
+                    'below 1 means the uniform correction would have starved source objects'
+                    % (100 * s_src, 100 * s_tgt, s_src / max(s_tgt, 1e-9)))
+        logger.warning('point calibration: the target foreground channel is measured from '
+                       'PSEUDO-LABELS, so any teacher recall below 1 UNDER-estimates it and biases '
+                       'the foreground rate DOWNWARD - the same direction as the defect this is '
+                       'meant to fix. Generate pseudo-labels at a high-recall SCORE_THRESH.')
+    return (fg_s, bg_s), (fg_t, bg_t)

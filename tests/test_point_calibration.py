@@ -17,6 +17,8 @@ from easydict import EasyDict
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pcdet.datasets.point_calibration import (compute_range_histogram,  # noqa: E402
+                                              compute_foreground_histograms,
+                                              link_foreground_calibration,
                                               link_point_calibration)
 from pcdet.datasets.processor.data_processor import DataProcessor  # noqa: E402
 
@@ -153,3 +155,127 @@ def test_the_guard_is_scale_free():
     a = _processor([100, 100, 100, 0.02], [50, 50, 50, 0.0001]).per_bin_sample_rate()
     b = _processor([100e3, 100e3, 100e3, 20], [50e3, 50e3, 50e3, 0.1]).per_bin_sample_rate()
     assert np.allclose(a, b)
+
+
+# --------------------------------------------------------------------------------------------
+# Foreground-aware calibration
+#
+# A single per-bin rate scales the points on objects and the points on everything else by the same
+# factor, so it cannot change a bin's foreground SHARE - matching the global radial profile leaves
+# source objects at sigma_src/sigma_tgt of the target's object density (measured 0.42-0.76x). The
+# fix is two channels. The target's boxes come from pseudo-labels, which keeps it UDA-legal.
+# --------------------------------------------------------------------------------------------
+
+class FakeBoxDataset(FakeDataset):
+    """Adds boxes, and points placed to fall inside or outside them."""
+
+    def __init__(self, fg_radii, bg_radii, box_label=1.0, num_frames=20, ontology='fake'):
+        super().__init__(list(fg_radii) + list(bg_radii), num_frames=num_frames, ontology=ontology)
+        self.fg_radii, self.bg_radii, self.box_label = list(fg_radii), list(bg_radii), box_label
+
+    def __getitem__(self, index):
+        pts = np.zeros((len(self.fg_radii) + len(self.bg_radii), 4))
+        pts[:, 0] = self.fg_radii + self.bg_radii
+        # one 2x2x2 m box centred on each foreground point; background points sit on the same
+        # axis but far enough away in y to be outside every box
+        pts[len(self.fg_radii):, 1] = 50.0
+        boxes = np.zeros((len(self.fg_radii), 8))
+        boxes[:, 0] = self.fg_radii
+        boxes[:, 3:6] = 2.0
+        boxes[:, 7] = self.box_label
+        return {'points': pts, 'gt_boxes': boxes}
+
+
+def _fg_processor(fg_s, bg_s, fg_t, bg_t):
+    p = _processor(np.asarray(fg_s, float) + np.asarray(bg_s, float),
+                   np.asarray(fg_t, float) + np.asarray(bg_t, float))
+    p.set_foreground_hist(np.asarray(fg_s, float), np.asarray(bg_s, float),
+                          np.asarray(fg_t, float), np.asarray(bg_t, float))
+    return p
+
+
+def test_points_in_any_box_flags_only_interior_points():
+    pts = np.array([[10.0, 0, 0, 0], [10.0, 50.0, 0, 0]])
+    boxes = np.array([[10.0, 0, 0, 2, 2, 2, 0]])
+    assert list(DataProcessor.points_in_any_box(pts, boxes)) == [True, False]
+
+
+def test_points_in_any_box_without_boxes_is_all_background():
+    pts = np.zeros((5, 4))
+    assert not DataProcessor.points_in_any_box(pts, None).any()
+    assert not DataProcessor.points_in_any_box(pts, np.zeros((0, 7))).any()
+
+
+def test_degenerate_boxes_are_dropped_before_the_geometry_kernel():
+    """A zero-extent box is the same failure mode as the open gt_sampling segfault."""
+    pts = np.array([[10.0, 0, 0, 0]])
+    assert not DataProcessor.points_in_any_box(pts, np.array([[10.0, 0, 0, 0, 0, 0, 0]])).any()
+
+
+def test_rate_is_computed_per_channel():
+    p = _fg_processor(fg_s=[2, 2], bg_s=[10, 10], fg_t=[1, 4], bg_t=[5, 5])
+    assert np.allclose(p.per_bin_sample_rate(None, 'fg'), [0.5, 2.0])
+    assert np.allclose(p.per_bin_sample_rate(None, 'bg'), [0.5, 0.5])
+    # 'all' still compares the whole cloud, and equals the sum of the channels
+    assert np.allclose(p.per_bin_sample_rate(None, 'all'), [0.5, 0.75])
+
+
+def test_foreground_and_background_get_different_rates():
+    """fg kept outright, bg dropped outright - so the split is observable exactly."""
+    bins = 50
+    p = _fg_processor(fg_s=[1.0] * bins, bg_s=[1.0] * bins,
+                      fg_t=[1.0] * bins, bg_t=[0.0] * bins)
+    pts = np.zeros((2, 4))
+    pts[:, 0] = 10.0
+    pts[1, 1] = 50.0                                     # second point is outside the box
+    boxes = np.array([[10.0, 0, 0, 2, 2, 2, 0]])
+    out = p.sample_points_hist_based({'points': pts, 'gt_boxes': boxes})['points']
+    assert len(out) == 1 and out[0][1] == 0.0            # the in-box point survived
+
+
+def test_without_foreground_histograms_behaviour_is_unchanged():
+    bins = 50
+    p = _processor([1.0] * bins, [1.0] * bins)
+    assert p.hist_fg_src is None
+    pts = np.zeros((4, 4))
+    pts[:, 0] = 10.0
+    out = p.sample_points_hist_based({'points': pts, 'gt_boxes': np.zeros((0, 8))})['points']
+    assert len(out) == 4                                 # rate 1 everywhere, nothing dropped
+
+
+def test_foreground_histogram_splits_the_cloud_without_losing_points():
+    ds = FakeBoxDataset(fg_radii=[10.0, 30.0], bg_radii=[10.0, 50.0, 60.0])
+    fg, bg = compute_foreground_histograms(ds, num_frames=5, num_bins=15)
+    assert fg.sum() == pytest.approx(2.0)                # per frame, not a raw count
+    assert bg.sum() == pytest.approx(3.0)
+    assert (fg + bg).sum() == pytest.approx(len(ds.radii))
+
+
+def test_ignored_pseudo_labels_are_excluded_from_the_foreground_channel():
+    """Memory voting demotes a box by negating its label; those must not count as foreground."""
+    kept = FakeBoxDataset(fg_radii=[10.0], bg_radii=[50.0], box_label=1.0)
+    demoted = FakeBoxDataset(fg_radii=[10.0], bg_radii=[50.0], box_label=-1.0)
+    assert compute_foreground_histograms(kept, num_frames=3, num_bins=15)[0].sum() == 1.0
+    assert compute_foreground_histograms(demoted, num_frames=3, num_bins=15)[0].sum() == 0.0
+
+
+def test_link_foreground_installs_both_pairs_on_the_source_only():
+    src = FakeBoxDataset(fg_radii=[10.0], bg_radii=[10.0, 20.0], ontology='src')
+    tgt = FakeBoxDataset(fg_radii=[10.0, 10.0], bg_radii=[20.0], ontology='tgt')
+    link_foreground_calibration(src, tgt, num_frames=5, num_bins=15)
+    assert src.data_processor.hist_fg_src is not None
+    assert tgt.data_processor.hist_fg_src is None
+    # the whole-cloud pair is installed too, as the exact sum of the channels
+    p = src.data_processor
+    assert np.allclose(p.hist_dist_src, p.hist_fg_src + p.hist_bg_src)
+    assert np.allclose(p.hist_dist_tgt, p.hist_fg_tgt + p.hist_bg_tgt)
+
+
+def test_link_foreground_recovers_the_direction_a_uniform_rate_cannot():
+    """Source foreground-poor vs target foreground-rich: the fg rate must exceed the bg rate."""
+    src = FakeBoxDataset(fg_radii=[10.0], bg_radii=[10.0] * 9)      # 10% foreground
+    tgt = FakeBoxDataset(fg_radii=[10.0] * 5, bg_radii=[10.0] * 5)  # 50% foreground
+    link_foreground_calibration(src, tgt, num_frames=5, num_bins=15)
+    p = src.data_processor
+    b = int(10.0 / 75.0 * 15)
+    assert p.per_bin_sample_rate(None, 'fg')[b] > p.per_bin_sample_rate(None, 'bg')[b]

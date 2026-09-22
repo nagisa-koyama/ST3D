@@ -11,7 +11,8 @@ from pcdet.utils import self_training_utils
 from pcdet.config import cfg
 from pcdet.models import load_data_to_gpu
 from pcdet.models.model_utils.dsnorm import set_ds_source, set_ds_target
-from pcdet.datasets import build_inference_dataloader, restart_persistent_workers
+from pcdet.datasets import (build_inference_dataloader, restart_persistent_workers,
+                            link_foreground_calibration)
 
 import wandb
 import torchjd
@@ -338,6 +339,9 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
         model_teacher = model  # Sharrow copy to share the memory.
 
     # Trying to support self training with muliple sources data.
+    # Measured after the first pseudo-label pass below, not here - see the hook in the epoch loop.
+    fg_calibration_pending = bool(cfg.DATA_CONFIG.get('HIST_DIST_ON_THE_FLY', False)
+                                  and cfg.DATA_CONFIG.get('HIST_DIST_FOREGROUND_AWARE', False))
     source_readers = [common_utils.DataReader(source_loader, source_sampler)
                       for source_loader, source_sampler in zip(source_loaders, source_samplers)]
     [source_reader.construct_iter() for source_reader in source_readers]
@@ -397,6 +401,25 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
                     leave_pbar=True, ps_label_dir=ps_label_dir, cur_epoch=cur_epoch
                 )
                 target_loader.dataset.dataset.train()
+
+                # Foreground-aware density calibration, measured once, here and nowhere earlier:
+                # it needs the TARGET's boxes, and under UDA those are pseudo-labels, which do not
+                # exist until this first generation pass has run. A uniform per-bin rate cannot
+                # change a bin's foreground share, so the plain correction leaves source objects
+                # starved; splitting it into inside-box and outside-box channels fixes that without
+                # target annotation. See pcdet/datasets/point_calibration.py.
+                if fg_calibration_pending:
+                    for reader in source_readers:
+                        link_foreground_calibration(
+                            reader.dataloader.dataset.dataset, target_loader.dataset.dataset,
+                            num_frames=cfg.DATA_CONFIG.get('HIST_DIST_FRAMES', 1000),
+                            num_bins=cfg.DATA_CONFIG.get('HIST_DIST_BINS', 50), logger=logger)
+                        # The source workers forked back at construct_iter(), before the dataset
+                        # carried any of this, and a forked worker never sees a later mutation.
+                        # Re-fork them or the correction silently never runs.
+                        restart_persistent_workers(reader.dataloader)
+                        reader.construct_iter()
+                    fg_calibration_pending = False
 
             # curriculum data augmentation
             if cfg.SELF_TRAIN.get('PROG_AUG', None) and cfg.SELF_TRAIN.PROG_AUG.ENABLED and \

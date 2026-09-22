@@ -153,7 +153,12 @@ def main():
     # rather than loading hist_dist_*.npy files whose frame counts, preprocessing and
     # POINT_CLOUD_RANGE may no longer match. Must happen before either loader is iterated:
     # DataLoader workers fork a copy of the dataset and never see later mutations.
-    if cfg.DATA_CONFIG.get('HIST_DIST_ON_THE_FLY', False):
+    # Foreground-aware calibration is measured later, inside the self-training loop, because it
+    # needs the target's pseudo-labels to exist. Running the whole-cloud version here as well would
+    # both double the measurement cost and make that later measurement circular - it would see a
+    # source already being corrected.
+    if cfg.DATA_CONFIG.get('HIST_DIST_ON_THE_FLY', False) \
+            and not cfg.DATA_CONFIG.get('HIST_DIST_FOREGROUND_AWARE', False):
         link_point_calibration(
             source_set, target_set,
             num_frames=cfg.DATA_CONFIG.get("HIST_DIST_FRAMES", 1000),
