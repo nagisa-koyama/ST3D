@@ -73,19 +73,18 @@ def test_corners_accept_float32_torch_and_return_torch():
     assert out.shape == (1, 8, 3)
 
 
-def test_corners_reject_a_float64_torch_tensor():
-    """A latent asymmetry, pinned rather than fixed.
+def test_corners_accept_a_float64_torch_tensor():
+    """Regression test: this raised RuntimeError until 2026-09-23.
 
     `check_numpy_to_torch` casts a numpy array to float32 but passes a torch tensor through
-    untouched, while `rotate_points_along_z` builds its rotation matrix with an unconditional
-    `.float()`. So the numpy path accepts float64 and the torch path does not - it raises
-    "expected scalar type Double but found Float". Every live call site passes either numpy or a
-    float32 model tensor, so this never fires today; it is recorded here so that the next caller
-    to hand it a float64 tensor finds a test rather than a puzzling RuntimeError. Fixing it means
-    editing a util shared by the loss and every dataset, which is a wider change than a test.
+    untouched, while `rotate_points_along_z` built its rotation matrix with an unconditional
+    `.float()` - so the numpy path accepted float64 and the torch path raised "expected scalar
+    type Double but found Float". The matrix now takes the points' dtype; see
+    tests/test_common_utils_rotation.py for the fix's own tests.
     """
-    with pytest.raises(RuntimeError, match='Double'):
-        box_utils.boxes_to_corners_3d(torch.from_numpy(UNIT_BOX).double())
+    out = box_utils.boxes_to_corners_3d(torch.from_numpy(UNIT_BOX).double())
+    assert out.dtype == torch.float64
+    assert np.allclose(np.abs(out.numpy()[0]).max(axis=0), [2.0, 1.0, 0.75])
 
 
 def test_the_numpy_path_accepts_float64():

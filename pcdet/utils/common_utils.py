@@ -53,7 +53,15 @@ def rotate_points_along_z(points, angle):
         cosa,  sina, zeros,
         -sina, cosa, zeros,
         zeros, zeros, ones
-    ), dim=1).view(-1, 3, 3).float()
+    ), dim=1).view(-1, 3, 3)
+    # Build the matrix in the POINTS' dtype rather than forcing float32. `check_numpy_to_torch`
+    # casts a numpy array to float32 but passes a tensor through untouched, so `points` keeps
+    # whatever dtype the caller handed in - and an unconditional .float() here made a float64
+    # tensor fail in matmul with "expected scalar type Double but found Float", while the same
+    # data as a numpy array worked. The matrix's own dtype comes from `angle`, which need not
+    # match `points`, so it is converted rather than constructed. Non-float points (never passed
+    # today) keep the previous float32 behaviour.
+    rot_matrix = rot_matrix.to(points.dtype if points.is_floating_point() else torch.float32)
     points_rot = torch.matmul(points[:, :, 0:3], rot_matrix)
     points_rot = torch.cat((points_rot, points[:, :, 3:]), dim=-1)
     return points_rot.numpy() if is_numpy else points_rot
