@@ -107,6 +107,17 @@ def compute_foreground_histograms(dataset, num_frames=DEFAULT_FRAMES, num_bins=D
 
     Ignored pseudo-labels (negative class index, the ones memory voting has demoted) are excluded,
     so the target foreground channel counts only boxes the teacher currently stands behind.
+
+    The foreground channel is POINTS PER BOX; the background channel is points per frame. That
+    asymmetry is deliberate and load-bearing. Foreground points per *frame* conflates how densely
+    each object is sampled - the only thing the correction can act on - with how many objects the
+    dataset happens to label, and those differ enormously: 22.0 Car/frame on Lyft against 4.31 on
+    KITTI, and KITTI annotates 0% of its boxes behind the vehicle (camera FOV only) where the
+    360-degree sets annotate ~40%. Comparing per-frame totals across that gap cuts Lyft foreground
+    by 63% purely for labelling more cars. Per box, the number of boxes cancels and what is left is
+    sampling density, which is what a detector sees per object.
+
+    Returns (foreground per box, background per frame, total per frame).
     """
     n = len(dataset)
     if n == 0:
@@ -115,6 +126,8 @@ def compute_foreground_histograms(dataset, num_frames=DEFAULT_FRAMES, num_bins=D
     edges = np.linspace(0, max_dist, num_bins + 1)
     fg = np.zeros(num_bins, dtype=np.float64)
     bg = np.zeros(num_bins, dtype=np.float64)
+    nbox = np.zeros(num_bins, dtype=np.float64)
+    total = np.zeros(num_bins, dtype=np.float64)
     used, with_boxes = 0, 0
     for idx in range(0, n, step):
         if used >= num_frames:
@@ -133,20 +146,29 @@ def compute_foreground_histograms(dataset, num_frames=DEFAULT_FRAMES, num_bins=D
         dist = np.clip(np.linalg.norm(points[:, 0:2], axis=1), 0, max_dist - 1e-4)
         fg += np.histogram(dist[mask], bins=edges)[0]
         bg += np.histogram(dist[~mask], bins=edges)[0]
+        total += np.histogram(dist, bins=edges)[0]
+        if boxes is not None and len(boxes):
+            bdist = np.clip(np.linalg.norm(np.asarray(boxes)[:, 0:2], axis=1), 0, max_dist - 1e-4)
+            nbox += np.histogram(bdist, bins=edges)[0]
         used += 1
     if used == 0:
         raise ValueError('no usable frames while measuring a histogram')
-    fg, bg = fg / used, bg / used
+    fg_per_frame = fg.sum() / used
+    # points PER BOX, so the boxes-per-frame difference between datasets cancels; bins with no
+    # boxes stay 0 and the rate guard leaves them uncorrected
+    fg = np.divide(fg, nbox, out=np.zeros_like(fg), where=nbox > 0)
+    bg, total = bg / used, total / used
     if logger is not None:
-        share = fg.sum() / max(fg.sum() + bg.sum(), 1e-9)
-        logger.info('point calibration [%s]: %d frames (%d with boxes), %.0f fg + %.0f bg '
-                    'pts/frame, foreground share %.2f%%'
-                    % (label, used, with_boxes, fg.sum(), bg.sum(), 100 * share))
+        share = fg_per_frame / max(total.sum(), 1e-9)
+        logger.info('point calibration [%s]: %d frames (%d with boxes), %.1f boxes/frame, '
+                    '%.0f pts/box peak, %.0f bg pts/frame, foreground share %.2f%%'
+                    % (label, used, with_boxes, nbox.sum() / used, fg.max(), bg.sum(),
+                       100 * share))
         if with_boxes == 0:
             logger.warning('point calibration [%s]: NO boxes in any sampled frame - the foreground '
                            'channel is empty and its rate will be 1 everywhere. For a target '
                            'domain this means pseudo-labels had not been generated yet.' % label)
-    return fg, bg
+    return fg, bg, total
 
 
 def link_foreground_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
@@ -176,27 +198,29 @@ def link_foreground_calibration(source_set, target_set, num_frames=DEFAULT_FRAME
     the first iteration of any loader over either dataset, since workers fork a copy.
     """
     if source_hist is None:
-        fg_s, bg_s = compute_foreground_histograms(source_set, num_frames, num_bins, max_dist,
-                                                   logger=logger, label='source')
+        fg_s, bg_s, tot_s = compute_foreground_histograms(source_set, num_frames, num_bins,
+                                                          max_dist, logger=logger, label='source')
     else:
         # Re-measuring the source on a refresh would read points the correction installed last time
         # has ALREADY thinned, compounding the rate on every pass. The source distribution does not
         # change anyway, so it is measured once and passed back in.
-        fg_s, bg_s = source_hist
-    fg_t, bg_t = compute_foreground_histograms(target_set, num_frames, num_bins, max_dist,
-                                               logger=logger, label='target (pseudo-labels)')
-    source_set.data_processor.set_hist_dist(fg_s + bg_s, fg_t + bg_t, max_dist=max_dist)
+        fg_s, bg_s, tot_s = source_hist
+    fg_t, bg_t, tot_t = compute_foreground_histograms(target_set, num_frames, num_bins, max_dist,
+                                                      logger=logger,
+                                                      label='target (pseudo-labels)')
+    # The whole-cloud pair is the per-FRAME total. It cannot be fg + bg any more: fg is per box.
+    source_set.data_processor.set_hist_dist(tot_s, tot_t, max_dist=max_dist)
     source_set.data_processor.set_foreground_hist(fg_s, bg_s, fg_t, bg_t)
     if logger is not None:
         proc = source_set.data_processor
         r_fg, r_bg = proc.per_bin_sample_rate(None, 'fg'), proc.per_bin_sample_rate(None, 'bg')
-        s_src = fg_s.sum() / max(fg_s.sum() + bg_s.sum(), 1e-9)
-        s_tgt = fg_t.sum() / max(fg_t.sum() + bg_t.sum(), 1e-9)
+        live = (fg_s > 0) & (fg_t > 0)
+        dens = (fg_t[live].sum() / max(fg_s[live].sum(), 1e-9)) if live.any() else float('nan')
         logger.info('point calibration: foreground-aware. fg rate %.2f..%.2f, bg rate %.2f..%.2f'
                     % (r_fg.min(), r_fg.max(), r_bg.min(), r_bg.max()))
-        logger.info('point calibration: foreground share src %.2f%% vs tgt %.2f%% (ratio %.2f) - '
-                    'below 1 means the uniform correction would have starved source objects'
-                    % (100 * s_src, 100 * s_tgt, s_src / max(s_tgt, 1e-9)))
+        logger.info('point calibration: points per box tgt/src = %.2f - below 1 means source '
+                    'objects are over-sampled and the foreground channel will thin them; above 1 '
+                    'means the uniform correction would have starved them' % dens)
         logger.warning('point calibration: the target foreground channel is measured from '
                        'PSEUDO-LABELS, so any teacher recall below 1 UNDER-estimates it and biases '
                        'the foreground rate DOWNWARD - the same direction as the defect this is '

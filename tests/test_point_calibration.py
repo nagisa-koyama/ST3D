@@ -169,16 +169,21 @@ def test_the_guard_is_scale_free():
 class FakeBoxDataset(FakeDataset):
     """Adds boxes, and points placed to fall inside or outside them."""
 
-    def __init__(self, fg_radii, bg_radii, box_label=1.0, num_frames=20, ontology='fake'):
-        super().__init__(list(fg_radii) + list(bg_radii), num_frames=num_frames, ontology=ontology)
-        self.fg_radii, self.bg_radii, self.box_label = list(fg_radii), list(bg_radii), box_label
+    def __init__(self, fg_radii, bg_radii, box_label=1.0, num_frames=20, ontology='fake', ppb=1):
+        self.fg_radii, self.bg_radii, self.box_label, self.ppb = (
+            list(fg_radii), list(bg_radii), box_label, ppb)
+        super().__init__(list(fg_radii) * ppb + list(bg_radii),
+                         num_frames=num_frames, ontology=ontology)
 
     def __getitem__(self, index):
-        pts = np.zeros((len(self.fg_radii) + len(self.bg_radii), 4))
-        pts[:, 0] = self.fg_radii + self.bg_radii
-        # one 2x2x2 m box centred on each foreground point; background points sit on the same
-        # axis but far enough away in y to be outside every box
-        pts[len(self.fg_radii):, 1] = 50.0
+        # one 2x2x2 m box centred on each foreground radius, carrying `ppb` points spread inside
+        # it. Background points are offset by 2 m in y: outside the box (half-extent 1 m) but
+        # close enough that |xy| is still essentially the stated radius, so they land in the same
+        # radial bin as the foreground. An offset of 50 m would put them 51 m out instead.
+        dy = np.linspace(-0.5, 0.5, self.ppb)
+        fg = np.array([[r, y, 0.0, 0.0] for r in self.fg_radii for y in dy])
+        bg = np.array([[r, 2.0, 0.0, 0.0] for r in self.bg_radii])
+        pts = np.vstack([a for a in (fg, bg) if len(a)]) if (len(fg) or len(bg)) else np.zeros((0, 4))
         boxes = np.zeros((len(self.fg_radii), 8))
         boxes[:, 0] = self.fg_radii
         boxes[:, 3:6] = 2.0
@@ -247,12 +252,26 @@ def test_without_foreground_histograms_behaviour_is_unchanged():
     assert len(out) == 4                                 # rate 1 everywhere, nothing dropped
 
 
-def test_foreground_histogram_splits_the_cloud_without_losing_points():
+def test_foreground_is_per_box_and_background_is_per_frame():
     ds = FakeBoxDataset(fg_radii=[10.0, 30.0], bg_radii=[10.0, 50.0, 60.0])
-    fg, bg = compute_foreground_histograms(ds, num_frames=5, num_bins=15)
-    assert fg.sum() == pytest.approx(2.0)                # per frame, not a raw count
-    assert bg.sum() == pytest.approx(3.0)
-    assert (fg + bg).sum() == pytest.approx(len(ds.radii))
+    fg, bg, total = compute_foreground_histograms(ds, num_frames=5, num_bins=15)
+    assert fg.max() == pytest.approx(1.0)                # one point in each one-point box
+    assert bg.sum() == pytest.approx(3.0)                # per frame
+    assert total.sum() == pytest.approx(len(ds.radii))   # per frame, the whole cloud
+
+
+def test_foreground_density_is_invariant_to_how_many_boxes_a_frame_carries():
+    """The point of per-box normalisation.
+
+    Lyft labels 22.0 Car/frame against KITTI's 4.31, and KITTI annotates 0% of its boxes behind
+    the vehicle. Comparing foreground points per FRAME across that gap measures labelling policy,
+    not sampling density - it cut Lyft's foreground by 63% for nothing.
+    """
+    few = FakeBoxDataset(fg_radii=[10.0], bg_radii=[50.0])
+    many = FakeBoxDataset(fg_radii=[10.0] * 8, bg_radii=[50.0])
+    a, _, _ = compute_foreground_histograms(few, num_frames=3, num_bins=15)
+    b, _, _ = compute_foreground_histograms(many, num_frames=3, num_bins=15)
+    assert a.max() == pytest.approx(b.max())             # same density, 8x the boxes
 
 
 def test_ignored_pseudo_labels_are_excluded_from_the_foreground_channel():
@@ -261,6 +280,8 @@ def test_ignored_pseudo_labels_are_excluded_from_the_foreground_channel():
     demoted = FakeBoxDataset(fg_radii=[10.0], bg_radii=[50.0], box_label=-1.0)
     assert compute_foreground_histograms(kept, num_frames=3, num_bins=15)[0].sum() == 1.0
     assert compute_foreground_histograms(demoted, num_frames=3, num_bins=15)[0].sum() == 0.0
+    # and the demoted box's points fall to the background channel rather than vanishing
+    assert compute_foreground_histograms(demoted, num_frames=3, num_bins=15)[1].sum() == 2.0
 
 
 def test_link_foreground_installs_both_pairs_on_the_source_only():
@@ -269,20 +290,27 @@ def test_link_foreground_installs_both_pairs_on_the_source_only():
     link_foreground_calibration(src, tgt, num_frames=5, num_bins=15)
     assert src.data_processor.hist_fg_src is not None
     assert tgt.data_processor.hist_fg_src is None
-    # the whole-cloud pair is installed too, as the exact sum of the channels
+    # the whole-cloud pair is the per-FRAME total - NOT fg + bg, since fg is per box
     p = src.data_processor
-    assert np.allclose(p.hist_dist_src, p.hist_fg_src + p.hist_bg_src)
-    assert np.allclose(p.hist_dist_tgt, p.hist_fg_tgt + p.hist_bg_tgt)
+    assert p.hist_dist_src.sum() == pytest.approx(3.0)      # 1 fg + 2 bg points per frame
+    assert p.hist_dist_tgt.sum() == pytest.approx(3.0)
 
 
 def test_link_foreground_recovers_the_direction_a_uniform_rate_cannot():
-    """Source foreground-poor vs target foreground-rich: the fg rate must exceed the bg rate."""
-    src = FakeBoxDataset(fg_radii=[10.0], bg_radii=[10.0] * 9)      # 10% foreground
-    tgt = FakeBoxDataset(fg_radii=[10.0] * 5, bg_radii=[10.0] * 5)  # 50% foreground
+    """Source objects sampled more sparsely than the target's: fg must be kept where bg is cut.
+
+    The difference that matters is points PER BOX, not foreground share of the frame. Here the
+    source has 2 points per box against the target's 6, while carrying far more background - so a
+    single rate would thin everything, and the foreground channel must not.
+    """
+    src = FakeBoxDataset(fg_radii=[10.0], bg_radii=[10.0] * 30, ppb=2)
+    tgt = FakeBoxDataset(fg_radii=[10.0], bg_radii=[10.0] * 3, ppb=6)
     link_foreground_calibration(src, tgt, num_frames=5, num_bins=15)
     p = src.data_processor
     b = int(10.0 / 75.0 * 15)
-    assert p.per_bin_sample_rate(None, 'fg')[b] > p.per_bin_sample_rate(None, 'bg')[b]
+    # a rate at or above 1 keeps every point (the clip is implicit in `rand() < rate`)
+    assert p.per_bin_sample_rate(None, 'fg')[b] >= 1.0            # source objects are sparser
+    assert p.per_bin_sample_rate(None, 'bg')[b] < 0.5             # its background is not
 
 
 def test_empty_target_foreground_does_not_delete_the_source_foreground():
