@@ -40,6 +40,17 @@ DATA_CONFIGS:
         # little headroom is the first thing to check.
         MAX_SWEEPS: 15
 
+        # Points inside a tracked box are moved onto that object's box in the anchor frame, so a
+        # moving object accumulates onto itself instead of smearing along its trajectory. It uses
+        # SOURCE labels only, so it stays UDA-legal, and it is strictly stronger than extrapolating
+        # gt_boxes_velocity - yaw change and non-constant motion come for free.
+        #
+        # Not optional at this depth. Measured on real nuScenes at MAX_SWEEPS 15, scoring each
+        # object against its own N=1 count, a moving Car gains x7.39 against a static car's x14.61
+        # without it and x14.93 with it: moving/static goes 0.51 -> 1.00. Left off, accumulation
+        # teaches the detector that a densely-sampled car is a parked one.
+        GT_BOXES_MOTION_COMPENSATION: True
+
         # Requires the regenerated 200-sweep infos; the shipped 10-sweep ones raise IndexError
         # above 10. Overridden here rather than in the shared dataset config, which the
         # source-only family uses at MAX_SWEEPS 1.
@@ -64,6 +75,17 @@ DATA_CONFIGS:
         # depth is unmeasured. Watch it: if Boston's arm shows the correction doing nothing, too
         # little headroom is the first thing to check.
         MAX_SWEEPS: 15
+
+        # Points inside a tracked box are moved onto that object's box in the anchor frame, so a
+        # moving object accumulates onto itself instead of smearing along its trajectory. It uses
+        # SOURCE labels only, so it stays UDA-legal, and it is strictly stronger than extrapolating
+        # gt_boxes_velocity - yaw change and non-constant motion come for free.
+        #
+        # Not optional at this depth. Measured on real nuScenes at MAX_SWEEPS 15, scoring each
+        # object against its own N=1 count, a moving Car gains x7.39 against a static car's x14.61
+        # without it and x14.93 with it: moving/static goes 0.51 -> 1.00. Left off, accumulation
+        # teaches the detector that a densely-sampled car is a parked one.
+        GT_BOXES_MOTION_COMPENSATION: True
 
         # Requires the regenerated 200-sweep infos; the shipped 10-sweep ones raise IndexError
         # above 10. Overridden here rather than in the shared dataset config, which the

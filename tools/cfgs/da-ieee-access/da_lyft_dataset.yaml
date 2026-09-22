@@ -6,6 +6,12 @@ DATA_PATH: '../data/lyft'
 ONTOLOGY: 'lyft'
 
 VERSION: 'trainval'
+
+# 1, so GT_BOXES_MOTION_COMPENSATION is deliberately absent here rather than set to False: with a
+# single frame there are no sweeps to compensate, and the loader gates the compensator on
+# MAX_SWEEPS > 1 anyway. LyftDataset does implement it (same devkit track ids as nuScenes) - raise
+# MAX_SWEEPS and it must be turned on, or moving objects smear exactly as they did on nuScenes
+# (moving/static 0.51 against 1.00 at N=15).
 MAX_SWEEPS: 1
 SET_NAN_VELOCITY_TO_ZEROS: True
 FILTER_MIN_POINTS_IN_GT: 1
