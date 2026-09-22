@@ -306,6 +306,12 @@ def test_two_gpu_launch_script_passes_an_explicit_global_batch():
     # Comments explain these flags at length, so test what the shell actually runs.
     code = '\n'.join(l for l in script.splitlines() if not l.lstrip().startswith('#'))
     assert '--nproc_per_node=2' in code, 'the configs\' BATCH_SIZE_PER_GPU 3 assumes exactly 2 GPUs'
+    # The job must run against a frozen copy of the repo, not the live checkout. Under DDP,
+    # spawned DataLoader workers re-import every module from disk, so a commit landing mid-run
+    # reaches them - which is how job 25743 lost its evaluation after 8 h of clean training.
+    assert 'rsync' in code and '/local_cache/' in code, 'long DDP runs must snapshot the code'
+    assert '--bind "$SNAP":/home/koyama/code/ST3D' in code, 'the snapshot must shadow the repo path'
+    assert '--bind "$SNAP":/root/ST3D' in code, 'PandaSet infos need /root/ST3D on the snapshot too'
     # Redundant with BATCH_SIZE_PER_GPU 3 by design: passing 6 is divided by the GPU count back to
     # 3 per rank, so the flag and the config agree instead of one covering for the other.
     assert '--batch_size 6' in code, 'the 2-GPU launch must pin the global batch to 6'
