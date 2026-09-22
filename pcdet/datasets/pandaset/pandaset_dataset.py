@@ -73,11 +73,18 @@ class PandasetDataset(DatasetTemplate):
         self.pandaset_infos = []
         self.include_pandaset_infos(self.mode)
 
-        # Refuse the key rather than ignore it - a silently-dropped config key turns a run into a
-        # different experiment than the one that was asked for.
-        from ..motion_compensation import assert_not_supported
-        assert_not_supported(self.dataset_cfg, 'PandasetDataset')
-        self.logger=logger
+        self.logger = logger
+
+        # Sweep accumulation over NEIGHBOURING ANNOTATED FRAMES. PandaSet has no non-annotated
+        # intermediate scans - 103 sequences of 80 frames at exactly 10 Hz, every frame labelled -
+        # so a "sweep" here is the previous frame of the same sequence, found by (sequence, frame)
+        # because a split can hold a subset and the infos are not promised to be in frame order.
+        from ..motion_compensation import build_sequence_index, should_compensate
+        self._frame_index = build_sequence_index(
+            self.pandaset_infos, lambda i: i['sequence'], lambda i: i['frame_idx'])
+        self._compensate = should_compensate(self.dataset_cfg, self.training, self.logger)
+        self._compensate_classes = set(
+            self.dataset_cfg.get('GT_BOXES_MOTION_COMPENSATION_CLASSES', [])) or None
         self.draw_conf_calib_curve = self.dataset_cfg.get('DRAW_CONF_CALIB_CURVE', False)
         self.run_conf_calib = self.dataset_cfg.get('RUN_CONF_CALIB', False)
 
@@ -125,7 +132,7 @@ class PandasetDataset(DatasetTemplate):
         seq_idx = info['sequence']
 
         pose = self._get_pose(info)
-        points = self._get_lidar_points(info, pose)
+        points = self._get_points_with_sweeps(info, pose)
         if self.dataset_cfg.get('SHIFT_COOR', None):
             points[:, 0:3] += np.array(self.dataset_cfg.SHIFT_COOR, dtype=np.float32)
 
@@ -172,6 +179,49 @@ class PandasetDataset(DatasetTemplate):
         return pose
 
 
+    def _tracked_boxes(self, info, pose):
+        """That frame's boxes in `pose`'s ego frame, keyed by track id."""
+        boxes, labels, _, uuids = self._get_annotations(info, pose, return_uuids=True)
+        out = {}
+        for box, lab, uid in zip(boxes, labels, uuids):
+            if uid is None or (self._compensate_classes and lab not in self._compensate_classes):
+                continue
+            out[uid] = np.asarray(box, dtype=np.float64)
+        return out
+
+    def _get_points_with_sweeps(self, info, pose):
+        """The anchor frame plus `MAX_SWEEPS - 1` preceding frames, in the anchor's ego frame.
+
+        The accumulation itself is nearly free: PandaSet stores its points in WORLD coordinates
+        and `_get_lidar_points` converts world -> ego with whatever pose it is handed, so passing
+        the ANCHOR's pose for a neighbouring frame already places that frame's returns in the
+        anchor frame. There is no relative-transform chain to get wrong.
+
+        Cost is I/O, not memory: each extra frame is one more points pickle, plus one more cuboids
+        pickle when compensating. PandaSet is the loader that stalls (46.5% data-wait before its
+        NUM_WORKERS was raised to 8), so depth multiplies the thing that was already the
+        bottleneck.
+        """
+        points = self._get_lidar_points(info, pose)
+        max_sweeps = self.dataset_cfg.get('MAX_SWEEPS', 1) or 1
+        if max_sweeps <= 1:
+            return points
+
+        from ..motion_compensation import move_points_between_boxes, preceding_frames
+        boxes_now = self._tracked_boxes(info, pose) if self._compensate else None
+        out = [points]
+        for j in preceding_frames(self._frame_index, info['sequence'], info['frame_idx'],
+                                  max_sweeps):
+            sweep_info = self.pandaset_infos[j]
+            pts = self._get_lidar_points(sweep_info, pose)
+            if boxes_now:
+                # Every frame is annotated, so the sweep's boxes are a direct read - no
+                # interpolation, unlike the 2 Hz-keyframe datasets.
+                pts = move_points_between_boxes(
+                    pts, self._tracked_boxes(sweep_info, pose), boxes_now)
+            out.append(pts)
+        return np.concatenate(out)
+
     def _get_lidar_points(self, info, pose):
         """
         Get lidar in the unified normative coordinate system for a given frame
@@ -209,9 +259,17 @@ class PandasetDataset(DatasetTemplate):
         return np.append(ego_points, np.expand_dims(points_int, axis=1), axis=1).astype(np.float32)
 
 
-    def _get_annotations(self,info, pose):
+    def _get_annotations(self, info, pose, return_uuids=False):
         """
         Get box informations in the unified normative coordinate system for a given frame
+
+        `pose` is a free parameter, not necessarily this frame's own: PandaSet stores cuboid
+        positions in WORLD coordinates, so passing another frame's pose expresses these boxes in
+        THAT frame's ego coordinates. Accumulation relies on exactly that.
+
+        With `return_uuids`, also returns the per-cuboid `uuid`, which is PandaSet's track id -
+        the devkit documents it as staying the same on every frame an object is tracked in, and
+        it measures 100% persistent between consecutive frames on the data here.
         """
 
         # get boxes
@@ -229,6 +287,7 @@ class PandasetDataset(DatasetTemplate):
         dzs = cuboids['dimensions.z'].to_numpy()
         yaws = cuboids['yaw'].to_numpy()
         labels = cuboids['label'].to_numpy()
+        uuids = cuboids['uuid'].to_numpy() if return_uuids else None
 
         del cuboids  # There seem to be issues with the automatic deletion of pandas datasets sometimes
 
@@ -272,6 +331,8 @@ class PandasetDataset(DatasetTemplate):
         ego_dys = dxs  # stays >= 0
         ego_dzs = dzs
         ego_boxes = np.vstack([ego_xs, ego_ys, ego_zs, ego_dxs, ego_dys, ego_dzs, ego_yaws]).T
+        if return_uuids:
+            return ego_boxes.astype(np.float32), labels, zrot_world_to_ego, uuids
         return ego_boxes.astype(np.float32), labels, zrot_world_to_ego
 
 

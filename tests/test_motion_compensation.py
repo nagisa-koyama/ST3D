@@ -127,37 +127,103 @@ class _Cfg(dict):
         return dict.get(self, k, d)
 
 
-def test_unsupported_dataset_raises_rather_than_ignoring_the_key():
-    with pytest.raises(NotImplementedError) as e:
-        assert_not_supported(_Cfg(GT_BOXES_MOTION_COMPENSATION=True), 'PandasetDataset')
-    msg = str(e.value)
-    assert 'PandasetDataset' in msg
-    assert 'NuScenesDataset' in msg and 'LyftDataset' in msg, 'must say what DOES support it'
-
-
-def test_the_message_says_why_each_dataset_cannot():
+def test_kitti_raises_rather_than_ignoring_the_key():
     with pytest.raises(NotImplementedError) as e:
         assert_not_supported(_Cfg(GT_BOXES_MOTION_COMPENSATION=True), 'KittiDataset')
     msg = str(e.value)
-    assert 'no sequences' in msg, 'KITTI cannot ever support it, for a different reason'
-    assert 'uuid' in msg and 'obj_ids' in msg, 'PandaSet and Waymo could, and the note should say so'
-    assert 'no accumulation path' in msg or 'accumulation path' in msg, \
-        'the reason they cannot YET must be the missing accumulation, not the track ids'
+    assert 'KittiDataset' in msg
+    assert 'no sequences' in msg, 'the reason KITTI can never support it'
+
+
+def test_the_message_says_the_other_four_DO_support_it():
+    """The refusal used to cover Waymo and PandaSet too; both now accumulate, so it must not."""
+    with pytest.raises(NotImplementedError) as e:
+        assert_not_supported(_Cfg(GT_BOXES_MOTION_COMPENSATION=True), 'KittiDataset')
+    msg = str(e.value)
+    for name in ('nuScenes', 'Lyft', 'Waymo', 'PandaSet'):
+        assert name in msg, '%s supports it and the message should say so' % name
+    assert 'obj_ids' in msg and 'uuid' in msg and 'instance_token' in msg
 
 
 def test_absent_or_false_is_silent():
     assert_not_supported(_Cfg(), 'KittiDataset')
-    assert_not_supported(_Cfg(GT_BOXES_MOTION_COMPENSATION=False), 'WaymoDataset')
+    assert_not_supported(_Cfg(GT_BOXES_MOTION_COMPENSATION=False), 'KittiDataset')
 
 
-@pytest.mark.parametrize('mod,cls', [
-    ('pcdet/datasets/kitti/kitti_dataset.py', 'KittiDataset'),
-    ('pcdet/datasets/waymo/waymo_dataset.py', 'WaymoDataset'),
-    ('pcdet/datasets/pandaset/pandaset_dataset.py', 'PandasetDataset'),
+def test_kitti_is_the_only_loader_still_guarded():
+    root = Path(__file__).resolve().parent.parent
+    guarded = {m for m in ('kitti/kitti_dataset', 'waymo/waymo_dataset',
+                           'pandaset/pandaset_dataset', 'nuscenes/nuscenes_dataset',
+                           'lyft/lyft_dataset')
+               if 'assert_not_supported(self.dataset_cfg' in
+               (root / 'pcdet' / 'datasets' / (m + '.py')).read_text(encoding='utf-8')}
+    assert guarded == {'kitti/kitti_dataset'}, guarded
+
+
+# --------------------------------------------------------------------------------------------
+# Neighbouring-frame accumulation, for the datasets that annotate every frame.
+
+from pcdet.datasets.motion_compensation import (  # noqa: E402
+    build_sequence_index, preceding_frames)
+
+
+def _seq_infos(seq, frames):
+    return [{'s': seq, 'f': f} for f in frames]
+
+
+def test_the_index_is_keyed_by_sequence_and_frame_not_by_position():
+    infos = _seq_infos('a', [0, 1, 2]) + _seq_infos('b', [0, 1])
+    idx = build_sequence_index(infos, lambda i: i['s'], lambda i: i['f'])
+    assert idx[('a', 2)] == 2 and idx[('b', 0)] == 3
+    assert len(idx) == len(infos)
+
+
+def test_preceding_frames_are_nearest_first_and_within_the_sequence():
+    infos = _seq_infos('a', range(5)) + _seq_infos('b', range(5))
+    idx = build_sequence_index(infos, lambda i: i['s'], lambda i: i['f'])
+    got = preceding_frames(idx, 'a', 4, max_sweeps=3)
+    assert [infos[j]['f'] for j in got] == [3, 2]
+    assert all(infos[j]['s'] == 'a' for j in got)
+
+
+def test_the_start_of_a_sequence_simply_yields_fewer_frames():
+    idx = build_sequence_index(_seq_infos('a', range(5)), lambda i: i['s'], lambda i: i['f'])
+    assert preceding_frames(idx, 'a', 1, max_sweeps=5) == [0]
+    assert preceding_frames(idx, 'a', 0, max_sweeps=5) == []
+
+
+def test_a_gap_stops_the_walk_rather_than_being_skipped():
+    """Jumping a missing frame would accumulate across a discontinuity in ego motion."""
+    idx = build_sequence_index(_seq_infos('a', [0, 1, 3, 4]), lambda i: i['s'], lambda i: i['f'])
+    got = preceding_frames(idx, 'a', 4, max_sweeps=5)
+    assert [i for i in got] == [idx[('a', 3)]], 'frame 2 is missing, so the walk must stop there'
+
+
+def test_max_sweeps_of_one_asks_for_nothing():
+    idx = build_sequence_index(_seq_infos('a', range(5)), lambda i: i['s'], lambda i: i['f'])
+    assert preceding_frames(idx, 'a', 4, max_sweeps=1) == []
+
+
+@pytest.mark.parametrize('mod', [
+    'pcdet/datasets/waymo/waymo_dataset.py',
+    'pcdet/datasets/pandaset/pandaset_dataset.py',
 ])
-def test_every_unsupported_loader_calls_the_guard(mod, cls):
+def test_the_per_frame_annotated_loaders_accumulate_and_compensate(mod):
     src = (Path(__file__).resolve().parent.parent / mod).read_text(encoding='utf-8')
-    assert "assert_not_supported(self.dataset_cfg, '%s')" % cls in src
+    assert 'build_sequence_index' in src and 'preceding_frames' in src, 'must accumulate'
+    assert 'should_compensate(self.dataset_cfg, self.training, self.logger)' in src, \
+        'and must go through the shared rule rather than its own condition'
+    assert 'move_points_between_boxes' in src
+
+
+def test_waymo_indexes_sweeps_before_SAMPLED_INTERVAL_thins_the_infos():
+    """SAMPLED_INTERVAL keeps every 2nd training frame; an index built after it finds no
+    neighbour at all, and accumulation would be a silent no-op."""
+    src = (Path(__file__).resolve().parent.parent
+           / 'pcdet/datasets/waymo/waymo_dataset.py').read_text(encoding='utf-8')
+    i_index = src.index('build_sequence_index(')
+    i_sample = src.index('if self.dataset_cfg.SAMPLED_INTERVAL[mode] > 1:')
+    assert i_index < i_sample, 'the index must be built from the unsampled list'
 
 
 # --------------------------------------------------------------------------------------------

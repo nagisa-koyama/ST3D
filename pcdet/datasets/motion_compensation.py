@@ -123,6 +123,38 @@ def boxes_to_frame(boxes, names, track_ids, S_from, S_to, classes=None):
     return out
 
 
+def build_sequence_index(infos, sequence_of, frame_of):
+    """`{(sequence, frame): index}` over `infos`, for datasets that annotate EVERY frame.
+
+    Waymo and PandaSet carry no `sweeps` list the way the devkit datasets do, because they have no
+    non-annotated intermediate scans: every frame is a keyframe. Accumulating there means reaching
+    for a NEIGHBOURING annotated frame of the same sequence, and that neighbour has to be found by
+    (sequence, frame) rather than by adjacency in `infos` - a split can be a subset of a sequence,
+    and nothing promises the infos are stored in frame order.
+
+    Because every frame carries boxes and a persistent track id, compensation on these datasets is
+    also simpler than on nuScenes: the sweep's boxes are a direct lookup, and `interpolate_boxes`
+    never runs.
+    """
+    return {(sequence_of(info), frame_of(info)): i for i, info in enumerate(infos)}
+
+
+def preceding_frames(index, sequence, frame, max_sweeps):
+    """Up to `max_sweeps - 1` frames before (sequence, frame), nearest first.
+
+    Stops at the first gap rather than skipping it: a missing frame means the sequence started, or
+    the split does not hold that frame, and jumping over it would silently accumulate across a
+    discontinuity in ego motion.
+    """
+    out = []
+    for k in range(1, max(int(max_sweeps), 1)):
+        j = index.get((sequence, frame - k))
+        if j is None:
+            break
+        out.append(j)
+    return out
+
+
 def should_compensate(dataset_cfg, training, logger=None):
     """Whether this dataset compensates object motion. ON BY DEFAULT WHENEVER IT ACCUMULATES.
 
@@ -308,27 +340,17 @@ def assert_not_supported(dataset_cfg, dataset_name):
     """Refuse `GT_BOXES_MOTION_COMPENSATION` on a dataset that cannot honour it.
 
     A config key that a loader silently ignores is worse than one that fails: the run looks like
-    it did what was asked and the result is quietly a different experiment. That failure mode has
-    already cost this project several times over - a correction configured but never installed, an
-    N=15 that was really N=10 - so an unsupported dataset raises here rather than accepting the key
-    and doing nothing with it.
+    it did what was asked and the result is quietly a different experiment.
 
-    Only nuScenes and Lyft implement it. Both carry nuScenes-devkit metadata, which is where the
-    track ids live: `gt_boxes_token` in the infos is a per-FRAME annotation token, and the track is
-    `instance_token` in `sample_annotation.json`.
+    Only KITTI is left. It has no sequences at all - the object-detection split is independent
+    frames - so there is nothing to accumulate and therefore nothing to compensate. The other four
+    (nuScenes and Lyft through devkit `instance_token`, Waymo through `obj_ids`, PandaSet through
+    the cuboid `uuid`) all implement it.
     """
     if not dataset_cfg.get('GT_BOXES_MOTION_COMPENSATION', False):
         return
     raise NotImplementedError(
-        'GT_BOXES_MOTION_COMPENSATION is set but %s does not implement it. Only NuScenesDataset '
-        'and LyftDataset do, both via nuScenes-devkit track ids (instance_token in '
-        'sample_annotation.json).\n'
-        '  KITTI    cannot: it has no sequences, so there is nothing to accumulate or compensate.\n'
-        '  PandaSet could: 103 sequences x 80 frames at exactly 10 Hz, every frame annotated,\n'
-        '           cuboids carry a `uuid` that is 100%% persistent frame to frame (and a\n'
-        '           `stationary` flag), and lidar/poses.json gives a pose per frame. What is\n'
-        '           missing is a sweep-accumulation path in the loader.\n'
-        '  Waymo    could: 798 train sequences x ~198 frames, annos carry `obj_ids` (100%%\n'
-        '           persistent between consecutive frames, 94%% over 10) and each info carries a\n'
-        '           4x4 `pose`. Same caveat - no accumulation path in the loader.\n'
-        'Remove the key, or implement accumulation for this dataset first.' % dataset_name)
+        'GT_BOXES_MOTION_COMPENSATION is set but %s does not implement it, and cannot: KITTI has '
+        'no sequences, so there is nothing to accumulate and nothing to compensate. Every other '
+        'dataset here supports it - nuScenes and Lyft via the devkit instance_token, Waymo via '
+        'annos["obj_ids"], PandaSet via the cuboid uuid. Remove the key.' % dataset_name)
