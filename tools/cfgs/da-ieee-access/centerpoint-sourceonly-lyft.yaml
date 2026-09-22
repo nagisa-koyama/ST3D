@@ -153,6 +153,13 @@ MODEL:
 
 OPTIMIZATION:
     BATCH_SIZE_PER_GPU: 6
+
+    # Data-wait is 0.09-0.13% at bs=6, i.e. the loader is already ahead of the GPU and there is no
+    # stall for more workers to remove - the same mechanism that makes 8 workers measure SLOWER on
+    # KITTI and nuScenes. Stated honestly: unlike those two, Lyft was never actually measured at 8
+    # workers, so this is the mechanism's prediction rather than a direct observation.
+    # experiments_md/20260922_06 section 1b.
+    NUM_WORKERS: 4
     # NUM_EPOCHS is the ONE optimization key that is NOT shared across this family, and that is
     # deliberate. The five sources differ by 21x in size (KITTI 3,712 frames to Waymo 79,041), so a
     # uniform epoch count would hand Waymo 21x KITTI's optimization budget and the column would be

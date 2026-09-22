@@ -148,6 +148,12 @@ MODEL:
 
 OPTIMIZATION:
     BATCH_SIZE_PER_GPU: 6
+
+    # 8, not the repo default 4: Waymo is one of the two sources whose loader genuinely stalls the
+    # GPU. Data-wait 8.98% at 4 workers collapses to 0.09% at 8, and throughput rises 1.38 -> 1.49
+    # it/s (+8.1%), taking the full budget from 18.9 h to 17.5 h.
+    # experiments_md/20260922_06 section 1b.
+    NUM_WORKERS: 8
     # NUM_EPOCHS is the ONE optimization key that is NOT shared across this family, and that is
     # deliberate. The five sources differ by 21x in size (KITTI 3,712 frames to Waymo 79,041), so a
     # uniform epoch count would hand Waymo 21x KITTI's optimization budget and the column would be

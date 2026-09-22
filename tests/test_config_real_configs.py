@@ -154,6 +154,14 @@ def test_ieee_access_sourceonly_family_is_internally_consistent(in_tools_dir):
         'NuScenesDataset': 28130,
         'WaymoDataset': 79041,
     }
+    # Measured per source rather than defaulted - the two 8s are the sources whose loaders stall.
+    expected_workers = {
+        'KittiDataset': 4,
+        'PandasetDataset': 8,
+        'LyftDataset': 4,
+        'NuScenesDataset': 4,
+        'WaymoDataset': 8,
+    }
     budget = 20 * train_frames['NuScenesDataset']
     expected_epochs = {k: round(budget / n) for k, n in train_frames.items()}
     assert expected_epochs['NuScenesDataset'] == 20, 'anchor must be nuScenes at 20 epochs'
@@ -182,6 +190,43 @@ def test_ieee_access_sourceonly_family_is_internally_consistent(in_tools_dir):
         assert abs(presentations - budget) / budget < 0.02, (
             '%s: %d presentations is %.1f%% off the %d budget'
             % (cfg_file, presentations, 100.0 * (presentations - budget) / budget, budget))
+        # NUM_WORKERS is measured per source, not defaulted. The value tracks whether that
+        # source's loader actually stalls the GPU: Waymo (8.98% data-wait) and PandaSet (46.54%)
+        # need 8, and the other three measure SLOWER at 8 because they have no stall to remove.
+        # See experiments_md/20260922_06 section 1b, and the comment at each config's own key.
+        assert cfg.OPTIMIZATION.NUM_WORKERS == expected_workers[src], (
+            '%s: NUM_WORKERS %s does not match the measured recommendation %s'
+            % (cfg_file, cfg.OPTIMIZATION.get('NUM_WORKERS', None), expected_workers[src]))
         seen[src] = cfg_file
 
     assert set(seen) == set(expected_shift), 'family is incomplete: %s' % sorted(seen)
+
+
+@pytest.mark.parametrize('entry_point', ['train.py', 'adaptive_train.py', 'test.py'])
+def test_workers_argparse_default_is_none(entry_point):
+    """`--workers` must default to None so OPTIMIZATION.NUM_WORKERS is reachable.
+
+    A non-None argparse default silently wins over the config and nothing reports it. That exact
+    bug lived in train.py's `--batch_size` (default=16) for months, overriding every config's
+    BATCH_SIZE_PER_GPU; test.py still carries it. Parsed from source with `ast` rather than by
+    importing, so this runs without a GPU and without pcdet's heavy import chain.
+    """
+    import ast
+
+    path = Path(__file__).resolve().parent.parent / 'tools' / entry_point
+    tree = ast.parse(path.read_text())
+    defaults = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not (isinstance(node.func, ast.Attribute) and node.func.attr == 'add_argument'):
+            continue
+        if not (node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value == '--workers'):
+            continue
+        for kw in node.keywords:
+            if kw.arg == 'default':
+                defaults.append(kw.value)
+
+    assert len(defaults) == 1, '%s: expected exactly one --workers argument' % entry_point
+    assert isinstance(defaults[0], ast.Constant) and defaults[0].value is None, (
+        '%s: --workers default must be None so the config can supply it' % entry_point)

@@ -31,7 +31,12 @@ def parse_config():
     parser.add_argument('--cfg_file', type=str, default=None, help='specify the config for training')
     parser.add_argument('--batch_size', type=int, default=None, required=False, help='batch size for training')
     parser.add_argument('--epochs', type=int, default=None, required=False, help='number of epochs to train for')
-    parser.add_argument('--workers', type=int, default=4, help='number of workers for dataloader')
+    # default=None, not 4, so the yaml's OPTIMIZATION.NUM_WORKERS is actually used - same
+    # pattern as --batch_size above, and for the same reason: a non-None argparse default
+    # silently wins over the config and nobody notices (train.py's --batch_size carried a
+    # default=16 for months that way, fixed in 5456291).
+    parser.add_argument('--workers', type=int, default=None, help='dataloader workers per GPU; '
+                        'default comes from OPTIMIZATION.NUM_WORKERS, else 4')
     parser.add_argument('--extra_tag', type=str, default='default', help='extra tag for this experiment')
     parser.add_argument('--ckpt', type=str, default=None, help='checkpoint to start from')
     parser.add_argument('--pretrained_model', type=str, default=None, help='pretrained_model')
@@ -103,6 +108,11 @@ def main():
         args.batch_size = args.batch_size // total_gpus
 
     args.epochs = cfg.OPTIMIZATION.NUM_EPOCHS if args.epochs is None else args.epochs
+
+    # Per-source, because the right value depends on whether that source's loader actually
+    # stalls the GPU - measured in experiments_md/20260922_06. Absent key keeps the old 4.
+    if args.workers is None:
+        args.workers = cfg.get('OPTIMIZATION', {}).get('NUM_WORKERS', 4)
 
     if args.fix_random_seed:
         common_utils.set_random_seed(666)
