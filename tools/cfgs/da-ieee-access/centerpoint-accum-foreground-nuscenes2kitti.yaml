@@ -27,14 +27,20 @@ DATA_CONFIGS:
     NUSCENES_N008:
         _BASE_CONFIG_: cfgs/da-ieee-access/da_nuscenes_n008_dataset.yaml
 
-        # Depth is set PER PLATFORM because the two need different amounts. Global parity with
-        # KITTI arrives at N=15 for this one (experiments_md/20260922_05), and the correction needs
-        # the source to exceed the target, not merely reach it: a keep-probability cannot add
-        # points, so at parity the rate sits on the kink where pseudo-label noise biases it
-        # downward (20260922_08 section 5). Singapore measured 1.06x target at N=15, 1.67x its
-        # parity depth of 9; 25 applies the same ratio to this platform's 15. Boston
-        # has not been measured at depth directly, so 25 is an EXTRAPOLATION.
-        MAX_SWEEPS: 25
+        # Depth is 15 for BOTH platforms. The split is not about depth - it is about each
+        # platform getting its OWN histogram against the shared KITTI target, so the correction
+        # is fitted to that sensor's actual radial profile rather than to a blend of two. Boston
+        # carries 16.30 Car/frame against Singapore's 6.77 with cars 22 cm longer, so a single
+        # hist_dist fitted to the pooled dataset is fitted to neither half.
+        #
+        # 15 because a keep-probability cannot add points: below the depth where the source
+        # exceeds the target the rate clips at 1 and the correction is a literal no-op. Singapore
+        # measured 0.69 at N=9 - identical to uncorrected - and 1.06 at N=15
+        # (experiments_md/20260922_08). Boston reaches GLOBAL parity only at N=15 against
+        # Singapore's 9, so it has less headroom here, and its per-bin FOREGROUND density at this
+        # depth is unmeasured. Watch it: if Boston's arm shows the correction doing nothing, too
+        # little headroom is the first thing to check.
+        MAX_SWEEPS: 15
 
         # Requires the regenerated 200-sweep infos; the shipped 10-sweep ones raise IndexError
         # above 10. Overridden here rather than in the shared dataset config, which the
@@ -81,12 +87,19 @@ DATA_CONFIGS:
     NUSCENES_N015:
         _BASE_CONFIG_: cfgs/da-ieee-access/da_nuscenes_n015_dataset.yaml
 
-        # Depth is set PER PLATFORM because the two need different amounts. Global parity with
-        # KITTI arrives at N=9 for this one (experiments_md/20260922_05), and the correction needs
-        # the source to exceed the target, not merely reach it: a keep-probability cannot add
-        # points, so at parity the rate sits on the kink where pseudo-label noise biases it
-        # downward (20260922_08 section 5). Singapore measured 1.06x target at N=15, 1.67x its
-        # parity depth of 9; 15 applies the same ratio to this platform's 9.
+        # Depth is 15 for BOTH platforms. The split is not about depth - it is about each
+        # platform getting its OWN histogram against the shared KITTI target, so the correction
+        # is fitted to that sensor's actual radial profile rather than to a blend of two. Boston
+        # carries 16.30 Car/frame against Singapore's 6.77 with cars 22 cm longer, so a single
+        # hist_dist fitted to the pooled dataset is fitted to neither half.
+        #
+        # 15 because a keep-probability cannot add points: below the depth where the source
+        # exceeds the target the rate clips at 1 and the correction is a literal no-op. Singapore
+        # measured 0.69 at N=9 - identical to uncorrected - and 1.06 at N=15
+        # (experiments_md/20260922_08). Boston reaches GLOBAL parity only at N=15 against
+        # Singapore's 9, so it has less headroom here, and its per-bin FOREGROUND density at this
+        # depth is unmeasured. Watch it: if Boston's arm shows the correction doing nothing, too
+        # little headroom is the first thing to check.
         MAX_SWEEPS: 15
 
         # Requires the regenerated 200-sweep infos; the shipped 10-sweep ones raise IndexError

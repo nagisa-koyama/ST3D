@@ -3,7 +3,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=400G               # NOT the 96G the N=1 sourceonly configs use. MAX_SWEEPS 15 makes
+#SBATCH --mem=320G               # NOT the 96G the N=1 sourceonly configs use. MAX_SWEEPS 15 makes
                                  # each sample ~374k points against ~22k at N=1 (measured), a 17x
                                  # rise in what every DataLoader worker holds and ships through
                                  # /dev/shm - and 64G already segfaulted centerpoint-sourceonly at
@@ -12,12 +12,9 @@
                                  # as SIGSEGV rather than a clean OOM because the shm pages count
                                  # against the cgroup.
                                  #
-                                 # 400G, not 320G, because the two nuScenes platforms run at
-                                 # different depths: n008 Boston at N=25 is ~675k points per sample
-                                 # against n015 Singapore's ~374k at N=15, so the worst-case worker
-                                 # holds 1.8x what the Singapore figure suggests. 400G also still
-                                 # fits every a6000_ada node (512G) and a6000 node13, though it
-                                 # excludes node11 at 448G once overhead is counted.
+                                 # Both nuScenes platforms run at N=15, so ~374k points per sample
+                                 # is the worst case, not Boston-at-25's ~675k. 320G fits every
+                                 # a6000_ada node and both a6000 nodes.
 #SBATCH --gres=gpu:1             # untyped on purpose: each partition holds one GPU type, so the
                                  # typed form would pin this back to a single partition
 #SBATCH --partition=a6000_ada,a6000   # NOT a100 - job 25536 died instantly there with an untyped
