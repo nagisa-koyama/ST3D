@@ -28,11 +28,12 @@ class NuScenesDataset(DatasetTemplate):
         self._sweep_compensator = None
         if self.dataset_cfg.get('GT_BOXES_MOTION_COMPENSATION', False) and self.training \
                 and self.dataset_cfg.get('MAX_SWEEPS', 1) > 1:
-            from ..motion_compensation import DevkitSweepCompensator
+            from ..motion_compensation import DevkitSweepCompensator, find_devkit_meta_dir
+            classes = set(self.dataset_cfg.get('GT_BOXES_MOTION_COMPENSATION_CLASSES', [])) or None
             self._sweep_compensator = DevkitSweepCompensator(
-                self.infos, self.root_path / self.dataset_cfg.VERSION, classes=set(self.dataset_cfg.get('GT_BOXES_MOTION_COMPENSATION_CLASSES',
-                                                                 [])) or None,
-                logger=self.logger)
+                self.infos,
+                find_devkit_meta_dir(self.root_path, self.dataset_cfg.get('VERSION', None)),
+                classes=classes, logger=self.logger)
         if self.training and self.dataset_cfg.get('BALANCED_RESAMPLING', False):
             self.infos = self.balanced_infos_resampling(self.infos)
         self.draw_conf_calib_curve = self.dataset_cfg.get('DRAW_CONF_CALIB_CURVE', False)

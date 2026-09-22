@@ -156,3 +156,115 @@ def test_absent_or_false_is_silent():
 def test_every_unsupported_loader_calls_the_guard(mod, cls):
     src = (Path(__file__).resolve().parent.parent / mod).read_text(encoding='utf-8')
     assert "assert_not_supported(self.dataset_cfg, '%s')" % cls in src
+
+
+# --------------------------------------------------------------------------------------------
+# The compensator over devkit metadata: timeline units, bracketing, index alignment.
+
+import json  # noqa: E402
+
+from pcdet.datasets.motion_compensation import (  # noqa: E402
+    DevkitSweepCompensator, find_devkit_meta_dir)
+
+EPOCH = 1537932026.0  # a real nuScenes keyframe time, in SECONDS - what the info builders store
+
+
+def _meta(tmp_path, n_frames=4, n_scenes=1):
+    """A minimal devkit metadata dir plus matching infos: one track, moving +10 m/s in x."""
+    d = tmp_path / 'v1.0-trainval'
+    d.mkdir(parents=True, exist_ok=True)
+    samples, anns, infos = [], [], []
+    for s in range(n_scenes):
+        for k in range(n_frames):
+            tok, ann = 'sample-%d-%d' % (s, k), 'ann-%d-%d' % (s, k)
+            samples.append({'token': tok, 'scene_token': 'scene-%d' % s})
+            anns.append({'token': ann, 'instance_token': 'inst-0'})
+            infos.append({
+                'token': tok,
+                'timestamp': EPOCH + 0.5 * k,          # keyframes are 2 Hz
+                'ref_from_car': np.eye(4),
+                'car_from_global': np.eye(4),
+                'gt_boxes': np.array([[10.0 * (0.5 * k), 0, 0, 4, 2, 2, 0]]),
+                'gt_names': np.array(['car']),
+                'gt_boxes_token': np.array([ann]),
+            })
+    json.dump(samples, open(d / 'sample.json', 'w'))
+    json.dump(anns, open(d / 'sample_annotation.json', 'w'))
+    return d, infos
+
+
+def test_the_timeline_is_in_seconds_not_microseconds(tmp_path):
+    """The info builders already divide by 1e6; dividing again collapses the scene to an instant.
+
+    That is not a small error. It compressed a 20 s scene into 1.2 ms, so every keyframe landed on
+    the same time, the bracketing search returned an arbitrary one, and a parked car appeared to
+    move 136 m in 0.3 s.
+    """
+    d, infos = _meta(tmp_path, n_frames=4)
+    c = DevkitSweepCompensator(infos, d)
+    ts = np.array([f['t'] for f in c.frames])
+    assert np.allclose(np.diff(ts), 0.5), 'keyframe spacing must survive as 0.5 s'
+
+
+def test_microsecond_timestamps_are_accepted_too(tmp_path):
+    """Epoch seconds are ~1.5e9 and epoch microseconds ~1.5e15, so the two are never ambiguous."""
+    d, infos = _meta(tmp_path, n_frames=4)
+    for info in infos:
+        info['timestamp'] = info['timestamp'] * 1e6
+    c = DevkitSweepCompensator(infos, d)
+    assert np.allclose(np.diff([f['t'] for f in c.frames]), 0.5)
+
+
+def test_a_sweep_between_keyframes_is_interpolated(tmp_path):
+    d, infos = _meta(tmp_path, n_frames=4)
+    c = DevkitSweepCompensator(infos, d)
+    anchor = infos[2]                                    # t = EPOCH + 1.0, box at x = 10
+    S = np.eye(4)
+    now = c.boxes_at(anchor['token'], EPOCH + 1.0, S)
+    then = c.boxes_at(anchor['token'], EPOCH + 0.75, S)  # half a keyframe gap back
+    assert np.isclose(now['inst-0'][0], 10.0)
+    assert np.isclose(then['inst-0'][0], 7.5), 'must interpolate, not clamp to a keyframe'
+
+
+def test_displacement_grows_with_the_sweep_lag(tmp_path):
+    """The symptom that exposed the unit bug was a median move identical at every lag."""
+    d, infos = _meta(tmp_path, n_frames=4)
+    c = DevkitSweepCompensator(infos, d)
+    anchor, S = infos[3], np.eye(4)
+    at = EPOCH + 1.5
+    now = c.boxes_at(anchor['token'], at, S)
+    moves = [abs(now['inst-0'][0] - c.boxes_at(anchor['token'], at - lag, S)['inst-0'][0])
+             for lag in (0.25, 0.5, 0.75)]
+    assert moves == sorted(moves) and moves[0] < moves[-1], moves
+    assert np.allclose(moves, [2.5, 5.0, 7.5])
+
+
+def test_a_skipped_info_does_not_shift_the_frame_index(tmp_path):
+    """tok2frame indexes self.frames, which an info with an unknown scene never enters."""
+    d, infos = _meta(tmp_path, n_frames=4)
+    infos.insert(0, dict(infos[0], token='not-in-sample-json'))
+    c = DevkitSweepCompensator(infos, d)
+    assert len(c.frames) == 4 and 'not-in-sample-json' not in c.tok2frame
+    for info in infos[1:]:
+        assert np.isclose(c.frames[c.tok2frame[info['token']]]['t'], info['timestamp'])
+
+
+def test_scenes_do_not_bracket_across_each_other(tmp_path):
+    d, infos = _meta(tmp_path, n_frames=4, n_scenes=2)
+    c = DevkitSweepCompensator(infos, d)
+    assert len(c.scene_order) == 2
+    assert all(len(v) == 4 for v in c.scene_order.values())
+
+
+def test_find_devkit_meta_dir_handles_both_layouts(tmp_path):
+    for root, sub in ((tmp_path / 'nusc', 'v1.0-trainval'), (tmp_path / 'lyft', 'data')):
+        (root / sub).mkdir(parents=True)
+        for name in ('sample.json', 'sample_annotation.json'):
+            (root / sub / name).write_text('[]')
+        assert find_devkit_meta_dir(root, 'v1.0-trainval') == root / sub
+
+
+def test_find_devkit_meta_dir_names_what_it_tried(tmp_path):
+    with pytest.raises(FileNotFoundError) as e:
+        find_devkit_meta_dir(tmp_path, 'v1.0-trainval')
+    assert 'sample_annotation.json' in str(e.value) and str(tmp_path) in str(e.value)

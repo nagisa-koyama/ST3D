@@ -21,6 +21,20 @@ from pathlib import Path
 import numpy as np
 
 
+def _timestamp_seconds(ts):
+    """A keyframe timestamp in SECONDS.
+
+    Both info builders already divide by 1e6 (`ref_time = 1e-6 * sd_rec['timestamp']`), so the
+    stored value is seconds, and `time_lag` is seconds too. Dividing again is not a small error:
+    it compresses a 20-minute scene into 1.2 ms, every keyframe of a scene lands on the same
+    instant, and the bracketing search then returns an arbitrary keyframe - which is exactly how a
+    parked car appeared to move 136 m in 0.3 s. Epoch seconds are ~1.5e9, epoch microseconds
+    ~1.5e15, so the two are never ambiguous; accept either.
+    """
+    t = float(ts)
+    return t * 1e-6 if abs(t) > 1e12 else t
+
+
 def _yaw_to_R(yaw):
     c, s = np.cos(yaw), np.sin(yaw)
     return np.array([[c, -s], [s, c]])
@@ -109,6 +123,34 @@ def boxes_to_frame(boxes, names, track_ids, S_from, S_to, classes=None):
     return out
 
 
+def find_devkit_meta_dir(root_path, version=None):
+    """Directory holding the devkit json tables, given a dataset root.
+
+    The two devkit-format datasets nest their tables differently, relative to the `root_path`
+    each loader has already built (`DATA_PATH / VERSION` in both):
+
+      nuScenes  <root_path>/v1.0-trainval/sample.json   (the version dir, repeated)
+      Lyft      <root_path>/data/sample.json            (a dir literally called `data`)
+
+    Each loader knows its own answer, so hard-coding it works - but it puts a silent layout
+    assumption in two places, and a wrong DATA_PATH then surfaces as a bare FileNotFoundError on
+    sample_annotation.json with nothing said about what was expected. Probe the candidates
+    instead and name every one that was tried.
+    """
+    root = Path(root_path)
+    cands = []
+    if version:
+        cands += [root / version / version, root / version / 'data', root / version]
+    cands += [root / 'data', root]
+    for c in cands:
+        if (c / 'sample_annotation.json').exists() and (c / 'sample.json').exists():
+            return c
+    raise FileNotFoundError(
+        'GT_BOXES_MOTION_COMPENSATION needs the nuScenes-devkit json tables (sample.json, '
+        'sample_annotation.json) - the track ids live there and nowhere in the infos. None of '
+        'these holds them:\n  %s' % '\n  '.join(str(c) for c in cands))
+
+
 class DevkitSweepCompensator:
     """Per-object compensation for nuScenes-devkit-format datasets (nuScenes and Lyft).
 
@@ -133,6 +175,7 @@ class DevkitSweepCompensator:
         # One timeline per scene, ordered in time. Lyft's infos are randomly ordered on disk, so
         # index adjacency cannot be used to find a keyframe's neighbours - group by scene instead.
         self.frames = []
+        self.tok2frame = {}
         by_scene = {}
         for info in infos:
             scene = tok2scene.get(info['token'])
@@ -142,7 +185,7 @@ class DevkitSweepCompensator:
             tids = [ann2inst.get(str(t)) for t in tokens]
             idx = len(self.frames)
             self.frames.append({
-                't': float(info['timestamp']) * 1e-6,
+                't': _timestamp_seconds(info['timestamp']),
                 'S': np.asarray(info['ref_from_car']) @ np.asarray(info['car_from_global']),
                 'boxes': np.asarray(info.get('gt_boxes', np.zeros((0, 7))))[:, :7],
                 'names': np.asarray(info.get('gt_names', [])),
@@ -150,10 +193,11 @@ class DevkitSweepCompensator:
             })
             by_scene.setdefault(scene, []).append(idx)
             self.frames[idx]['scene'] = scene
+            # keyed here, not from enumerate(infos): an info whose scene is unknown is skipped
+            # above, after which an infos index and a frames index no longer agree.
+            self.tok2frame[info['token']] = idx
         self.scene_order = {s: sorted(ix, key=lambda i: self.frames[i]['t'])
                             for s, ix in by_scene.items()}
-        self.tok2frame = {info['token']: i for i, info in enumerate(infos)
-                          if tok2scene.get(info['token']) is not None}
         self.tok2scene = tok2scene
         if logger is not None:
             logger.info('motion compensation: %d keyframes over %d scenes, %d annotation tokens'
@@ -190,7 +234,7 @@ class DevkitSweepCompensator:
     def compensate_sweep(self, info, sweep, points):
         """Points of one sweep, already ego-transformed into the anchor frame."""
         S = np.asarray(info['ref_from_car']) @ np.asarray(info['car_from_global'])
-        anchor_t = float(info['timestamp']) * 1e-6
+        anchor_t = _timestamp_seconds(info['timestamp'])
         now = self.boxes_at(info['token'], anchor_t, S)
         if not now:
             return points
