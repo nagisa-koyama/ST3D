@@ -114,6 +114,46 @@ def get_all_configs(cfg):
         assert False, "One of DATA_CONFIG_TAR, DATA_CONFIG or DATA_CONFIGS should be defined"
     return configs
 
+def claim_next_ckpt(ckpt_dir, ckpt_record_file, args, dist_test=False):
+    """Pick the next checkpoint to evaluate, returning the SAME answer on every rank.
+
+    `ckpt_record_file` is shared mutable state: `get_no_evaluated_ckpt` reads it, and the
+    claim is recorded by appending to it. Run unguarded on every rank - which is what this
+    function replaces - that read-then-append is a race whose loser deadlocks the job.
+    Whichever rank claims a checkpoint first makes every other rank see it as already
+    evaluated, so the losers get `cur_epoch_id == -1` and leave `repeat_eval_ckpt`, while the
+    winner walks into `eval_one_epoch`'s NCCL collectives with nobody to meet and blocks
+    forever. Observed on job 25714: one epoch trained, the checkpoint saved, then eval hung
+    with a record file holding exactly one line. Short smoke tests never see it because they
+    stop inside the training loop.
+
+    So rank 0 alone reads and claims, then broadcasts the decision. Single-GPU
+    (`dist_test=False`) is the original code path with no collective at all.
+    """
+    def _decide():
+        cur_epoch_id, cur_ckpt = get_no_evaluated_ckpt(ckpt_dir, ckpt_record_file, args)
+        if cur_epoch_id != -1:
+            with open(ckpt_record_file, 'a') as f:
+                print('%s' % cur_epoch_id, file=f)
+        return cur_epoch_id, cur_ckpt
+
+    if not dist_test:
+        return _decide()
+
+    rank, world_size = common_utils.get_dist_info()
+    if world_size == 1:
+        return _decide()
+
+    payload = [None, None]
+    if rank == 0:
+        payload = list(_decide())
+    # NCCL cannot broadcast CPU objects, so name the rank's own device explicitly rather
+    # than relying on the default device lookup.
+    device = torch.device('cuda', torch.cuda.current_device()) if torch.cuda.is_available() else None
+    dist.broadcast_object_list(payload, src=0, device=device)
+    return payload[0], payload[1]
+
+
 def repeat_eval_ckpt(model, test_loaders, args, eval_output_dir, logger, ckpt_dir, dist_test=False):
     data_config_evals = get_eval_configs(cfg).values()
     data_config_eval_rep = list(data_config_evals)[0]
@@ -130,15 +170,13 @@ def repeat_eval_ckpt(model, test_loaders, args, eval_output_dir, logger, ckpt_di
     first_eval = True
 
     while True:
-        # check whether there is checkpoint which is not evaluated
-        cur_epoch_id, cur_ckpt = get_no_evaluated_ckpt(ckpt_dir, ckpt_record_file, args)
-        # if there is no unevaluated ckpt, break
+        # check whether there is checkpoint which is not evaluated, and claim it. Every rank
+        # gets the same answer here - see claim_next_ckpt for why that has to be arranged
+        # rather than assumed.
+        cur_epoch_id, cur_ckpt = claim_next_ckpt(ckpt_dir, ckpt_record_file, args, dist_test=dist_test)
+        # if there is no unevaluated ckpt, break. All ranks break together.
         if cur_epoch_id == -1:
             break
-
-        # record this epoch which has been evaluated
-        with open(ckpt_record_file, 'a') as f:
-            print('%s' % cur_epoch_id, file=f)
 
         if int(float(cur_epoch_id)) < args.start_epoch:
             continue

@@ -7,6 +7,10 @@ DATA_PATH: '../data/nuscenes'
 ONTOLOGY: 'nuscenes'
 
 VERSION: 'v1.0-trainval'
+# 1 keyframe, no sweeps - see preprocess_sourceonly.yaml for why this family accumulates nothing.
+# Note this does NOT contradict the infos filename below: nuscenes_infos_10sweeps_*.pkl stores the
+# metadata for up to 9 sweeps per keyframe, and MAX_SWEEPS decides how many of them are actually
+# loaded. The infos are shared with configs that do use sweeps; nothing is baked into them.
 MAX_SWEEPS: 1
 PRED_VELOCITY: False
 SET_NAN_VELOCITY_TO_ZEROS: True

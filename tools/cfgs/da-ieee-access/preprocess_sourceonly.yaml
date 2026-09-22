@@ -83,6 +83,23 @@ DATA_AUGMENTOR:
         - NAME: random_world_scaling
           WORLD_SCALE_RANGE: [0.95, 1.05]
 
+# No sample_points_hist_based and no accumulation anywhere in this family - both deliberate, and
+# for different reasons.
+#
+# The density correction is absent because these are NAIVE floors: the whole point of the column is
+# "how far does a detector trained on X get on nuScenes with no adaptation of any kind", and a
+# density correction is an adaptation. It also would not help if it were here - min(P_t/P_s, 1) is
+# downsample-only, and nuScenes is the sparsest dataset in the set, so every source->nuScenes pair
+# is a pure downsampling problem for it.
+#
+# Accumulation is absent because for THIS target it is not called for. Measured per source-target
+# pair in experiments_md/20260922_07: reaching nuScenes takes N=1 from every source in this family
+# (Lyft 40/64, Pandar64, Waymo all 1; nuScenes n015 1, n008 2). nuScenes is the sparsest source in
+# the set, so nothing here has to be accumulated to meet it. That is a property of the nuScenes
+# target specifically - a KITTI or Lyft target would need N=2-4, and a nuScenes SOURCE would need
+# N=9-30 with keyframe chaining. So MAX_SWEEPS: 1 below is a measured choice for this column, not a
+# default to be copied into a config with a different target.
+
 DATA_PROCESSOR:
     - NAME: mask_points_and_boxes_outside_range
       REMOVE_OUTSIDE_BOXES: True
