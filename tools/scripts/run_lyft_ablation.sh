@@ -33,4 +33,4 @@ set -e
 singularity exec --nv --bind /home/koyama/data/:/storage \
   /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif \
   python3 train.py --cfg_file cfgs/da-ieee-access/centerpoint-global-lyft2nuscenes.yaml \
-  --fix_random_seed --run_name "lyft_global_2nuscenes" --extra_tag 20260923_lyft_global
+  --fix_random_seed --run_name "lyft_global_2nuscenes_v2" --extra_tag 20260923_lyft_global_v2

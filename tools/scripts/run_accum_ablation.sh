@@ -48,4 +48,4 @@ set -e
 singularity exec --nv --bind /home/koyama/data/:/storage \
   /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif \
   python3 train.py --cfg_file cfgs/da-ieee-access/centerpoint-accum-global-nuscenes2kitti.yaml \
-  --fix_random_seed --run_name "accum_global_nuscenes2kitti" --extra_tag 20260922_accum_global
+  --fix_random_seed --run_name "accum_global_nuscenes2kitti_mc" --extra_tag 20260923_accum_global_mc
