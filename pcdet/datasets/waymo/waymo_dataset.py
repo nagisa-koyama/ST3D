@@ -28,6 +28,10 @@ class WaymoDataset(DatasetTemplate):
         self.sample_sequence_list = [x.strip() for x in open(split_dir).readlines()]
 
         self.infos = []
+        # Refuse the key rather than ignore it - a silently-dropped config key turns
+        # a run into a different experiment than the one that was asked for.
+        from ..motion_compensation import assert_not_supported
+        assert_not_supported(self.dataset_cfg, 'WaymoDataset')
         self.include_waymo_data(self.mode)
 
         self.draw_conf_calib_curve = self.dataset_cfg.get('DRAW_CONF_CALIB_CURVE', False)

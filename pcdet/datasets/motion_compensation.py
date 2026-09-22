@@ -196,3 +196,31 @@ class DevkitSweepCompensator:
             return points
         then = self.boxes_at(info['token'], anchor_t - float(sweep.get('time_lag', 0.0)), S)
         return move_points_between_boxes(points, then, now)
+
+
+def assert_not_supported(dataset_cfg, dataset_name):
+    """Refuse `GT_BOXES_MOTION_COMPENSATION` on a dataset that cannot honour it.
+
+    A config key that a loader silently ignores is worse than one that fails: the run looks like
+    it did what was asked and the result is quietly a different experiment. That failure mode has
+    already cost this project several times over - a correction configured but never installed, an
+    N=15 that was really N=10 - so an unsupported dataset raises here rather than accepting the key
+    and doing nothing with it.
+
+    Only nuScenes and Lyft implement it. Both carry nuScenes-devkit metadata, which is where the
+    track ids live: `gt_boxes_token` in the infos is a per-FRAME annotation token, and the track is
+    `instance_token` in `sample_annotation.json`.
+    """
+    if not dataset_cfg.get('GT_BOXES_MOTION_COMPENSATION', False):
+        return
+    raise NotImplementedError(
+        'GT_BOXES_MOTION_COMPENSATION is set but %s does not implement it. Only NuScenesDataset '
+        'and LyftDataset do, both via nuScenes-devkit track ids (instance_token in '
+        'sample_annotation.json).\n'
+        '  KITTI    cannot: it has no sequences, so there is nothing to accumulate or compensate.\n'
+        '  PandaSet could: every frame is annotated and cuboids carry a persistent uuid - but its\n'
+        '           loader has no sweep accumulation at all, so there is nothing to compensate\n'
+        '           until one exists.\n'
+        '  Waymo    could: annos carry obj_ids per frame and infos carry pose - same caveat, no\n'
+        '           accumulation path in the loader.\n'
+        'Remove the key, or implement accumulation for this dataset first.' % dataset_name)

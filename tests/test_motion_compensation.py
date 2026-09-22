@@ -110,3 +110,49 @@ def test_classes_filter_excludes_untracked_categories():
 def test_boxes_without_a_track_id_are_skipped():
     got = boxes_to_frame(np.array([box(0, 0)]), np.array(['car']), [None], np.eye(4), np.eye(4))
     assert got == {}
+
+
+# --------------------------------------------------------------------------------------------
+# The key must be refused where it cannot be honoured. A config key a loader silently ignores is
+# worse than one that fails: the run looks like it did what was asked and is quietly a different
+# experiment. This project has paid for that failure mode more than once - a correction configured
+# but never installed, an N=15 that was really N=10.
+# --------------------------------------------------------------------------------------------
+
+from pcdet.datasets.motion_compensation import assert_not_supported  # noqa: E402
+
+
+class _Cfg(dict):
+    def get(self, k, d=None):
+        return dict.get(self, k, d)
+
+
+def test_unsupported_dataset_raises_rather_than_ignoring_the_key():
+    with pytest.raises(NotImplementedError) as e:
+        assert_not_supported(_Cfg(GT_BOXES_MOTION_COMPENSATION=True), 'PandasetDataset')
+    msg = str(e.value)
+    assert 'PandasetDataset' in msg
+    assert 'NuScenesDataset' in msg and 'LyftDataset' in msg, 'must say what DOES support it'
+
+
+def test_the_message_says_why_each_dataset_cannot():
+    with pytest.raises(NotImplementedError) as e:
+        assert_not_supported(_Cfg(GT_BOXES_MOTION_COMPENSATION=True), 'KittiDataset')
+    msg = str(e.value)
+    assert 'no sequences' in msg, 'KITTI cannot ever support it, for a different reason'
+    assert 'uuid' in msg and 'obj_ids' in msg, 'PandaSet and Waymo could, and the note should say so'
+
+
+def test_absent_or_false_is_silent():
+    assert_not_supported(_Cfg(), 'KittiDataset')
+    assert_not_supported(_Cfg(GT_BOXES_MOTION_COMPENSATION=False), 'WaymoDataset')
+
+
+@pytest.mark.parametrize('mod,cls', [
+    ('pcdet/datasets/kitti/kitti_dataset.py', 'KittiDataset'),
+    ('pcdet/datasets/waymo/waymo_dataset.py', 'WaymoDataset'),
+    ('pcdet/datasets/pandaset/pandaset_dataset.py', 'PandasetDataset'),
+])
+def test_every_unsupported_loader_calls_the_guard(mod, cls):
+    src = (Path(__file__).resolve().parent.parent / mod).read_text(encoding='utf-8')
+    assert "assert_not_supported(self.dataset_cfg, '%s')" % cls in src

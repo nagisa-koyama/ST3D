@@ -31,6 +31,11 @@ class KittiDataset(DatasetTemplate):
 
         self.kitti_infos = []
         self.include_kitti_data(self.mode)
+
+        # Refuse the key rather than ignore it - a silently-dropped config key turns a run into a
+        # different experiment than the one that was asked for.
+        from ..motion_compensation import assert_not_supported
+        assert_not_supported(self.dataset_cfg, 'KittiDataset')
         self.draw_conf_calib_curve = self.dataset_cfg.get('DRAW_CONF_CALIB_CURVE', False)
         self.run_conf_calib = self.dataset_cfg.get('RUN_CONF_CALIB', False)
 
