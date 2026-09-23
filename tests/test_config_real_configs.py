@@ -362,11 +362,31 @@ def test_dataset_staging_is_opt_in_and_skips_what_the_pipeline_never_reads():
     assert "--exclude='camera/'" in code and "--exclude='gt_database/'" in code, (
         'staging must skip what the loader never reads'
     )
-    assert 'df -Pk /local_cache' in code, 'staging must check free space before copying'
+    assert 'df -Pk "$SCRATCH"' in code, 'staging must check free space before copying'
     assert 'NOT staging' in code, 'a full disk must fall back to NFS, not abort the job'
     # The bind has to shadow the SYMLINK TARGET: both the relative config path and PandaSet's
     # baked-in /root/ST3D/... absolute paths resolve through /home/koyama/data/pandaset.
     assert '"$STAGE":"$SRC_DATA"' in code, 'the staged copy must shadow the symlink target'
+
+
+def test_scratch_falls_back_when_local_cache_is_absent():
+    """/local_cache does not exist on every node, and assuming it did killed a job instantly.
+
+    Job 25815 was the first to be scheduled on node03 and died at once with
+    `mkdir: cannot create directory '/local_cache': Permission denied`. node13 and node61 have it,
+    which is why every earlier run of this script worked. The test must be whether Slurm
+    PRE-CREATED this job's directory - where /local_cache exists, only the prolog may write its
+    top level - and the fallback must clean up after itself, since /tmp has no auto-deletion.
+    """
+    script = (Path(__file__).resolve().parent.parent
+              / 'tools' / 'scripts' / 'run_sourceonly_2gpu.sh').read_text()
+    code = '\n'.join(l for l in script.splitlines() if not l.lstrip().startswith('#'))
+    assert '-d "/local_cache/${SLURM_JOB_ID}"' in code and '-w "/local_cache/${SLURM_JOB_ID}"' in code, (
+        'probe the PRE-CREATED per-job directory, not /local_cache itself'
+    )
+    assert '/tmp/st3d_${SLURM_JOB_ID}' in code, 'there must be a node-local fallback'
+    assert "trap 'rm -rf" in code, '/tmp has no auto-cleanup, so the job must remove its own'
+    assert 'SNAP=$SCRATCH/ST3D' in code, 'the code snapshot must live under the chosen scratch root'
     # --workers must NOT be passed: it is per-rank and comes from each config's NUM_WORKERS,
     # which differs by source (8 for Waymo and PandaSet, 4 otherwise).
     assert '--workers' not in code, '--workers would override the per-source NUM_WORKERS'

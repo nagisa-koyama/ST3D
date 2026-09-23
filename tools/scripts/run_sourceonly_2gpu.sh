@@ -101,7 +101,26 @@ cd "$REPO/tools"
 # match and which are 11 GB each. `data/` IS copied - it is 248 KB of symlinks into ~/data, and
 # rsync -a preserves them as links. `.git` is copied too (10 MB) so wandb can still record
 # git.commit, which is how a run's exact code version stays recoverable.
-SNAP=/local_cache/${SLURM_JOB_ID}/ST3D
+# Pick the node-local scratch root FIRST. /local_cache/$SLURM_JOB_ID is Slurm's per-job scratch
+# and is auto-deleted at job end - but it does NOT exist on every node. Job 25815 died instantly
+# on node03 with `mkdir: cannot create directory '/local_cache': Permission denied`, having been
+# scheduled there for the first time; node13 and node61 have it, which is why every earlier job
+# using this script worked. The test is whether SLURM PRE-CREATED this job's directory, not
+# whether /local_cache exists - where it does exist, only the prolog may write the top level.
+#
+# Fall back to /tmp, which is node-local too (and NOT the login node's /tmp - compute nodes cannot
+# see that, which is a separate trap this repo has hit). /tmp has no auto-cleanup, so remove it
+# ourselves on exit, however the job ends.
+if [ -d "/local_cache/${SLURM_JOB_ID}" ] && [ -w "/local_cache/${SLURM_JOB_ID}" ]; then
+    SCRATCH=/local_cache/${SLURM_JOB_ID}
+else
+    SCRATCH=/tmp/st3d_${SLURM_JOB_ID}
+    echo "=== /local_cache/${SLURM_JOB_ID} unavailable on $(hostname) - falling back to $SCRATCH ==="
+    trap 'rm -rf "/tmp/st3d_${SLURM_JOB_ID}"' EXIT
+fi
+mkdir -p "$SCRATCH" || { echo "cannot create scratch dir $SCRATCH" >&2; exit 1; }
+
+SNAP=$SCRATCH/ST3D
 mkdir -p "$SNAP"
 rsync -a \
   --exclude='/output/' --exclude='/wandb/' --exclude='/build/' \
@@ -135,9 +154,9 @@ echo "=== code frozen at $(git -C "$REPO" rev-parse --short HEAD) -> $SNAP ==="
 DATA_BIND=()
 if [ "${STAGE_PANDASET:-0}" = "1" ]; then
     SRC_DATA=/home/koyama/data/pandaset
-    STAGE=/local_cache/${SLURM_JOB_ID}/pandaset
+    STAGE=$SCRATCH/pandaset
     NEED_KB=$(du -sk --exclude=camera --exclude=gt_database "$SRC_DATA" | awk '{print $1}')
-    FREE_KB=$(df -Pk /local_cache | awk 'NR==2 {print $4}')
+    FREE_KB=$(df -Pk "$SCRATCH" | awk 'NR==2 {print $4}')
     # 10 GiB of headroom over the copy, so staging never fills the disk under another job.
     if [ "$FREE_KB" -gt $((NEED_KB + 10485760)) ]; then
         mkdir -p "$STAGE"
