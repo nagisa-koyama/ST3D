@@ -53,6 +53,7 @@ sys.path.insert(0, os.path.join(_TOOLS_DIR, '..'))
 
 from pcdet.config import cfg, cfg_from_yaml_file
 from pcdet.datasets import build_dataloader
+from pcdet.datasets.point_calibration import link_point_calibration
 from pcdet.models import build_network, model_fn_decorator
 from pcdet.utils import common_utils
 from train_utils.optimization import build_optimizer
@@ -67,6 +68,13 @@ def parse_args():
     ap.add_argument('--measure', type=int, default=60, help='iterations actually timed')
     ap.add_argument('--budget', type=int, default=562600,
                     help='sample presentations, for the projected-hours column')
+    ap.add_argument('--link_target', action='store_true',
+                    help='build DATA_CONFIG_TAR too and install the density correction, as '
+                         'train.py does. Without it the correction is inert (hist_dist_tgt is '
+                         'None) and the source is fed to the network UNTHINNED - which inflates '
+                         'GPU time and therefore UNDER-states the data-wait fraction. Measured '
+                         '2026-09-23 on the PandaSet accum row: 270,921 points reach the network '
+                         'uncorrected against 91,636 corrected.')
     return ap.parse_args()
 
 
@@ -82,6 +90,23 @@ def main():
         dist=False, workers=0, logger=logger, training=True,
         model_ontology=cfg.get('ONTOLOGY', None))
     logger.info('source: %s, %d train frames', cfg.DATA_CONFIG.DATASET, len(dataset))
+
+    if args.link_target:
+        if 'DATA_CONFIG_TAR' not in cfg:
+            raise SystemExit('--link_target given but this config has no DATA_CONFIG_TAR')
+        target, _, _ = build_dataloader(
+            dataset_cfg=cfg.DATA_CONFIG_TAR, class_names=cfg.CLASS_NAMES, batch_size=1,
+            dist=False, workers=0, logger=logger, training=True,
+            model_ontology=cfg.get('ONTOLOGY', None))
+        # Must precede the first iteration of the loader below: workers fork a copy of the
+        # dataset and never see a later mutation (20260921_02).
+        link_point_calibration(
+            dataset, target,
+            num_frames=cfg.DATA_CONFIG.get('HIST_DIST_FRAMES', 1000),
+            num_bins=cfg.DATA_CONFIG.get('HIST_DIST_BINS', 50),
+            max_dist=cfg.DATA_CONFIG.get('HIST_DIST_MAX_DIST', 75.0),
+            logger=logger)
+        logger.info('density correction installed from %s', cfg.DATA_CONFIG_TAR.DATASET)
 
     model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=dataset)
     model.cuda()
