@@ -110,6 +110,48 @@ rsync -a \
   "$REPO/" "$SNAP/"
 echo "=== code frozen at $(git -C "$REPO" rev-parse --short HEAD) -> $SNAP ==="
 
+# --- optional: stage the dataset on the node's local SSD ----------------------------------------
+#
+# STAGE_PANDASET=1 copies PandaSet's lidar/annotations/meta into this job's scratch and binds it
+# over the NFS copy. Off by default, so every existing invocation is unchanged.
+#
+# WHY. Measured 2026-09-23: a COLD read of a PandaSet lidar file over NFS costs 47 ms against 2 ms
+# warm - 28x - and MAX_SWEEPS 5 reads FIVE files per sample. Training walks 4,880 distinct frames
+# an epoch, so it is cold essentially throughout, and job 25814 measured the accumulating row at
+# 86.8% data-wait with 8 workers and still 62.6% with 16. Workers cannot fix a per-read latency;
+# they only buy more readers waiting in parallel. Moving the reads off NFS attacks the 28x itself.
+#
+# SIZE. 18 GiB for the 61 train sequences, 32 GiB for all 103, against 3.4 TB free on node13's
+# /local_cache (probe job 25818, a 3.6 TB ext4 SSD at 1% used). `camera/` (10 GiB) and
+# `gt_database/` are excluded - this pipeline reads neither.
+#
+# REMOVAL needs no handling. Slurm creates /local_cache/$SLURM_JOB_ID per job and deletes it when
+# the job ends; the probe saw directories for RUNNING jobs only, none of this session's finished
+# ones. Nothing is written back, so an interrupted job loses nothing but the copy.
+#
+# The bind targets the SYMLINK TARGET, /home/koyama/data/pandaset, not the repo's data/pandaset -
+# both the relative config path and PandaSet's baked-in absolute /root/ST3D/... paths resolve
+# through that symlink, so one bind covers both.
+DATA_BIND=()
+if [ "${STAGE_PANDASET:-0}" = "1" ]; then
+    SRC_DATA=/home/koyama/data/pandaset
+    STAGE=/local_cache/${SLURM_JOB_ID}/pandaset
+    NEED_KB=$(du -sk --exclude=camera --exclude=gt_database "$SRC_DATA" | awk '{print $1}')
+    FREE_KB=$(df -Pk /local_cache | awk 'NR==2 {print $4}')
+    # 10 GiB of headroom over the copy, so staging never fills the disk under another job.
+    if [ "$FREE_KB" -gt $((NEED_KB + 10485760)) ]; then
+        mkdir -p "$STAGE"
+        echo "=== staging $((NEED_KB/1048576)) GiB -> $STAGE (free $((FREE_KB/1048576)) GiB) ==="
+        T0=$SECONDS
+        rsync -a --exclude='camera/' --exclude='gt_database/' "$SRC_DATA/" "$STAGE/"
+        echo "=== staged in $((SECONDS-T0)) s ==="
+        DATA_BIND=(--bind "$STAGE":"$SRC_DATA")
+    else
+        # Fall back rather than fail: a slow run beats no run, and the reason is printed.
+        echo "=== NOT staging: need $((NEED_KB/1048576)) GiB, only $((FREE_KB/1048576)) GiB free - using NFS ===" >&2
+    fi
+fi
+
 # Random port so two of these can run concurrently without a rendezvous collision.
 PORT=$(( ((RANDOM<<15)|RANDOM) % 49152 + 10000 ))
 
@@ -141,6 +183,7 @@ fi
 
 singularity exec --nv \
     --bind /home/koyama/data/:/storage \
+    ${DATA_BIND[@]+"${DATA_BIND[@]}"} \
     --bind "$SNAP":/home/koyama/code/ST3D \
     --bind "$SNAP":/root/ST3D \
     --pwd /home/koyama/code/ST3D/tools \

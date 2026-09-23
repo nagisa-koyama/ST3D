@@ -344,6 +344,29 @@ def test_launch_script_pins_the_global_batch_at_any_gpu_count():
     # count back to 3 per rank, so the flag and the config agree instead of one covering for the
     # other. On one GPU the flag is doing the work alone.
     assert '--batch_size 6' in code, 'the launch must pin the global batch to 6 at any GPU count'
+
+
+def test_dataset_staging_is_opt_in_and_skips_what_the_pipeline_never_reads():
+    """Staging PandaSet on the node SSD must be off by default and must not copy dead weight.
+
+    A cold NFS read of a PandaSet lidar file costs 47 ms against 2 ms warm, and MAX_SWEEPS 5 reads
+    five files per sample - which is why the accumulating row measured 86.8% data-wait at 8
+    workers (job 25814). Staging attacks that, but it must not change any other row's behaviour,
+    and it must not copy `camera/` (10 GiB) or `gt_database/`, neither of which this pipeline
+    opens. It must also degrade to NFS rather than fail when the disk is too full.
+    """
+    script = (Path(__file__).resolve().parent.parent
+              / 'tools' / 'scripts' / 'run_sourceonly_2gpu.sh').read_text()
+    code = '\n'.join(l for l in script.splitlines() if not l.lstrip().startswith('#'))
+    assert 'STAGE_PANDASET:-0' in code, 'staging must default OFF, so existing launches are unchanged'
+    assert "--exclude='camera/'" in code and "--exclude='gt_database/'" in code, (
+        'staging must skip what the loader never reads'
+    )
+    assert 'df -Pk /local_cache' in code, 'staging must check free space before copying'
+    assert 'NOT staging' in code, 'a full disk must fall back to NFS, not abort the job'
+    # The bind has to shadow the SYMLINK TARGET: both the relative config path and PandaSet's
+    # baked-in /root/ST3D/... absolute paths resolve through /home/koyama/data/pandaset.
+    assert '"$STAGE":"$SRC_DATA"' in code, 'the staged copy must shadow the symlink target'
     # --workers must NOT be passed: it is per-rank and comes from each config's NUM_WORKERS,
     # which differs by source (8 for Waymo and PandaSet, 4 otherwise).
     assert '--workers' not in code, '--workers would override the per-source NUM_WORKERS'
