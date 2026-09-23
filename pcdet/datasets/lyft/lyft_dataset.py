@@ -180,7 +180,8 @@ class LyftDataset(DatasetTemplate):
             'Pedestrian': 'Pedestrian', # TODO: remove this once proper head-per-dataset eval is set up.
             'truck': 'Truck',
             'bicycle': 'Cyclist',
-            'motorcycle': 'Cyclist'
+            'motorcycle': 'Cyclist',
+            'Cyclist': 'Cyclist', # passthrough if already remapped upstream
         }
 
         kitti_utils.transform_annotations_to_kitti_format(eval_det_annos, map_name_to_kitti=map_name_to_kitti)

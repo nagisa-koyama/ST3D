@@ -301,28 +301,49 @@ def test_num_epochs_to_eval_is_off_by_one(num_epochs_to_eval, expected_checkpoin
     assert len(evaluated) == expected_checkpoints
 
 
-def test_two_gpu_launch_script_passes_an_explicit_global_batch():
-    """The 2-GPU launch must pass `--batch_size 6`, or it silently halves the optimizer steps.
+def test_launch_script_pins_the_global_batch_at_any_gpu_count():
+    """The launch must pass `--batch_size 6` explicitly, whatever GPU count Slurm allocates.
 
-    `--batch_size` is the TOTAL across ranks and train.py divides it by the GPU count, so 6 gives
-    3 per rank and a global batch of 6 - the single-GPU recipe. Omitting it instead makes
-    args.batch_size = BATCH_SIZE_PER_GPU = 6 PER rank: global batch 12, 46,883 steps, and LR 0.003
-    out of calibration. Nothing errors. This test is the guard.
+    `--batch_size` is the TOTAL across ranks and train.py divides it by the GPU count, so 6 is a
+    global batch of 6 either way: 3 per rank on two GPUs, 6 on one. That is what makes a 1-GPU and
+    a 2-GPU run the SAME experiment - same 93,766 optimizer steps, same LR 0.003 - differing only
+    in wall-clock.
+
+    Omitting the flag breaks that, and breaks it DIFFERENTLY at each GPU count, which is why the
+    invariant is tested rather than the number of ranks:
+
+      - on 2 GPUs, args.batch_size = BATCH_SIZE_PER_GPU = 3 PER rank -> global 6 by luck;
+      - on 1 GPU it is 3 -> global 3, HALF the intended batch and DOUBLE the steps.
+
+    Nothing errors in either case. `train.py` logs `global batch size:` at startup and it must read
+    6; note that line goes to the logger, so it lands in the run's `log_train_*.txt`, not in the
+    job's stdout.
+
+    Updated 2026-09-23: this test previously asserted the literal `--nproc_per_node=2`. Commit
+    e1c5bfa made the launcher read the allocated GPU count instead (a 1-GPU slot opens far sooner
+    on this cluster), and the assertion was not updated, so the suite had a stale failure. The
+    property worth pinning was never the rank count - it is that the global batch does not depend
+    on it.
     """
     script = (Path(__file__).resolve().parent.parent
               / 'tools' / 'scripts' / 'run_sourceonly_2gpu.sh').read_text()
     # Comments explain these flags at length, so test what the shell actually runs.
     code = '\n'.join(l for l in script.splitlines() if not l.lstrip().startswith('#'))
-    assert '--nproc_per_node=2' in code, 'the configs\' BATCH_SIZE_PER_GPU 3 assumes exactly 2 GPUs'
+    assert '--nproc_per_node="$NGPU"' in code, (
+        'nproc must come from the allocation, not a literal - a hardcoded 2 hangs a 1-GPU slot '
+        'by starting a 2-rank rendezvous against one device'
+    )
+    assert 'SLURM_GPUS_ON_NODE' in code, 'NGPU must be read from what Slurm actually gave the job'
     # The job must run against a frozen copy of the repo, not the live checkout. Under DDP,
     # spawned DataLoader workers re-import every module from disk, so a commit landing mid-run
     # reaches them - which is how job 25743 lost its evaluation after 8 h of clean training.
     assert 'rsync' in code and '/local_cache/' in code, 'long DDP runs must snapshot the code'
     assert '--bind "$SNAP":/home/koyama/code/ST3D' in code, 'the snapshot must shadow the repo path'
     assert '--bind "$SNAP":/root/ST3D' in code, 'PandaSet infos need /root/ST3D on the snapshot too'
-    # Redundant with BATCH_SIZE_PER_GPU 3 by design: passing 6 is divided by the GPU count back to
-    # 3 per rank, so the flag and the config agree instead of one covering for the other.
-    assert '--batch_size 6' in code, 'the 2-GPU launch must pin the global batch to 6'
+    # Redundant with BATCH_SIZE_PER_GPU 3 on two GPUs by design: passing 6 is divided by the GPU
+    # count back to 3 per rank, so the flag and the config agree instead of one covering for the
+    # other. On one GPU the flag is doing the work alone.
+    assert '--batch_size 6' in code, 'the launch must pin the global batch to 6 at any GPU count'
     # --workers must NOT be passed: it is per-rank and comes from each config's NUM_WORKERS,
     # which differs by source (8 for Waymo and PandaSet, 4 otherwise).
     assert '--workers' not in code, '--workers would override the per-source NUM_WORKERS'

@@ -464,6 +464,7 @@ class PandasetDataset(DatasetTemplate):
             'Semi-truck': 'Truck',
             'Motorized Scooter': 'Cyclist',
             'Bicycle': 'Cyclist',
+            'Cyclist': 'Cyclist', # passthrough if already remapped upstream
         }
         # Restrict evaluation to what the sensor can actually see.
         #
