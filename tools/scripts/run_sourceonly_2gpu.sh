@@ -3,12 +3,32 @@
 #SBATCH --partition=a6000_ada,a6000,rtx8000
 #SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=20
-#SBATCH --mem=96G               # enough for the five N=1 source-only rows. An accumulating row
-                                # needs more (the 200-sweep nuScenes infos are 2.75 GB per
-                                # process, and 2 ranks means twice as many of them), so override
-                                # it on the command line: `sbatch --mem=250G ...`. Keep the value
-                                # under the SMALLEST node of whatever --partition list is in
-                                # force - 239G rtx8000, 299G a6000, 478G a6000_ada.
+#SBATCH --mem=96G               # enough for the five N=1 source-only rows (~10 GB resident each).
+                                # An accumulating row needs more, so override it on the command
+                                # line: `sbatch --mem=150G ...` for a 2-GPU accum row. 96G still
+                                # covers the same row on ONE GPU. Keep the value under the
+                                # SMALLEST node of whatever --partition list is in force - 239G
+                                # rtx8000, 299G a6000, 478G a6000_ada; 150G is chosen to stay
+                                # rtx8000-eligible, and 220-250G was not - it silently gave up a
+                                # whole partition for headroom nothing used.
+                                #
+                                # MEASURED, 2026-09-23, not estimated - `sacct`/`sstat` cannot
+                                # tell you, because this cluster runs JobAcctGatherType=(null)
+                                # and never records MaxRSS for any job. Building the real dataset
+                                # objects from centerpoint-accum-global-nuscenes2kitti.yaml:
+                                # NUSCENES_N008 +7.28 GB, NUSCENES_N015 +3.03 GB, main process
+                                # 10.90 GB. Two source loaders at NUM_WORKERS 4 means 8 workers,
+                                # and DDP forces SPAWN, so every worker carries a full pickled
+                                # copy with no copy-on-write sharing: ~52 GB on 1 GPU, ~104 GB on
+                                # 2, plus CUDA contexts. 150G is ~36% headroom over that, which
+                                # /dev/shm IPC wants (see singularity_usage_and_tips.md Gotcha #2
+                                # - under-requesting surfaces as an untraceable segfault at an
+                                # epoch boundary, never as an OOM message).
+                                #
+                                # The earlier note here said the 200-sweep infos are "2.75 GB per
+                                # process". That was the ON-DISK pickle size and understates the
+                                # real cost by 4.3x: nuscenes_infos_200sweeps_train.pkl is 2.56
+                                # GB on disk and 11.0 GB resident once loaded (12.0 GB peak).
 #SBATCH --time=48:00:00
 #SBATCH --output=logs/output_%j_%x.txt
 #SBATCH --error=logs/error_%j_%x.txt
