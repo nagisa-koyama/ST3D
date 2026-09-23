@@ -13,7 +13,9 @@
 #SBATCH --output=logs/output_%j_%x.txt
 #SBATCH --error=logs/error_%j_%x.txt
 #
-# Launch one da-ieee-access source-only baseline on 2 GPUs at a GLOBAL batch of 6.
+# Launch one da-ieee-access row at a GLOBAL batch of 6, on however many GPUs Slurm allocates.
+# 2 by default; `sbatch --gres=gpu:1 ...` runs the same recipe on one, which is the same
+# experiment at roughly twice the wall-clock (see the NGPU branch near the bottom).
 #
 #   sbatch scripts/run_sourceonly_2gpu.sh <source> [extra_tag]
 #   <source> = kitti | lyft | nuscenes | pandaset | waymo
@@ -96,15 +98,34 @@ PORT=$(( ((RANDOM<<15)|RANDOM) % 49152 + 10000 ))
 # Both binds point at the SNAPSHOT: the first shadows the live repo at its own path (so relative
 # config paths and `import pcdet` resolve to frozen code), the second satisfies PandaSet's infos,
 # which bake absolute /root/ST3D/... paths. --pwd is explicit so cwd cannot resolve elsewhere.
+# How many GPUs Slurm actually gave us, so `sbatch --gres=gpu:1 ...` does the right thing instead
+# of starting a 2-rank rendezvous against one device and hanging. The queue is often full enough
+# that a 1-GPU slot opens long before a 2-GPU one, and the two are INTERCHANGEABLE for results:
+# --batch_size is the TOTAL across ranks, so 6 is a global batch of 6 either way - 6 per rank on
+# one GPU, 3 per rank on two - with the same optimizer step count and the same LR. Only wall-clock
+# differs, at close to 2x (measured scaling is 2.03-2.06x, experiments_md/20260922_06).
+NGPU=${SLURM_GPUS_ON_NODE:-$(nvidia-smi -L 2>/dev/null | grep -c '^GPU' || echo 1)}
+echo "=== allocated GPUs: $NGPU ==="
+
+if [ "$NGPU" -le 1 ]; then
+    # Single GPU: no launcher, no DDP. Also immune to the mid-run code-edit failure that the
+    # snapshot above guards against, since a forked worker inherits the parent's already-imported
+    # modules rather than re-importing from disk - the snapshot is kept anyway, for one behaviour
+    # across both paths.
+    LAUNCH=(python train.py)
+else
+    LAUNCH=(python -m torch.distributed.launch --use-env --nproc_per_node="$NGPU"
+            --rdzv_endpoint=localhost:"$PORT"
+            train.py --launcher pytorch --tcp_port "$PORT")
+fi
+
 singularity exec --nv \
     --bind /home/koyama/data/:/storage \
     --bind "$SNAP":/home/koyama/code/ST3D \
     --bind "$SNAP":/root/ST3D \
     --pwd /home/koyama/code/ST3D/tools \
     "$SIF" \
-    python -m torch.distributed.launch --use-env --nproc_per_node=2 \
-        --rdzv_endpoint=localhost:"$PORT" \
-    train.py --launcher pytorch --tcp_port "$PORT" \
+    "${LAUNCH[@]}" \
         --cfg_file "$CFG" \
         --batch_size 6 \
         --fix_random_seed \
