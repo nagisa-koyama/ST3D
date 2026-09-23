@@ -243,10 +243,25 @@ OPTIMIZATION:
     # and costs ~14 min. Set 0 for exactly one.
     NUM_EPOCHS_TO_EVAL: 1
 
-    # Data-wait 0.16% at bs=6 - loader already ahead of the GPU. More workers measure slightly
-    # slower: 1.87 it/s at 4, 1.83 at 8 (-1.7%), 1.85 at 12 (-1.0%).
-    # experiments_md/20260922_06 section 1b.
-    NUM_WORKERS: 8
+    # 16, NOT the family's 8. The comment here previously read "data-wait 0.16% at bs=6 - loader
+    # already ahead of the GPU", copied from the source-only template. That figure is KITTI's and
+    # it is wrong by two orders of magnitude for THIS row, because accumulation moves the whole
+    # cost into the loader: one sample reads MAX_SWEEPS files instead of one, and cold NFS reads
+    # of PandaSet lidar cost 47 ms per file against 2 ms warm (28x).
+    #
+    # Measured on a GPU node, job 25814, with the density correction installed (--link_target,
+    # which matters: uncorrected the network sees 270,921 points instead of 91,636, inflating GPU
+    # time and hiding the wait):
+    #
+    #   workers  it/s    data-wait   projected hours for the 93,766-iteration budget
+    #        8   0.257     86.8%     101.4
+    #       16   0.398     62.6%      65.5
+    #
+    # So 8 workers leaves the GPU idle seven eighths of the time. 16 buys +55% and is STILL
+    # loader-bound, so this is a mitigation rather than a fix - the fix is to stop reading the
+    # source over NFS. Raising this further needs --cpus-per-task raised with it; at 16 the job
+    # wants 20 CPUs.
+    NUM_WORKERS: 16
     # NUM_EPOCHS is the ONE optimization key that is NOT shared across this family, and that is
     # deliberate. The five sources differ by 21x in size (KITTI 3,712 frames to Waymo 79,041), so a
     # uniform epoch count would hand Waymo 21x KITTI's optimization budget and the column would be
