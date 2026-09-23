@@ -68,6 +68,12 @@ def parse_args():
     ap.add_argument('--measure', type=int, default=60, help='iterations actually timed')
     ap.add_argument('--budget', type=int, default=562600,
                     help='sample presentations, for the projected-hours column')
+    ap.add_argument('--hist_frames', type=int, default=None,
+                    help='override HIST_DIST_FRAMES for --link_target. The calibration pass walks '
+                         'DISTINCT frames through the full __getitem__, so at 1000 frames it cost '
+                         '74 min on the PandaSet accum row (4.46 s/frame, cold NFS) and timed the '
+                         'job out before it measured anything. The keep-rates only need to be '
+                         'approximately right for a THROUGHPUT measurement, so 150-200 is enough.')
     ap.add_argument('--link_target', action='store_true',
                     help='build DATA_CONFIG_TAR too and install the density correction, as '
                          'train.py does. Without it the correction is inert (hist_dist_tgt is '
@@ -102,7 +108,7 @@ def main():
         # dataset and never see a later mutation (20260921_02).
         link_point_calibration(
             dataset, target,
-            num_frames=cfg.DATA_CONFIG.get('HIST_DIST_FRAMES', 1000),
+            num_frames=args.hist_frames or cfg.DATA_CONFIG.get('HIST_DIST_FRAMES', 1000),
             num_bins=cfg.DATA_CONFIG.get('HIST_DIST_BINS', 50),
             max_dist=cfg.DATA_CONFIG.get('HIST_DIST_MAX_DIST', 75.0),
             logger=logger)
