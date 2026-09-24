@@ -435,3 +435,38 @@ CKPT_UNSHUF=/storage/wandb/run-20260921_031521-o213w6bw/files/ckpt/checkpoint_ep
 # Shuffling is worth +16.70 BEV moderate - nearly a doubling. The unshuffled arm landing near the
 # published 14.1 is what validates the control. Job 25536 was a failed first attempt at the
 # unshuffled eval (allocated node21/a100, no GPU); 25538 is the real one.
+
+
+# ---------- GBlobs BASELINE, Lyft -> nuScenes (2026-09-22) ----------
+# GBlobs (Malic et al., CVPR 2025) as a domain-GENERALIZATION baseline for the IEEE Access paper.
+# Implemented as a single new VFE (pcdet/models/backbones_3d/vfe/gblobs_vfe.py): each voxel is
+# encoded as [mean - voxel centre, flatten(cov)] = 12 features instead of MeanVFE's absolute xyz
+# centroid (3). No learnable parameters are added. The config is byte-identical to
+# centerpoint-sourceonly-lyft.yaml apart from the MODEL.VFE block, so the pair is a one-variable
+# A/B against an existing number.
+#
+# CPU pre-flight already passed: base-config chain resolves, source train set 18,900 frames, eval
+# set 6,019 nuScenes frames (ontology kitti), VFE -> 12, VoxelResBackBone8x conv_input == 12, and
+# a real Lyft batch gives finite features with the position block bounded by half a voxel
+# (|max| 0.0750 m against a 0.075 m half-voxel in z) where MeanVFE gives 75.19 m. The one thing
+# it could not check is the full network: CenterHead hardcodes .cuda(), so the head, the loss and
+# the eval path are what this smoke test is for.
+#
+# WATCH: the covariance block is ~262x smaller in magnitude than the position block and
+# VoxelResBackBone8x's conv_input has no input normalisation. If the loss does not come down,
+# set MODEL.VFE.COVARIANCE_SCALE: 1.0e4 before concluding anything about the method.
+
+# SMOKE TEST - 2 epochs, checks training + checkpointing + the nuScenes eval path end to end.
+# PASSED - job 25710 (wandb k6h5a4nw), 1:07:35 on node12/a6000, exit 0. Training, checkpointing
+# and the nuScenes eval path all work. Loss fell 10-13 -> ~3.5 over epoch 1, so the 262x
+# position/covariance magnitude gap needs no COVARIANCE_SCALE. Car BEV AP_R40@0.7 after 2 of 30
+# epochs: 17.21 (ep1) -> 23.44 (ep2); 3D 4.94 -> 11.26. Throughput 1.94 it/s, 28.8 min/epoch.
+#singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-ieee-access/centerpoint-gblobs-sourceonly-lyft.yaml --epochs 2 --fix_random_seed --run_name "gblobs_smoke_lyft2nuscenes" --extra_tag 20260922_gblobs
+
+# FULL RUN - 30 epochs, the actual baseline row. Uncomment after the smoke test passes.
+# ~14.5 h at 28.8 min/epoch, so submit with --time=48:00:00.
+singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-ieee-access/centerpoint-gblobs-sourceonly-lyft.yaml --fix_random_seed --run_name "gblobs_lyft2nuscenes" --extra_tag 20260922_gblobs
+
+# BASELINE ARM - the same config with MeanVFE, i.e. the existing source-only row. Needed because
+# no da-ieee-access source-only run has been done yet, so there is nothing to compare against.
+#singularity exec --nv --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif python3 train.py --cfg_file cfgs/da-ieee-access/centerpoint-sourceonly-lyft.yaml --fix_random_seed --run_name "sourceonly_lyft2nuscenes" --extra_tag 20260922_gblobs

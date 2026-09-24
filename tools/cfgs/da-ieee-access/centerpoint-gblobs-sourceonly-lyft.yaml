@@ -1,0 +1,277 @@
+# GBlobs: Lyft Level 5 -> nuScenes.
+#
+# BASELINE ROW, not our method. GBlobs (Malic et al., CVPR 2025) is a domain GENERALIZATION
+# method: it uses no target data of any kind, so its natural place in this paper is beside the
+# source-only floor, not beside the self-training rows. This config is
+# `centerpoint-sourceonly-lyft.yaml` with ONE key changed - MODEL.VFE - and is diffed against it in
+# CI-free fashion by simply being a copy; keep them in sync by hand if the family changes.
+#
+# WHAT CHANGES: MeanVFE emits each voxel's absolute xyz centroid (3 numbers). GBlobsVFE emits
+# [mean - voxel centre, flatten(cov)] = 12 numbers, so BACKBONE_3D is built with input_channels 12
+# instead of 3. No learnable parameters are added anywhere. The covariance is translation
+# invariant, which is the point: a detector fed absolute coordinates can key on WHERE an object is
+# rather than what it looks like, and that does not transfer across datasets.
+#
+# WHAT DOES NOT CHANGE: absolute position still reaches the network through the sparse tensor's
+# voxel indices and the position-indexed CenterHead. GBlobs removes it from the input feature
+# VALUE only. Do not describe this as a position-invariant detector.
+#
+# NOT A REPRODUCTION. The published +21/+13/+12 mAP figures are Voxel R-CNN with a 3-class head on
+# Waymo->KITTI / KITTI->Waymo / nuScenes->KITTI against DG baselines. This runs CenterPoint on our
+# five-source column against our own source-only floor, so the number is "GBlobs, reimplemented in
+# our pipeline under our protocol", and must never be tabled as a reproduction of theirs.
+#
+# ALSO NOT THEIR PROTOCOL: GBlobs is evaluated with neither ROS nor SN upstream. This config keeps
+# the family's ROS intervals so the row is comparable with its own source-only sibling, which
+# makes it OUR variant. Say so in the caption.
+#
+# DELIBERATELY OMITTED: upstream pairs GBlobs with LVoxelBackBone8x, whose first conv is 32
+# channels instead of 16. That is a wider stem, not part of the method, and shipping it here would
+# confound "GBlobs helped" with "a wider stem helped". If this row underperforms, add it as a
+# separately labelled arm rather than folding it in.
+#
+# IF TRAINING IS UNSTABLE: the 12 inputs are heterogeneous - position in metres (bounded by half a
+# voxel, so <= 0.05 m) and covariance in metres squared (~1e-4) - and VoxelResBackBone8x's
+# conv_input has no input normalisation. MODEL.VFE.COVARIANCE_SCALE (default 1.0, a bit-exact
+# no-op) rescales the covariance block only. Try 1e4 before concluding the method does not work.
+#
+# ABLATION, for free: RELATIVE_DISTANCE and COVARIANCE_ONLY give a 4-cell grid off one key each.
+# RELATIVE_DISTANCE: False + COVARIANCE_ONLY: False is exactly MeanVFE plus a covariance block.
+#
+# Plan and source-level reading of the upstream repo: experiments_md/20260922_04.
+#
+# Lyft is two capture platforms at once here - 82% 40-beam, 18% 64-beam, differing in beams,
+# vertical FOV, points per frame AND in what was annotated (pedestrians beyond POINT_CLOUD_RANGE:
+# 3.7% on 40-beam against 17.0% on 64-beam). This config trains on the blend. See the SHIFT_COOR
+# note in da_lyft_dataset.yaml.
+#
+# FAMILY: IEEE Access source-only baselines. Five configs, one per labelled source dataset, all
+# evaluated zero-shot on the SAME unlabelled target (nuScenes val), so the five AP numbers form a
+# single comparable column: "how far does a detector trained on X get on nuScenes with no
+# adaptation of any kind". This is the floor every adaptation result in the paper is measured
+# against. The nuscenes-source member of the family is the in-domain ORACLE ceiling for that
+# column, not a domain-adaptation row.
+#
+# Runs with tools/train.py, NOT adaptive_train.py: there is no second dataloader. With no
+# SELF_TRAIN block present, train.py never builds a target TRAINING loader, so nuScenes is used for
+# EVALUATION ONLY - DATA_CONFIG_TAR is picked up by get_eval_configs() and nothing else.
+#
+# What is held identical across all five (this is the point of the family):
+#   - model, optimizer schedule, voxelization, point cloud range
+#   - CLASS_NAMES + ONTOLOGY: 'kitti', so one head vocabulary serves five label vocabularies
+#   - the per-class ROS intervals, which are the SAME for every source - see
+#     preprocess_sourceonly.yaml for why that is what keeps them UDA-legal
+#   - SCORE_THRESH 0.0001 at both post-processing blocks
+# What varies: the source dataset and its SHIFT_COOR, which is a property of where that platform
+# mounted its sensor and is measured from the source's own data alone.
+
+DATA_CONFIG:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_lyft_dataset.yaml
+
+DATA_CONFIG_TAR:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_nuscenes_dataset.yaml
+
+# Common model output vocabulary for all five configs. ONTOLOGY: 'kitti' is what makes ONE
+# augmentation block and ONE head serve five different label vocabularies: DatasetTemplate builds
+# map_ontology_dataset_to_model from each dataset's own ONTOLOGY field to this one, and
+# prepare_data() applies it before augmentation, so Waymo 'Vehicle', Lyft 'car', nuScenes 'car' and
+# PandaSet 'Car' all arrive as 'Car'. It is also the mechanism that scores a source-only model
+# against nuScenes GT at evaluation (get_ontology_mapping('kitti','nuscenes')).
+#
+# CLASS_MAPPING is NOT used: it is implemented only in nuscenes_dataset.py and kitti_dataset.py, so
+# it cannot serve a family whose sources include Lyft, Waymo and PandaSet.
+#
+# Cyclist is present for head capacity and for comparability with the existing sourceonly family,
+# but is bicycle-only by the standard DA convention and absent from 77-86% of frames in every
+# dataset here. Report Car and Pedestrian; do not table Cyclist. See preprocess_sourceonly.yaml.
+CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
+ONTOLOGY: 'kitti'
+
+MODEL:
+    NAME: CenterPoint
+
+    VFE:
+        NAME: GBlobsVFE
+        # [mean - voxel centre, flatten(cov)] = 3 + 9 = 12 features per voxel.
+        RELATIVE_DISTANCE: True
+        COVARIANCE_ONLY: False
+        COVARIANCE_SCALE: 1.0
+
+    BACKBONE_3D:
+        NAME: VoxelResBackBone8x
+
+    MAP_TO_BEV:
+        NAME: HeightCompression
+        NUM_BEV_FEATURES: 256
+
+    BACKBONE_2D:
+        NAME: BaseBEVBackbone
+
+        LAYER_NUMS: [5]
+        LAYER_STRIDES: [1]
+        NUM_FILTERS: [128]
+        UPSAMPLE_STRIDES: [2]
+        NUM_UPSAMPLE_FILTERS: [256]
+
+    DENSE_HEAD:
+        NAME: CenterHead
+        CLASS_AGNOSTIC: False
+
+        CLASS_NAMES_EACH_HEAD: [
+            ['Car', 'Pedestrian', 'Cyclist'],
+        ]
+
+        SHARED_CONV_CHANNEL: 64
+        USE_BIAS_BEFORE_NORM: True
+        NUM_HM_CONV: 2
+        SEPARATE_HEAD_CFG:
+            HEAD_ORDER: ['center', 'center_z', 'dim', 'rot']
+            HEAD_DICT: {
+                'center': {'out_channels': 2, 'num_conv': 2},
+                'center_z': {'out_channels': 1, 'num_conv': 2},
+                'dim': {'out_channels': 3, 'num_conv': 2},
+                'rot': {'out_channels': 2, 'num_conv': 2},
+            }
+
+        TARGET_ASSIGNER_CONFIG:
+            FEATURE_MAP_STRIDE: 4
+            NUM_MAX_OBJS: 500
+            GAUSSIAN_OVERLAP: 0.1
+            MIN_RADIUS: 2
+
+        LOSS_CONFIG:
+            LOSS_WEIGHTS: {
+                'cls_weight': 1.0,
+                'loc_weight': 2.0,
+                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+            }
+
+        # CenterPoint has TWO live POST_PROCESSING blocks - this one and the model-level one below -
+        # each with its own SCORE_THRESH and NMS_CONFIG. Both are set to 0.0001 here; changing only
+        # one is a common way to get an unexplained AP shift.
+        POST_PROCESSING:
+            SCORE_THRESH: 0.0001
+            POST_CENTER_LIMIT_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+            MAX_OBJ_PER_SAMPLE: 500
+            NMS_CONFIG:
+                NMS_TYPE: nms_gpu
+                NMS_THRESH: 0.5
+                NMS_PRE_MAXSIZE: 4096
+                NMS_POST_MAXSIZE: 500
+
+    POST_PROCESSING:
+        RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+
+        # 0.0001, uniform across this whole family, and NOT the 0.01 the existing sourceonly
+        # configs use. eval_class() fills only len(thresholds) of its 41 R40 precision slots and
+        # averages the rest as ZERO, so discarding low-confidence detections before scoring caps
+        # achievable recall and biases AP DOWNWARD - worst exactly in the weak cross-domain regime
+        # a source-only floor lives in. Never raise this to relieve eval-time OOM; if numba's
+        # separate CUDA pool runs out (it is not PyTorch's allocator), add
+        # torch.cuda.empty_cache() before dataset.evaluation() in tools/eval_utils/eval_utils.py.
+        # See experiments_md/20260920_01 and 20260920_02.
+        SCORE_THRESH: 0.0001
+        OUTPUT_RAW_SCORE: False
+
+        # KITTI R40 AP. Note what this means with a NON-KITTI evaluation target: nuscenes_dataset.py
+        # fabricates the 2D bbox as [0, 0, 50, 50] with truncation/occlusion 0, so every GT passes
+        # all three difficulty levels, nothing is ever ignored, and easy == moderate == hard
+        # identically. Three identical AP values in the log is the expected output, not a bug. Those
+        # numbers are "all objects, no difficulty filter" - stricter than KITTI hard, and NOT
+        # comparable with a KITTI-target row's "moderate". The bbox/aos columns are meaningless here
+        # (all boxes identical, so 2D IoU is trivially 1). See experiments_md/20260919_05 sections 6-8.
+        EVAL_METRIC: kitti
+
+        NMS_CONFIG:
+            MULTI_CLASSES_NMS: False
+            NMS_TYPE: nms_gpu
+            NMS_THRESH: 0.5
+            NMS_PRE_MAXSIZE: 4096
+            NMS_POST_MAXSIZE: 500
+
+
+OPTIMIZATION:
+    BATCH_SIZE_PER_GPU: 6
+
+    # Data-wait is 0.09-0.13% at bs=6, i.e. the loader is already ahead of the GPU and there is no
+    # stall for more workers to remove - the same mechanism that makes 8 workers measure SLOWER on
+    # KITTI and nuScenes. Stated honestly: unlike those two, Lyft was never actually measured at 8
+    # workers, so this is the mechanism's prediction rather than a direct observation.
+    # experiments_md/20260922_06 section 1b.
+    #
+    # Unchanged for GBlobs: the VFE swap adds one einsum per voxel on the GPU side and touches
+    # nothing in the loader, so if anything it widens the margin the w4 choice already has.
+    NUM_WORKERS: 4
+    # NUM_EPOCHS is the ONE optimization key that is NOT shared across this family, and that is
+    # deliberate. The five sources differ by 21x in size (KITTI 3,712 frames to Waymo 79,041), so a
+    # uniform epoch count would hand Waymo 21x KITTI's optimization budget and the column would be
+    # measuring training length as much as domain gap.
+    #
+    # Every config instead gets the SAME optimization budget, expressed as sample presentations
+    # (epochs x frames). nuScenes at 20 epochs is the anchor, fixing the budget at
+    # 20 x 28,130 = 562,600. Each other source's epoch count is that budget over its frame count:
+    #
+    #     source      frames   exact   used   presentations    dev     iters @ bs 6
+    #     KITTI        3,712  151.56    152         564,224  +0.29%          94,037
+    #     PandaSet     4,880  115.29    115         561,200  -0.25%          93,533
+    #     Lyft        18,900   29.77     30         567,000  +0.78%          94,500
+    #     nuScenes    28,130   20.00     20         562,600   0.00%          93,766
+    #     Waymo       79,041    7.12      7         553,287  -1.66%          92,214
+    #
+    # Rounding to whole epochs costs at most 1.7%. Because BATCH_SIZE_PER_GPU is shared, equal
+    # presentations also means equal ITERATIONS - every config takes about 94k optimizer steps.
+    #
+    # WHY ITERATIONS, not epochs: these checkpoints are the starting point for the self-training and
+    # DANN runs (passed as --pretrained_model / --pretrained_model_teacher). If one source's floor
+    # had seen 62k steps and another's 158k, the adaptation stage would start from unequally trained
+    # models and the comparison between settings would be confounded before adaptation begins.
+    #
+    # Worth knowing when configuring that next stage, because it does NOT follow automatically:
+    # the self-training schedule is EPOCH-keyed, not iteration-keyed. SELF_TRAIN.UPDATE_PSEUDO_LABEL
+    # is a list of epoch indices, UPDATE_PSEUDO_LABEL_INTERVAL is a modulo on cur_epoch, and
+    # PROG_AUG.UPDATE_AUG is a list of epochs (train_st_utils.py ~line 391-405). An epoch there is
+    # also one pass over the TARGET loader, not the source - `total_it_each_epoch =
+    # len(target_loader)` - which is why the repo's own ST configs set epochs by target, 100 for a
+    # KITTI target and 30 for a nuScenes target off the same Lyft source. So equalising the
+    # baselines' budget aligns the starting checkpoints; aligning the adaptation runs themselves is
+    # a separate matter of their epoch lists.
+    #
+    # REJECTED alternative: the repo's own per-source DA convention (KITTI 100, PandaSet 100,
+    # Lyft 50, nuScenes 30, Waymo 10), which every single-source naive config in da-MIRU2025 /
+    # da-post-MIRU2025 uses. It has the advantage of being directly referable against past MIRU
+    # results, but it holds presentations only roughly constant and effectively CAPS the small
+    # sources - KITTI 0.37 M and PandaSet 0.49 M against 0.79-0.94 M for the large three - so
+    # iteration counts there range 62k to 158k. CONSEQUENCE OF THE CHOICE MADE HERE: none of these
+    # five epoch counts matches any previous run, so these baselines are NOT directly comparable
+    # with published MIRU numbers and must not be tabled beside them without saying so.
+    #
+    # Also note 20 here is NOT upstream's 20. OpenPCDet's nuscenes_models configs set
+    # BALANCED_RESAMPLING (CBGS), which inflates the epoch from 28,130 to 123,580 samples - 4.39x -
+    # so upstream's 20 epochs is 2.47 M presentations. This family runs CBGS off, as the whole da_*
+    # family does. The anchor is our own budget; 20 is just a convenient round number for it.
+    #
+    # Matching the budget exactly also removes the small-source cap the repo convention gave for
+    # free: KITTI now makes 152 passes over 3,712 frames. Watch its train/val gap - if it overfits,
+    # reintroduce a cap rather than abandon the budget.
+    #
+    # Lyft (18,900 frames): Lyft sits mid-size.
+    NUM_EPOCHS: 30
+
+    OPTIMIZER: adam_onecycle
+    LR: 0.003
+    WEIGHT_DECAY: 0.01
+    MOMENTUM: 0.9
+
+    MOMS: [0.95, 0.85]
+    PCT_START: 0.4
+    DIV_FACTOR: 10
+    # Dead keys under adam_onecycle - build_scheduler()'s onecycle branch computes total_steps from
+    # the runtime epoch count and never reads them. Kept only to match the sibling configs.
+    DECAY_STEP_LIST: [23, 29]
+    LR_DECAY: 0.1
+    LR_CLIP: 0.0000001
+
+    LR_WARMUP: False
+    WARMUP_EPOCH: 1
+
+    GRAD_NORM_CLIP: 10
