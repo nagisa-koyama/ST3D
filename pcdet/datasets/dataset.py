@@ -124,10 +124,27 @@ class DatasetTemplate(torch_data.Dataset):
         self.hist_dist["pandaset"] = np.load(hist_dist_pandaset_path) if hist_dist_pandaset_path is not None else None
         point_calib_target = self.dataset_cfg.get('POINT_CALIB_TAR', "kitti")
         assert point_calib_target in self.hist_dist, "Invalid point calibration target: {}".format(point_calib_target)
-        self.data_augmentor = DataAugmentor(
-            self.root_path, self.dataset_cfg.DATA_AUGMENTOR, self.dataset_class_names, logger=self.logger,
-            map_ontology_dataset_to_model=self.map_ontology_dataset_to_model, dataset_ontology=self.dataset_ontology
-        ) if self.training else None
+        # UNSUPERVISED marks a domain-adaptation TARGET: a dataset the model trains against
+        # without using its labels. UADA3D-native reads this key (its dataset.py:36) and it does
+        # three things there; ST3D's port never implemented it, so the key sat in nine migrated
+        # `*-rospm-C` configs doing NOTHING while `adaptive_train.py` built the target loader with
+        # training=True. The consequence was not cosmetic: the target got a DataAugmentor and ran
+        # the full GT-requiring path below, so `random_object_scaling` was resizing the TARGET's
+        # objects using the TARGET's ground-truth boxes. That is a use of target labels - not
+        # UDA-legal - and it is not what the method does.
+        #
+        # Matching the paper, an unsupervised domain is loaded RAW: no augmentation at all, not
+        # even the label-free world-level ones, and no requirement that it carry boxes.
+        self.unsupervised = self.dataset_cfg.get('UNSUPERVISED', False)
+        if self.unsupervised or not self.training:
+            self.data_augmentor = None
+        else:
+            self.data_augmentor = DataAugmentor(
+                self.root_path, self.dataset_cfg.DATA_AUGMENTOR, self.dataset_class_names,
+                logger=self.logger,
+                map_ontology_dataset_to_model=self.map_ontology_dataset_to_model,
+                dataset_ontology=self.dataset_ontology
+            )
         self.data_processor = DataProcessor(
             self.dataset_cfg.DATA_PROCESSOR, point_cloud_range=self.point_cloud_range,
             training=self.training, num_point_features=self.point_feature_encoder.num_point_features,
@@ -375,7 +392,10 @@ class DatasetTemplate(torch_data.Dataset):
             data_dict['gt_names'] = np.array(updated_gt_names)
             # print("data_dict[gt_names] in prepare_data after multi-head label update", data_dict['gt_names'])
 
-        if self.training:
+        # `and not self.unsupervised`: everything in this block reads or rewrites ground truth -
+        # the zero-point filter, the assert, the class mask and the augmentor - so a DA target
+        # must skip all of it. See the note at self.unsupervised in __init__.
+        if self.training and not self.unsupervised:
             # filter gt_boxes without points
             num_points_in_gt = data_dict.get('num_points_in_gt', None)
             if num_points_in_gt is None:

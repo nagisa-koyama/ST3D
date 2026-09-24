@@ -43,7 +43,9 @@
 #     AP (eval_class fills only len(thresholds) of 41 precision slots and averages the rest as
 #     zero), and comparing rows evaluated at different thresholds is meaningless.
 #   - SHIFT_COOR comes from da_lyft_dataset.yaml (1.87), not the old 1.60, which was 0.27 m low.
-#   - UNSUPERVISED is NOT carried over. It appears in 9 YAMLs and ZERO Python files - a dead key.
+#   - UNSUPERVISED: True IS carried over, and ST3D now implements it. It had zero Python
+#     references here - unimplemented, not merely unused - so in the nine migrated *-rospm-C
+#     configs the target domain was being augmented with its own labels. See dataset.py.
 
 DATA_CONFIG:
     _BASE_CONFIG_: cfgs/da-ieee-access/da_lyft_dataset.yaml
@@ -53,6 +55,13 @@ DATA_CONFIG:
 # detection loss, which is what keeps the row unsupervised. It is also what gets evaluated.
 DATA_CONFIG_TAR:
     _BASE_CONFIG_: cfgs/da-ieee-access/da_nuscenes_dataset.yaml
+
+    # Load the target RAW. This is the key UADA3D-native reads and ST3D had never implemented:
+    # without it the target gets a DataAugmentor and `random_object_scaling` resizes the TARGET's
+    # objects using the TARGET's GT boxes, which is a use of target labels and not what the paper
+    # does. All augmentation is dropped, including the label-free world-level ones, because
+    # UADA3D-native builds no augmentor for an unsupervised domain at all.
+    UNSUPERVISED: True
 
 CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
 ONTOLOGY: 'kitti'
