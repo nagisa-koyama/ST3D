@@ -232,22 +232,36 @@ def main():
     # instead and has no DATA_CONFIG at all, so reaching for it would raise AttributeError before
     # training starts. Each source also gets its own histogram against the shared target, which is
     # the point - two Lyft platforms are different sensors and want different rates.
+    wants_foreground = any(dc.get('HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS', False)
+                          for dc in data_configs.values())
     if any(dc.get('HIST_DIST_ON_THE_FLY', False) for dc in data_configs.values()):
-        assert not any(dc.get('HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS', False)
-                       for dc in data_configs.values()), \
+        # The foreground channel comes from the TARGET's pseudo-labels, so it can only be measured
+        # once a pseudo-label pass has run. That happens in train_st_utils.train_model_st, which
+        # THIS file dispatches to - so the requirement is a SELF_TRAIN config, not a different
+        # entry point. (The message here used to say adaptive_train.py; that file has no
+        # SELF_TRAIN handling at all, and following it cost job 25930.)
+        assert not wants_foreground or cfg.get('SELF_TRAIN', None), \
             ('HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS needs the target foreground channel, which '
-             'comes from pseudo-labels, so it requires a SELF_TRAIN config run through '
-             'adaptive_train.py. This is train.py and there are no pseudo-labels.')
+             'comes from pseudo-labels, so it requires a SELF_TRAIN block. This config has none, '
+             'so there would be no pseudo-labels to measure.')
+        if wants_foreground:
+            # Do NOT install the global correction here. link_foreground_calibration installs the
+            # whole-cloud pair itself, and it measures the SOURCE while doing so - if the source
+            # were already being corrected, that measurement would read points the correction had
+            # thinned and compound the rate on every pass, which the function's own docstring
+            # warns about. Leave the source uncorrected until train_model_st installs both.
+            logger.info('foreground-aware correction requested: deferring calibration to the '
+                        'first pseudo-label pass (train_model_st)')
         # A measurement-only view of the target: only its point clouds are read, and eval mode
         # avoids requiring labels the UDA setup does not have.
-        calib_target = target_set
-        if calib_target is None:
+        calib_target = None if wants_foreground else target_set
+        if calib_target is None and not wants_foreground:
             calib_target, _, _ = build_dataloader(
                 dataset_cfg=cfg.DATA_CONFIG_TAR, class_names=cfg.CLASS_NAMES, batch_size=1,
                 dist=False, workers=0, logger=logger, training=False,
                 model_ontology=cfg.get('ONTOLOGY', None))
         for dc, source in zip(data_configs.values(), source_datasets):
-            if not dc.get('HIST_DIST_ON_THE_FLY', False):
+            if wants_foreground or not dc.get('HIST_DIST_ON_THE_FLY', False):
                 continue
             link_point_calibration(
                 source['dataset_class'], calib_target,

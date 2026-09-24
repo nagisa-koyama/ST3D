@@ -349,14 +349,24 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
     # Re-measured after EVERY pseudo-label pass - the labels define the target foreground channel,
     # so the two have to move together. With a frozen teacher that is one pass (see
     # FROZEN_TEACHER_SINGLE_PASS below); with the student acting as its own teacher it tracks.
-    ps_label_fg_calibration = bool(
-        cfg.DATA_CONFIG.get('HIST_DIST_ON_THE_FLY', False)
-        and cfg.DATA_CONFIG.get('HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS', False))
+    # Read per SOURCE config. A multi-source run declares DATA_CONFIGS and has NO DATA_CONFIG at
+    # all, so `cfg.DATA_CONFIG` raises before training starts - which is why the Lyft foreground
+    # row (two capture platforms, two histograms) had never been runnable, while the single-source
+    # PandaSet one was fine. train.py:235 already reads the plural form; this path did not.
+    _fg_data_configs = list(cfg.DATA_CONFIGS.values()) if cfg.get('DATA_CONFIGS', None) \
+        else [cfg.DATA_CONFIG]
+    ps_label_fg_calibration = any(
+        dc.get('HIST_DIST_ON_THE_FLY', False)
+        and dc.get('HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS', False)
+        for dc in _fg_data_configs)
     # The SOURCE half is measured once and reused. That is not an optimisation: after the first
     # install the source dataset is being corrected, so re-measuring it would read points that the
     # correction has already thinned and compound the rate on every refresh. The target carries no
     # correction, so it is safe - and necessary - to re-measure.
-    ps_label_fg_source_hist = None
+    # ONE source histogram PER SOURCE, keyed by index. A single shared variable would hand
+    # source 2 the histogram measured on source 1 - and for Lyft those are two different sensors,
+    # which is the whole reason the row is split per platform.
+    ps_label_fg_source_hist = {}
 
     # Regenerating pseudo-labels from a frozen teacher is deterministic: eval mode, no
     # augmentation, no weight updates, and memory voting only re-confirms boxes that matched
@@ -492,14 +502,19 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
                 # objects starved; two channels fix that without target annotation. See
                 # pcdet/datasets/point_calibration.py.
                 if ps_label_fg_calibration:
-                    for reader in source_readers:
-                        ps_label_fg_source_hist, _ = link_foreground_calibration(
+                    for src_idx, reader in enumerate(source_readers):
+                        # The knobs come from THIS source's own config, not a global one: each
+                        # source is a different sensor and may want a different bin count or frame
+                        # budget. Falls back to the first config when a run is single-source.
+                        src_cfg = _fg_data_configs[src_idx] if src_idx < len(_fg_data_configs) \
+                            else _fg_data_configs[0]
+                        ps_label_fg_source_hist[src_idx], _ = link_foreground_calibration(
                             reader.dataloader.dataset.dataset, target_loader.dataset.dataset,
-                            num_frames=cfg.DATA_CONFIG.get('HIST_DIST_FRAMES', 1000),
-                            num_bins=cfg.DATA_CONFIG.get('HIST_DIST_BINS', 50),
-                            max_dist=cfg.DATA_CONFIG.get('HIST_DIST_MAX_DIST', 75.0),
-                            logger=logger, source_hist=ps_label_fg_source_hist,
-                            min_points_in_box=cfg.DATA_CONFIG.get(
+                            num_frames=src_cfg.get('HIST_DIST_FRAMES', 1000),
+                            num_bins=src_cfg.get('HIST_DIST_BINS', 50),
+                            max_dist=src_cfg.get('HIST_DIST_MAX_DIST', 75.0),
+                            logger=logger, source_hist=ps_label_fg_source_hist.get(src_idx),
+                            min_points_in_box=src_cfg.get(
                                 'HIST_DIST_MIN_POINTS_IN_BOX', 1))
                         # The source workers forked at construct_iter() holding the dataset as it
                         # was before this, and a forked worker never sees a later mutation. Re-fork

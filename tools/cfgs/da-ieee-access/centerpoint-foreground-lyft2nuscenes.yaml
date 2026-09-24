@@ -27,11 +27,18 @@
 #
 # ENTRY POINT: train.py, with --pretrained_model and --pretrained_model_teacher.
 #
-# NOT adaptive_train.py, which this header said until 2026-09-25 and which cannot run this config
-# for three independent reasons: it has no --pretrained_model_teacher argument at all (argparse
-# would reject the flag), it contains no SELF_TRAIN handling, and it reads cfg.DATA_CONFIG rather
-# than the DATA_CONFIGS below, so it would not see either Lyft platform. train.py is the entry
-# point that handles all three.
+# NOT adaptive_train.py, which this header said until 2026-09-25 and which cannot run ANY
+# self-training config: it has no --pretrained_model_teacher argument, no SELF_TRAIN handling and
+# no DATA_CONFIGS support. train.py dispatches to train_st_utils.train_model_st, which is where
+# the foreground channel is actually measured.
+#
+# Two code fixes were needed before this row could run at all (2026-09-25, after job 25930 died
+# in 25 seconds): train_st_utils gated the foreground calibration on `cfg.DATA_CONFIG` - singular
+# - while this row is multi-source and has none; and train.py asserted the key away entirely,
+# with a message blaming the entry point rather than the missing SELF_TRAIN block. train.py now
+# also DEFERS the global calibration when the foreground one is requested, because
+# link_foreground_calibration measures the source itself and measuring an already-corrected
+# source compounds the rate.
 #
 #   TEACHER = the trained global-correction model. Its pseudo-labels define the target foreground
 #   channel, which is what makes this correction UDA-legal - no target ground truth is read. The
