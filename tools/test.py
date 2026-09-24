@@ -76,11 +76,32 @@ def eval_single_ckpt(model, test_loaders, args, eval_output_dir, logger, epoch_i
 
 def get_no_evaluated_ckpt(ckpt_dir, ckpt_record_file, args):
     ckpt_list_unsorted = glob.glob(os.path.join(ckpt_dir, '*checkpoint_epoch_*.pth'))
-    ckpt_list_sorted = [None] * len(ckpt_list_unsorted)
-    for cur_ckpt in ckpt_list_unsorted:
-        num_list = re.findall('checkpoint_epoch_(.*).pth', cur_ckpt)
-        # Assuming ckpt number is 1-index. Also assuming ckpt number is incremental.
-        ckpt_list_sorted[int(float(num_list[-1])) - 1] = cur_ckpt
+
+    # SORT by epoch, do not INDEX by it. The original built a list sized by the NUMBER of
+    # checkpoint files and then assigned at `epoch - 1`, on the stated assumption that epoch
+    # numbers are 1-indexed and incremental. That holds only while every checkpoint is retained.
+    # `--max_ckpt_save_num` defaults to 100, so any run longer than 100 epochs deletes the early
+    # ones and the last epoch's index runs off the end:
+    #
+    #   job 25817, KITTI source-only, 152 epochs, 100 checkpoints kept
+    #   -> ckpt_list_sorted[151] on a list of length 100
+    #   -> IndexError: list assignment index out of range, after 21 h of clean training
+    #
+    # It fires for any row where NUM_EPOCHS > max_ckpt_save_num, which in the da-ieee-access
+    # family is KITTI (152) and both PandaSet rows (115) - not Lyft (30), nuScenes (20) or
+    # Waymo (7), which is why it stayed hidden until the first long row finished.
+    def _epoch_of(path):
+        num_list = re.findall('checkpoint_epoch_(.*).pth', path)
+        if not num_list or 'optim' in num_list[-1]:
+            return None
+        try:
+            return float(num_list[-1])
+        except ValueError:
+            return None
+
+    ckpt_list_sorted = sorted(
+        (p for p in ckpt_list_unsorted if _epoch_of(p) is not None), key=_epoch_of
+    )
 
     evaluated_ckpt_list = [float(x.strip()) for x in open(ckpt_record_file, 'r').readlines()]
 

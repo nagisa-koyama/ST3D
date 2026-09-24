@@ -200,6 +200,7 @@ else
             train.py --launcher pytorch --tcp_port "$PORT")
 fi
 
+set +e
 singularity exec --nv \
     --bind /home/koyama/data/:/storage \
     ${DATA_BIND[@]+"${DATA_BIND[@]}"} \
@@ -213,3 +214,50 @@ singularity exec --nv \
         --fix_random_seed \
         --run_name "$RUN_NAME" \
         --extra_tag "$TAG"
+TRAIN_RC=$?
+set -e
+[ "$TRAIN_RC" -eq 0 ] && exit 0
+
+# --- auto-recover an evaluation that failed after training COMPLETED ---------------------------
+#
+# Three runs have now been lost this way, every one of them with a finished model on disk and no
+# AP to show for it: 25743 (a commit landed mid-run and DDP's spawned workers re-imported it),
+# 25769 (`KeyError: 'Cyclist'` - the Lyft eval map had no passthrough for a class the config
+# declares), 25817 (`IndexError` in get_no_evaluated_ckpt on any run longer than
+# max_ckpt_save_num). Each cost 8-21 h of clean training and each was recoverable in ~7 minutes,
+# because the failure is always in the POST-training evaluation and every checkpoint is on disk.
+#
+# So: if training reached its end marker, score the final checkpoint here, inside the allocation
+# we already hold. No new queue wait, and the GPU is already ours.
+#
+# Deliberately runs against the LIVE repo, NOT $SNAP. The snapshot exists so a mid-run commit
+# cannot reach a running job; but this path runs precisely when the frozen code failed, and the
+# fix - if there is one - is in the live checkout. Evaluation loads a model from a checkpoint in a
+# fresh process, so none of the pickled-instance hazard that motivated the snapshot applies.
+ERR_LOG="$REPO/tools/logs/error_${SLURM_JOB_ID}_${SLURM_JOB_NAME}.txt"
+if ! grep -q 'End training' "$ERR_LOG" 2>/dev/null; then
+    echo "=== training itself failed (rc=$TRAIN_RC), no end-of-training marker - NOT recovering ===" >&2
+    exit "$TRAIN_RC"
+fi
+
+RUN_DIR=$(grep -ohE '/storage/wandb/run-[0-9]{8}_[0-9]{6}-[0-9a-z]+' \
+          "$ERR_LOG" "$REPO/tools/logs/output_${SLURM_JOB_ID}_${SLURM_JOB_NAME}.txt" 2>/dev/null \
+          | head -1 | sed 's|^/storage|/home/koyama/data|')
+CKPT=$(ls -1 "$RUN_DIR/files/ckpt"/checkpoint_epoch_*.pth 2>/dev/null \
+       | sed 's/.*checkpoint_epoch_\([0-9]*\)\.pth/\1 &/' | sort -n | tail -1 | cut -d' ' -f2-)
+if [ -z "${CKPT:-}" ] || [ ! -f "$CKPT" ]; then
+    echo "=== training finished but no checkpoint found under '$RUN_DIR' - cannot recover ===" >&2
+    exit "$TRAIN_RC"
+fi
+
+echo "=== training finished, EVALUATION failed (rc=$TRAIN_RC) - auto-recovering from $CKPT ==="
+bash "$REPO/tools/analysis/eval_checkpoint.sh" "$CFG" "$CKPT" "autorecover_${SLURM_JOB_ID}"
+RECOVER_RC=$?
+if [ "$RECOVER_RC" -eq 0 ]; then
+    echo "=== AP recovered from the final checkpoint; the training run itself was sound ==="
+else
+    echo "=== auto-recovery ALSO failed (rc=$RECOVER_RC) - this needs a human ===" >&2
+fi
+# Exit non-zero regardless: the job did not do what it was asked to, and a green job would hide
+# that the in-run evaluation is still broken.
+exit "$TRAIN_RC"

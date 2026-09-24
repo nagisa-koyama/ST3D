@@ -387,6 +387,34 @@ def test_scratch_falls_back_when_local_cache_is_absent():
     assert '/tmp/st3d_${SLURM_JOB_ID}' in code, 'there must be a node-local fallback'
     assert "trap 'rm -rf" in code, '/tmp has no auto-cleanup, so the job must remove its own'
     assert 'SNAP=$SCRATCH/ST3D' in code, 'the code snapshot must live under the chosen scratch root'
+
+
+def test_failed_evaluation_is_auto_recovered_but_only_after_training_finished():
+    """A crash in the POST-training evaluation must not throw away the trained model.
+
+    Three runs were lost this way, each with a finished model on disk and no AP: 25743 (a commit
+    landed mid-run), 25769 (`KeyError: 'Cyclist'`), 25817 (`IndexError` on any run longer than
+    max_ckpt_save_num). Each cost 8-21 h and each was recoverable in ~7 minutes inside the
+    allocation the job already held.
+
+    Two conditions make it safe. It must recover ONLY when training reached its end marker - a
+    run that died at epoch 3 has nothing to score, and silently evaluating it would report a
+    number for a model nobody trained. And it must still exit non-zero, so a green job cannot hide
+    that the in-run evaluation is broken.
+    """
+    script = (Path(__file__).resolve().parent.parent
+              / 'tools' / 'scripts' / 'run_sourceonly_2gpu.sh').read_text()
+    code = '\n'.join(l for l in script.splitlines() if not l.lstrip().startswith('#'))
+    assert 'TRAIN_RC=$?' in code, 'the training exit code must be captured, not swallowed by set -e'
+    assert "grep -q 'End training'" in code, (
+        'recover only when training COMPLETED - otherwise there is no model to score'
+    )
+    assert 'eval_checkpoint.sh' in code, 'recovery must reuse the single-GPU eval path'
+    assert 'exit "$TRAIN_RC"' in code, 'the job must still report failure even after recovering'
+    # Recovery runs against the LIVE repo, not the snapshot: it fires precisely when the frozen
+    # code failed, and evaluation loads a checkpoint in a fresh process, so the pickled-instance
+    # hazard the snapshot exists for does not apply.
+    assert '"$REPO/tools/analysis/eval_checkpoint.sh"' in code, 'recovery must use the live repo'
     # --workers must NOT be passed: it is per-rank and comes from each config's NUM_WORKERS,
     # which differs by source (8 for Waymo and PandaSet, 4 otherwise).
     assert '--workers' not in code, '--workers would override the per-source NUM_WORKERS'
