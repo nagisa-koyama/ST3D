@@ -25,7 +25,31 @@
 # the opposite of the nuScenes-source case, and where the two corrections should separate most
 # visibly in the other direction.
 #
-# ENTRY POINT: adaptive_train.py, with --pretrained_model and --pretrained_model_teacher
+# ENTRY POINT: train.py, with --pretrained_model and --pretrained_model_teacher.
+#
+# NOT adaptive_train.py, which this header said until 2026-09-25 and which cannot run this config
+# for three independent reasons: it has no --pretrained_model_teacher argument at all (argparse
+# would reject the flag), it contains no SELF_TRAIN handling, and it reads cfg.DATA_CONFIG rather
+# than the DATA_CONFIGS below, so it would not see either Lyft platform. train.py is the entry
+# point that handles all three.
+#
+#   TEACHER = the trained global-correction model. Its pseudo-labels define the target foreground
+#   channel, which is what makes this correction UDA-legal - no target ground truth is read. The
+#   same checkpoint initialises the student, so this is a continuation rather than a cold start.
+#
+#   sbatch --partition=a6000_ada,a6000,rtx8000 --gres=gpu:1 --cpus-per-task=16 --mem=96G \
+#          --time=2-00:00:00 --job-name=fg_lyft \
+#          --output=logs/output_%j_%x.txt --error=logs/error_%j_%x.txt \
+#          --wrap="cd /home/koyama/code/ST3D/tools && singularity exec --nv \
+#            --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif \
+#            python train.py --cfg_file cfgs/da-ieee-access/centerpoint-foreground-lyft2nuscenes.yaml \
+#            --batch_size 6 --fix_random_seed \
+#            --pretrained_model        <CKPT> \
+#            --pretrained_model_teacher <CKPT> \
+#            --run_name fg_lyft2nuscenes --extra_tag 20260925_foreground"
+#
+#   <CKPT> = /storage/wandb/run-20260923_093504-iwg6l5v1/files/ckpt/checkpoint_epoch_30.pth
+#            (job 25781, the global-correction row, Car BEV AP_R40 28.22 / 3D 13.12)
 
 DATA_CONFIGS:
     LYFT_40BEAM:
