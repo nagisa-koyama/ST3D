@@ -1,0 +1,318 @@
+# UADA3D (conditional adversarial DA) - Lyft -> nuScenes
+#
+# The modern comparison baseline for the IEEE Access paper, answering MIRU2025 reviewer criticism
+# #4 ("comparison methods are old"). Ported into the da-ieee-access family from
+# cfgs/lyft2nuscenes_models/centerpoint-rospm-C.yaml so that it is COMPARABLE with the rows beside
+# it: same ontology, same class set, same ROS, same POINT_CLOUD_RANGE, same eval SCORE_THRESH, and
+# the same optimizer budget. Only the method differs.
+#
+# ENTRY POINT: adaptive_train.py, NOT train.py. It builds a source loader and a target loader and
+# steps them together; the discriminator needs both domains in the same forward pass.
+#
+#   sbatch --partition=a6000_ada,a6000,rtx8000 --gres=gpu:1 --cpus-per-task=20 --mem=96G \
+#          --time=2-00:00:00 --job-name=uada_lyft \
+#          --output=logs/output_%j_%x.txt --error=logs/error_%j_%x.txt \
+#          --wrap="cd /home/koyama/code/ST3D/tools && singularity exec --nv \
+#            --bind /home/koyama/data/:/storage /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif \
+#            python adaptive_train.py --cfg_file cfgs/da-ieee-access/centerpoint-uada3d-lyft2nuscenes.yaml \
+#            --batch_size 12 --fix_random_seed --run_name uada3d_lyft2nuscenes --extra_tag 20260924_uada3d"
+#
+# --batch_size 12 IS NOT OPTIONAL, and it is 12 rather than 6 for a reason that is easy to get
+# wrong. adaptive_train.py divides the value by the GPU count, asserts the result is EVEN, and
+# then gives HALF to each domain (`batch_size // 2`). So 12 on one GPU is 6 source + 6 target -
+# a SOURCE batch of 6, which is what every other row in this family uses. Passing 6 here would
+# silently train on a source batch of 3, doubling the optimizer steps and putting LR 0.003 out of
+# calibration. `total_iters_each_epoch = len(source_loader)`, so the epoch is defined by the
+# source: 18,900 Lyft frames / 6 = 3,150 iterations, identical to the other Lyft rows.
+#
+# NO ACCUMULATION AND NO DENSITY CORRECTION, deliberately. UADA3D adapts in FEATURE space through
+# a discriminator; the point-distribution correction is this paper's own contribution and mixing
+# the two would stop the row being a baseline for it. So MAX_SWEEPS stays 1 on both domains (it is
+# 1 in both base configs, inherited, not overridden) and no HIST_DIST_* key appears anywhere
+# below. This also removes the reason the other Lyft rows split the source per platform: that
+# split exists so each of Lyft's two capture platforms gets its OWN radial histogram. With no
+# histogram to fit there is nothing to split, and a single DATA_CONFIG is also what
+# adaptive_train.py reads - it uses cfg.DATA_CONFIG, not the family's multi-source DATA_CONFIGS.
+#
+# Differences from the config this was ported from, each deliberate:
+#   - CLASS_NAMES ['Car','Pedestrian','Cyclist'] + ONTOLOGY 'kitti', not ['car','pedestrian',
+#     'bicycle'] - the family vocabulary, so the head and the eval mapping match its neighbours.
+#   - NUM_EPOCHS 30, not 40. Epochs FOLLOW THE SOURCE: the family fixes a budget of 562,600
+#     sample presentations, and Lyft's row of that table is 30 epochs.
+#   - SCORE_THRESH 0.0001 at BOTH post-processing blocks, not 0.01. A higher threshold truncates
+#     AP (eval_class fills only len(thresholds) of 41 precision slots and averages the rest as
+#     zero), and comparing rows evaluated at different thresholds is meaningless.
+#   - SHIFT_COOR comes from da_lyft_dataset.yaml (1.87), not the old 1.60, which was 0.27 m low.
+#   - UNSUPERVISED is NOT carried over. It appears in 9 YAMLs and ZERO Python files - a dead key.
+
+DATA_CONFIG:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_lyft_dataset.yaml
+
+# A REAL TRAINING TARGET here, not just an eval config. adaptive_train.py builds a loader over it
+# with training=True and feeds it to the discriminator; its LABELS are never used for the
+# detection loss, which is what keeps the row unsupervised. It is also what gets evaluated.
+DATA_CONFIG_TAR:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_nuscenes_dataset.yaml
+
+CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
+ONTOLOGY: 'kitti'
+
+MODEL:
+    NAME: DACenterPoint
+
+    VFE:
+        NAME: MeanVFE
+
+    BACKBONE_3D:
+        NAME: VoxelResBackBone8x
+
+    MAP_TO_BEV:
+        NAME: HeightCompression
+        NUM_BEV_FEATURES: 256
+
+    BACKBONE_2D:
+        NAME: BaseBEVBackbone
+
+        LAYER_NUMS: [5]
+        LAYER_STRIDES: [1]
+        NUM_FILTERS: [128]
+        UPSAMPLE_STRIDES: [2]
+        NUM_UPSAMPLE_FILTERS: [256]
+
+    # UADA3D's conditional adversarial head. It is CONDITIONAL: the discriminator sees the
+    # detector's own per-location class and box predictions concatenated with the BEV features, so
+    # it aligns the joint distribution of (feature, prediction) rather than the marginal feature
+    # distribution - which is the paper's argument for why plain DANN under-performs on detection.
+    # MLPS is prepended at init with NUM_FEATURES + BOX_REGRESSION_PARAMS = 264.
+    DISCRIMINATOR:
+        NAME: Discriminator2
+        CONDITIONAL_ADAPTATION:
+            INPUT_DICT_KEYS: ['cls_preds_spatial', 'box_preds_spatial', 'spatial_features_2d']
+            MLP_TYPE: Conv2d
+            MLPS: [256, 128]
+            NUM_CLASSES: 3
+            BOX_REGRESSION_PARAMS: 8   # 2 center + 1 center_z + 3 dim + 2 rot
+            NUM_FEATURES: 256          # spatial_features_2d channels
+            KERNEL_SIZE: 3
+            USE_SIGMOID: True
+        LOSS_CONFIG:
+            LOSS_CONDITIONAL: LeastSquares
+
+    DENSE_HEAD:
+        NAME: CenterHead
+        CLASS_AGNOSTIC: False
+        # Populates cls_preds_spatial / box_preds_spatial, which the
+        # discriminator's INPUT_DICT_KEYS above read. Without it they are absent.
+        EXPORT_SPATIAL_PREDS: True
+
+        CLASS_NAMES_EACH_HEAD: [
+            ['Car', 'Pedestrian', 'Cyclist'],
+        ]
+
+        SHARED_CONV_CHANNEL: 64
+        USE_BIAS_BEFORE_NORM: True
+        NUM_HM_CONV: 2
+        SEPARATE_HEAD_CFG:
+            HEAD_ORDER: ['center', 'center_z', 'dim', 'rot']
+            HEAD_DICT: {
+                'center': {'out_channels': 2, 'num_conv': 2},
+                'center_z': {'out_channels': 1, 'num_conv': 2},
+                'dim': {'out_channels': 3, 'num_conv': 2},
+                'rot': {'out_channels': 2, 'num_conv': 2},
+            }
+
+        TARGET_ASSIGNER_CONFIG:
+            FEATURE_MAP_STRIDE: 4
+            NUM_MAX_OBJS: 500
+            GAUSSIAN_OVERLAP: 0.1
+            MIN_RADIUS: 2
+
+        LOSS_CONFIG:
+            LOSS_WEIGHTS: {
+                'cls_weight': 1.0,
+                'loc_weight': 2.0,
+                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+            }
+
+        # CenterPoint has TWO live POST_PROCESSING blocks - this one and the model-level one below -
+        # each with its own SCORE_THRESH and NMS_CONFIG. Both are set to 0.0001 here; changing only
+        # one is a common way to get an unexplained AP shift.
+        POST_PROCESSING:
+            SCORE_THRESH: 0.0001
+            POST_CENTER_LIMIT_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+            MAX_OBJ_PER_SAMPLE: 500
+            NMS_CONFIG:
+                NMS_TYPE: nms_gpu
+                NMS_THRESH: 0.5
+                NMS_PRE_MAXSIZE: 4096
+                NMS_POST_MAXSIZE: 500
+
+    POST_PROCESSING:
+        RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+
+        # 0.0001, uniform across this whole family, and NOT the 0.01 the existing sourceonly
+        # configs use. eval_class() fills only len(thresholds) of its 41 R40 precision slots and
+        # averages the rest as ZERO, so discarding low-confidence detections before scoring caps
+        # achievable recall and biases AP DOWNWARD - worst exactly in the weak cross-domain regime
+        # a source-only floor lives in. Never raise this to relieve eval-time OOM; if numba's
+        # separate CUDA pool runs out (it is not PyTorch's allocator), add
+        # torch.cuda.empty_cache() before dataset.evaluation() in tools/eval_utils/eval_utils.py.
+        # See experiments_md/20260920_01 and 20260920_02.
+        SCORE_THRESH: 0.0001
+        OUTPUT_RAW_SCORE: False
+
+        # KITTI R40 AP. Note what this means with a NON-KITTI evaluation target: nuscenes_dataset.py
+        # fabricates the 2D bbox as [0, 0, 50, 50] with truncation/occlusion 0, so every GT passes
+        # all three difficulty levels, nothing is ever ignored, and easy == moderate == hard
+        # identically. Three identical AP values in the log is the expected output, not a bug. Those
+        # numbers are "all objects, no difficulty filter" - stricter than KITTI hard, and NOT
+        # comparable with a KITTI-target row's "moderate". The bbox/aos columns are meaningless here
+        # (all boxes identical, so 2D IoU is trivially 1). See experiments_md/20260919_05 sections 6-8.
+        EVAL_METRIC: kitti
+
+        NMS_CONFIG:
+            MULTI_CLASSES_NMS: False
+            NMS_TYPE: nms_gpu
+            NMS_THRESH: 0.5
+            NMS_PRE_MAXSIZE: 4096
+            NMS_POST_MAXSIZE: 500
+
+
+OPTIMIZATION:
+
+    # PER-GPU batch. This family runs on TWO GPUs, so 3 per GPU is a GLOBAL batch of 6 - the same
+    # global batch, the same 93,766 optimizer steps and the same LR 0.003 as a one-GPU run at 6.
+    # Launch with tools/scripts/run_sourceonly_2gpu.sh.
+    #
+    # WHY THIS ROW SAYS 12 WHERE THE REST OF THE FAMILY SAYS 3. adaptive_train.py divides the
+    # value by the GPU count, asserts the result is EVEN, and hands HALF to each domain. So on one
+    # GPU, 12 is a source batch of 6 and a target batch of 6 - the SAME source batch, and the same
+    # 3,150 iterations per epoch, as every train.py row in this family. A 6 here would mean a
+    # source batch of 3: twice the optimizer steps and LR 0.003 out of calibration, with nothing
+    # erroring. On two GPUs pass --batch_size 12 as well; it is the TOTAL across ranks, so each
+    # rank gets 6 and splits it 3 source / 3 target, again a global source batch of 6.
+    #
+    # The rest of the note below is inherited from the source-only rows and describes train.py's
+    # single-domain arithmetic. It does not apply to this config; the numbers that do are above.
+    # train.py logs the resolved
+    # global batch at startup - it must read 6.
+    #
+    # Measured on ONE node in ONE allocation, so GPU count is the only variable (jobs 25734
+    # PandaSet / 25735 KITTI, node61; 20260922_06 section 2e):
+    #
+    #   * 2 GPUs scale ~LINEARLY: 2.06x on PandaSet, 2.03x on KITTI. An earlier cross-node
+    #     comparison put this at 1.93x, and a hardware "correction" then put it at 1.40x; both
+    #     were wrong, because the nodes were shared and the rtx8000/a6000 factor was measuring
+    #     co-tenancy. Only a same-node A/B answers this.
+    #   * bs=3 per rank is STILL SATURATED - 0.944x (KITTI) to 0.965x (PandaSet) of bs=6's
+    #     samples/s - so splitting a global batch of 6 across two GPUs costs ~4-6%, not a
+    #     collapse. That is what makes this recipe-preserving option viable at all.
+    #   * 3/rank BEATS 6/rank: 15.0 h vs 15.2 h on PandaSet, while keeping TWICE the optimizer
+    #     steps. Going to 6/rank would double the global batch to 12, halve the steps to 46,883
+    #     and put LR 0.003 - tuned at global batch 6 - out of calibration, for no time saved.
+    #   * memory is roughly linear in batch, so 3/rank costs about half of the one-GPU recipe:
+    #     ~5.0 GB allocated / ~9.2 GB reserved per rank on PandaSet, the heaviest source, against
+    #     48 GB cards. Note DDP does NOT inherit the single-GPU memory profile - PandaSet at
+    #     bs=12 fits solo at 47.0/48 GB but HANGS under 2-GPU DDP (section 3) - so the headroom
+    #     here is deliberate, not incidental.
+    # COMBINED source+target batch, half to each domain - so this is a SOURCE batch of 6,
+    # matching every other row. adaptive_train.py asserts it is even. Always pass
+    # --batch_size 12 explicitly; see the header.
+    BATCH_SIZE_PER_GPU: 12
+
+    # Evaluate only the tail of training, not every checkpoint.
+    #
+    # The repo default is 100, and evaluation is NOT cheap: measured on job 25730, one evaluation
+    # of the 6019-frame nuScenes target costs 299.5 s against 300.2 s for one KITTI training
+    # epoch - the same price - and 162 s of that is KITTI-metric AP computation running
+    # single-threaded on rank 0, which no amount of parallelism touches. At the default this
+    # family would spend ~30.8 h evaluating on top of ~95 h training, and for KITTI evaluation
+    # would nearly double the run. See experiments_md/20260922_06 section 4d.
+    #
+    # NOTE the off-by-one: `start_epoch = max(NUM_EPOCHS - NUM_EPOCHS_TO_EVAL, 0)` and the
+    # checkpoint filter is `>= start_epoch`, so 1 evaluates the last TWO checkpoints, not one.
+    # That is deliberate here - a cheap sanity pair showing whether the final epoch is anomalous -
+    # and costs ~14 min. Set 0 for exactly one.
+    NUM_EPOCHS_TO_EVAL: 1
+
+    # Data-wait is 0.09-0.13% at bs=6, i.e. the loader is already ahead of the GPU and there is no
+    # stall for more workers to remove - the same mechanism that makes 8 workers measure SLOWER on
+    # KITTI and nuScenes. Stated honestly: unlike those two, Lyft was never actually measured at 8
+    # workers, so this is the mechanism's prediction rather than a direct observation.
+    # experiments_md/20260922_06 section 1b.
+    NUM_WORKERS: 4
+    # NUM_EPOCHS is the ONE optimization key that is NOT shared across this family, and that is
+    # deliberate. The five sources differ by 21x in size (KITTI 3,712 frames to Waymo 79,041), so a
+    # uniform epoch count would hand Waymo 21x KITTI's optimization budget and the column would be
+    # measuring training length as much as domain gap.
+    #
+    # Every config instead gets the SAME optimization budget, expressed as sample presentations
+    # (epochs x frames). nuScenes at 20 epochs is the anchor, fixing the budget at
+    # 20 x 28,130 = 562,600. Each other source's epoch count is that budget over its frame count:
+    #
+    #     source      frames   exact   used   presentations    dev     iters @ bs 6
+    #     KITTI        3,712  151.56    152         564,224  +0.29%          94,037
+    #     PandaSet     4,880  115.29    115         561,200  -0.25%          93,533
+    #     Lyft        18,900   29.77     30         567,000  +0.78%          94,500
+    #     nuScenes    28,130   20.00     20         562,600   0.00%          93,766
+    #     Waymo       79,041    7.12      7         553,287  -1.66%          92,214
+    #
+    # Rounding to whole epochs costs at most 1.7%. Because the SOURCE batch is shared across the
+    # family - 6, here as half of this config's combined 12 - equal presentations also means equal
+    # ITERATIONS: every config takes about 94k optimizer steps. The last column below is that count
+    # at a global batch of 6, and it is unaffected by how many GPUs the 6 is spread over.
+    #
+    # WHY ITERATIONS, not epochs: these checkpoints are the starting point for the self-training and
+    # DANN runs (passed as --pretrained_model / --pretrained_model_teacher). If one source's floor
+    # had seen 62k steps and another's 158k, the adaptation stage would start from unequally trained
+    # models and the comparison between settings would be confounded before adaptation begins.
+    #
+    # Worth knowing when configuring that next stage, because it does NOT follow automatically:
+    # the self-training schedule is EPOCH-keyed, not iteration-keyed. SELF_TRAIN.UPDATE_PSEUDO_LABEL
+    # is a list of epoch indices, UPDATE_PSEUDO_LABEL_INTERVAL is a modulo on cur_epoch, and
+    # PROG_AUG.UPDATE_AUG is a list of epochs (train_st_utils.py ~line 391-405). An epoch there is
+    # also one pass over the TARGET loader, not the source - `total_it_each_epoch =
+    # len(target_loader)` - which is why the repo's own ST configs set epochs by target, 100 for a
+    # KITTI target and 30 for a nuScenes target off the same Lyft source. So equalising the
+    # baselines' budget aligns the starting checkpoints; aligning the adaptation runs themselves is
+    # a separate matter of their epoch lists.
+    #
+    # REJECTED alternative: the repo's own per-source DA convention (KITTI 100, PandaSet 100,
+    # Lyft 50, nuScenes 30, Waymo 10), which every single-source naive config in da-MIRU2025 /
+    # da-post-MIRU2025 uses. It has the advantage of being directly referable against past MIRU
+    # results, but it holds presentations only roughly constant and effectively CAPS the small
+    # sources - KITTI 0.37 M and PandaSet 0.49 M against 0.79-0.94 M for the large three - so
+    # iteration counts there range 62k to 158k. CONSEQUENCE OF THE CHOICE MADE HERE: none of these
+    # five epoch counts matches any previous run, so these baselines are NOT directly comparable
+    # with published MIRU numbers and must not be tabled beside them without saying so.
+    #
+    # Also note 20 here is NOT upstream's 20. OpenPCDet's nuscenes_models configs set
+    # BALANCED_RESAMPLING (CBGS), which inflates the epoch from 28,130 to 123,580 samples - 4.39x -
+    # so upstream's 20 epochs is 2.47 M presentations. This family runs CBGS off, as the whole da_*
+    # family does. The anchor is our own budget; 20 is just a convenient round number for it.
+    #
+    # Matching the budget exactly also removes the small-source cap the repo convention gave for
+    # free: KITTI now makes 152 passes over 3,712 frames. Watch its train/val gap - if it overfits,
+    # reintroduce a cap rather than abandon the budget.
+    #
+    # Lyft (18,900 frames): Lyft sits mid-size.
+    NUM_EPOCHS: 30
+
+    OPTIMIZER: adam_onecycle
+    LR: 0.003
+    WEIGHT_DECAY: 0.01
+    MOMENTUM: 0.9
+
+    MOMS: [0.95, 0.85]
+    PCT_START: 0.4
+    DIV_FACTOR: 10
+    # Dead keys under adam_onecycle - build_scheduler()'s onecycle branch computes total_steps from
+    # the runtime epoch count and never reads them. Kept only to match the sibling configs.
+    DECAY_STEP_LIST: [23, 29]
+    LR_DECAY: 0.1
+    LR_CLIP: 0.0000001
+
+    LR_WARMUP: False
+    WARMUP_EPOCH: 1
+
+    GRAD_NORM_CLIP: 10
