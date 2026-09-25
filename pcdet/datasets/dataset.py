@@ -25,6 +25,7 @@ class DatasetTemplate(torch_data.Dataset):
 
         self.dataset_class_names = copy.deepcopy(class_names)
         self.map_ontology_dataset_to_model = None
+        self.model_ontology_name = None
         self.map_ontology_model_to_dataset = None
         # Two distinct situations both use "dataset:class" CLASS_NAMES, and they need different
         # handling. The discriminator is NOT "do the names contain ':'" - both do - but whether any
@@ -70,6 +71,14 @@ class DatasetTemplate(torch_data.Dataset):
                 # ontology ('Car' -> 'kitti:Car'), which is what dataset_class_names below expects.
                 self.map_ontology_model_to_dataset = get_ontology_mapping(
                     model_ontology, self.dataset_ontology)
+                # Same early-assertion principle as the single-ontology branch below: name what
+                # is missing and in which direction, at construction, rather than a bare KeyError.
+                missing = [l for l in class_names if l not in self.map_ontology_model_to_dataset]
+                assert not missing, (
+                    'head_per_dataset: ontology map {!r} -> {!r} does not cover CLASS_NAMES {}. '
+                    'Available keys: {}'.format(
+                        model_ontology, self.dataset_ontology, missing,
+                        sorted(self.map_ontology_model_to_dataset)))
                 self.dataset_class_names = [
                     self.map_ontology_model_to_dataset[label] for label in class_names
                 ]
@@ -90,9 +99,30 @@ class DatasetTemplate(torch_data.Dataset):
                 "check that CLASS_NAMES uses '<dataset>:<label>' formatting.".format(
                     model_ontology, self.dataset_ontology, class_names)
             )
+            self.model_ontology_name = model_ontology
             self.map_ontology_dataset_to_model = get_ontology_mapping(self.dataset_ontology, model_ontology)
             self.map_ontology_model_to_dataset = get_ontology_mapping(model_ontology, self.dataset_ontology)
             self.dataset_class_names = [self.map_ontology_model_to_dataset[label] for label in class_names]
+        # EARLY ASSERTION on the mapping configuration. Every class the model asks for must survive
+        # the round trip model -> dataset -> model, or gt_names will fail (or silently change
+        # class) at the first sample instead of here. Checked at construction because a dataset is
+        # built in seconds on a CPU node, while the first sample of a real run is minutes into a
+        # GPU allocation - which is how job 25940 spent 20 minutes to surface a mapping problem.
+        if self.map_ontology_dataset_to_model is not None:
+            missing = [n for n in self.dataset_class_names
+                       if n not in self.map_ontology_dataset_to_model]
+            assert not missing, (
+                'ontology map {!r} -> {!r} does not cover {}, which are the dataset-vocabulary '
+                'names for CLASS_NAMES {}. Available keys: {}'.format(
+                    self.dataset_ontology, model_ontology, missing, class_names,
+                    sorted(self.map_ontology_dataset_to_model)))
+            round_trip = [self.map_ontology_dataset_to_model[n] for n in self.dataset_class_names]
+            assert round_trip == list(class_names), (
+                'ontology map is not round-trip consistent: CLASS_NAMES {} -> dataset {} -> {}. '
+                'A class that does not come back to itself would be trained under one label and '
+                'scored under another.'.format(
+                    list(class_names), self.dataset_class_names, round_trip))
+
         logger.info("Model class names: {}".format(class_names))
         logger.info("Mapping from dataset to model ontology: {}".format(
               self.map_ontology_dataset_to_model if self.map_ontology_dataset_to_model else "None"))
@@ -366,14 +396,38 @@ class DatasetTemplate(torch_data.Dataset):
         # print("data_dict[gt_names] in the beginning of prepare_data", data_dict['gt_names'])
 
         # ontology remapping
-        if self.map_ontology_dataset_to_model is not None:
+        # Pseudo-labelled names are ALREADY in the model vocabulary and must not be mapped again.
+        # `fill_pseudo_labels` builds gt_names from `self.class_names` ('Car', 'Pedestrian',
+        # 'Cyclist'), while this map is keyed by the DATASET vocabulary ('car', 'bicycle', ...), so
+        # a second pass raises `KeyError: 'Car'` - job 25940, which is the first time anything ever
+        # read a pseudo-labelled target through prepare_data (the foreground calibration does).
+        # The condition mirrors exactly the one under which fill_pseudo_labels ran in __getitem__,
+        # so an eval-mode pass over the same dataset still maps normally.
+        names_are_pseudo_labels = bool(
+            self.dataset_cfg.get('USE_PSEUDO_LABEL', False)) and self.training
+
+        if self.map_ontology_dataset_to_model is not None and not names_are_pseudo_labels:
             updated_gt_names = []
             # print("data_dict[gt_names] in prepare_data before ontology remap", data_dict['gt_names'])
             # print("self.map_ontology_dataset_to_model", self.map_ontology_dataset_to_model)
             for index in range(data_dict['gt_names'].size):
                 # Note: previously updated name is trancated due to initially allocated smaller memory size.
                 # Resolved by newly creating numpy.array instead of updating existing element.
-                updated_gt_names.append(self.map_ontology_dataset_to_model[data_dict['gt_names'][index]])
+                name = data_dict['gt_names'][index]
+                if name not in self.map_ontology_dataset_to_model:
+                    # A bare KeyError here names only the missing key, which sent job 25940's
+                    # diagnosis through the wrong layer. Say which vocabulary was expected and
+                    # what the most likely cause is.
+                    looks_mapped = name in (self.class_names or [])
+                    raise KeyError(
+                        '{!r} is not in the {!r} -> {!r} ontology map (keys: {}). {}'.format(
+                            name, self.dataset_ontology, self.model_ontology_name,
+                            sorted(self.map_ontology_dataset_to_model)[:8],
+                            'It IS one of the model class names, so these gt_names have already '
+                            'been mapped - something set them in model vocabulary (pseudo-labels '
+                            'do) and they are being mapped a second time.' if looks_mapped else
+                            'Expected a name in the DATASET vocabulary.'))
+                updated_gt_names.append(self.map_ontology_dataset_to_model[name])
             assert len(updated_gt_names) == len(data_dict['gt_names'])
             data_dict['gt_names'] = np.array(updated_gt_names)
             # print("data_dict[gt_names] in prepare_data after ontology remap", data_dict['gt_names'])
