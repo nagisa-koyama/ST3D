@@ -191,9 +191,20 @@ def compute_foreground_histograms(dataset, num_frames=DEFAULT_FRAMES, num_bins=D
                     'sensor check the FOV; for a self-training target check that pseudo-labels '
                     'exist and are not all ignored.' % label)
         if with_boxes == 0:
+            # Report the counters, not just the conclusion. Job 25941 hit this on its SOURCE - a
+            # labelled Lyft domain that demonstrably HAS boxes when the same call is made on a
+            # freshly built dataset (58 kept, fg.sum() 17,031), so the cause is the dataset's state
+            # at call time and the message as written gave nothing to go on. `n` and `step` say
+            # whether the wrong object was passed; `used` separates "no frames" from "no boxes".
             logger.warning('point calibration [%s]: NO boxes in any sampled frame - the foreground '
-                           'channel is empty and its rate will be 1 everywhere. For a target '
-                           'domain this means pseudo-labels had not been generated yet.' % label)
+                           'channel is empty and its rate will be 1 everywhere, so the correction '
+                           'degenerates to the uniform one. Diagnostics: len(dataset)=%d, '
+                           'stride=%d, frames_used=%d, frames_with_boxes=0, boxes_seen=%d, '
+                           'dataset=%s, training=%s. For a self-training TARGET this means '
+                           'pseudo-labels had not been generated yet; for a labelled SOURCE it '
+                           'means gt_boxes were absent or empty at call time, which is a bug.'
+                           % (label, n, step, used, seen_boxes,
+                              type(dataset).__name__, getattr(dataset, 'training', '?')))
     return fg, bg, total
 
 
