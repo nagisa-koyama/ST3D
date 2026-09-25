@@ -67,3 +67,69 @@ def test_target_does_not_also_ask_for_motion_compensation(path):
         f'{path.name}: target asks for both USE_PSEUDO_LABEL and GT_BOXES_MOTION_COMPENSATION; '
         f'the loader raises on that combination - compensation belongs on the labelled source'
     )
+
+
+# --- the runtime guard ---------------------------------------------------------------------
+
+import sys  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from easydict import EasyDict  # noqa: E402
+from pcdet.datasets import assert_target_labels_are_not_used  # noqa: E402
+
+
+def _cfg(self_train=False, pseudo=False, unsupervised=False, has_target=True):
+    c = {}
+    if has_target:
+        tar = {}
+        if pseudo:
+            tar['USE_PSEUDO_LABEL'] = True
+        if unsupervised:
+            tar['UNSUPERVISED'] = True
+        c['DATA_CONFIG_TAR'] = tar
+    if self_train:
+        c['SELF_TRAIN'] = {'TAR': {'LOSS_WEIGHT': 1.0}}
+    return EasyDict(c)
+
+
+def test_self_training_without_pseudo_labels_is_refused():
+    """The exact shape of job 25933 - and the dangerous part is what it would have done if the
+    missing counter had been optional: trained on the target's real labels and reported it as UDA."""
+    with pytest.raises(AssertionError, match='USE_PSEUDO_LABEL'):
+        assert_target_labels_are_not_used(_cfg(self_train=True), True)
+
+
+def test_self_training_with_pseudo_labels_is_allowed():
+    assert_target_labels_are_not_used(_cfg(self_train=True, pseudo=True), True)
+
+
+def test_trained_target_with_neither_flag_is_refused():
+    """A DANN/UADA3D target with no flag: its GT reaches the augmentor and the optimiser."""
+    with pytest.raises(AssertionError, match='UNSUPERVISED'):
+        assert_target_labels_are_not_used(_cfg(), True)
+
+
+def test_unsupervised_target_is_allowed():
+    assert_target_labels_are_not_used(_cfg(unsupervised=True), True)
+
+
+def test_both_flags_together_are_refused():
+    """They are different mechanisms and UNSUPERVISED would suppress the pseudo-label path."""
+    with pytest.raises(ValueError, match='both'):
+        assert_target_labels_are_not_used(_cfg(self_train=True, pseudo=True, unsupervised=True), True)
+
+
+def test_source_only_config_with_no_target_is_untouched():
+    """DATA_CONFIG_TAR is eval-only for the source-only family; it is never trained on."""
+    assert_target_labels_are_not_used(_cfg(has_target=False), True)
+
+
+@pytest.mark.parametrize('path', _self_training_configs(), ids=lambda p: p.stem)
+def test_every_real_self_training_config_passes_the_guard(path):
+    cfg = EasyDict(yaml.safe_load(path.read_text(encoding='utf-8')))
+    assert_target_labels_are_not_used(cfg, True)
+
+
+def test_source_only_eval_target_is_not_refused():
+    """A source-only row declares DATA_CONFIG_TAR as an EVALUATION target only. Reading its real
+    labels there is the point, so the guard must not fire when nothing trains on it."""
+    assert_target_labels_are_not_used(_cfg(), False)

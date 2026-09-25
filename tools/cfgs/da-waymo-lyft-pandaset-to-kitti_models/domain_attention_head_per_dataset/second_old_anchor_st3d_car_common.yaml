@@ -4,7 +4,6 @@
 # ONTOLOGY: 'kitti'
 
 DATA_CONFIG_TAR:
-    TARGET: True
     USE_PSEUDO_LABEL: True
 
     DATA_AUGMENTOR:

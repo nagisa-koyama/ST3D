@@ -65,7 +65,6 @@ DATA_CONFIGS:
 
 # Used for self-training
 DATA_CONFIG_TAR:
-    TARGET: True
     USE_PSEUDO_LABEL: True
     _BASE_CONFIG_: cfgs/da-MIRU2025/da_kitti_dataset_point_calibrated_to_kitti.yaml
     CLASS_NAMES: ['kitti:Car', 'kitti:Pedestrian']

@@ -12,7 +12,7 @@ from test import repeat_eval_ckpt
 import wandb
 
 from pcdet.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_file
-from pcdet.datasets import build_dataloader, link_point_calibration
+from pcdet.datasets import assert_target_labels_are_not_used, build_dataloader, link_point_calibration
 from pcdet.models import build_network, model_fn_decorator
 from pcdet.utils import common_utils
 from train_utils.optimization import build_optimizer, build_scheduler, build_grl_scheduler
@@ -151,6 +151,9 @@ def main():
         logger=logger, training=True,
         merge_all_iters_to_one_epoch=args.merge_all_iters_to_one_epoch, total_epochs=args.epochs
     )
+    # A DA target must never contribute its REAL labels. Checked here, before a
+    # loader exists, so a misconfigured run dies in seconds rather than minutes.
+    assert_target_labels_are_not_used(cfg, True, logger)
     target_set, target_loader, target_sampler = build_dataloader(
         dataset_cfg=cfg.DATA_CONFIG_TAR, class_names=cfg.CLASS_NAMES,
         batch_size=args.batch_size // 2, dist=dist_train, workers=args.workers,

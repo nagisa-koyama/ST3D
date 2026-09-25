@@ -46,6 +46,54 @@ class DistributedSampler(_DistributedSampler):
         return iter(indices)
 
 
+def assert_target_labels_are_not_used(cfg, target_is_trained, logger=None):
+    """A domain-adaptation TARGET must never contribute its REAL labels to training.
+
+    Two separate defects in this repo let it do exactly that, both found 2026-09-24/25 and both
+    silent rather than loud:
+
+      * `UNSUPERVISED` was read by UADA3D-native and unimplemented here, so a DANN target was
+        given a DataAugmentor and `random_object_scaling` resized its objects using its own GT
+        boxes (ST3D 295b1af).
+      * `USE_PSEUDO_LABEL` was missing from all four foreground rows, so `fill_pseudo_labels`
+        never ran and the target's real gt_boxes would have gone straight into the self-training
+        loss. That one happened to crash first, on a missing counter - had `pos_ps_bbox` been
+        optional it would have trained, converged, and reported a supervised number as UDA.
+
+    So the invariant is stated once, here, and checked before training rather than inferred later:
+    a target is legal if its labels are REPLACED (USE_PSEUDO_LABEL) or NEVER READ (UNSUPERVISED).
+    Anything else is a target whose ground truth reaches the optimiser.
+    """
+    # `target_is_trained` is passed in, never inferred. The source-only family also declares
+    # DATA_CONFIG_TAR, but purely as an EVALUATION target that no loader ever trains on - reading
+    # its real labels there is the whole point, and refusing it would block every source-only row.
+    # train.py builds a target loader only under SELF_TRAIN; adaptive_train.py always does.
+    tar = cfg.get('DATA_CONFIG_TAR', None)
+    if tar is None or not target_is_trained:
+        return
+    pseudo = bool(tar.get('USE_PSEUDO_LABEL', False))
+    unsupervised = bool(tar.get('UNSUPERVISED', False))
+    if cfg.get('SELF_TRAIN', None):
+        assert pseudo, (
+            'SELF_TRAIN is set but DATA_CONFIG_TAR lacks USE_PSEUDO_LABEL: True. The target loss '
+            'would then be computed against the TARGET\'s REAL labels, which is supervised '
+            'training on the evaluation domain, not UDA. (It also raises KeyError on pos_ps_bbox '
+            'a few minutes in - job 25933.)')
+    else:
+        assert pseudo or unsupervised, (
+            'DATA_CONFIG_TAR is trained on but declares neither USE_PSEUDO_LABEL nor '
+            'UNSUPERVISED, so its real ground truth would reach the optimiser. Set UNSUPERVISED '
+            'for feature-space adaptation, or USE_PSEUDO_LABEL for self-training.')
+    if pseudo and unsupervised:
+        raise ValueError(
+            'DATA_CONFIG_TAR sets both USE_PSEUDO_LABEL and UNSUPERVISED. They are different '
+            'mechanisms - one REPLACES the labels, the other suppresses the whole label path - '
+            'and UNSUPERVISED would stop fill_pseudo_labels\' boxes being augmented or counted.')
+    if logger is not None:
+        logger.info('target label policy: %s',
+                    'pseudo-labels' if pseudo else 'unsupervised (labels never read)')
+
+
 def build_dataloader(dataset_cfg, class_names, batch_size, dist, root_path=None, workers=4,
                      logger=None, training=True, merge_all_iters_to_one_epoch=False, total_epochs=0, model_ontology=None, force_no_shuffle=None, use_subset=False):
 

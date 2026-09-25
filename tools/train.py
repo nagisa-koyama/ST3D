@@ -17,7 +17,7 @@ import wandb
 from torchinfo import summary
 
 from pcdet.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_file
-from pcdet.datasets import build_dataloader, link_point_calibration
+from pcdet.datasets import assert_target_labels_are_not_used, build_dataloader, link_point_calibration
 from pcdet.models.model_utils.dsnorm import DSNorm
 from pcdet.models import build_network, model_fn_decorator
 from pcdet.utils import common_utils
@@ -207,6 +207,9 @@ def main():
         dataset = dict(dataset_class=source_set, loader=source_loader, sampler=source_sampler)
         source_datasets.append(dataset)
 
+    # A DA target must never contribute its REAL labels. Checked here, before a
+    # loader exists, so a misconfigured run dies in seconds rather than minutes.
+    assert_target_labels_are_not_used(cfg, bool(cfg.get('SELF_TRAIN', None)), logger)
     if cfg.get('SELF_TRAIN', None):
         target_set, target_loader, target_sampler = build_dataloader(
             cfg.DATA_CONFIG_TAR, cfg.CLASS_NAMES, args.batch_size,

@@ -9,7 +9,6 @@ DATA_CONFIG:
 DATA_CONFIG_TAR:
     _BASE_CONFIG_: cfgs/dataset_configs/da_waymo_dataset.yaml
     PROCESSED_DATA_TAG: 'waymo_processed_data'
-    TARGET: True
     SELECTED_LIDAR_INDEX: 2
     USE_PSEUDO_LABEL: True
     CLASS_NAMES: ['Vehicle']
