@@ -202,3 +202,67 @@ def test_regime_A_construction_names_what_the_map_is_missing():
         with pytest.raises(AssertionError, match='does not cover'):
             _build_regime('head_per_dataset', 'lyft',
                           ['nuscenes:car', 'nuscenes:pedestrian'])
+
+
+# --- regime A has THREE sub-cases, and 103 configs use the multi-dataset one -------------------
+#
+# CLASS_NAMES under head_per_dataset routinely span SEVERAL datasets, up to four:
+#   ['lyft:car', 'lyft:pedestrian', 'nuscenes:car', 'nuscenes:pedestrian']
+# The discriminator is not "do names contain ':'" - all three sub-cases do - but whether any class
+# carries THIS dataset's prefix:
+#
+#   A1  some class matches this dataset  -> keep just those, still prefixed. No map consulted.
+#   A2  none match, ONE prefix present   -> cross-map via map_head_per_dataset_to_<dataset>.
+#                                           A real configuration: a single-head model scored
+#                                           against another dataset's GT.
+#   A3  none match, SEVERAL prefixes     -> ambiguous, must assert.
+
+MULTI = ['lyft:car', 'lyft:pedestrian', 'nuscenes:car', 'nuscenes:pedestrian']
+
+
+def test_A1_multi_dataset_class_names_keeps_only_this_dataset_prefixed():
+    ds = _build_regime('head_per_dataset', 'lyft', MULTI)
+    assert ds.dataset_class_names == ['lyft:car', 'lyft:pedestrian'], ds.dataset_class_names
+    assert ds.class_names == MULTI, 'the full model list must be preserved for the heads'
+    assert ds.map_ontology_dataset_to_model is None
+
+
+def test_A1_the_other_dataset_in_the_same_config_selects_its_own():
+    ds = _build_regime('head_per_dataset', 'nuscenes', MULTI)
+    assert ds.dataset_class_names == ['nuscenes:car', 'nuscenes:pedestrian']
+
+
+def test_A1_four_dataset_config_selects_one():
+    four = ['kitti:Car', 'waymo:Vehicle', 'lyft:car', 'pandaset:Car']
+    assert _build_regime('head_per_dataset', 'waymo', four).dataset_class_names == ['waymo:Vehicle']
+
+
+def test_A1_prepare_data_keeps_already_prefixed_names_and_prefixes_plain_ones():
+    ds = _build_regime('head_per_dataset', 'lyft', MULTI)
+    ds.prepare_data(_dict(['car']))          # plain dataset name -> gets this dataset's prefix
+    ds.prepare_data(_dict(['lyft:car']))     # already prefixed -> kept
+
+
+def test_A1_with_pseudo_labels_indexes_the_FULL_model_class_list():
+    """fill_pseudo_labels reads self.class_names, not dataset_class_names, so a pseudo-label's
+    class id indexes the whole multi-head vocabulary and arrives already prefixed. Pinning this
+    because it means a pseudo-label can carry ANOTHER head's prefix - correct for indexing, but
+    worth knowing before reading self-training results from a multi-head model."""
+    ds = _build_regime('head_per_dataset', 'lyft', MULTI, use_pseudo_label=True)
+    assert ds.class_names == MULTI
+    ds.prepare_data(_dict(['nuscenes:car']))   # a name from a different head must survive
+
+
+def test_A2_single_prefix_scored_against_another_dataset_cross_maps():
+    """A naive nuScenes-trained model scored against KITTI GT. This is the path a 2026-08-23
+    assert made unreachable for a month (20260921_04) - it must stay reachable."""
+    ds = _build_regime('head_per_dataset', 'kitti',
+                       ['nuscenes:car', 'nuscenes:pedestrian'])
+    assert ds.dataset_class_names, 'cross-mapped names must be non-empty'
+    assert all(':' in n for n in ds.dataset_class_names), ds.dataset_class_names
+
+
+def test_A3_several_prefixes_none_matching_is_refused_as_ambiguous():
+    """Two heads would collapse onto the same target class - a misconfiguration, not a valid eval."""
+    with pytest.raises(AssertionError):
+        _build_regime('head_per_dataset', 'pandaset', MULTI)
