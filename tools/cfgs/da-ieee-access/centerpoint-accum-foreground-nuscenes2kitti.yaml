@@ -181,6 +181,17 @@ DATA_CONFIGS:
 # teacher's pseudo-labels in place of annotation; its real labels are used for evaluation only.
 DATA_CONFIG_TAR:
     _BASE_CONFIG_: cfgs/da-ieee-access/da_kitti_dataset.yaml
+    # REQUIRED for self-training, and absent from all four foreground rows until 2026-09-25.
+    # It is what makes __getitem__ call fill_pseudo_labels on the target, which sets gt_boxes from
+    # the saved pseudo-labels AND the pos_ps_bbox / ign_ps_bbox counters that
+    # train_st_utils.train_one_epoch_st reads every iteration. Without it the target yields real
+    # labels and no counters, and the run dies with `KeyError: 'pos_ps_bbox'` a few minutes in
+    # (job 25933). The MIRU2025 self-training configs, which ran, all carry it.
+    #
+    # Not accompanied by `TARGET: True`, which those configs also set: that key has ZERO consumers
+    # in ST3D and zero in UADA3D-native, so it documents intent without doing anything.
+    USE_PSEUDO_LABEL: True
+
 
 
 CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
