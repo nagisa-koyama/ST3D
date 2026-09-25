@@ -184,12 +184,26 @@ def main():
         if teacher_class_names is not None:
             source_class_names = copy.deepcopy(teacher_class_names)
 
-    # Set None to model_ontology of source dataset if teacher model is head_per_dataset.
+    # Drop the source's ontology remap ONLY for a head_per_dataset teacher, whose class names are
+    # already prefixed and must not be cross-mapped. The condition used to be "MODEL_TEACHER.ONTOLOGY
+    # is set at all", which is not what the comment said and not what was meant.
+    #
+    # What that cost: with a teacher ONTOLOGY of 'kitti', the SOURCE was built with
+    # model_ontology=None, so map_ontology_dataset_to_model was None, so Lyft's gt_names stayed
+    # lowercase ('car', 'pedestrian') - and keep_arrays_by_name() in prepare_data then dropped
+    # every box, because CLASS_NAMES are ['Car', 'Pedestrian', 'Cyclist']. Measured on the real
+    # config: model_ontology='kitti' gives 51/6/28/10 boxes in the first sampled frames,
+    # model_ontology=None gives 0/0/0/0.
+    #
+    # So the source contributed NO ground truth at all: the source detection loss had no positives
+    # for the whole run, and the foreground calibration reported an empty source channel (job
+    # 25941/25943, "NO boxes in any sampled frame", frames_used=1000, boxes_seen=0). The empty
+    # channel was the visible symptom; the missing source supervision was the actual damage.
     source_model_ontology = cfg.get('ONTOLOGY', None)
     if cfg.get('SELF_TRAIN', None):
-        if cfg.SELF_TRAIN.get('MODEL_TEACHER', None):
-            if cfg.SELF_TRAIN.MODEL_TEACHER.get('ONTOLOGY', None):
-                source_model_ontology = None
+        teacher_cfg = cfg.SELF_TRAIN.get('MODEL_TEACHER', None)
+        if teacher_cfg is not None and teacher_cfg.get('ONTOLOGY', None) == 'head_per_dataset':
+            source_model_ontology = None
     for data_config in data_configs.values():
         source_set, source_loader, source_sampler = build_dataloader(
             dataset_cfg=data_config,
