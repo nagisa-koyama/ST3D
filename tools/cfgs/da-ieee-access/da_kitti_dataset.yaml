@@ -26,3 +26,15 @@ POINT_FEATURE_ENCODING: {
     used_feature_list: ['x', 'y', 'z'],
     src_feature_list: ['x', 'y', 'z', 'intensity'],
 }
+
+# Camera-FOV filter on PREDICTED boxes (kitti_dataset.py:293), read only at evaluation, so it has no
+# effect when KITTI is the training SOURCE. KITTI is annotated only over the camera FOV (0.0% of GT
+# behind the vehicle, 99% within +-50 deg), while this family's detectors predict over 360 deg, so
+# without it every prediction outside the image is scored as an unmatched detection against GT
+# that could never exist there. da-MIRU2025 and dataset_configs/da_kitti_dataset.yaml both set it;
+# this file omitted it until 2026-09-26, so every KITTI-TARGET number in this family before then
+# (job 25780, accum-global nuScenes->KITTI) was scored WITHOUT it. See experiments_md/20260922_01.
+TEST:
+    BOX_FILTER: {
+        'FOV_FILTER': True
+    }
