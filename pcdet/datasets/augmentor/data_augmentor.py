@@ -193,15 +193,33 @@ class DataAugmentor(object):
             'random_world_scaling': 'WORLD_SCALE_RANGE',
         }
 
+        def scale_interval(interval, flag):
+            """Scale [lo, hi] about `flag`, EACH SIDE INDEPENDENTLY.
+
+            The previous version required the interval to be symmetric about flag
+            (`assert np.isclose(flag - lo, hi - flag)`) and rebuilt it from the upper half alone.
+            Every per-class ROS interval derived from the data is deliberately ASYMMETRIC - Car is
+            [0.85, 1.20], i.e. 0.15 below 1 and 0.20 above, because every source in this study is a
+            larger-vehicle domain (experiments_md/20260922_03) - so that assert fires on the real
+            configs and, when it does not, the rebuild would silently symmetrise the interval and
+            discard the asymmetry the derivation exists to express.
+
+            Scaling each side independently is identical for a symmetric interval, so no previously
+            working config changes behaviour.
+            """
+            assert len(interval) == 2, interval
+            lo, hi = interval
+            return [flag - (flag - lo) * intensity, flag + (hi - flag) * intensity]
+
         def cal_new_intensity(config, flag):
-            origin_intensity_list = config.get(adjust_map[config.NAME])
-            assert len(origin_intensity_list) == 2
-            assert np.isclose(flag - origin_intensity_list[0], origin_intensity_list[1] - flag)
-            
-            noise = origin_intensity_list[1] - flag
-            new_noise = noise * intensity
-            new_intensity_list = [flag - new_noise, new_noise + flag]
-            return new_intensity_list
+            origin = config.get(adjust_map[config.NAME])
+            # PER-CLASS intervals are a dict ({'Car': [...], 'Pedestrian': [...]}) since ROS and SN
+            # became per-class (577a3f8). The old code indexed it as a list: with exactly two
+            # classes `len(origin) == 2` passed by coincidence and the next line raised
+            # `KeyError: 0` - eleven hours into job 25945, at the first UPDATE_AUG epoch.
+            if isinstance(origin, dict):
+                return {cls: scale_interval(vals, flag) for cls, vals in origin.items()}
+            return scale_interval(origin, flag)
 
         if config.NAME not in adjust_map:
             return config
