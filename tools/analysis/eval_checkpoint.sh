@@ -17,9 +17,19 @@
 # so the workers got the new class while unpickling an instance built by the old one). Evaluation
 # is also dominated by single-threaded AP computation that DDP cannot speed up anyway.
 set -u
-CFG=${1:?usage: eval_checkpoint.sh <cfg_file> <ckpt.pth> [eval_tag]}
-CKPT=${2:?usage: eval_checkpoint.sh <cfg_file> <ckpt.pth> [eval_tag]}
+CFG=${1:?usage: eval_checkpoint.sh <cfg_file> <ckpt.pth> [eval_tag] [extra_tag]}
+CKPT=${2:?usage: eval_checkpoint.sh <cfg_file> <ckpt.pth> [eval_tag] [extra_tag]}
 TAG=${3:-recover_$(date +%Y%m%d_%H%M%S)}
+# extra_tag only selects the OUTPUT directory (output/<cfg>/<extra_tag>/eval/...), never which
+# checkpoint is loaded - that is --ckpt. Default is the family's own tag, so the auto-recovery path
+# in run_sourceonly_2gpu.sh keeps behaving exactly as before; pass a 4th argument when rescoring a
+# run that used a different --extra_tag, so its eval lands beside the run instead of somewhere else.
+EXTRA_TAG=${4:-20260922_sourceonly}
+# Anything after the 4th argument is appended verbatim to test.py's command line, for an ablation
+# that needs `--set KEY VALUE`. It goes LAST because --set is nargs=REMAINDER: it swallows every
+# following token, so a flag placed after it is silently absorbed into set_cfgs and cfg_from_list
+# then dies with NotFoundKey.
+shift $(( $# < 4 ? $# : 4 ))
 cd /home/koyama/code/ST3D/tools
 [ -f "$CFG" ]  || { echo "no such config: $CFG" >&2; exit 2; }
 [ -f "$CKPT" ] || { echo "no such checkpoint: $CKPT" >&2; exit 2; }
@@ -27,4 +37,4 @@ cd /home/koyama/code/ST3D/tools
 singularity exec --nv --bind /home/koyama/data/:/storage --bind /home/koyama/code/ST3D:/root/ST3D \
   /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif \
   python3 test.py --cfg_file "$CFG" --ckpt "$CKPT" --batch_size 6 \
-    --extra_tag 20260922_sourceonly --eval_tag "$TAG"
+    --extra_tag "$EXTRA_TAG" --eval_tag "$TAG" "$@"
