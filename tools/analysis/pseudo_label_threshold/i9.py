@@ -1,6 +1,7 @@
+import os
 import pickle, sys, numpy as np, importlib.util
 S = sys.argv[1]
-spec = importlib.util.spec_from_file_location('h', S + '/harness.py'); h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
+spec = importlib.util.spec_from_file_location('h', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'harness.py')); h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
 GRID = np.round(np.arange(0.11, 0.60, 0.01), 2)
 def knee(s, y):
     best = (np.inf, np.nan)

@@ -2,11 +2,12 @@
 depend on score, within range? Uses ONLY (class, score, npts, range, frame). The TP column is read
 at the very end, for validation, never for selection."""
 import pickle, sys, numpy as np
+import bins
 
 a = pickle.load(open(sys.argv[1] + '/score_pts.pkl', 'rb'))   # class, score, npts, range, tp, frame
 C = {1: 'Car', 2: 'Pedestrian', 3: 'Cyclist'}
 RING = 5.0
-GRID = np.round(np.arange(0.105, 0.45, 0.005), 3)
+GRID = np.array([g for g in bins.GRID if 0.0005 < g < 0.45])
 rng = np.random.default_rng(0)
 
 
@@ -37,7 +38,7 @@ def fit(s, y, ring_idx, nr):
 
 def hist_kink(s):
     """Second label-free signal: log-density of score, fit two lines, kink location."""
-    edges = np.arange(0.1, 0.6001, 0.01)
+    edges = np.arange(bins.LO, 0.6001, 0.01)
     h, _ = np.histogram(s, bins=edges)
     x, ok = (edges[:-1] + edges[1:]) / 2, h > 0
     x, ly = x[ok], np.log(h[ok])
@@ -53,6 +54,7 @@ def hist_kink(s):
 
 for c, cn in C.items():
     b = a[(a[:, 0] == c) & (a[:, 3] < 70)]
+    if bins.FULL and len(b) > 100000: b = b[rng.choice(len(b), 100000, replace=False)]   # full range: subsample, the hinge is a diagnostic
     s, n, r, fr = b[:, 1], b[:, 2], b[:, 3], b[:, 5].astype(int)
     y = np.log(n)                                       # every box has >= 1 point
     ri = (r // RING).astype(int); nr = ri.max() + 1
@@ -60,7 +62,7 @@ for c, cn in C.items():
     # bootstrap over frames
     frames = np.unique(fr); by = {f: np.where(fr == f)[0] for f in frames}
     boots = []
-    for _ in range(200):
+    for _ in range(30 if bins.FULL else 200):
         idx = np.concatenate([by[f] for f in rng.choice(frames, len(frames))])
         (_, g, _), _ = fit(s[idx], y[idx], ri[idx], nr)
         boots.append(g)
@@ -75,7 +77,7 @@ for c, cn in C.items():
     # the curve itself: range-adjusted log points by score bin, label-free
     Xr = np.eye(nr)[ri]; br, *_ = np.linalg.lstsq(Xr, y, rcond=None); resid = y - Xr @ br
     print('score bin    n     range-adjusted pts (x ring baseline)   share of boxes')
-    for e0, e1 in zip([.10, .12, .14, .16, .18, .20, .25, .30, .40, .50], [.12, .14, .16, .18, .20, .25, .30, .40, .50, 1.01]):
+    for e0, e1 in zip(bins.SB[:-1], bins.SB[1:]):
         m = (s >= e0) & (s < e1)
         if m.sum() >= 20:
             print('%.2f-%.2f  %6d   %6.2f                                %5.1f%%' % (

@@ -9,6 +9,7 @@ Everything in `indicators()` reads only score / npts / range / persistence.
 """
 import pickle, sys, numpy as np
 from scipy.optimize import minimize
+import bins
 
 S = sys.argv[1]
 SP = pickle.load(open(S + '/score_pts.pkl', 'rb'))
@@ -16,7 +17,7 @@ PE = pickle.load(open(S + '/persistence.pkl', 'rb'))
 AU = pickle.load(open(S + '/audit_full.pkl', 'rb'))
 GT = np.array(AU['target']['gt'], dtype=float).reshape(-1, 4)
 GT = GT[(GT[:, 2] >= 1) & (GT[:, 3] < 70)]
-GRID = np.round(np.arange(0.10, 0.601, 0.01), 2)
+GRID = bins.GRID
 R = [0, 10, 20, 30, 40, 50, 70]
 NAMES = {1: 'Car', 2: 'Pedestrian', 3: 'Cyclist'}
 
@@ -27,10 +28,10 @@ def count_balance(scores, n_true):
     return GRID[np.argmin(np.abs(kept - n_true))]
 
 
-def persistence_unmix(s, p, lo=(0.10, 0.12), hi=(0.50, 1.01)):
+def persistence_unmix(s, p, lo=bins.BOTTOM, hi=(0.50, 1.01)):
     P0 = p[(s >= lo[0]) & (s < lo[1])].mean()
     P1 = p[(s >= hi[0]) & (s < hi[1])].mean()
-    edges = np.concatenate([np.arange(0.10, 0.50, 0.02), [1.01]])
+    edges = np.concatenate([bins.LOW_SB, np.arange(0.10, 0.50, 0.02), [1.01]])
     pi = np.zeros(len(s))
     for e0, e1 in zip(edges[:-1], edges[1:]):
         m = (s >= e0) & (s < e1)
@@ -39,7 +40,8 @@ def persistence_unmix(s, p, lo=(0.10, 0.12), hi=(0.50, 1.01)):
     return pi, P0, P1
 
 
-def trunc_exp_mix(s, lo=0.10):
+def trunc_exp_mix(s, lo=None):
+    lo = bins.LO if lo is None else lo
     """Two truncated exponentials on [lo, 1]: fast (spurious) + slow (real). ML fit."""
     x = s - lo; L = 1.0 - lo
 

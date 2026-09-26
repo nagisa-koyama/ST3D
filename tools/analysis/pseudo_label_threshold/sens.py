@@ -1,5 +1,6 @@
+import os
 import pickle, sys, glob, numpy as np, importlib.util
-spec = importlib.util.spec_from_file_location('h', sys.argv[1] + '/harness.py'); h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
+spec = importlib.util.spec_from_file_location('h', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'harness.py')); h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
 for f in [sys.argv[1] + '/persistence.pkl'] + sorted(glob.glob(sys.argv[1] + '/persistence_*.pkl')):
     h.PE = pickle.load(open(f, 'rb'))
     row = f.split('/')[-1]

@@ -1,8 +1,9 @@
+import os
 import pickle, sys, numpy as np, importlib.util
 from scipy.stats import norm
 from scipy.optimize import minimize
 S = sys.argv[1]
-spec = importlib.util.spec_from_file_location('h', S + '/harness.py'); h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
+spec = importlib.util.spec_from_file_location('h', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'harness.py')); h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
 Z0 = np.log(0.1 / 0.9)
 def fit(s):
     z = np.log(s / (1 - s))

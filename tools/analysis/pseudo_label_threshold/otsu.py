@@ -1,9 +1,11 @@
+import os
 import pickle, sys, numpy as np, importlib.util
 S = sys.argv[1]
-spec = importlib.util.spec_from_file_location('h', S + '/harness.py'); h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
+spec = importlib.util.spec_from_file_location('h', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'harness.py')); h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
 from sklearn.mixture import GaussianMixture
+import bins as B
 def otsu(s, bins=90):
-    hst, e = np.histogram(s, bins=bins, range=(0.1, 1.0)); p = hst / hst.sum(); x = (e[:-1] + e[1:]) / 2
+    hst, e = np.histogram(s, bins=bins, range=(B.LO, 1.0)); p = hst / hst.sum(); x = (e[:-1] + e[1:]) / 2
     best = (-1, None)
     for k in range(1, bins):
         w0, w1 = p[:k].sum(), p[k:].sum()
@@ -15,7 +17,7 @@ def otsu(s, bins=90):
 def gmm_logit(s):
     z = np.log(s / (1 - s)).reshape(-1, 1)
     g = GaussianMixture(2, random_state=0, n_init=20).fit(z); hi = np.argmax(g.means_.ravel())
-    grid = np.linspace(0.1, 0.9, 801); pz = g.predict_proba(np.log(grid / (1 - grid)).reshape(-1, 1))[:, hi]
+    grid = np.linspace(B.LO, 0.9, 801); pz = g.predict_proba(np.log(grid / (1 - grid)).reshape(-1, 1))[:, hi]
     t = grid[np.argmax(pz >= 0.5)] if (pz >= .5).any() else np.nan
     w_true = g.weights_[hi]
     return t, h.count_balance(s, w_true * len(s))

@@ -1,8 +1,9 @@
 import pickle, sys, numpy as np
+import bins
 a = pickle.load(open(sys.argv[1] + '/score_pts.pkl', 'rb'))
 d = pickle.load(open(sys.argv[1] + '/audit_full.pkl', 'rb'))
 g = np.array(d['target']['gt'], dtype=float).reshape(-1, 4); g = g[g[:, 2] >= 1]
-R = [0, 10, 20, 30, 40, 50, 70]; T = [0.1, 0.15, 0.2]; nf = 1000
+R = [0, 10, 20, 30, 40, 50, 70]; T = [x for x in bins.T if x <= 0.2]; nf = 1000
 rank = lambda x: np.argsort(np.argsort(x, kind='stable'), kind='stable').astype(float)
 sp = lambda x, y: np.corrcoef(rank(x), rank(y))[0, 1] if len(x) > 10 else np.nan
 for c, cn in [(1, 'Car'), (2, 'Pedestrian'), (3, 'Cyclist')]:

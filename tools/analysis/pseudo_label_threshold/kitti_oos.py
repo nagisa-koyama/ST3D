@@ -1,10 +1,11 @@
+import os
 """Out-of-sample: Lyft->KITTI SECOND teacher (p64jmfqs, ps_label_e0). Non-temporal indicators only.
 Both pseudo-labels and GT restricted to the camera FOV (|azimuth| < 40 deg, x > 0) and < 70 m,
 because KITTI annotates only there - a sensor/protocol restriction, not a label."""
 import pickle, sys, numpy as np, importlib.util
 from pathlib import Path
 S = sys.argv[1]
-spec = importlib.util.spec_from_file_location('h', S + '/harness.py'); h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
+spec = importlib.util.spec_from_file_location('h', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'harness.py')); h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
 sys.path.insert(0, '/st3d')
 from pcdet.ops.roiaware_pool3d import roiaware_pool3d_utils
 

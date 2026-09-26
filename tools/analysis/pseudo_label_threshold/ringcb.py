@@ -1,5 +1,6 @@
+import os
 import pickle, sys, numpy as np, importlib.util
-spec = importlib.util.spec_from_file_location('h', sys.argv[1] + '/harness.py'); h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
+spec = importlib.util.spec_from_file_location('h', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'harness.py')); h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
 R = [0, 10, 20, 30, 40, 50, 70]
 for c in [1, 2]:
     pe = h.PE[(h.PE[:, 0] == c) & (h.PE[:, 1] >= 0)]; s, r, p = pe[:, 1], pe[:, 2], pe[:, 3]

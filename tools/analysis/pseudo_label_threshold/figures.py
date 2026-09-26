@@ -12,6 +12,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from sklearn.mixture import GaussianMixture
+import bins
 
 S, OUT = sys.argv[1], sys.argv[2]
 SURFACE, INK, INK2, GRID = '#fcfcfb', '#0b0b0b', '#52514e', '#e1e0d9'
@@ -37,8 +38,8 @@ def logit(s):
 
 def gmm_threshold(s):
     z = logit(s).reshape(-1, 1)
-    g = GaussianMixture(2, random_state=0, n_init=10).fit(z); hi = int(np.argmax(g.means_.ravel()))
-    grid = np.linspace(0.1, 0.95, 851); post = g.predict_proba(logit(grid).reshape(-1, 1))[:, hi]
+    g = GaussianMixture(bins.NCOMP, random_state=0, n_init=10).fit(z); hi = int(np.argmax(g.means_.ravel()))
+    grid = np.linspace(bins.LO, 0.95, 851); post = g.predict_proba(logit(grid).reshape(-1, 1))[:, hi]
     return g, hi, grid[np.argmax(post >= .5)]
 
 
@@ -50,28 +51,28 @@ fig, axes = plt.subplots(1, 5, figsize=(15, 3.2), constrained_layout=True)
 for ax, (name, b) in zip(axes, sets):
     s, tp = b[:, 1], b[:, 4] > 0; z = logit(s); cls = name.split()[-1]
     g, hi, t = gmm_threshold(s)
-    edges = np.linspace(logit(0.1), logit(0.97), 60)
+    edges = np.linspace(logit(bins.LO), logit(0.97), 60)
     ax.hist(z, bins=edges, color=HUE[cls], alpha=0.85, density=True, label='all pseudo-labels')
     ax.hist(z[tp], bins=edges, histtype='step', color=INK, density=False,
             weights=np.full(tp.sum(), 1 / (len(z) * (edges[1] - edges[0]))), lw=1.2, ls='--',
             label='matched to GT (validation)')
     xs = np.linspace(edges[0], edges[-1], 300).reshape(-1, 1)
-    for k in range(2):
+    for k in range(bins.NCOMP):
         pdf = g.weights_[k] * np.exp(-0.5 * ((xs[:, 0] - g.means_[k, 0]) ** 2) / g.covariances_[k, 0, 0]) / np.sqrt(2 * np.pi * g.covariances_[k, 0, 0])
-        ax.plot(xs[:, 0], pdf, color=DARK if k == hi else INK2, lw=1.6, label='GMM confident mode' if k == hi else 'GMM other mode')
+        ax.plot(xs[:, 0], pdf, color=DARK if k == hi else INK2, lw=1.6, label='GMM confident mode' if k == hi else ('GMM other mode' if k == 0 else None))
     ax.axvline(logit(t), color=INK, lw=1.2)
     prec = tp[s >= t].mean()
     ax.set_title('%s\nt = %.2f, precision %.2f (valid.)' % (name, t, prec))
-    ticks = [0.1, 0.2, 0.3, 0.5, 0.8]; ax.set_xticks(logit(np.array(ticks))); ax.set_xticklabels([str(x) for x in ticks])
+    ticks = ([0.001, 0.01] if bins.FULL else []) + [0.1, 0.2, 0.3, 0.5, 0.8]; ax.set_xticks(logit(np.array(ticks))); ax.set_xticklabels([str(x) for x in ticks])
     ax.set_xlabel('teacher score (logit axis)'); ax.set_yticks([])
 axes[0].set_ylabel('density'); axes[0].legend(loc='upper right', fontsize=7)
-fig.suptitle('Fig. 1  Pseudo-label scores are bimodal on the logit axis in every class, including one that is 98% wrong', x=0.01, ha='left', fontsize=10)
-fig.savefig(OUT + '/pseudo_label_fig1_score_gmm.png', dpi=160); plt.close(fig)
+fig.suptitle('Fig. 1  Full-range teacher scores: one mode at the background plateau (~0.05) and a monotone tail; the true detections are a low shoulder, not a mode (KITTI Car is the exception)' if bins.FULL else 'Fig. 1  Pseudo-label scores are bimodal on the logit axis in every class, including one that is 98% wrong', x=0.01, ha='left', fontsize=10)
+fig.savefig(OUT + '/pseudo_label_' + ('full_' if bins.FULL else '') + 'fig1_score_gmm.png', dpi=160); plt.close(fig)
 
 # ---------------------------------------------------------------- Fig 2: points vs score by ring
 fig, axes = plt.subplots(1, 4, figsize=(15, 3.4), constrained_layout=True)
 panels = [(1, 'Car', 10, 20), (1, 'Car', 20, 30), (1, 'Car', 30, 40), (2, 'Pedestrian', 10, 20)]
-edges = np.arange(0.10, 0.62, 0.02)
+edges = np.concatenate([bins.LOW_SB, np.arange(0.10, 0.62, 0.02)])
 for ax, (c, cn, lo, hi) in zip(axes, panels):
     b = SP[(SP[:, 0] == c) & (SP[:, 3] >= lo) & (SP[:, 3] < hi)]; s, n, tp = b[:, 1], b[:, 2], b[:, 4] > 0
     g = GT[(GT[:, 1] == c) & (GT[:, 3] >= lo) & (GT[:, 3] < hi), 2]
@@ -85,16 +86,16 @@ for ax, (c, cn, lo, hi) in zip(axes, panels):
     ax.plot(xs, med, color=HUE[cn], lw=2, label='median, all pseudo-labels')
     ax.plot(xs, medtp, color=INK, lw=1.2, ls=':', label='median, matched only (valid.)')
     ax.axhline(np.median(g), color=INK, lw=1.2, ls='--', label='GT median (valid.)')
-    ax.set_yscale('log'); ax.set_xlim(0.1, 0.6); ax.set_title('%s, %d–%d m  (n = %d)' % (cn, lo, hi, len(b)))
+    ax.set_yscale('log'); ax.set_xlim(bins.LO, 0.6); ax.set_xscale('log' if bins.FULL else 'linear'); ax.set_title('%s, %d–%d m  (n = %d)' % (cn, lo, hi, len(b)))
     ax.set_xlabel('teacher score')
 axes[0].set_ylabel('points inside box'); axes[0].legend(fontsize=7, loc='upper left')
-fig.suptitle('Fig. 2  Points-in-box rises with score for Car at 10–30 m, is flat beyond 30 m, and flat for Pedestrian', x=0.01, ha='left', fontsize=10)
-fig.savefig(OUT + '/pseudo_label_fig2_points_vs_score.png', dpi=160); plt.close(fig)
+fig.suptitle('Fig. 2  Full range: points-in-box is flat from the plateau up to ~0.2 at every ring, then rises for Car at 10–30 m; the sub-0.1 boxes are the same population as 0.10–0.12' if bins.FULL else 'Fig. 2  Points-in-box rises with score for Car at 10–30 m, is flat beyond 30 m, and flat for Pedestrian', x=0.01, ha='left', fontsize=10)
+fig.savefig(OUT + '/pseudo_label_' + ('full_' if bins.FULL else '') + 'fig2_points_vs_score.png', dpi=160); plt.close(fig)
 
 # ---------------------------------------------------------------- Fig 3: what a threshold keeps (Car)
 b = SP[(SP[:, 0] == 1) & (SP[:, 3] < 70)]; s, n, r, tp = b[:, 1], b[:, 2], b[:, 3], b[:, 4] > 0
 g = GT[GT[:, 1] == 1]; ngt = len(g)
-T = np.round(np.arange(0.10, 0.51, 0.01), 2)
+T = bins.GRID[bins.GRID <= 0.5]
 R = [0, 10, 20, 30, 40, 50, 70]
 kept = np.array([(s >= t).sum() for t in T]) / NF
 prec = np.array([tp[s >= t].mean() for t in T]); rec = np.array([(tp & (s >= t)).sum() / ngt for t in T])
@@ -126,14 +127,14 @@ ax.plot(T, kept / (ngt / NF), color=INK2, lw=1.4, ls=':', label='kept ÷ real bo
 ax.set_ylim(0, 1.2); ax.set_title('Kept-set distance to GT and box-count balance'); ax.set_ylabel('distance / ratio')
 for ax in axes:
     ax.axvline(t_gmm, color=INK, lw=1.2); ax.text(t_gmm + 0.005, ax.get_ylim()[1] * 0.96, 'GMM t=%.2f\n(label-free)' % t_gmm, fontsize=7, va='top')
-    ax.set_xlabel('SCORE_THRESH  (keeps every box ≥ t)'); ax.set_xlim(0.1, 0.5); ax.legend(fontsize=7)
-fig.suptitle('Fig. 3  nuScenes Car: the label-free GMM threshold sits at box-count balance; precision keeps rising past it while the density estimate goes over 1', x=0.01, ha='left', fontsize=10)
-fig.savefig(OUT + '/pseudo_label_fig3_threshold_tradeoff.png', dpi=160); plt.close(fig)
+    ax.set_xlabel('SCORE_THRESH  (keeps every box ≥ t)'); ax.set_xlim(bins.LO, 0.5); ax.set_xscale('log' if bins.FULL else 'linear'); ax.legend(fontsize=7)
+fig.suptitle('Fig. 3  nuScenes Car, full range: below 0.1 nothing changes; count balance and the distance minimum stay at 0.18–0.20, the 3-component GMM lands at 0.24' if bins.FULL else 'Fig. 3  nuScenes Car: the label-free GMM threshold sits at box-count balance; precision keeps rising past it while the density estimate goes over 1', x=0.01, ha='left', fontsize=10)
+fig.savefig(OUT + '/pseudo_label_' + ('full_' if bins.FULL else '') + 'fig3_threshold_tradeoff.png', dpi=160); plt.close(fig)
 
 # ---------------------------------------------------------------- Fig 4: persistence and range mix
 fig, axes = plt.subplots(1, 3, figsize=(15, 3.4), constrained_layout=True)
 ax = axes[0]
-edges = np.concatenate([np.arange(0.10, 0.50, 0.02), [0.6, 0.8, 1.01]])
+edges = np.concatenate([bins.LOW_SB, np.arange(0.10, 0.50, 0.02), [0.6, 0.8, 1.01]])
 for c, cn in [(1, 'Car'), (2, 'Pedestrian'), (3, 'Cyclist')]:
     pe = PE[(PE[:, 0] == c) & (PE[:, 1] >= 0)]; s_, p_, tp_ = pe[:, 1], pe[:, 3] > 0, pe[:, 4] > 0
     xs, ys = [], []
@@ -144,10 +145,10 @@ for c, cn in [(1, 'Car'), (2, 'Pedestrian'), (3, 'Cyclist')]:
     if c == 1:
         ax.axhline(p_[tp_].mean(), color=INK, ls='--', lw=1, label='Car P(persist | matched) (valid.)')
         ax.axhline(p_[~tp_].mean(), color=INK, ls=':', lw=1, label='Car P(persist | unmatched) (valid.)')
-ax.set_xscale('log'); ax.set_xticks([0.1, 0.2, 0.3, 0.5, 1.0]); ax.set_xticklabels(['0.1', '0.2', '0.3', '0.5', '1'])
+ax.set_xscale('log'); tk = ([0.001, 0.01] if bins.FULL else []) + [0.1, 0.2, 0.3, 0.5, 1.0]; ax.set_xticks(tk); ax.set_xticklabels([str(x) for x in tk])
 ax.set_ylim(0, 1); ax.set_xlabel('teacher score'); ax.set_ylabel('fraction persisting in adjacent keyframes'); ax.set_title('Temporal persistence vs score (label-free)'); ax.legend(fontsize=7)
 ax = axes[1]
-SB = [.10, .12, .14, .16, .18, .20, .25, .30, .40, .50, 1.01]
+SB = bins.SB
 for c, cn in [(1, 'Car'), (2, 'Pedestrian'), (3, 'Cyclist')]:
     bb = SP[(SP[:, 0] == c) & (SP[:, 3] < 70)]
     xs = [(a + min(e, 1)) / 2 for a, e in zip(SB[:-1], SB[1:])]
@@ -158,14 +159,14 @@ ax.plot([], [], color=INK, ls='--', lw=1, label='GT median range, same hue (vali
 ax.set_xlabel('teacher score (bin centre)'); ax.set_ylabel('median box range (m)'); ax.set_title('Where each score bin sits in range'); ax.legend(fontsize=7)
 ax = axes[2]
 Rr = [0, 10, 20, 30, 40, 50, 70]; b = SP[(SP[:, 0] == 1) & (SP[:, 3] < 70)]; g = GT[GT[:, 1] == 1]
-cats = ['GT', '≥0.10', '≥0.18', '≥0.30', '≥0.50']
-shares = [np.histogram(g[:, 3], Rr)[0] / len(g)] + [np.histogram(b[b[:, 1] >= t, 3], Rr)[0] / (b[:, 1] >= t).sum() for t in [0.10, 0.18, 0.30, 0.50]]
+TH = ([0.0001, 0.01] if bins.FULL else []) + [0.10, 0.18, 0.30, 0.50]; cats = ['GT'] + ['≥%g' % t for t in TH]
+shares = [np.histogram(g[:, 3], Rr)[0] / len(g)] + [np.histogram(b[b[:, 1] >= t, 3], Rr)[0] / (b[:, 1] >= t).sum() for t in TH]
 ramp = ['#dce9f9', '#9cc3ee', '#4a8fdd', '#2a78d6', '#17457c', '#0d2a4d']
 bottom = np.zeros(len(cats))
 for k, (lo, hi) in enumerate(zip(Rr[:-1], Rr[1:])):
     vals = [sh[k] for sh in shares]
     ax.bar(cats, vals, bottom=bottom, color=ramp[k], edgecolor=SURFACE, linewidth=1, label='%d–%d m' % (lo, hi)); bottom += vals
 ax.set_ylim(0, 1); ax.set_ylabel('share of Car boxes'); ax.set_title('Range mix of the kept Car set vs GT'); ax.legend(fontsize=7, ncol=6, loc='upper center', bbox_to_anchor=(0.5, -0.12), handlelength=1)
-fig.suptitle('Fig. 4  Persistence separates score bands inside the same class; each score band lives at a different range, so a threshold also picks a range mix', x=0.01, ha='left', fontsize=10)
-fig.savefig(OUT + '/pseudo_label_fig4_persistence_range.png', dpi=160); plt.close(fig)
+fig.suptitle('Fig. 4  Full range: plateau boxes (<0.1) persist MORE than low-score detections - static clutter re-fires every frame - so persistence is not monotone across the plateau' if bins.FULL else 'Fig. 4  Persistence separates score bands inside the same class; each score band lives at a different range, so a threshold also picks a range mix', x=0.01, ha='left', fontsize=10)
+fig.savefig(OUT + '/pseudo_label_' + ('full_' if bins.FULL else '') + 'fig4_persistence_range.png', dpi=160); plt.close(fig)
 print('wrote 4 figures to', OUT)

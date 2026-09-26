@@ -1,8 +1,9 @@
 import pickle, sys, numpy as np
+import bins
 a = pickle.load(open(sys.argv[1] + '/score_pts.pkl', 'rb'))
 d = pickle.load(open(sys.argv[1] + '/audit_full.pkl', 'rb'))
 g = np.array(d['target']['gt'], dtype=float).reshape(-1, 4); g = g[(g[:, 2] >= 1) & (g[:, 3] < 70)]
-R = [0, 10, 20, 30, 40, 50, 70]; T = [.10, .12, .14, .16, .18, .20, .25, .30, .40, .50]
+R = [0, 10, 20, 30, 40, 50, 70]; T = [x for x in bins.SB if x <= 0.5]
 def tv(x, y):
     hx = np.histogram(x, R)[0] / len(x); hy = np.histogram(y, R)[0] / len(y); return 0.5 * np.abs(hx - hy).sum()
 def w1(x, y):

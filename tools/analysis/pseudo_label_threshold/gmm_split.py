@@ -1,7 +1,8 @@
+import os
 import pickle, sys, numpy as np, importlib.util
 S = sys.argv[1]
-spec = importlib.util.spec_from_file_location('o', S + '/otsu.py')
-src = open(S + '/otsu.py').read().split('K = pickle')[0]; exec(src)
+spec = importlib.util.spec_from_file_location('o', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'otsu.py'))
+src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'otsu.py')).read().split('K = pickle')[0]; exec(src)
 infos = pickle.load(open('/st3d/data/nuscenes/v1.0-trainval/nuscenes_infos_10sweeps_train.pkl', 'rb'))
 loc = np.array([i['lidar_path'].split('/')[-1].startswith('n008') for i in infos])
 pe = h.PE; rng = np.random.default_rng(3)

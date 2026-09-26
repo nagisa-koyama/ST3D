@@ -1,6 +1,7 @@
+import os
 import pickle, sys, numpy as np, importlib.util
 S = sys.argv[1]
-spec = importlib.util.spec_from_file_location('h', S + '/harness.py'); h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
+spec = importlib.util.spec_from_file_location('h', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'harness.py')); h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
 def binned(s, y, w=0.01, top=0.6, minn=15):
     e = np.arange(0.10, top + 1e-9, w); xs, ys, ns = [], [], []
     for a, b in zip(e[:-1], e[1:]):

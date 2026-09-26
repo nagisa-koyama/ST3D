@@ -1,7 +1,8 @@
+import os
 import pickle, sys, numpy as np
 sys.argv = [sys.argv[0], sys.argv[1]]
 import importlib.util
-spec = importlib.util.spec_from_file_location('h', sys.argv[1] + '/harness.py'); h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
+spec = importlib.util.spec_from_file_location('h', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'harness.py')); h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
 infos = pickle.load(open('/st3d/data/nuscenes/v1.0-trainval/nuscenes_infos_10sweeps_train.pkl', 'rb'))
 loc = np.array([0 if i['lidar_path'].split('/')[-1].startswith('n008') else 1 for i in infos])
 SP0, PE0, GT0 = h.SP.copy(), h.PE.copy(), h.GT.copy()

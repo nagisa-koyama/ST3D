@@ -18,6 +18,7 @@ from pcdet.config import cfg, cfg_from_yaml_file
 from pcdet.datasets import build_dataloader
 from pcdet.datasets.processor.data_processor import DataProcessor
 from pcdet.utils import common_utils
+import bins
 
 S = sys.argv[1]
 HI = float(sys.argv[2]) if len(sys.argv) > 2 else 0.3
@@ -28,7 +29,7 @@ rc = copy.deepcopy(cfg.DATA_CONFIG_TAR); rc.USE_PSEUDO_LABEL = False
 ds, _, _ = build_dataloader(rc, cfg.CLASS_NAMES, 1, False, workers=0, logger=common_utils.create_logger(),
                             training=True, model_ontology=cfg.get('ONTOLOGY'))
 infos = ds.infos
-ps = pickle.load(open('/storage/wandb/run-20260926_102950-uq83obp7/files/ps_label/ps_label_e0.pkl', 'rb'))
+ps = pickle.load(open(bins.PS_LABEL, 'rb'))
 SHIFT = np.array(rc.SHIFT_COOR)
 NAMES = {1: 'car', 2: 'pedestrian'}
 

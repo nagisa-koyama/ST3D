@@ -1,5 +1,6 @@
+import os
 import pickle, sys, numpy as np, importlib.util
-spec = importlib.util.spec_from_file_location('h', sys.argv[1] + '/harness.py'); h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
+spec = importlib.util.spec_from_file_location('h', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'harness.py')); h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
 STEP = 28
 R = np.array([0, 10, 20, 30, 40, 50, 70]); LB = np.linspace(0, np.log(3000), 41)
 def join(c):

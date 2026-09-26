@@ -1,7 +1,9 @@
+import os
 import pickle, sys, numpy as np, importlib.util
-spec = importlib.util.spec_from_file_location('h', sys.argv[1] + '/harness.py'); h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
-spec2 = importlib.util.spec_from_file_location('j', sys.argv[1] + '/i6.py')
-src = open(sys.argv[1] + '/i6.py').read().split('def dist')[0]; exec(src.split('STEP = 28')[1].replace('\nR = ', '\n_R = '), globals()) if False else None
+
+spec = importlib.util.spec_from_file_location('h', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'harness.py')); h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
+spec2 = importlib.util.spec_from_file_location('j', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'i6.py'))
+src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'i6.py')).read().split('def dist')[0]; exec(src.split('STEP = 28')[1].replace('\nR = ', '\n_R = '), globals()) if False else None
 STEP = 28
 def join(c):
     sp = h.SP[(h.SP[:, 0] == c) & (h.SP[:, 3] < 70)]; pe = h.PE[(h.PE[:, 0] == c) & (h.PE[:, 1] >= 0)]
@@ -15,7 +17,7 @@ for c in [1, 2]:
     est, gtm, tpm = {}, {}, {}
     for lo, hi in RINGS:
         m = (r >= lo) & (r < hi); sm, pm, lm = s[m], pers[m], np.log(n[m])
-        P0 = pm[sm < 0.12].mean(); q = np.quantile(sm, 0.8); P1 = pm[sm >= max(q, 0.4)].mean()
+        P0 = pm[sm < h.bins.BOTTOM[1]].mean(); q = np.quantile(sm, 0.8); P1 = pm[sm >= max(q, 0.4)].mean()
         w = (pm - P0) / (P1 - P0)
         est[(lo, hi)] = (w * lm).sum() / w.sum()                        # label-free mean log pts of real objects
         gtm[(lo, hi)] = np.log(g[(g[:, 3] >= lo) & (g[:, 3] < hi), 2]).mean()   # VALIDATION

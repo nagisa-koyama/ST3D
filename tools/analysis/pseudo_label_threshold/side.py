@@ -1,9 +1,10 @@
 import pickle, sys, numpy as np
+import bins
 a = pickle.load(open(sys.argv[1] + '/score_pts.pkl', 'rb'))
 d = pickle.load(open(sys.argv[1] + '/audit_full.pkl', 'rb'))
 g = np.array(d['target']['gt'], dtype=float).reshape(-1, 4); g = g[g[:, 2] >= 1]
 R = [0, 10, 20, 30, 40, 50, 70]
-SB = [.10, .12, .14, .16, .18, .20, .25, .30, .40, .50, 1.01]
+SB = bins.SB
 for c, cn in [(1, 'Car'), (2, 'Pedestrian'), (3, 'Cyclist')]:
     b = a[a[:, 0] == c]
     print('\n%s | %s' % (cn, ' | '.join('%d-%d m' % r for r in zip(R[:-1], R[1:]))))

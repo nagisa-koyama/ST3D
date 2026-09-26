@@ -9,9 +9,10 @@ next keyframes (0.5 s either side, same scene) hold same-class boxes q-, q+ with
 """
 import pickle, sys
 import numpy as np
+import bins
 
 S = sys.argv[1]
-ps = pickle.load(open('/storage/wandb/run-20260926_102950-uq83obp7/files/ps_label/ps_label_e0.pkl', 'rb'))
+ps = pickle.load(open(bins.PS_LABEL, 'rb'))
 infos = pickle.load(open('/storage/../koyama_st3d_infos.pkl', 'rb')) if False else \
     pickle.load(open('/st3d/data/nuscenes/v1.0-trainval/nuscenes_infos_10sweeps_train.pkl', 'rb'))
 SHIFT_Z = 1.75

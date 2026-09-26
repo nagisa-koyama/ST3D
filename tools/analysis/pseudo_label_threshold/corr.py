@@ -1,4 +1,5 @@
 import pickle, sys, numpy as np
+import bins
 a = pickle.load(open(sys.argv[1], 'rb'))   # class, score, npts, range, tp, frame
 C = {1: 'Car', 2: 'Pedestrian', 3: 'Cyclist'}
 rank = lambda x: np.argsort(np.argsort(x, kind='stable'), kind='stable').astype(float)
@@ -28,6 +29,6 @@ for c, cn in C.items():
     # score threshold view: what a higher accept threshold keeps
     print('  accept >= thr:  thr  kept/frame  precision  median pts  (all ranges)')
     nf = len(np.unique(a[:, 5]))
-    for t in [0.1, 0.2, 0.3, 0.4, 0.5]:
+    for t in bins.T:
         k = s >= t
         if k.sum(): print('                 %.1f  %8.2f  %9.2f  %9.0f' % (t, k.sum() / nf, tp[k].mean(), np.median(n[k])))
