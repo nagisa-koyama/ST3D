@@ -15,5 +15,7 @@ if [ -z "${WANDB_NOTES//[[:space:]]/}" ]; then
   exit 2
 fi
 export WANDB_NOTES
-JOB=$(sbatch --parsable "$@")
+# --comment puts the note on the Slurm job too, so the queue says what each job is for:
+#   squeue -u $USER -o "%.8i %.10j %.3t %.10M %.8N %k"
+JOB=$(sbatch --parsable --comment="$WANDB_NOTES" "$@")
 echo "submitted job ${JOB%%;*}: [job ${JOB%%;*}] $WANDB_NOTES"

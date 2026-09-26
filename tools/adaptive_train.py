@@ -114,7 +114,7 @@ def main():
     )
 
     if cfg.LOCAL_RANK == 0:
-        wandb.init(config=vars(cfg), project="st3d", name=args.run_name, dir="/storage", notes=common_utils.wandb_notes_with_job_id())
+        wandb.init(config=vars(cfg), project="st3d", name=args.run_name, dir="/storage", notes=common_utils.wandb_notes_with_job_id(), tags=common_utils.wandb_tags(cfg, 'adaptive_train'))
         wandb.config.update(common_utils.wandb_launch_config(total_gpus, args.batch_size))
         print("W&B run directory:", wandb.run.dir)
 

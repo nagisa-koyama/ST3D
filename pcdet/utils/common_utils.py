@@ -133,9 +133,23 @@ def wandb_launch_config(total_gpus, batch_size_per_gpu):
         'launch': {
             'total_gpus': total_gpus,
             'batch_size_per_gpu': batch_size_per_gpu,
-            'global_batch_size': batch_size_per_gpu * total_gpus,
+            'global_batch_size': None if batch_size_per_gpu is None else batch_size_per_gpu * total_gpus,
         },
     }
+
+
+def wandb_tags(cfg, entry_point, cfg_file=None):
+    """W&B tags: config family (cfgs/<family>/...), config name, and the entry point that ran it.
+
+    Scripts that do not set cfg.EXP_GROUP_PATH / cfg.TAG pass cfg_file and get the same derivation
+    train.py uses.
+    """
+    group, tag = cfg.get('EXP_GROUP_PATH'), cfg.get('TAG')
+    if cfg_file and not (group or tag):
+        group = '/'.join(cfg_file.split('/')[1:-1])
+        tag = os.path.splitext(os.path.basename(cfg_file))[0]
+    tags = [group, tag, entry_point]
+    return [t[:64] for t in tags if t]  # W&B rejects tags over 64 characters
 
 
 def set_random_seed(seed):

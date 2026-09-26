@@ -45,7 +45,9 @@ def main():
     logger = common_utils.create_logger()
     logger.info('-----------------Run TSNE-------------------------')
 
-    wandb.init(config=vars(cfg), project="st3d", name=args.run_name)
+    wandb.init(config=vars(cfg), project="st3d", name=args.run_name,
+               notes=common_utils.wandb_notes_with_job_id(), tags=common_utils.wandb_tags(cfg, 'tsne', args.cfg_file))
+    wandb.config.update(common_utils.wandb_launch_config(1, getattr(args, 'batch_size', None)))
 
     # Dataset configs
     eval_configs = get_eval_configs(cfg)
