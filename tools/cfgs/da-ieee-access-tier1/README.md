@@ -67,8 +67,17 @@ a second time from the source-only model `ldb35c2o` epoch 30.
     WANDB_NOTES="..." ENTRY=adaptive_train.py BATCH=12 scripts/submit.sh --gres=gpu:1 \
         scripts/run_sourceonly_2gpu.sh cfgs/da-ieee-access-tier1/centerpoint-uada3d-lyft2nuscenes-4ep.yaml tier1
 
-At `BATCH=12` (6 source + 6 target) the Lyft row segfaults deterministically near iteration 493 of
-epoch 0 (jobs 25928, 25931). Job 26275's backtrace puts the crash in cuDNN
-`convolution_backward`. The proxy would crash in its first ~20 minutes the same way. `BATCH=6`
-(3+3) ran for hours in job 25922, but it halves the source batch and doubles the step count, so it
-is NOT matched to the other arms. Only use it if you accept that.
+The segfault that stopped it at `BATCH=12` (jobs 25928/25931, near iteration 493) is ROOT-CAUSED
+and no longer blocks it: a use-after-free in torch 2.5.1's CUDA caching allocator, armed by the
+image's `PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128` and reached because this recipe runs at
+the GPU memory wall. It is not cuDNN - the backtrace passes through cuDNN's workspace allocation.
+`tools/_alloc_conf_guard.py`, run from `_init_path`, now strips the option for every entry point.
+`BATCH=12` is therefore runnable, and it is the matched batch; do not fall back to `BATCH=6`.
+experiments_md/20260926_05.
+
+**Still BLOCKED, on the method rather than the crash:** the conditional discriminator's GRL lambda
+is never updated from 0.0, so it sends exactly zero gradient to the detector. The row as configured
+is source-only training with a discriminator attached, and that is also true of the released
+upstream code (maxiuw/UADA3D). Fixing it changes the method, so it waits on a decision. The other
+defect found alongside it - `adaptive_train.py` passing no `model_ontology`, which left the Lyft
+source with zero ground-truth boxes - is fixed.

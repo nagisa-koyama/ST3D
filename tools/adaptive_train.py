@@ -66,6 +66,64 @@ def parse_config():
     return args, cfg
 
 
+def model_ontologies(cfg):
+    """(training, evaluation) model_ontology, by the same rule train.py uses.
+
+    Every loader MUST receive one. Without it map_ontology_dataset_to_model is None, a dataset
+    whose names differ from CLASS_NAMES keeps its own spelling, and keep_arrays_by_name() in
+    prepare_data then drops every box: the da-ieee-access Lyft UADA3D row trained with ZERO source
+    ground truth that way (Lyft's 'car' vs 'Car'; measured 0/0/0/0/0/0/0/0 boxes in the first
+    eight frames against 50/16/25/30/2/8/22/35 with 'kitti'), and its loss fell to the
+    discriminator's alone. The same defect as train.py's cc5d69a; this entry point never got the
+    fix. experiments_md/20260926_05 section 6a.
+
+    No SELF_TRAIN teacher exists here, so train.py's head_per_dataset exception does not apply.
+    """
+    training = cfg.get('ONTOLOGY', None)
+    evaluation = cfg.get('EVAL_ONTOLOGY', None) or training
+    return training, evaluation
+
+
+def build_domain_dataloaders(cfg, args, dist_train, logger):
+    """Source and target training loaders, half of the per-GPU batch each.
+
+    Returns ((source_set, source_loader, source_sampler), (target_set, target_loader,
+    target_sampler)).
+    """
+    model_ontology, _ = model_ontologies(cfg)
+    source = build_dataloader(
+        dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES,
+        batch_size=args.batch_size // 2, dist=dist_train, workers=args.workers,
+        logger=logger, training=True,
+        merge_all_iters_to_one_epoch=args.merge_all_iters_to_one_epoch, total_epochs=args.epochs,
+        model_ontology=model_ontology
+    )
+    # A DA target must never contribute its REAL labels. Checked here, before a
+    # loader exists, so a misconfigured run dies in seconds rather than minutes.
+    # Mapping the target's names (as train.py does) does not weaken that: UNSUPERVISED stops the
+    # label path in prepare_data, and DACenterPoint takes no detection loss on domain 1.
+    assert_target_labels_are_not_used(cfg, True, logger)
+    target = build_dataloader(
+        dataset_cfg=cfg.DATA_CONFIG_TAR, class_names=cfg.CLASS_NAMES,
+        batch_size=args.batch_size // 2, dist=dist_train, workers=args.workers,
+        logger=logger, training=True,
+        merge_all_iters_to_one_epoch=args.merge_all_iters_to_one_epoch, total_epochs=args.epochs,
+        model_ontology=model_ontology
+    )
+    return source, target
+
+
+def build_eval_dataloader(cfg, args, dist_train, logger):
+    """The target evaluation loader, under the same ontology train.py evaluates with, so a UADA3D
+    row is scored against the same class mapping as the source-only rows it is compared with."""
+    _, model_ontology_eval = model_ontologies(cfg)
+    return build_dataloader(
+        dataset_cfg=cfg.DATA_CONFIG_TAR, class_names=cfg.CLASS_NAMES,
+        batch_size=min(args.batch_size, 10), dist=dist_train, workers=args.workers,
+        logger=logger, training=False, model_ontology=model_ontology_eval
+    )
+
+
 def main():
     args, cfg = parse_config()
     if args.launcher == 'none':
@@ -146,21 +204,8 @@ def main():
         os.system('cp %s %s' % (args.cfg_file, output_dir))
 
     # -----------------------create dataloaders---------------------------
-    source_set, source_loader, source_sampler = build_dataloader(
-        dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES,
-        batch_size=args.batch_size // 2, dist=dist_train, workers=args.workers,
-        logger=logger, training=True,
-        merge_all_iters_to_one_epoch=args.merge_all_iters_to_one_epoch, total_epochs=args.epochs
-    )
-    # A DA target must never contribute its REAL labels. Checked here, before a
-    # loader exists, so a misconfigured run dies in seconds rather than minutes.
-    assert_target_labels_are_not_used(cfg, True, logger)
-    target_set, target_loader, target_sampler = build_dataloader(
-        dataset_cfg=cfg.DATA_CONFIG_TAR, class_names=cfg.CLASS_NAMES,
-        batch_size=args.batch_size // 2, dist=dist_train, workers=args.workers,
-        logger=logger, training=True,
-        merge_all_iters_to_one_epoch=args.merge_all_iters_to_one_epoch, total_epochs=args.epochs
-    )
+    (source_set, source_loader, source_sampler), (target_set, target_loader, target_sampler) = \
+        build_domain_dataloaders(cfg, args, dist_train, logger)
     logger.info('source dataset: %s', source_set.__class__.__name__)
     logger.info('target dataset: %s', target_set.__class__.__name__)
 
@@ -259,11 +304,7 @@ def main():
     logger.info('**********************Start evaluation %s/%s(%s)**********************' %
                 (cfg.EXP_GROUP_PATH, cfg.TAG, args.extra_tag))
 
-    test_set, test_loader, _ = build_dataloader(
-        dataset_cfg=cfg.DATA_CONFIG_TAR, class_names=cfg.CLASS_NAMES,
-        batch_size=min(args.batch_size, 10), dist=dist_train, workers=args.workers,
-        logger=logger, training=False
-    )
+    test_set, test_loader, _ = build_eval_dataloader(cfg, args, dist_train, logger)
 
     eval_output_dir = output_dir / 'eval' / 'eval_with_train'
     eval_output_dir.mkdir(parents=True, exist_ok=True)
