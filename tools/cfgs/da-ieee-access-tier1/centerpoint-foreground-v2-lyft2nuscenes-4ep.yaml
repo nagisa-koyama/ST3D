@@ -1,0 +1,12 @@
+# TIER-1 PROXY of da-ieee-access/centerpoint-foreground-v2-lyft2nuscenes.yaml (report 20260926_06:
+# GMM-derived per-class thresholds + ignore band + Car-only foreground channel). See README.md.
+# Schedule only: NUM_EPOCHS 30 -> 4 and PROG_AUG [8, 15, 23] -> [1, 2, 3], as for the other ST
+# proxies. Compare against foreground-4ep (v1) and the two ST3D controls.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-foreground-v2-lyft2nuscenes.yaml
+
+OPTIMIZATION:
+    NUM_EPOCHS: 4
+
+SELF_TRAIN:
+    PROG_AUG:
+        UPDATE_AUG: [1, 2, 3]

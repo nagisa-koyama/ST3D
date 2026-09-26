@@ -62,22 +62,38 @@ a second time from the source-only model `ldb35c2o` epoch 30.
         cfgs/da-ieee-access-tier1/<config>.yaml tier1 <run_name> \
         --pretrained_model $T --pretrained_model_teacher $T
 
-## UADA3D arm: BLOCKED at its matched batch
+## Foreground v2 (report 20260926_06): derived thresholds + ignore band + Car-only channel
+
+`centerpoint-foreground-v2-lyft2nuscenes-4ep` is the foreground row with the report's two changes
+and nothing else (a test pins that):
+
+- `SELF_TRAIN.SCORE_THRESH [0.21, 0.19, 0.18]`: per-class 2-component GMM on logit(score),
+  posterior 0.5, fitted to THIS teacher's first-pass pseudo-labels. `NEG_THRESH` stays 0.1, so the
+  band in between is ignored rather than deleted. Valid only for teacher `iwg6l5v1` epoch 30.
+- `HIST_DIST_FOREGROUND_CLASSES: ['Car']`: the foreground channel counts Car boxes only.
+  Pedestrian and Cyclist points take the background rate.
+
+Same launch as the other ST arms (1 GPU, `T` as above). Read it against foreground-4ep (v1), which
+isolates the v2 changes, and against st3d-global-4ep, which isolates the whole foreground idea.
+
+## UADA3D arm: runnable at its matched batch (as of 2026-09-26)
 
     WANDB_NOTES="..." ENTRY=adaptive_train.py BATCH=12 scripts/submit.sh --gres=gpu:1 \
         scripts/run_sourceonly_2gpu.sh cfgs/da-ieee-access-tier1/centerpoint-uada3d-lyft2nuscenes-4ep.yaml tier1
 
-The segfault that stopped it at `BATCH=12` (jobs 25928/25931, near iteration 493) is ROOT-CAUSED
-and no longer blocks it: a use-after-free in torch 2.5.1's CUDA caching allocator, armed by the
-image's `PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128` and reached because this recipe runs at
-the GPU memory wall. It is not cuDNN - the backtrace passes through cuDNN's workspace allocation.
-`tools/_alloc_conf_guard.py`, run from `_init_path`, now strips the option for every entry point.
-`BATCH=12` is therefore runnable, and it is the matched batch; do not fall back to `BATCH=6`.
-experiments_md/20260926_05.
+Three defects stood in the way, all fixed (experiments_md/20260926_05):
 
-**Still BLOCKED, on the method rather than the crash:** the conditional discriminator's GRL lambda
-is never updated from 0.0, so it sends exactly zero gradient to the detector. The row as configured
-is source-only training with a discriminator attached, and that is also true of the released
-upstream code (maxiuw/UADA3D). Fixing it changes the method, so it waits on a decision. The other
-defect found alongside it - `adaptive_train.py` passing no `model_ontology`, which left the Lyft
-source with zero ground-truth boxes - is fixed.
+- **Segfault at `BATCH=12`** (jobs 25928/25931, near iteration 493): a use-after-free in torch
+  2.5.1's CUDA caching allocator, armed by the image's `PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128`
+  and reached because this recipe runs at the GPU memory wall. Not cuDNN - the backtrace only passes
+  through cuDNN's workspace allocation. `tools/_alloc_conf_guard.py`, run from `_init_path`, strips
+  the option for every entry point (ST3D `15347ee`). Use `BATCH=12`, the matched batch; do not fall
+  back to `BATCH=6`.
+- **Zero source ground truth**: `adaptive_train.py` passed no `model_ontology`, so Lyft's lowercase
+  names were all dropped (`00dc77b`).
+- **Zero adaptation gradient**: the conditional discriminator's GRL lambda was never updated from
+  0.0, so it sent exactly zero gradient to the detector - also in the released upstream
+  (maxiuw/UADA3D). Fixed to implement the method as the paper describes it (`1247338`), which is a
+  deliberate departure from the released code; say so wherever this row is reported.
+
+Any UADA3D number produced before `1247338` is source-only training with a discriminator attached.

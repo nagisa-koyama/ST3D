@@ -1,0 +1,38 @@
+# Foreground-aware correction, v2 (experiments_md/20260926_06 sections 8 and 12), Lyft -> nuScenes.
+#
+# The foreground row (centerpoint-foreground-lyft2nuscenes.yaml) with the report's two changes,
+# and nothing else:
+#
+# 1. Per-class pseudo-label thresholds DERIVED from the teacher, not fixed at 0.1. A 2-component
+#    GMM on logit(score) per class, positive where P(confident component) >= 0.5, fitted to the
+#    first-pass pseudo-labels of THIS teacher (iwg6l5v1 epoch 30, job 26220's ps_label_e0.pkl):
+#    Car 0.21, Pedestrian 0.19, Cyclist 0.18 (report section 12 table). Teacher scores only, no
+#    target labels, so UDA-legal. They are constants here because the teacher is fixed. A run with a
+#    DIFFERENT teacher must re-derive them; there is no in-run GMM step yet.
+#    NEG_THRESH stays 0.1, so 0.1 <= score < threshold becomes IGNORE (not in the loss) rather than
+#    deleted, and the calibration, which drops ignored boxes, measures the >= threshold set. On Car
+#    that is the count-balance point (kept/frame ~ real/frame), where one threshold serves both uses
+#    (section 11).
+#    Cyclist is NOT gated out, although the report found its pseudo-labels ~98% false positive:
+#    that finding comes from target GT and cannot legally select anything. The legal gate is teacher
+#    precision on the labelled SOURCE (Lyft val), which has not been measured. Cyclist is not a
+#    tabled class either way.
+#
+# 2. Car-only foreground channel (HIST_DIST_FOREGROUND_CLASSES). The pooled channel thinned cars
+#    20-25% harder than a Car-only comparison justifies, because a third of nuScenes boxes are
+#    pedestrians at ~1/7 of a car's points while Lyft's source is 93% cars (section 2).
+#    Pedestrian and Cyclist points take the background rate.
+#
+# Launch exactly like the foreground row: train.py, 1 GPU, --pretrained_model and
+# --pretrained_model_teacher both iwg6l5v1 epoch 30. The thresholds are only valid for that teacher.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-foreground-lyft2nuscenes.yaml
+
+DATA_CONFIGS:
+    LYFT_40BEAM:
+        HIST_DIST_FOREGROUND_CLASSES: ['Car']
+    LYFT_64BEAM:
+        HIST_DIST_FOREGROUND_CLASSES: ['Car']
+
+SELF_TRAIN:
+    SCORE_THRESH: [0.21, 0.19, 0.18]
+    NEG_THRESH: [0.1, 0.1, 0.1]

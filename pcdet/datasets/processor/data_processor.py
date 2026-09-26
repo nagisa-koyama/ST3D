@@ -76,6 +76,9 @@ class DataProcessor(object):
         # whole-cloud pair above and behaves exactly as before.
         self.hist_fg_src = self.hist_bg_src = None
         self.hist_fg_tgt = self.hist_bg_tgt = None
+        # 1-based class indices (column 7 of gt_boxes) whose boxes form the foreground channel;
+        # None = every class, the original pooled behaviour.
+        self.hist_fg_class_ids = None
         # Radial extent the histogram bins span. Together with the bin count it fixes the
         # resolution (75 m / 50 bins = 1.5 m). Held here rather than read from config at
         # correction time so that the value binning the points is by construction the one the
@@ -101,7 +104,7 @@ class DataProcessor(object):
         if max_dist is not None:
             self.hist_max_dist = float(max_dist)
 
-    def set_foreground_hist(self, fg_src, bg_src, fg_tgt, bg_tgt):
+    def set_foreground_hist(self, fg_src, bg_src, fg_tgt, bg_tgt, class_ids=None):
         """Install the inside-box / outside-box histogram pairs (see point_calibration.py).
 
         Same forking constraint as `set_hist_dist`: must precede the first iteration of any loader
@@ -111,6 +114,9 @@ class DataProcessor(object):
         """
         self.hist_fg_src, self.hist_bg_src = fg_src, bg_src
         self.hist_fg_tgt, self.hist_bg_tgt = fg_tgt, bg_tgt
+        # Must be the SAME class set the histograms were measured with: a point in a box of an
+        # excluded class was counted as background there, so it must be sampled as background here.
+        self.hist_fg_class_ids = None if class_ids is None else sorted(int(c) for c in class_ids)
 
     def set_ptsn_scale(self, scale):
         """Install DALI's PTSN input scale (pcdet/utils/ptsn_utils.py).
@@ -270,7 +276,8 @@ class DataProcessor(object):
             # and denominator alike - so matching the global profile leaves source objects
             # under-sampled by exactly sigma_src/sigma_tgt. Two channels give the correction a
             # degree of freedom it structurally lacked.
-            fg = self.points_in_any_box(points, data_dict.get('gt_boxes', None))
+            fg = self.points_in_any_box(points, self.foreground_boxes(
+                data_dict.get('gt_boxes', None), getattr(self, 'hist_fg_class_ids', None)))
             sample_rate = np.where(fg,
                                    self.per_bin_sample_rate(config, 'fg')[indexes],
                                    self.per_bin_sample_rate(config, 'bg')[indexes])
@@ -300,6 +307,25 @@ class DataProcessor(object):
         inside = roiaware_pool3d_utils.points_in_boxes_cpu(
             np.ascontiguousarray(points[:, 0:3], dtype=np.float32), boxes)
         return inside.any(axis=0) > 0, inside.sum(axis=1), boxes
+
+    @staticmethod
+    def foreground_boxes(boxes, class_ids):
+        """Keep only boxes whose class index (column 7, sign ignored) is in `class_ids`.
+
+        `class_ids=None` keeps every box. The foreground-aware correction pools classes by default,
+        and 20260926_06 section 2 measured what that costs: a third of nuScenes boxes are
+        pedestrians at ~1/7 of a car's points, while Lyft's source is 93% cars, so pooling thins
+        cars 20-25% harder than a Car-only comparison justifies. Restricting the channel to
+        `HIST_DIST_FOREGROUND_CLASSES` leaves the other classes' points on the background rate.
+        """
+        if class_ids is None or boxes is None or len(boxes) == 0:
+            return boxes
+        boxes = np.asarray(boxes)
+        if boxes.shape[1] <= 7:
+            raise ValueError('HIST_DIST_FOREGROUND_CLASSES needs the class column of gt_boxes '
+                             '(appended in prepare_data), but these boxes have %d columns'
+                             % boxes.shape[1])
+        return boxes[np.isin(np.abs(boxes[:, 7]).astype(np.int64), list(class_ids))]
 
     @staticmethod
     def points_in_any_box(points, boxes):

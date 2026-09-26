@@ -383,3 +383,47 @@ def test_foreground_link_stores_the_extent_too():
     link_foreground_calibration(src, tgt, num_frames=2, num_bins=10, max_dist=120.0)
     assert src.data_processor.hist_max_dist == 120.0
     assert len(src.data_processor.hist_fg_src) == 10
+
+
+# --- HIST_DIST_FOREGROUND_CLASSES: a class-keyed foreground channel (20260926_06 section 2) ------
+
+def test_foreground_boxes_keeps_only_listed_classes_and_ignores_sign():
+    boxes = np.zeros((4, 8))
+    boxes[:, 7] = [1, 2, 3, -1]              # Car, Ped, Cyc, an ignored Car pseudo-label
+    assert DataProcessor.foreground_boxes(boxes, None) is boxes
+    assert list(DataProcessor.foreground_boxes(boxes, [1])[:, 7]) == [1, -1]
+    with pytest.raises(ValueError):          # no class column -> refuse rather than pool silently
+        DataProcessor.foreground_boxes(np.zeros((2, 7)), [1])
+
+
+def test_excluded_class_boxes_count_as_background_in_the_measurement():
+    car = FakeBoxDataset(fg_radii=[10.0], bg_radii=[50.0], box_label=1.0)
+    ped = FakeBoxDataset(fg_radii=[10.0], bg_radii=[50.0], box_label=2.0)
+    assert compute_foreground_histograms(car, num_frames=3, num_bins=15, class_ids=[1])[0].sum() == 1.0
+    fg, bg, _ = compute_foreground_histograms(ped, num_frames=3, num_bins=15, class_ids=[1])
+    assert fg.sum() == 0.0 and bg.sum() == 2.0   # the pedestrian's point moved to background
+    # pooled (the default) is unchanged
+    assert compute_foreground_histograms(ped, num_frames=3, num_bins=15)[0].sum() == 1.0
+
+
+def test_sampler_uses_the_same_class_set_as_the_measurement():
+    """A point in an excluded-class box was measured as background, so it must be SAMPLED as one."""
+    bins = 50
+    # fg rate 1 (keep), bg rate 0 (drop) everywhere
+    p = _fg_processor([1.0] * bins, [1.0] * bins, [1.0] * bins, [0.0001] * bins)
+    pts = np.array([[10.0, 0, 0, 0], [30.0, 0, 0, 0]])
+    boxes = np.array([[10.0, 0, 0, 2, 2, 2, 0, 1],      # Car
+                      [30.0, 0, 0, 2, 2, 2, 0, 2]])     # Pedestrian
+    np.random.seed(0)
+    pooled = p.sample_points_hist_based({'points': pts, 'gt_boxes': boxes})['points']
+    assert len(pooled) == 2                              # both in "a box" -> fg rate
+    p.set_foreground_hist(p.hist_fg_src, p.hist_bg_src, p.hist_fg_tgt, p.hist_bg_tgt, class_ids=[1])
+    car_only = p.sample_points_hist_based({'points': pts, 'gt_boxes': boxes})['points']
+    assert len(car_only) == 1 and car_only[0][0] == 10.0  # the pedestrian point took the bg rate
+
+
+def test_link_foreground_installs_the_class_set_it_measured_with():
+    src = FakeBoxDataset(fg_radii=[10.0], bg_radii=[10.0, 20.0], ontology='src')
+    tgt = FakeBoxDataset(fg_radii=[10.0, 10.0], bg_radii=[20.0], ontology='tgt')
+    link_foreground_calibration(src, tgt, num_frames=5, num_bins=15, class_ids=[1])
+    assert src.data_processor.hist_fg_class_ids == [1]

@@ -343,7 +343,10 @@ def test_launch_script_pins_the_global_batch_at_any_gpu_count():
     # Redundant with BATCH_SIZE_PER_GPU 3 on two GPUs by design: passing 6 is divided by the GPU
     # count back to 3 per rank, so the flag and the config agree instead of one covering for the
     # other. On one GPU the flag is doing the work alone.
-    assert '--batch_size 6' in code, 'the launch must pin the global batch to 6 at any GPU count'
+    # BATCH is overridable since 7b61cd2 (adaptive_train.py rows pass 12 = 6 source + 6 target),
+    # so pin the DEFAULT and that the flag is always passed - never left to BATCH_SIZE_PER_GPU.
+    assert 'BATCH=${BATCH:-6}' in code, 'the default global batch must stay 6'
+    assert '--batch_size "$BATCH"' in code, 'the launch must always pass the global batch explicitly'
 
 
 def test_dataset_staging_is_opt_in_and_skips_what_the_pipeline_never_reads():
@@ -595,3 +598,21 @@ def test_st3d_controls_differ_from_foreground_row_only_in_correction(control, in
 
 def cfg_get_self_train(cfg):
     return cfg.get('SELF_TRAIN', None)
+
+
+def test_foreground_v2_differs_from_v1_only_in_thresholds_and_class_set(in_tools_dir):
+    """v2 vs v1 must be the report's two changes and nothing else, or the comparison measures more."""
+    v1, v2 = EasyDict(), EasyDict()
+    cfg_from_yaml_file('cfgs/da-ieee-access/centerpoint-foreground-lyft2nuscenes.yaml', v1)
+    cfg_from_yaml_file('cfgs/da-ieee-access/centerpoint-foreground-v2-lyft2nuscenes.yaml', v2)
+    a, b = _flat(v1), _flat(v2)
+    allowed = {'SELF_TRAIN.SCORE_THRESH', 'SELF_TRAIN.NEG_THRESH'}
+    diffs = sorted(k for k in set(a) | set(b) if not k.endswith('_BASE_CONFIG_')
+                   and k not in allowed and not k.endswith('.HIST_DIST_FOREGROUND_CLASSES')
+                   and str(a.get(k)) != str(b.get(k)))
+    assert not diffs, diffs
+    for name, blk in v2.DATA_CONFIGS.items():
+        assert list(blk.HIST_DIST_FOREGROUND_CLASSES) == ['Car'], name
+        assert set(blk.HIST_DIST_FOREGROUND_CLASSES) <= set(v2.CLASS_NAMES), name
+    # an ignore band exists for every class: positive threshold strictly above the removal floor
+    assert all(s > n for s, n in zip(v2.SELF_TRAIN.SCORE_THRESH, v2.SELF_TRAIN.NEG_THRESH))

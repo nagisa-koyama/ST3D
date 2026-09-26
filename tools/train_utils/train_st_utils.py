@@ -332,6 +332,22 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
     return accumulated_iter
 
 
+def _foreground_class_ids(data_cfg, class_names):
+    """HIST_DIST_FOREGROUND_CLASSES (model class names) -> 1-based indices, or None to pool all.
+
+    Indices, not names, because the calibration reads column 7 of gt_boxes, which prepare_data
+    fills with `class_names.index(name) + 1` for the source and the teacher's class index for
+    pseudo-labels - one vocabulary for both domains, the model's.
+    """
+    names = data_cfg.get('HIST_DIST_FOREGROUND_CLASSES', None)
+    if names is None:
+        return None
+    unknown = [n for n in names if n not in class_names]
+    assert not unknown, 'HIST_DIST_FOREGROUND_CLASSES %s not in CLASS_NAMES %s' % (
+        unknown, list(class_names))
+    return [list(class_names).index(n) + 1 for n in names]
+
+
 def train_model_st(model, model_teacher, optimizer, source_loaders, target_loader, model_func, lr_scheduler, optim_cfg,
                    start_epoch, total_epochs, start_iter, rank, tb_log, ckpt_save_dir, ps_label_dir,
                    source_samplers=None, target_sampler=None, lr_warmup_scheduler=None, ckpt_save_interval=1,
@@ -515,7 +531,9 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
                             max_dist=src_cfg.get('HIST_DIST_MAX_DIST', 75.0),
                             logger=logger, source_hist=ps_label_fg_source_hist.get(src_idx),
                             min_points_in_box=src_cfg.get(
-                                'HIST_DIST_MIN_POINTS_IN_BOX', 1))
+                                'HIST_DIST_MIN_POINTS_IN_BOX', 1),
+                            class_ids=_foreground_class_ids(
+                                src_cfg, reader.dataloader.dataset.dataset.class_names))
                         # The source workers forked at construct_iter() holding the dataset as it
                         # was before this, and a forked worker never sees a later mutation. Re-fork
                         # them or the correction silently never runs.

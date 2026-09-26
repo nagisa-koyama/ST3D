@@ -22,6 +22,8 @@ See experiments_md/20260922_02_dataset_and_platform_domain_gap_analysis.md, defe
 """
 import numpy as np
 
+from .processor.data_processor import DataProcessor
+
 # Defaults for the three knobs. Bin RESOLUTION is MAX_DIST / DEFAULT_BINS - 1.5 m as shipped -
 # and both halves are configurable: HIST_DIST_MAX_DIST and HIST_DIST_BINS. The extent must cover
 # POINT_CLOUD_RANGE, since everything beyond it is clipped into the last bin rather than dropped,
@@ -96,7 +98,8 @@ def link_point_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
 
 
 def compute_foreground_histograms(dataset, num_frames=DEFAULT_FRAMES, num_bins=DEFAULT_BINS,
-                                  max_dist=MAX_DIST, logger=None, label='', min_points_in_box=1):
+                                  max_dist=MAX_DIST, logger=None, label='', min_points_in_box=1,
+                                  class_ids=None):
     """Mean points per frame per radial bin, split into inside-box and outside-box channels.
 
     Boxes come from `dataset[idx]['gt_boxes']`, which is real annotation for a source domain and
@@ -125,6 +128,10 @@ def compute_foreground_histograms(dataset, num_frames=DEFAULT_FRAMES, num_bins=D
     by 63% purely for labelling more cars. Per box, the number of boxes cancels and what is left is
     sampling density, which is what a detector sees per object.
 
+    `class_ids` (1-based indices into the dataset's class_names) restricts the foreground channel
+    to those classes; points inside boxes of any other class are counted as BACKGROUND, which is
+    how `sample_points_hist_based` will treat them. None pools every class.
+
     Returns (foreground per box, background per frame, total per frame).
     """
     n = len(dataset)
@@ -149,6 +156,7 @@ def compute_foreground_histograms(dataset, num_frames=DEFAULT_FRAMES, num_bins=D
             boxes = np.asarray(boxes)
             if boxes.shape[1] > 7:                       # drop ignored pseudo-labels
                 boxes = boxes[boxes[:, 7] > 0]
+            boxes = DataProcessor.foreground_boxes(boxes, class_ids)
             with_boxes += 1 if len(boxes) else 0
         mask, per_box, kept = dataset.data_processor.box_occupancy(points, boxes)
         dist = np.clip(np.linalg.norm(points[:, 0:2], axis=1), 0, max_dist - 1e-4)
@@ -210,7 +218,7 @@ def compute_foreground_histograms(dataset, num_frames=DEFAULT_FRAMES, num_bins=D
 
 def link_foreground_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
                                 num_bins=DEFAULT_BINS, max_dist=MAX_DIST, logger=None,
-                                source_hist=None, min_points_in_box=1):
+                                source_hist=None, min_points_in_box=1, class_ids=None):
     """Foreground-aware calibration: correct inside-box and outside-box points separately.
 
     A single per-bin rate cannot change a bin's foreground SHARE - it scales the points on objects
@@ -237,7 +245,7 @@ def link_foreground_calibration(source_set, target_set, num_frames=DEFAULT_FRAME
     if source_hist is None:
         fg_s, bg_s, tot_s = compute_foreground_histograms(
             source_set, num_frames, num_bins, max_dist, logger=logger, label='source',
-            min_points_in_box=min_points_in_box)
+            min_points_in_box=min_points_in_box, class_ids=class_ids)
     else:
         # Re-measuring the source on a refresh would read points the correction installed last time
         # has ALREADY thinned, compounding the rate on every pass. The source distribution does not
@@ -245,17 +253,19 @@ def link_foreground_calibration(source_set, target_set, num_frames=DEFAULT_FRAME
         fg_s, bg_s, tot_s = source_hist
     fg_t, bg_t, tot_t = compute_foreground_histograms(
         target_set, num_frames, num_bins, max_dist, logger=logger,
-        label='target (pseudo-labels)', min_points_in_box=min_points_in_box)
+        label='target (pseudo-labels)', min_points_in_box=min_points_in_box, class_ids=class_ids)
     # The whole-cloud pair is the per-FRAME total. It cannot be fg + bg any more: fg is per box.
     source_set.data_processor.set_hist_dist(tot_s, tot_t, max_dist=max_dist)
-    source_set.data_processor.set_foreground_hist(fg_s, bg_s, fg_t, bg_t)
+    source_set.data_processor.set_foreground_hist(fg_s, bg_s, fg_t, bg_t, class_ids=class_ids)
     if logger is not None:
         proc = source_set.data_processor
         r_fg, r_bg = proc.per_bin_sample_rate(None, 'fg'), proc.per_bin_sample_rate(None, 'bg')
         live = (fg_s > 0) & (fg_t > 0)
         dens = (fg_t[live].sum() / max(fg_s[live].sum(), 1e-9)) if live.any() else float('nan')
-        logger.info('point calibration: foreground-aware. fg rate %.2f..%.2f, bg rate %.2f..%.2f'
-                    % (r_fg.min(), r_fg.max(), r_bg.min(), r_bg.max()))
+        logger.info('point calibration: foreground-aware (fg classes %s). fg rate %.2f..%.2f, '
+                    'bg rate %.2f..%.2f'
+                    % ('all' if class_ids is None else list(class_ids),
+                       r_fg.min(), r_fg.max(), r_bg.min(), r_bg.max()))
         logger.info('point calibration: points per box tgt/src = %.2f - below 1 means source '
                     'objects are over-sampled and the foreground channel will thin them; above 1 '
                     'means the uniform correction would have starved them' % dens)
