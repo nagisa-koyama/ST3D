@@ -1,0 +1,49 @@
+# Plain ST3D, Lyft -> nuScenes: self-training with NO density correction.
+#
+# Identical to centerpoint-foreground-lyft2nuscenes.yaml except that the correction is removed
+# from both source platforms: no calibration, and sample_points_hist_based dropped from the
+# pipeline (rather than left in as a silent no-op). Source platforms stay split so the loader is the
+# same as the corrected rows'.
+#
+# Teacher: pass it at launch. With the foreground row's teacher (the global-correction model,
+# iwg6l5v1 epoch 30) this isolates "correction during self-training" from "no correction". With the
+# source-only model (ldb35c2o epoch 30) it is textbook ST3D, the paper's baseline row.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-foreground-lyft2nuscenes.yaml
+
+DATA_CONFIGS:
+    LYFT_40BEAM:
+        HIST_DIST_ON_THE_FLY: False
+        HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS: False
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }
+    LYFT_64BEAM:
+        HIST_DIST_ON_THE_FLY: False
+        HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS: False
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }

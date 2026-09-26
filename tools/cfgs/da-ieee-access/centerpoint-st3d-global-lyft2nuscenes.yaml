@@ -1,0 +1,18 @@
+# ST3D + GLOBAL density correction, Lyft -> nuScenes. Control for the foreground row.
+#
+# Identical to centerpoint-foreground-lyft2nuscenes.yaml (same self-training block, same teacher at
+# launch, same schedule) except for ONE key per source platform: the foreground channel is off.
+# train.py then installs the whole-cloud correction before training, as in
+# centerpoint-global-lyft2nuscenes.yaml, instead of deferring to the first pseudo-label pass. So
+# foreground-vs-this is the foreground channel alone, under self-training. Launch with the same
+# --pretrained_model / --pretrained_model_teacher as the foreground row.
+#
+# Needs train.py's calibration to measure an EVAL view of the target: the SELF_TRAIN target set
+# reads pseudo-labels, which do not exist before the first pass (fixed together with this file).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-foreground-lyft2nuscenes.yaml
+
+DATA_CONFIGS:
+    LYFT_40BEAM:
+        HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS: False
+    LYFT_64BEAM:
+        HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS: False

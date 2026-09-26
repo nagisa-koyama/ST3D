@@ -513,7 +513,9 @@ def test_the_scan_actually_finds_accumulating_configs():
 # This pins that: any difference outside the whitelisted schedule keys fails.
 TIER1_DIR = TOOLS_DIR / 'cfgs' / 'da-ieee-access-tier1'
 TIER1_ALLOWED_DIFFS = {'_BASE_CONFIG_', 'OPTIMIZATION.NUM_EPOCHS',
-                       'OPTIMIZATION.BATCH_SIZE_PER_GPU', 'OPTIMIZATION.NUM_EPOCHS_TO_EVAL'}
+                       'OPTIMIZATION.BATCH_SIZE_PER_GPU', 'OPTIMIZATION.NUM_EPOCHS_TO_EVAL',
+                       # epoch-indexed, so it must be rescaled with NUM_EPOCHS (asserted below)
+                       'SELF_TRAIN.PROG_AUG.UPDATE_AUG'}
 
 
 def _flat(d, pre=''):
@@ -543,10 +545,53 @@ def test_tier1_proxy_differs_from_parent_only_in_schedule(proxy, in_tools_dir):
     assert b['OPTIMIZATION.NUM_EPOCHS'] < a['OPTIMIZATION.NUM_EPOCHS']
     assert b.get('OPTIMIZATION.NUM_EPOCHS_TO_EVAL') is not None, \
         '%s: without NUM_EPOCHS_TO_EVAL train.py defaults to scoring every checkpoint' % proxy
-    # The launcher always passes --batch_size 6 (TOTAL). A bare call on 2 GPUs falls back to
-    # BATCH_SIZE_PER_GPU per rank, so 3 keeps that path at global 6 as well.
-    assert b['OPTIMIZATION.BATCH_SIZE_PER_GPU'] == 3
+    # The launcher passes --batch_size (TOTAL). A bare train.py call on 2 GPUs falls back to
+    # BATCH_SIZE_PER_GPU per rank, so 3 keeps that path at global 6 as well. adaptive_train.py
+    # splits its batch between the domains, so a UADA3D row's 12 is a source batch of 6.
+    expected = 12 if str(b['MODEL.NAME']).startswith('DA') else 3
+    assert b['OPTIMIZATION.BATCH_SIZE_PER_GPU'] == expected
+    # An epoch-indexed curriculum left at the parent's epochs never fires in a short run.
+    ramp = b.get('SELF_TRAIN.PROG_AUG.UPDATE_AUG')
+    if ramp is not None and b.get('SELF_TRAIN.PROG_AUG.ENABLED'):
+        assert max(ramp) < b['OPTIMIZATION.NUM_EPOCHS'], \
+            '%s: PROG_AUG.UPDATE_AUG %s never fires in %d epochs' % (
+                proxy, ramp, b['OPTIMIZATION.NUM_EPOCHS'])
 
 
 def test_tier1_directory_is_not_empty():
     assert len(list(TIER1_DIR.glob('*.yaml'))) >= 3
+
+
+# The self-training controls are the foreground row with ONE thing changed, so foreground-vs-control
+# measures that thing. Pin the difference, not just the resolution.
+ST_CONTROLS = {
+    'centerpoint-st3d-global-lyft2nuscenes.yaml': {'HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS'},
+    'centerpoint-st3d-lyft2nuscenes.yaml': {'HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS',
+                                            'HIST_DIST_ON_THE_FLY', 'DATA_PROCESSOR'},
+}
+
+
+@pytest.mark.parametrize('control', sorted(ST_CONTROLS))
+def test_st3d_controls_differ_from_foreground_row_only_in_correction(control, in_tools_dir):
+    fg, ctl = EasyDict(), EasyDict()
+    cfg_from_yaml_file('cfgs/da-ieee-access/centerpoint-foreground-lyft2nuscenes.yaml', fg)
+    cfg_from_yaml_file('cfgs/da-ieee-access/' + control, ctl)
+    a, b = _flat(fg), _flat(ctl)
+    allowed = ST_CONTROLS[control]
+    # _BASE_CONFIG_ is bookkeeping at every depth (nothing outside pcdet/config.py reads it), and a
+    # block the child overrides keeps its own, absent one rather than the parent's.
+    diffs = sorted(k for k in set(a) | set(b) if not k.endswith('_BASE_CONFIG_')
+                   and not any(k.startswith('DATA_CONFIGS.') and k.split('.')[2] == key
+                               for key in allowed)
+                   and str(a.get(k)) != str(b.get(k)))
+    assert not diffs, '%s differs from the foreground row outside %s: %s' % (control, allowed, diffs)
+    assert cfg_get_self_train(ctl), '%s must be a self-training row' % control
+    for name, blk in ctl.DATA_CONFIGS.items():
+        assert not blk.get('HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS', False), name
+        has_sampler = any(p.get('NAME') == 'sample_points_hist_based' for p in blk.DATA_PROCESSOR)
+        # global control: sampler present AND calibrated; plain: neither, never one without the other
+        assert has_sampler == bool(blk.get('HIST_DIST_ON_THE_FLY', False)), name
+
+
+def cfg_get_self_train(cfg):
+    return cfg.get('SELF_TRAIN', None)

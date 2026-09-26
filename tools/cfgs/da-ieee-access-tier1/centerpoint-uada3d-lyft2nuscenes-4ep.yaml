@@ -1,0 +1,7 @@
+# TIER-1 PROXY of da-ieee-access/centerpoint-uada3d-lyft2nuscenes.yaml (UADA3D / DANN, run with
+# adaptive_train.py). Schedule only. BATCH_SIZE_PER_GPU stays 12 = 6 source + 6 target, the family's
+# source batch; see README.md for why this row is currently BLOCKED at that batch.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-uada3d-lyft2nuscenes.yaml
+
+OPTIMIZATION:
+    NUM_EPOCHS: 4

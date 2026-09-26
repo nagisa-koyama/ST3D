@@ -61,8 +61,15 @@ set -euo pipefail
 # $1 is either one of the five source names, or a path to any config in the family - the latter
 # so one-off rows (e.g. the Lyft->Lyft oracle, which is not an `X -> nuScenes` source) get the same
 # 2-GPU recipe and the same frozen-code guarantee instead of a hand-rolled invocation.
-SOURCE=${1:?usage: sbatch scripts/run_sourceonly_2gpu.sh <kitti|lyft|nuscenes|pandaset|waymo|path/to.yaml> [extra_tag] [run_name]}
+SOURCE=${1:?usage: sbatch scripts/run_sourceonly_2gpu.sh <kitti|lyft|nuscenes|pandaset|waymo|path/to.yaml> [extra_tag] [run_name] [extra train args...]}
 TAG=${2:-$(date +%Y%m%d)_sourceonly}
+# Everything after run_name goes to the entry point verbatim, e.g. the self-training rows'
+#   --pretrained_model <ckpt> --pretrained_model_teacher <ckpt>
+# ENTRY picks the entry point (adaptive_train.py for UADA3D/DANN rows) and BATCH the TOTAL batch
+# (12 for adaptive_train.py = 6 source + 6 target). Both default to what this script always did.
+EXTRA_ARGS=("${@:4}")
+ENTRY=${ENTRY:-train.py}
+BATCH=${BATCH:-6}
 case "$SOURCE" in
   # A config PATH names itself. The five-source shorthand keeps the "X -> nuScenes" run name it
   # has always had, but a path can be any row in the family - an ablation, an oracle - and
@@ -193,11 +200,11 @@ if [ "$NGPU" -le 1 ]; then
     # snapshot above guards against, since a forked worker inherits the parent's already-imported
     # modules rather than re-importing from disk - the snapshot is kept anyway, for one behaviour
     # across both paths.
-    LAUNCH=(python train.py)
+    LAUNCH=(python "$ENTRY")
 else
     LAUNCH=(python -m torch.distributed.launch --use-env --nproc_per_node="$NGPU"
             --rdzv_endpoint=localhost:"$PORT"
-            train.py --launcher pytorch --tcp_port "$PORT")
+            "$ENTRY" --launcher pytorch --tcp_port "$PORT")
 fi
 
 set +e
@@ -210,10 +217,11 @@ singularity exec --nv \
     "$SIF" \
     "${LAUNCH[@]}" \
         --cfg_file "$CFG" \
-        --batch_size 6 \
+        --batch_size "$BATCH" \
         --fix_random_seed \
         --run_name "$RUN_NAME" \
-        --extra_tag "$TAG"
+        --extra_tag "$TAG" \
+        ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
 TRAIN_RC=$?
 set -e
 [ "$TRAIN_RC" -eq 0 ] && exit 0

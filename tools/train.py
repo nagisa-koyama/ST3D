@@ -271,9 +271,13 @@ def main():
             logger.info('foreground-aware correction requested: deferring calibration to the '
                         'first pseudo-label pass (train_model_st)')
         # A measurement-only view of the target: only its point clouds are read, and eval mode
-        # avoids requiring labels the UDA setup does not have.
-        calib_target = None if wants_foreground else target_set
-        if calib_target is None and not wants_foreground:
+        # avoids requiring labels the UDA setup does not have. Always a fresh view, never
+        # target_set: under SELF_TRAIN that is the TRAINING target (USE_PSEUDO_LABEL, augmented),
+        # so dataset[i] would call fill_pseudo_labels before any pseudo-label pass has run and
+        # raise, and would measure augmented clouds besides. No SELF_TRAIN run had ever used the
+        # GLOBAL correction before the da-ieee-access-tier1 ST3D+global control, so this was latent.
+        calib_target = None
+        if not wants_foreground:
             calib_target, _, _ = build_dataloader(
                 dataset_cfg=cfg.DATA_CONFIG_TAR, class_names=cfg.CLASS_NAMES, batch_size=1,
                 dist=False, workers=0, logger=logger, training=False,
