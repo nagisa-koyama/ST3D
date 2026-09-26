@@ -1,0 +1,7 @@
+# TIER-1 PROXY of centerpoint-global-lyft2nuscenes.yaml (global density correction, full run
+# 28.22 BEV). Only the schedule changes; the calibration (1000 frames per platform) is kept
+# identical, so the treatment is the same one the full row measured. See README.md.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-global-lyft2nuscenes.yaml
+
+OPTIMIZATION:
+    NUM_EPOCHS: 4

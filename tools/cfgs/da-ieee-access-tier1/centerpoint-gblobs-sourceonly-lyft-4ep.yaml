@@ -1,0 +1,14 @@
+# TIER-1 PROXY of centerpoint-gblobs-sourceonly-lyft.yaml (GBlobs VFE, full run 31.43 BEV).
+# The schedule changes as in the other proxies. Two more keys bring the parent into line with its
+# siblings; the parent was copied before the family moved to 2 GPUs and never synced:
+#   - BATCH_SIZE_PER_GPU 3: the launcher passes --batch_size 6 (TOTAL) either way, so this changes
+#     nothing under run_sourceonly_2gpu.sh. It only stops a bare train.py call on 2 GPUs from
+#     silently getting global batch 12.
+#   - NUM_EPOCHS_TO_EVAL 1: the parent has none, so train.py would default to 100 and score every
+#     checkpoint. With 1, epochs 3 and 4 are scored, same as the other proxies.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-gblobs-sourceonly-lyft.yaml
+
+OPTIMIZATION:
+    NUM_EPOCHS: 4
+    BATCH_SIZE_PER_GPU: 3
+    NUM_EPOCHS_TO_EVAL: 1

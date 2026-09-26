@@ -503,3 +503,50 @@ def test_the_scan_actually_finds_accumulating_configs():
     """Guards the test above against silently passing because its filter matched nothing."""
     found = [p for p in _experiment_configs()]
     assert len(found) >= 3, 'the config scan matched almost nothing - check the MODEL: filter'
+
+
+# --- da-ieee-access-tier1: a proxy must be its parent with a shorter schedule, nothing else ------
+#
+# A proxy's result is only a prediction of its parent's if the two run the same recipe. The proxies
+# inherit through _BASE_CONFIG_ rather than being copies, because copies do not track their source
+# (centerpoint-gblobs-sourceonly-lyft.yaml kept BATCH_SIZE_PER_GPU 6 after its siblings moved to 3).
+# This pins that: any difference outside the whitelisted schedule keys fails.
+TIER1_DIR = TOOLS_DIR / 'cfgs' / 'da-ieee-access-tier1'
+TIER1_ALLOWED_DIFFS = {'_BASE_CONFIG_', 'OPTIMIZATION.NUM_EPOCHS',
+                       'OPTIMIZATION.BATCH_SIZE_PER_GPU', 'OPTIMIZATION.NUM_EPOCHS_TO_EVAL'}
+
+
+def _flat(d, pre=''):
+    out = {}
+    for k, v in d.items():
+        if isinstance(v, dict):
+            out.update(_flat(v, pre + k + '.'))
+        else:
+            out[pre + k] = v
+    return out
+
+
+@pytest.mark.parametrize('proxy', sorted(p.name for p in TIER1_DIR.glob('*.yaml')))
+def test_tier1_proxy_differs_from_parent_only_in_schedule(proxy, in_tools_dir):
+    path = 'cfgs/da-ieee-access-tier1/' + proxy
+    cfg = EasyDict()
+    cfg_from_yaml_file(path, cfg)
+    parent = cfg.get('_BASE_CONFIG_')
+    assert parent and parent.startswith('cfgs/da-ieee-access/'), \
+        '%s must inherit a da-ieee-access row via _BASE_CONFIG_, not copy it' % proxy
+    base = EasyDict()
+    cfg_from_yaml_file(parent, base)
+    a, b = _flat(base), _flat(cfg)
+    diffs = sorted(k for k in set(a) | set(b)
+                   if k not in TIER1_ALLOWED_DIFFS and str(a.get(k)) != str(b.get(k)))
+    assert not diffs, '%s changes more than the schedule: %s' % (proxy, diffs)
+    assert b['OPTIMIZATION.NUM_EPOCHS'] < a['OPTIMIZATION.NUM_EPOCHS']
+    assert b.get('OPTIMIZATION.NUM_EPOCHS_TO_EVAL') is not None, \
+        '%s: without NUM_EPOCHS_TO_EVAL train.py defaults to scoring every checkpoint' % proxy
+    # The launcher always passes --batch_size 6 (TOTAL). A bare call on 2 GPUs falls back to
+    # BATCH_SIZE_PER_GPU per rank, so 3 keeps that path at global 6 as well.
+    assert b['OPTIMIZATION.BATCH_SIZE_PER_GPU'] == 3
+
+
+def test_tier1_directory_is_not_empty():
+    assert len(list(TIER1_DIR.glob('*.yaml'))) >= 3

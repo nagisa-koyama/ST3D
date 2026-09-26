@@ -1,0 +1,6 @@
+# TIER-1 PROXY of centerpoint-sourceonly-lyft.yaml (the MeanVFE control, full run 23.17 BEV).
+# Only the schedule changes. See README.md in this directory.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-lyft.yaml
+
+OPTIMIZATION:
+    NUM_EPOCHS: 4
