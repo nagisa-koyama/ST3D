@@ -121,6 +121,19 @@ class Discriminator2(nn.Module):
                 ret_dict['domain_refs'] = domain_refs
 
             if self.conditional:
+                # The conditional discriminators' GRLs must get the coefficient too. Upstream (and
+                # this port until 2026-09-26) updated only the marginal ones above, so these kept
+                # GradientReversal's initial lambda_ of 0.0 and the backward through them was
+                # -0.0 * grad: the conditional branch trained itself but sent EXACTLY zero gradient
+                # to the features and to the box/class predictions it conditions on. Every
+                # conditional-only config (*-rospm-C, da-ieee-access UADA3D) was therefore
+                # source-only training with a discriminator attached, and -M-C configs adapted
+                # through the marginal branch alone. Same in the released maxiuw/UADA3D b60b846.
+                # experiments_md/20260926_05 section 6b.
+                if batch_dict.get('grl_coeff', None) is not None:
+                    for cond_discriminator in self.cond_discriminators:
+                        cond_discriminator[0].update_lambda(batch_dict['grl_coeff'])
+
                 cond_preds = []
                 cond_refs = []
 
