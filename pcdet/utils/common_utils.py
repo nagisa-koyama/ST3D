@@ -118,6 +118,26 @@ def wandb_notes_with_job_id(notes=None):
     return ('[job %s] %s' % (job_id, notes)).rstrip()
 
 
+def wandb_launch_config(total_gpus, batch_size_per_gpu):
+    """How and where the run was launched, as filterable W&B config (notes are free text, not searchable)."""
+    env = os.environ.get
+    return {
+        'slurm': {
+            'job_id': env('SLURM_JOB_ID'),
+            'job_name': env('SLURM_JOB_NAME'),
+            'partition': env('SLURM_JOB_PARTITION'),
+            'node': env('SLURMD_NODENAME'),
+            'cpus_per_task': env('SLURM_CPUS_PER_TASK'),
+            'gpus_on_node': env('SLURM_GPUS_ON_NODE'),
+        },
+        'launch': {
+            'total_gpus': total_gpus,
+            'batch_size_per_gpu': batch_size_per_gpu,
+            'global_batch_size': batch_size_per_gpu * total_gpus,
+        },
+    }
+
+
 def set_random_seed(seed):
     random.seed(seed)
     np.random.seed(seed)

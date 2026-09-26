@@ -289,6 +289,7 @@ def main():
 
     if cfg.LOCAL_RANK == 0:
         wandb.init(config=vars(cfg), project="st3d", name=args.run_name, notes=common_utils.wandb_notes_with_job_id())
+        wandb.config.update(common_utils.wandb_launch_config(total_gpus, args.batch_size))
 
     # log to file
     logger.info('**********************Start logging**********************')
