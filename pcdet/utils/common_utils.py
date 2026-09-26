@@ -109,6 +109,15 @@ def create_logger(log_file=None, rank=0, log_level=logging.INFO):
     return logger
 
 
+def wandb_notes_with_job_id(notes=None):
+    """WANDB_NOTES prefixed with the SLURM job ID, which is unknown when the note is written at sbatch time."""
+    notes = os.environ.get('WANDB_NOTES', '') if notes is None else notes
+    job_id = os.environ.get('SLURM_JOB_ID')
+    if job_id is None or notes.startswith('[job %s]' % job_id):
+        return notes or None
+    return ('[job %s] %s' % (job_id, notes)).rstrip()
+
+
 def set_random_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
