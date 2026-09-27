@@ -39,13 +39,22 @@ def main():
     ap.add_argument('--cfg_file', required=True)
     ap.add_argument('--dataset_cfg', required=True)
     ap.add_argument('--out', required=True)
+    ap.add_argument('--split', choices=['train', 'val'], default='val',
+                    help="which split of --dataset_cfg the generator's (training=True) loader reads")
+    ap.add_argument('--override', default=None,
+                    help='YAML mapping merged into the dataset block before the split is applied, '
+                         'e.g. "MAX_SWEEPS: 15" or an INFO_PATH for accumulated infos')
     args = ap.parse_args()
 
     full = cfg_from_yaml_file(args.cfg_file, EasyDict())
     ds = cfg_from_yaml_file(args.dataset_cfg, EasyDict())
-    val_infos = list(ds.INFO_PATH['test'])
-    ds.DATA_SPLIT = {'train': 'val', 'test': 'val'}
-    ds.INFO_PATH = {'train': val_infos, 'test': val_infos}
+    if args.override:
+        for k, v in yaml.safe_load(args.override).items():
+            ds[k] = v
+    key = 'test' if args.split == 'val' else 'train'
+    infos = list(ds.INFO_PATH[key])
+    ds.DATA_SPLIT = {'train': args.split, 'test': args.split}
+    ds.INFO_PATH = {'train': infos, 'test': infos}
     ds.USE_PSEUDO_LABEL = True
     full.DATA_CONFIG_TAR = ds
     out = plain(full)
@@ -53,12 +62,13 @@ def main():
               '# %s with DATA_CONFIG_TAR replaced by %s on its VAL split, for a teacher pass over\n'
               '# labelled source data (selection-bias measurement, 20260927_01 follow-up).\n'
               % (args.cfg_file, args.dataset_cfg))
+    header = header.replace('on its VAL split', 'on its %s split' % args.split.upper())
     with open(args.out, 'w') as f:
         f.write(header)
         yaml.safe_dump(out, f, sort_keys=False, default_flow_style=False)
     print('wrote', args.out)
     print('DATA_CONFIG_TAR:', out['DATA_CONFIG_TAR']['DATASET'], out['DATA_CONFIG_TAR']['INFO_PATH'],
-          'SHIFT_COOR', out['DATA_CONFIG_TAR'].get('SHIFT_COOR'))
+          'SHIFT_COOR', out['DATA_CONFIG_TAR'].get('SHIFT_COOR'), 'MAX_SWEEPS', out['DATA_CONFIG_TAR'].get('MAX_SWEEPS'), 'split', out['DATA_CONFIG_TAR']['DATA_SPLIT'])
 
 
 if __name__ == '__main__':

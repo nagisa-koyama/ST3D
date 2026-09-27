@@ -44,12 +44,30 @@ def platform_of(frame_id):
     return 0
 
 
+def in_fov(ds, d, boxes):
+    if len(boxes) == 0:
+        return np.zeros(0, dtype=bool)
+    centres = boxes[:, :3].copy()
+    shift = ds.dataset_cfg.get('SHIFT_COOR', None)
+    if shift:
+        centres -= np.asarray(shift, dtype=np.float32)
+    calib, shape = d.get('calib'), d.get('image_shape')
+    if calib is not None and shape is not None:
+        return ds.get_fov_flag(calib.lidar_to_rect(centres), shape, calib, margin=5)
+    return np.abs(np.arctan2(centres[:, 1], centres[:, 0])) <= np.deg2rad(45.0)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--cfg_file', required=True)
     ap.add_argument('--ps_label', required=True)
     ap.add_argument('--frames', type=int, default=1000)
     ap.add_argument('--out', required=True)
+    ap.add_argument('--fov', action='store_true',
+                    help='keep only boxes whose centre projects into the camera image (KITTI: its '
+                         'labels cover the camera FOV only, so a box behind the vehicle has no GT to '
+                         'match and is not a false positive). Uses the dataset\'s own get_fov_flag on '
+                         'the un-shifted centre, 5 px margin, like the eval-time FOV_FILTER.')
     args = ap.parse_args()
 
     cfg_from_yaml_file(args.cfg_file, cfg)
@@ -77,6 +95,8 @@ def main():
         gb = gb[(gb[:, 3:6] > 1e-3).all(axis=1)]
         pb = np.asarray(ps[fid]['gt_boxes'], dtype=np.float32).reshape(-1, 9)
         pb = pb[(pb[:, 3:6] > 1e-3).all(axis=1)]
+        if args.fov:
+            gb, pb = gb[in_fov(ds, d, gb)], pb[in_fov(ds, d, pb)]
         pcls = np.abs(pb[:, 7]).astype(int)
         gcls = gb[:, 7].astype(int)
         n_gt = DataProcessor.box_occupancy(pts, gb[:, :7])[1] if len(gb) else np.zeros(0)
@@ -97,7 +117,7 @@ def main():
            'ps_cols': ['ring', 'cls', 'score', 'npts', 'tp', 'r', 'platform', 'frame'],
            'gt_cols': ['ring', 'cls', 'npts', 'matched', 'r', 'platform', 'frame'],
            'frames': frames, 'missing': missing, 'classes': list(cfg.CLASS_NAMES),
-           'cfg': args.cfg_file, 'ps_label': args.ps_label}
+           'cfg': args.cfg_file, 'ps_label': args.ps_label, 'fov': bool(args.fov)}
     pickle.dump(out, open(args.out, 'wb'))
     logger.info('wrote %s: %d frames (%d had no pseudo-labels), %d ps boxes, %d gt boxes'
                 % (args.out, frames, missing, len(ps_rec), len(gt_rec)))
