@@ -121,10 +121,11 @@ def main():
         per_dataset(tgt, 'TARGET ' + tgt['ps_label'].split('/')[-2], classes, args.rings)
     if src is not None:
         per_dataset(src, 'SOURCE ' + src['ps_label'].split('/')[-2], classes, args.rings)
-        for p in (40, 64):
+        plats = sorted(set(int(v) for v in src['ps'][:, 6]) - {0})   # Lyft platforms only; 0 = no platform
+        for p in plats:
             per_dataset(src, 'SOURCE ' + src['ps_label'].split('/')[-2], classes, args.rings, plat=p)
     if src is not None and tgt is not None:
-        transfer(src, tgt, classes, args.rings, args.flat)
+        transfer(src, tgt, classes, args.rings, args.flat, src_plats=[None] + plats)
 
 
 if __name__ == '__main__':
