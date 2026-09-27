@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# Keep the Slurm queue topped up to MAXJOBS jobs / MAXGPUS GPUs, submitting from a fixed priority
-# list.
+# Keep the Slurm queue topped up to MAXJOBS jobs, submitting from a fixed priority list.
 #
 # Run in the BACKGROUND from the master node (tmux/nohup), not via sbatch - it is a submitter, not
 # a job. It submits one row at a time and only when a slot is free.
 #
-# The caps are a COURTESY limit, not Slurm's. Slurm allows this account 12 GPUs / 12 running / 16
-# submitted (QOS limit12), but the cluster's ~36 GPUs this container can use are shared by ~8
-# active users who each hold 4-8; 8 jobs and 8 GPUs keeps this queue in line with them
-# (experiments_md/20260927_04). Both counts include PENDING jobs, which is what stops a deep queue
-# from taking every GPU as it frees ahead of anyone who submits later.
+# MAXJOBS=8 is a COURTESY limit, not Slurm's: Slurm allows this account 12 running / 16 submitted
+# jobs and 12 GPUs (QOS limit12), but the ~36 GPUs this container can use are shared by ~8 active
+# users (experiments_md/20260927_04). The count includes PENDING jobs, which is what stops a deep
+# queue from taking every GPU as it frees ahead of anyone who submits later. GPUs are deliberately
+# NOT capped here - the user's decision - so 2-GPU rows can take the total past 8, up to Slurm's 12.
 #
 # Every row goes through scripts/submit.sh with its own EST_H (hours on ONE GPU, from the closest
 # comparable run's real elapsed time), and size_job.py turns that into --gres (2 GPUs above 24 h),
@@ -26,7 +25,6 @@ set -uo pipefail
 cd /home/koyama/code/ST3D/tools
 unset EST_H  # set per row below; one inherited from the caller's shell must not size every row
 MAXJOBS=${MAXJOBS:-8}
-MAXGPUS=${MAXGPUS:-8}
 POLL=${POLL:-180}
 S=scripts/run_sourceonly_2gpu.sh
 
@@ -47,8 +45,6 @@ ROWS=(
 )
 
 njobs() { squeue -u "$USER" -h -o '%i' 2>/dev/null | wc -l; }
-# GPUs held or requested by every job in the queue, running or pending ('gres/gpu:2' -> 2).
-ngpus() { squeue -u "$USER" -h -o '%b' 2>/dev/null | awk -F: '/gpu/ {n += $NF} END {print n + 0}'; }
 queued() { squeue -u "$USER" -h -o '%j' 2>/dev/null | grep -qx "$1"; }
 
 for row in "${ROWS[@]}"; do
@@ -60,9 +56,7 @@ for row in "${ROWS[@]}"; do
   IFS='|' read -r NAME MEM EST CFG TAG RUN NOTES <<< "$row"
   export WANDB_NOTES="$NOTES"
   if queued "$NAME"; then echo "[$(date +%H:%M)] $NAME already queued, skipping"; continue; fi
-  # The GPUs this row will ask for, by size_job.py's own rule, so MAXGPUS is never overshot.
-  NEED=1; [ "$EST" != "-" ] && awk "BEGIN {exit !($EST > ${DDP_ABOVE_H:-24})}" && NEED=2
-  while [ "$(njobs)" -ge "$MAXJOBS" ] || [ $(( $(ngpus) + NEED )) -gt "$MAXGPUS" ]; do sleep "$POLL"; done
+  while [ "$(njobs)" -ge "$MAXJOBS" ]; do sleep "$POLL"; done
   if [ "$NAME" = "PTSN" ]; then
     # DALI Tier D1 has its own script: inference only, ~1 GPU-hour, no train.py involved.
     echo "[$(date +%H:%M)] submitting PTSN search"
