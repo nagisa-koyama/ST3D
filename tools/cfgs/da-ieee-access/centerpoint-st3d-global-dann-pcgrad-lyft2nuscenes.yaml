@@ -1,0 +1,21 @@
+# ST3D + GLOBAL density correction + DANN + PCGrad, Lyft -> nuScenes. The paper's full method on
+# this pair (draft Table 3's last row, "+ PCGrad", on CenterPoint instead of SECOND).
+#
+# Identical to centerpoint-st3d-global-dann-lyft2nuscenes.yaml except ONE key: SELF_TRAIN.USE_TORCHJD.
+# With it, train_st_utils replaces the summed backward by
+#     torchjd.backward([loss_src_sum, dann_loss_sum, st_loss_sum], PCGrad(), parallel_chunk_size=1)
+# i.e. the source-detection, DANN and self-training gradients are projected against each other
+# before the step, and seven pairwise gradient cosines are logged (train/grad_similarity_*). So
+# this-vs-dann is gradient projection alone.
+#
+# PCGrad asserts all three losses are present, which is why this row inherits the DANN row rather
+# than the st3d-global one: without `dann_weight` the assert fires at the first iteration.
+# SRC.BACKWARD_TOGETHER and TAR.BACKWARD_TOGETHER must both be True for the torchjd branch to be
+# reached; both are inherited True from the foreground row.
+#
+# Cost is unmeasured: three Jacobian rows per step, so expect it visibly slower than the DANN row.
+# Launch like the DANN row. experiments_md/20260927_06.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-st3d-global-dann-lyft2nuscenes.yaml
+
+SELF_TRAIN:
+    USE_TORCHJD: True

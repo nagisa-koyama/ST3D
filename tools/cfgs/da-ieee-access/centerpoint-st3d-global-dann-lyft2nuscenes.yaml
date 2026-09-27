@@ -1,0 +1,30 @@
+# ST3D + GLOBAL density correction + DANN, Lyft -> nuScenes. Rung above centerpoint-st3d-global.
+#
+# Identical to centerpoint-st3d-global-lyft2nuscenes.yaml except ONE key: `dann_weight` in the
+# student's DENSE_HEAD LOSS_WEIGHTS. That key makes CenterHead build the in-head domain
+# discriminator (pcdet/models/model_utils/dann_utils.py - ReverseLayerF at a constant 1.0 on
+# spatial_features_2d, 3-layer conv DomainDiscriminator, BCE against the batch's domain label), and
+# CenterPoint returns the term as a SEPARATE `dann_loss`, which train_st_utils sums over the source
+# and target halves (0.5 each) and adds to the detection losses. So this-vs-st3d-global is DANN alone.
+#
+# 0.1 is the weight of every MIRU2025 "Ours+DANN" run (SECOND + AnchorHeadMulti, the same
+# mechanism) - kept so the CenterPoint row stays comparable to the published 77.3. Two things are
+# inherited from that version and deliberately NOT improved here: no GRL warm-up, and a discriminator
+# that starts from random init on top of the pretrained checkpoint (its keys are absent from
+# iwg6l5v1 and load_params_from_file is non-strict, so they are logged as "Not updated weight").
+#
+# The TEACHER block is left without `dann_weight`: it runs in eval mode only and never sees a
+# domain label, so a discriminator there would be dead parameters.
+#
+# Gradient projection is OFF here (SELF_TRAIN.USE_TORCHJD absent -> False); the PCGrad row,
+# centerpoint-st3d-global-dann-pcgrad-lyft2nuscenes.yaml, inherits this file and turns it on.
+# Launch exactly like the st3d-global row: train.py, 1 GPU, --pretrained_model and
+# --pretrained_model_teacher both iwg6l5v1 epoch 30. experiments_md/20260927_06.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-st3d-global-lyft2nuscenes.yaml
+
+MODEL:
+    DENSE_HEAD:
+        LOSS_CONFIG:
+            LOSS_WEIGHTS: {
+                'dann_weight': 0.1
+            }

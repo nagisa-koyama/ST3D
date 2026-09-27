@@ -5,6 +5,7 @@ import torch.nn as nn
 from torch.nn.init import kaiming_normal_
 from ..model_utils import model_nms_utils
 from ..model_utils import centernet_utils
+from ..model_utils import dann_utils
 from ...utils import loss_utils
 
 
@@ -95,6 +96,15 @@ class CenterHead(nn.Module):
         self.predict_boxes_when_training = predict_boxes_when_training
         self.forward_ret_dict = {}
         self.build_losses()
+
+        # In-head DANN, ported from AnchorHeadMulti (pcdet/models/model_utils/dann_utils.py). Built
+        # ONLY when LOSS_WEIGHTS carries 'dann_weight', so every existing CenterPoint config keeps
+        # its parameter set and its checkpoints round-trip unchanged. Taps `spatial_features_2d`
+        # (the 2D backbone output, before shared_conv), which is where the UADA3D marginal
+        # discriminator also reads, and where AnchorHeadMulti reads when it has no shared conv.
+        self.domain_discriminator = dann_utils.build_domain_discriminator(
+            self.model_cfg.get('LOSS_CONFIG', None), in_channels=input_channels
+        )
 
     def build_losses(self):
         self.add_module('hm_loss_func', loss_utils.FocalLossCenterNet())
@@ -250,6 +260,17 @@ class CenterHead(nn.Module):
         tb_dict['rpn_loss'] = loss.item()
         return loss, tb_dict
 
+    def get_domain_adversarial_loss(self):
+        """The DANN term, or (None, {}) when this head has no discriminator or the batch carried
+        no `domain_label` (plain train.py never stamps one; only train_st_utils does)."""
+        if self.domain_discriminator is None or 'domain_preds' not in self.forward_ret_dict:
+            return None, {}
+        loss, tb_dict = dann_utils.domain_adversarial_loss(
+            self.forward_ret_dict['domain_preds'], self.forward_ret_dict['domain_label'],
+            self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['dann_weight']
+        )
+        return loss, tb_dict
+
     def generate_predicted_boxes(self, batch_size, pred_dicts):
         post_process_cfg = self.model_cfg.POST_PROCESSING
         post_center_limit_range = torch.tensor(post_process_cfg.POST_CENTER_LIMIT_RANGE).cuda().float()
@@ -324,6 +345,17 @@ class CenterHead(nn.Module):
     def forward(self, data_dict):
         spatial_features_2d = data_dict['spatial_features_2d']
         x = self.shared_conv(spatial_features_2d)
+
+        # Domain discriminator, mirroring anchor_head_multi.py. The stale entries are cleared
+        # first so an eval-mode or plain-training forward (no `domain_label`) cannot serve a
+        # previous batch's predictions to get_domain_adversarial_loss().
+        self.forward_ret_dict.pop('domain_preds', None)
+        self.forward_ret_dict.pop('domain_label', None)
+        if self.domain_discriminator is not None and 'domain_label' in data_dict:
+            self.forward_ret_dict['domain_label'] = data_dict['domain_label']
+            self.forward_ret_dict['domain_preds'] = dann_utils.domain_predictions(
+                self.domain_discriminator, spatial_features_2d
+            )
 
         pred_dicts = []
         for head in self.heads_list:

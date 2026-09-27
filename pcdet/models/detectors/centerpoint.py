@@ -11,11 +11,17 @@ class CenterPoint(Detector3DTemplate):
             batch_dict = cur_module(batch_dict)
 
         if self.training:
-            loss, tb_dict, disp_dict = self.get_training_loss()
+            loss, tb_dict, disp_dict, dann_loss = self.get_training_loss()
 
             ret_dict = {
                 'loss': loss
             }
+            # Kept SEPARATE from `loss`, as second_net.py does: train_st_utils sums it with the
+            # target half and PCGrad (SELF_TRAIN.USE_TORCHJD) projects it against the detection
+            # gradients. None unless the head has a discriminator AND the batch was stamped with
+            # `domain_label` by the self-training loop.
+            if dann_loss is not None:
+                ret_dict['dann_loss'] = dann_loss
             return ret_dict, tb_dict, disp_dict
         else:
             pred_dicts, recall_dicts = self.post_processing(batch_dict)
@@ -30,8 +36,14 @@ class CenterPoint(Detector3DTemplate):
             **tb_dict
         }
 
+        # In-head DANN (pcdet/models/model_utils/dann_utils.py); (None, {}) for every config
+        # without `dann_weight`. Excluded from `loss` and from the rpn_loss logging, exactly as
+        # AnchorHeadTemplate.get_loss excludes it.
+        dann_loss, tb_dict_domain = self.dense_head.get_domain_adversarial_loss()
+        tb_dict.update(tb_dict_domain)
+
         loss = loss_rpn
-        return loss, tb_dict, disp_dict
+        return loss, tb_dict, disp_dict, dann_loss
 
     def post_processing(self, batch_dict):
         post_process_cfg = self.model_cfg.POST_PROCESSING

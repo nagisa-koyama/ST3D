@@ -62,6 +62,25 @@ a second time from the source-only model `ldb35c2o` epoch 30.
         cfgs/da-ieee-access-tier1/<config>.yaml tier1 <run_name> \
         --pretrained_model $T --pretrained_model_teacher $T
 
+## DANN and PCGrad arms (report 20260927_06): the two rungs above ST3D + global
+
+| arm | proxy config | differs from the row below it by |
+|---|---|---|
+| ST3D + global + DANN | centerpoint-st3d-global-dann-lyft2nuscenes-4ep | `DENSE_HEAD.LOSS_CONFIG.LOSS_WEIGHTS.dann_weight: 0.1` |
+| ST3D + global + DANN + PCGrad | centerpoint-st3d-global-dann-pcgrad-lyft2nuscenes-4ep | `SELF_TRAIN.USE_TORCHJD: True` |
+
+`dann_weight` makes `CenterHead` build the in-head domain discriminator (the AnchorHeadMulti
+mechanism behind MIRU2025's "Ours+DANN", ported in `pcdet/models/model_utils/dann_utils.py`:
+GRL at a constant 1.0 on `spatial_features_2d`, BCE against the domain label) and `CenterPoint`
+returns it as a separate `dann_loss`. `USE_TORCHJD` switches the backward to
+`torchjd.backward([src, dann, st], PCGrad())`; it asserts all three losses exist, so the PCGrad
+row inherits the DANN row. Read DANN against st3d-global-4ep (job 26328) and PCGrad against DANN.
+
+Same launch as the other ST arms (1 GPU, `T` = `iwg6l5v1` epoch 30 as teacher and init). The
+checkpoint has no discriminator weights; `load_params_from_file` is non-strict and logs them as
+"Not updated weight", which is expected. The PCGrad arm computes three Jacobian rows per step and
+its cost is unmeasured: take `EST_H` from the DANN arm's measured epoch time times ~1.5 until it is.
+
 ## Foreground v2 (report 20260926_06): derived thresholds + ignore band + Car-only channel
 
 `centerpoint-foreground-v2-lyft2nuscenes-4ep` is the foreground row with the report's two changes
