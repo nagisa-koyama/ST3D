@@ -3,12 +3,17 @@
 # The foreground row (centerpoint-foreground-lyft2nuscenes.yaml) with the report's two changes,
 # and nothing else:
 #
-# 1. Per-class pseudo-label thresholds DERIVED from the teacher, not fixed at 0.1. A 2-component
-#    GMM on logit(score) per class, positive where P(confident component) >= 0.5, fitted to the
-#    first-pass pseudo-labels of THIS teacher (iwg6l5v1 epoch 30, job 26220's ps_label_e0.pkl):
-#    Car 0.21, Pedestrian 0.19, Cyclist 0.18 (report section 12 table). Teacher scores only, no
-#    target labels, so UDA-legal. They are constants here because the teacher is fixed. A run with a
-#    DIFFERENT teacher must re-derive them; there is no in-run GMM step yet.
+# 1. Per-class pseudo-label thresholds DERIVED from the teacher, not fixed at 0.1: Car 0.21,
+#    Pedestrian 0.19, Cyclist 0.18, from the first-pass pseudo-labels of THIS teacher (iwg6l5v1
+#    epoch 30, job 26220's ps_label_e0.pkl). Teacher scores only, no target labels, so UDA-legal.
+#    They are constants here because the teacher is fixed; a DIFFERENT teacher must re-derive them.
+#    WHAT THEY ARE (corrected by experiments_md/20260927_01): the COUNT-BALANCE point per class -
+#    kept boxes/frame ~ estimated real boxes/frame, the estimate being label-free (persistence or a
+#    per-ring mixture, both ~0.2 for Car). They were first obtained as the posterior-0.5 boundary of
+#    a 2-component GMM on logit(score) (20260926_06 section 12); that description is WRONG as a
+#    model - over the full score range the marginal is unimodal (background plateau + monotone tail)
+#    and the GMM only lands here because a two-Gaussian split of the 0.1-truncated tail happens to
+#    coincide with count balance. The values stand; the justification is count balance.
 #    NEG_THRESH stays 0.1, so 0.1 <= score < threshold becomes IGNORE (not in the loss) rather than
 #    deleted, and the calibration, which drops ignored boxes, measures the >= threshold set. On Car
 #    that is the count-balance point (kept/frame ~ real/frame), where one threshold serves both uses

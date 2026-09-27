@@ -67,9 +67,11 @@ a second time from the source-only model `ldb35c2o` epoch 30.
 `centerpoint-foreground-v2-lyft2nuscenes-4ep` is the foreground row with the report's two changes
 and nothing else (a test pins that):
 
-- `SELF_TRAIN.SCORE_THRESH [0.21, 0.19, 0.18]`: per-class 2-component GMM on logit(score),
-  posterior 0.5, fitted to THIS teacher's first-pass pseudo-labels. `NEG_THRESH` stays 0.1, so the
-  band in between is ignored rather than deleted. Valid only for teacher `iwg6l5v1` epoch 30.
+- `SELF_TRAIN.SCORE_THRESH [0.21, 0.19, 0.18]`: per-class thresholds at the label-free COUNT-BALANCE
+  point of THIS teacher's first-pass pseudo-labels (first obtained as a 2-GMM posterior-0.5 boundary;
+  20260927_01 shows the GMM is not a valid model of these scores - the marginal is unimodal - and the
+  values stand as count balance). `NEG_THRESH` stays 0.1: the band in between is ignored rather than
+  deleted, and 0.1 is also the label-free plateau exclusion. Valid only for teacher `iwg6l5v1` epoch 30.
 - `HIST_DIST_FOREGROUND_CLASSES: ['Car']`: the foreground channel counts Car boxes only.
   Pedestrian and Cyclist points take the background rate.
 
