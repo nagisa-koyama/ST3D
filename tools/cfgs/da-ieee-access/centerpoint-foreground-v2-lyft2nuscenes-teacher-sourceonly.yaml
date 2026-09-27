@@ -10,4 +10,4 @@
 _BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-foreground-v2-lyft2nuscenes.yaml
 
 SELF_TRAIN:
-    SCORE_THRESH: [0.21, 0.19, 0.18]   # PLACEHOLDER = v2's values for iwg6l5v1; re-derived below
+    SCORE_THRESH: [0.24, 0.20, 0.25]   # persistence count balance on ldb35c2o (job 26384): Car 0.241, Ped 0.203, Cyc 0.246 - same pooled rule as v2 (reproduces 0.203/0.177/0.215 on iwg6l5v1)

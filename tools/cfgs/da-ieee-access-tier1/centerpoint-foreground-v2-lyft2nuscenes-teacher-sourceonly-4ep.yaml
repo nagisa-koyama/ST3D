@@ -1,0 +1,10 @@
+# Tier-1 (4-epoch) proxy of cfgs/da-ieee-access/centerpoint-foreground-v2-lyft2nuscenes-teacher-sourceonly.yaml - see README.md.
+# Teacher-strength series on foreground v2: read against 26330 (v2, teacher iwg6l5v1, 29.17 BEV ep 4).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-foreground-v2-lyft2nuscenes-teacher-sourceonly.yaml
+
+OPTIMIZATION:
+    NUM_EPOCHS: 4
+
+SELF_TRAIN:
+    PROG_AUG:
+        UPDATE_AUG: [1, 2, 3]

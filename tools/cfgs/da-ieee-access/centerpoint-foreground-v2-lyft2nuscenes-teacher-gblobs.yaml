@@ -20,7 +20,7 @@ MODEL:
         COVARIANCE_SCALE: 1.0
 
 SELF_TRAIN:
-    SCORE_THRESH: [0.21, 0.19, 0.18]   # PLACEHOLDER = v2's values for iwg6l5v1; re-derived below
+    SCORE_THRESH: [0.23, 0.18, 0.20]   # persistence count balance on qyerdcln (job 26385): Car 0.227, Ped 0.183, Cyc 0.199 - same pooled rule as v2 (reproduces 0.203/0.177/0.215 on iwg6l5v1)
     MODEL_TEACHER:
         VFE:
             NAME: GBlobsVFE
