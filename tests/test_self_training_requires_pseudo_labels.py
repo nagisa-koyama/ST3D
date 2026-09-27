@@ -25,6 +25,16 @@ import pytest
 import yaml
 
 FAMILY = Path(__file__).resolve().parent.parent / 'tools' / 'cfgs' / 'da-ieee-access'
+TOOLS = FAMILY.parent.parent
+
+
+def _resolved(path):
+    """The config as train.py sees it: `_BASE_CONFIG_` chains expanded. A child that inherits its
+    DATA_CONFIG_TAR from a base (centerpoint-foreground-v2-lyft2nuscenes, 2026-09-27) has no such
+    key in its raw text, and testing the text instead of the resolved config failed on it."""
+    from easydict import EasyDict            # the repo import path is set up further down
+    from pcdet.config import cfg_from_yaml_file
+    return cfg_from_yaml_file(str(path.relative_to(TOOLS)), EasyDict())
 
 
 def _self_training_configs():
@@ -43,7 +53,7 @@ def test_the_family_has_self_training_rows_to_check():
 
 @pytest.mark.parametrize('path', _self_training_configs(), ids=lambda p: p.stem)
 def test_target_declares_use_pseudo_label(path):
-    cfg = yaml.safe_load(path.read_text(encoding='utf-8'))
+    cfg = _resolved(path)
     tar = cfg.get('DATA_CONFIG_TAR')
     assert tar is not None, f'{path.name}: SELF_TRAIN with no DATA_CONFIG_TAR'
     assert tar.get('USE_PSEUDO_LABEL') is True, (
@@ -61,7 +71,7 @@ def test_target_does_not_also_ask_for_motion_compensation(path):
     combination. Adding USE_PSEUDO_LABEL to a target that already asked for compensation would turn
     a silent problem into a hard failure at startup, so pin that it does not happen.
     """
-    cfg = yaml.safe_load(path.read_text(encoding='utf-8'))
+    cfg = _resolved(path)
     tar = cfg['DATA_CONFIG_TAR']
     assert not tar.get('GT_BOXES_MOTION_COMPENSATION', False), (
         f'{path.name}: target asks for both USE_PSEUDO_LABEL and GT_BOXES_MOTION_COMPENSATION; '
@@ -125,7 +135,7 @@ def test_source_only_config_with_no_target_is_untouched():
 
 @pytest.mark.parametrize('path', _self_training_configs(), ids=lambda p: p.stem)
 def test_every_real_self_training_config_passes_the_guard(path):
-    cfg = EasyDict(yaml.safe_load(path.read_text(encoding='utf-8')))
+    cfg = _resolved(path)
     assert_target_labels_are_not_used(cfg, True)
 
 
