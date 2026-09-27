@@ -134,8 +134,20 @@ def boxes_to_bev_mask(boxes, spatial_features_2d, point_cloud_range, voxel_size,
 
 
 def bev_imitation_loss(student_batch, teacher_batch, mode, point_cloud_range, voxel_size, grid_size,
-                       boxes_key='gt_boxes'):
+                       boxes_key='gt_boxes', normalization='reference'):
     """L2 distance between student and teacher BEV features, masked to the objects.
+
+    normalization (mode 'gt' only):
+        'reference' - the released code's denominator, `batch_size * roi_size`, where roi_size is the
+            PADDED second dimension of the gt_boxes tensor (the largest box count in the batch). This
+            is what `--mimic_weight 1` in the paper multiplies, so WEIGHT 1.0 here is the published
+            setting. (The reference's apparent second normalisation, line 56 of train_mimic_utils.py,
+            is a no-op: it multiplies an already-scalar loss by the mask, whose sum is the number of
+            valid boxes, and divides by that same count.) The quirk comes with it: the effective
+            weight drifts with batch composition, by the padding factor B*R / n_valid.
+        'valid' - divide by the number of boxes with a footprint. Larger than 'reference' by that
+            padding factor (typically 2-4x on KITTI), which is why WEIGHT 1.0 under it put the
+            imitation term at 42% of the objective (experiments_md/20260927_02 section 7.2).
 
     Args:
         student_batch / teacher_batch: batch dicts AFTER the forward pass, so both carry
@@ -170,4 +182,9 @@ def bev_imitation_loss(student_batch, teacher_batch, mode, point_cloud_range, vo
         # Every box out of range, or a frame with no labels at all. Returning a real zero that is
         # still attached to the graph keeps DDP's gradient buckets consistent across ranks.
         return (per_cell * 0.0).sum()
-    return (per_cell * mask).sum() / num_valid
+    if normalization == 'reference':
+        batch_size, roi_size = boxes.shape[0], boxes.shape[1]
+        return (per_cell * mask).sum() / (batch_size * roi_size)
+    if normalization == 'valid':
+        return (per_cell * mask).sum() / num_valid
+    raise NotImplementedError('normalization {!r}: use "reference" or "valid"'.format(normalization))

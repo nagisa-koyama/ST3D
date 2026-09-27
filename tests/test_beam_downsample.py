@@ -186,7 +186,7 @@ class TestImitationLoss:
         """Padding rows are all-zero, so an unguarded mask would put a footprint at the origin and
         normalise by a box count that counts them."""
         kwargs = dict(mode='gt', point_cloud_range=self.PC_RANGE, voxel_size=self.VOXEL,
-                      grid_size=self.GRID)
+                      grid_size=self.GRID, normalization='valid')   # 'reference' divides by the padded count on purpose
         teacher = {'spatial_features_2d': self._features(1.0)}
         one = distill_utils.bev_imitation_loss(
             {'spatial_features_2d': self._features(0.0), 'gt_boxes': self._boxes(1, 0)},
@@ -374,3 +374,63 @@ class TestImitationLossExtra:
                 {'spatial_features_2d': torch.zeros(1, 8, 188, 188), 'gt_boxes': self._boxes()},
                 {'spatial_features_2d': torch.zeros(1, 8, 94, 94)},
                 'gt', self.PC_RANGE, self.VOXEL, self.GRID)
+
+
+class TestReferenceNormalization:
+    """'reference' must equal the released cal_mimic_loss (train_mimic_utils.py, mode 'gt') to float
+    precision, including its padded-batch denominator; 'valid' differs from it by exactly B*R/n_valid."""
+    PC_RANGE = [-75.2, -75.2, -2, 75.2, 75.2, 4]
+    VOXEL = [0.1, 0.1, 0.15]
+    GRID = [1504, 1504, 40]
+
+    @staticmethod
+    def _reference_cal_mimic_loss(teacher_features, student_features, rois, min_x, min_y, cell_x, cell_y):
+        # literal CPU transcription of the reference, mode 'gt'
+        batch_size, height, width = teacher_features.size(0), teacher_features.size(2), teacher_features.size(3)
+        roi_size = rois.size(1)
+        x1 = (rois[:, :, 0] - rois[:, :, 3] / 2 - min_x) / cell_x
+        x2 = (rois[:, :, 0] + rois[:, :, 3] / 2 - min_x) / cell_x
+        y1 = (rois[:, :, 1] - rois[:, :, 4] / 2 - min_y) / cell_y
+        y2 = (rois[:, :, 1] + rois[:, :, 4] / 2 - min_y) / cell_y
+        grid_y, grid_x = torch.meshgrid(torch.arange(0, height), torch.arange(0, width), indexing='ij')
+        grid_y = grid_y[None, None].repeat(batch_size, roi_size, 1, 1)
+        grid_x = grid_x[None, None].repeat(batch_size, roi_size, 1, 1)
+        mask_y = (grid_y >= y1[:, :, None, None]) * (grid_y <= y2[:, :, None, None])
+        mask_x = (grid_x >= x1[:, :, None, None]) * (grid_x <= x2[:, :, None, None])
+        mask = (mask_y * mask_x).float()
+        mask[rois[:, :, -1] == 0] = 0
+        weight = mask.sum(-1).sum(-1)
+        weight[weight == 0] = 1
+        mask = mask / weight[:, :, None, None]
+        mimic_loss = torch.norm(teacher_features - student_features, p=2, dim=1)
+        mask = mask.sum(1)
+        mimic_loss = (mimic_loss * mask).sum() / batch_size / roi_size
+        mimic_loss = (mimic_loss * mask).sum() / (rois[:, :, -1] > 0).sum()   # the reference's no-op line
+        return mimic_loss
+
+    def _batch(self):
+        g = torch.Generator().manual_seed(0)
+        student = torch.randn(2, 8, 188, 188, generator=g)
+        teacher = torch.randn(2, 8, 188, 188, generator=g)
+        # frame 0: three boxes, frame 1: one box + two padding rows -> R = 3, n_valid = 4
+        boxes = torch.tensor([
+            [[10.0, 5.0, 0, 4.0, 2.0, 1.5, 0.3, 1.0], [-20.0, 30.0, 0, 6.0, 2.5, 2.0, 0.0, 1.0], [40.0, -8.0, 0, 1.0, 1.0, 1.7, 0.0, 2.0]],
+            [[-5.0, -5.0, 0, 4.5, 1.9, 1.6, 1.0, 1.0], [0.0] * 8, [0.0] * 8]], dtype=torch.float32)
+        return student, teacher, boxes
+
+    def test_reference_matches_the_released_function(self):
+        student, teacher, boxes = self._batch()
+        ours = distill_utils.bev_imitation_loss(
+            {'spatial_features_2d': student, 'gt_boxes': boxes}, {'spatial_features_2d': teacher},
+            'gt', self.PC_RANGE, self.VOXEL, self.GRID, normalization='reference')
+        stride = distill_utils.bev_feature_stride(student, self.GRID)
+        ref = self._reference_cal_mimic_loss(teacher, student, boxes, self.PC_RANGE[0], self.PC_RANGE[1],
+                                             self.VOXEL[0] * stride, self.VOXEL[1] * stride)
+        assert ours.item() == pytest.approx(ref.item(), rel=1e-5)
+
+    def test_valid_differs_by_the_padding_factor(self):
+        student, teacher, boxes = self._batch()
+        kw = dict(mode='gt', point_cloud_range=self.PC_RANGE, voxel_size=self.VOXEL, grid_size=self.GRID)
+        ref = distill_utils.bev_imitation_loss({'spatial_features_2d': student, 'gt_boxes': boxes}, {'spatial_features_2d': teacher}, normalization='reference', **kw)
+        val = distill_utils.bev_imitation_loss({'spatial_features_2d': student, 'gt_boxes': boxes}, {'spatial_features_2d': teacher}, normalization='valid', **kw)
+        assert val.item() == pytest.approx(ref.item() * (2 * 3) / 4, rel=1e-5)

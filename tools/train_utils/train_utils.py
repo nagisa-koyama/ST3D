@@ -120,6 +120,7 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
                 point_cloud_range=dataset.point_cloud_range,
                 voxel_size=dataset.voxel_size,
                 grid_size=dataset.grid_size,
+                normalization=distill_cfg.get('NORMALIZATION', 'reference'),
             )
             loss = loss + distill_cfg.get('WEIGHT', 1.0) * loss_distill
 

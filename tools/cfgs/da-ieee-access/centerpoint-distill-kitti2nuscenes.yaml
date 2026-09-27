@@ -328,8 +328,16 @@ OPTIMIZATION:
 
 DISTILL:
     # Weight on the imitation term, added to the detection loss. 1.0 is the reference's default
-    # (--mimic_weight 1) and its ablation found the method insensitive between 0.5 and 2.
+    # (--mimic_weight 1) and its ablation found the method insensitive between 0.5 and 2 - but only
+    # against the reference's own denominator, which NORMALIZATION selects below.
     WEIGHT: 1.0
+    # 'reference': divide the summed per-box means by batch_size * PADDED box count, exactly as the
+    # released cal_mimic_loss does, so WEIGHT 1.0 is the published setting. 'valid' (divide by the
+    # number of real boxes) is larger by the padding factor, typically 2-4x on KITTI: under it the
+    # imitation term was 42% of the objective at weight 1 (two smoke tests, 20260927_02 section 7.2),
+    # and a 4-epoch weight sweep could not rank weights for a KITTI source. Decided 2026-09-27: run
+    # the baseline as published rather than sweep.
+    NORMALIZATION: 'reference'
     # 'gt' masks the imitation loss to ground-truth boxes; 'all' imitates every BEV cell. The
     # reference defaults to 'roi' (masks around the teacher's PROPOSALS), which needs a two-stage
     # detector - CenterPoint produces no proposals during training. 'gt' is legitimate rather than a
