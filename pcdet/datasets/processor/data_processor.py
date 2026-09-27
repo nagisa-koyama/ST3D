@@ -3,7 +3,7 @@ from functools import partial
 import numpy as np
 import math
 
-from ...utils import box_utils, common_utils, ptsn_utils
+from ...utils import beam_downsample_utils, box_utils, common_utils, ptsn_utils
 
 tv = None
 try:
@@ -88,6 +88,11 @@ class DataProcessor(object):
         # only value that can be reached without an explicit set_ptsn_scale() call, so no config
         # that does not ask for PTSN can be affected by it.
         self.ptsn_scale = 1.0
+        # Ring elevations for `downsample_beams`, fitted on the first frame this processor sees and
+        # then reused. They are a sensor calibration, not a per-frame quantity, so re-fitting per
+        # frame would only pay for KMeans repeatedly to get the same answer. Cached per processor
+        # instance, which means per DataLoader worker - each worker pays the fit once.
+        self.beam_centroids = None
 
         for cur_cfg in processor_configs:
             cur_processor = getattr(self, cur_cfg.NAME)(config=cur_cfg)
@@ -253,6 +258,50 @@ class DataProcessor(object):
                 choice = np.concatenate((choice, extra_choice), axis=0)
             np.random.shuffle(choice)
         data_dict['points'] = points[choice]
+        return data_dict
+
+    def downsample_beams(self, data_dict=None, config=None):
+        """Drop whole laser rings, to make a high-beam source look like a low-beam target.
+
+        The LiDAR Distillation baseline (Wei et al., ECCV 2022). Config keys:
+            NUM_BEAMS:   rings the SOURCE sensor has (KITTI 64, Lyft 40 or 64, nuScenes 32).
+            BEAM_RATIO:  keep every BEAM_RATIO-th ring. 64 -> 32 beams is 2; 64 -> 16 is 4.
+            BIN_RATIO:   keep every BIN_RATIO-th return within a kept ring, i.e. the paper's `*`
+                         variants, which also halve the HORIZONTAL resolution. Default 1.
+            MAX_FIT_POINTS: elevations the ring fit uses (default 20000).
+
+        Runs on the fly rather than reading a precomputed `modes/<beam>/` directory as the original
+        does. Three reasons, in order of weight: the original selects the student's beam count by
+        `ln -s data/waymo/modes/<tag> data/waymo/waymo_processed_data` from inside its training
+        script, which mutates a data directory this cluster shares between two repos and every
+        concurrent job; a cache would duplicate hundreds of GB across five datasets and two ratios
+        each; and nothing in this repo's loaders reads points from a path a config can redirect
+        per-run anyway. The cost is a KMeans fit once per worker (see `beam_centroids`) plus one
+        searchsorted per frame - measure it with tools/analysis/profile_throughput.py before
+        launching, since accumulation already showed how easily this family becomes loader-bound.
+
+        Deliberately NOT gated on self.training: the point of the baseline is that the student sees
+        low-beam data, and a student evaluated on its source would have to see it at eval too. What
+        keeps the TARGET untouched is that the target has its own DATA_CONFIG, which does not carry
+        this stage.
+        """
+        if data_dict is None:
+            return partial(self.downsample_beams, config=config)
+
+        beam_ratio = config.get('BEAM_RATIO', 1)
+        bin_ratio = config.get('BIN_RATIO', 1)
+        if beam_ratio == 1 and bin_ratio == 1:
+            return data_dict
+
+        points, self.beam_centroids = beam_downsample_utils.downsample_beams(
+            data_dict['points'],
+            num_beams=config.NUM_BEAMS,
+            beam_ratio=beam_ratio,
+            bin_ratio=bin_ratio,
+            centroids=self.beam_centroids,
+            max_fit_points=config.get('MAX_FIT_POINTS', 20000),
+        )
+        data_dict['points'] = points
         return data_dict
 
     def sample_points_hist_based(self, data_dict=None, config=None):

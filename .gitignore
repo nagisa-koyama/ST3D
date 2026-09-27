@@ -1,7 +1,12 @@
-**__pycache__**
+__pycache__/
 build/
-**egg-info**
-**dist**
+*.egg-info/
+# `dist/` NOT `**dist**`: the old pattern matched any path CONTAINING "dist", which silently hid
+# pcdet/utils/distill_utils.py and centerpoint-distill-kitti2nuscenes.yaml - they never appeared in
+# `git status` and `git add` refused them without a word. Same fix as build/ in 66b98ac, and the
+# hazard was written down before it fired: this repo's subject is distribution correction, so
+# hist_dist_*.py and dist_utils.py were always going to collide with it.
+dist/
 data/
 *.pyc
 venv/

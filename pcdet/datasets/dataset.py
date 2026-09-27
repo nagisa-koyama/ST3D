@@ -7,7 +7,7 @@ import torch.utils.data as torch_data
 from .augmentor.data_augmentor import DataAugmentor
 from .processor.data_processor import DataProcessor
 from .processor.point_feature_encoder import PointFeatureEncoder
-from ..utils import common_utils, box_utils, self_training_utils
+from ..utils import beam_downsample_utils, common_utils, box_utils, self_training_utils
 from ..ops.roiaware_pool3d import roiaware_pool3d_utils
 from ..utils.ontology_mapping import get_ontology_mapping
 
@@ -186,6 +186,12 @@ class DatasetTemplate(torch_data.Dataset):
         # to predictions can be read back from the very object that applied the forward transform
         # (self_training_utils.save_pseudo_label_epoch), rather than from config a second time.
         self.ptsn_scale = 1.0
+        # LiDAR Distillation. Present => __getitem__ yields a (student, teacher) pair in training;
+        # absent => this dataset behaves exactly as before, which is what keeps every other family
+        # untouched. `beam_centroids` caches the fitted ring elevations per dataset instance, i.e.
+        # per DataLoader worker.
+        self.beam_distill_cfg = self.dataset_cfg.get('BEAM_DISTILL', None)
+        self.beam_centroids = None
         self.total_epochs = 0
         self._merge_all_iters_to_one_epoch = False
 
@@ -489,6 +495,10 @@ class DatasetTemplate(torch_data.Dataset):
             gt_boxes = np.concatenate((data_dict['gt_boxes'], gt_classes.reshape(-1, 1).astype(np.float32)), axis=1)
             data_dict['gt_boxes'] = gt_boxes
 
+        # LiDAR Distillation: one augmented cloud, two beam resolutions.
+        if self.beam_distill_cfg is not None and self.training:
+            return self._split_for_beam_distillation(data_dict)
+
         data_dict = self.point_feature_encoder.forward(data_dict)
 
         data_dict = self.data_processor.forward(
@@ -505,8 +515,65 @@ class DatasetTemplate(torch_data.Dataset):
 
         return data_dict
 
+    def _split_for_beam_distillation(self, data_dict):
+        """Return (student, teacher) views of ONE augmented frame, at two beam resolutions.
+
+        The LiDAR Distillation baseline imitates the teacher's BEV feature map cell by cell, so the
+        two streams must describe the SAME scene in the SAME pose - a teacher rotated differently
+        from its student makes the imitation loss compare unrelated locations and is worse than no
+        loss at all. The reference implementation runs two independent Dataset objects over the same
+        index and copies the student's sampled augmentation parameters into the teacher
+        (`MyDataset.__getitem__`, keys `random_flip_along_x` / `global_rotation` / `global_scaling`),
+        which requires those parameters to be recorded, replayed, and kept in step with every future
+        augmentation that is added.
+
+        Splitting AFTER the augmentor removes the problem rather than solving it: there is one draw,
+        so there is nothing to keep in step, and alignment is exact by construction rather than by
+        agreement between two code paths. It also halves the file reads, which matters on this
+        cluster - a cold NFS lidar read costs 47 ms against 2 ms warm.
+
+        Both streams keep identical `gt_boxes`: the boxes are fixed before this point, and no later
+        stage filters them by point count, so a mask built from GT is valid for both feature maps.
+        """
+        beam_ratio = self.beam_distill_cfg.get('BEAM_RATIO', 1)
+        bin_ratio = self.beam_distill_cfg.get('BIN_RATIO', 1)
+        assert beam_ratio > 1 or bin_ratio > 1, \
+            'BEAM_DISTILL with BEAM_RATIO 1 and BIN_RATIO 1 would give the student the teacher\'s ' \
+            'own cloud, making the imitation loss identically zero. Set one of them.'
+
+        student_points, self.beam_centroids = beam_downsample_utils.downsample_beams(
+            data_dict['points'],
+            num_beams=self.beam_distill_cfg.NUM_BEAMS,
+            beam_ratio=beam_ratio,
+            bin_ratio=bin_ratio,
+            centroids=self.beam_centroids,
+            max_fit_points=self.beam_distill_cfg.get('MAX_FIT_POINTS', 20000),
+        )
+
+        def _stream(points):
+            # Fresh arrays per stream: the processor edits 'points' and 'gt_boxes' in place, so two
+            # streams sharing either would have the first one processed corrupt the second.
+            stream = dict(data_dict)
+            stream['points'] = points.copy()
+            if stream.get('gt_boxes', None) is not None:
+                stream['gt_boxes'] = stream['gt_boxes'].copy()
+            if stream.get('gt_names', None) is not None:
+                stream['gt_names'] = stream['gt_names'].copy()
+            stream = self.point_feature_encoder.forward(stream)
+            return self.data_processor.forward(data_dict=stream)
+
+        # Student first, so that if the pair is ever logged the order matches the loss's argument
+        # order. The teacher runs the UNTOUCHED cloud - it is the high-beam model.
+        return _stream(student_points), _stream(data_dict['points'])
+
     @staticmethod
     def collate_batch(batch_list, _unused=False):
+        # A beam-distillation dataset yields (student, teacher) pairs, so collate each side
+        # separately and hand back two batch dicts. Mirrors the reference implementation's branch.
+        if len(batch_list) > 0 and isinstance(batch_list[0], tuple):
+            return [DatasetTemplate.collate_batch([pair[i] for pair in batch_list])
+                    for i in range(len(batch_list[0]))]
+
         data_dict = defaultdict(list)
         for cur_sample in batch_list:
             for key, val in cur_sample.items():

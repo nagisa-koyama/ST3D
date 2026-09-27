@@ -318,6 +318,14 @@ def main():
         if cfg.get('SELF_TRAIN', None) and cfg.SELF_TRAIN.get('MODEL_TEACHER', None):
             model_teacher = build_network(model_cfg=cfg.SELF_TRAIN.MODEL_TEACHER, num_class=len(source_class_names),
                             dataset=source_dataset['dataset_class'])
+        elif cfg.get('DISTILL', None):
+            # LiDAR Distillation's teacher is the SAME architecture trained at a higher beam count -
+            # the imitation loss compares BEV feature maps cell by cell and channel by channel, so a
+            # different backbone would not even produce comparable tensors. Hence cfg.MODEL, not a
+            # separate MODEL_TEACHER block: there is nothing for such a block to legitimately vary,
+            # and offering one would only let the two drift apart.
+            model_teacher = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES),
+                            dataset=source_dataset['dataset_class'])
         else:
             model_teacher = None
         break
@@ -415,6 +423,20 @@ def main():
     # select proper trainer
     train_func = train_model_st if cfg.get('SELF_TRAIN', None) else train_model
 
+    # Passed only when asked for, because train_model_st does not take it - a distillation run and a
+    # self-training run are different trainers, and DISTILL is refused alongside SELF_TRAIN below.
+    train_func_kwargs = {}
+    if cfg.get('DISTILL', None):
+        assert not cfg.get('SELF_TRAIN', None), (
+            'DISTILL and SELF_TRAIN cannot both be set: they need different trainers, and the '
+            'reference implementation composes them by STAGES (distil first, then self-train from '
+            'the resulting checkpoint via --pretrained_model), not in one run.')
+        assert args.pretrained_model_teacher is not None, (
+            'DISTILL needs --pretrained_model_teacher: the higher-beam checkpoint this student '
+            'imitates. Without it the teacher would be randomly initialised and the imitation loss '
+            'would pull the student towards noise.')
+        train_func_kwargs['distill_cfg'] = cfg.DISTILL
+
     # -----------------------start training---------------------------
     logger.info('**********************Start training %s/%s(%s)**********************'
                 % (cfg.EXP_GROUP_PATH, cfg.TAG, args.extra_tag))
@@ -444,7 +466,8 @@ def main():
         max_ckpt_save_num=args.max_ckpt_save_num,
         merge_all_iters_to_one_epoch=args.merge_all_iters_to_one_epoch,
         logger=logger,
-        ema_model=None
+        ema_model=None,
+        **train_func_kwargs
     )
 
     # Exclude pth files from wandb upload.

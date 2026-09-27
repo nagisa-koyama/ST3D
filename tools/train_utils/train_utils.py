@@ -7,10 +7,14 @@ import torch.distributed as dist
 import tqdm
 from torch.nn.utils import clip_grad_norm_
 
+from pcdet.models import load_data_to_gpu
+from pcdet.utils import distill_utils
+
 import wandb
 
 def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, accumulated_iter, optim_cfg,
-                    rank, tbar, total_it_each_epochs, dataloader_iters, tb_log=None, leave_pbar=False, epoch_id=None):
+                    rank, tbar, total_it_each_epochs, dataloader_iters, tb_log=None, leave_pbar=False, epoch_id=None,
+                    model_teacher=None, distill_cfg=None):
     # dataloader_iter = dataloader_iters[0]
     assert(len(dataloader_iters) == len(train_loaders))
     assert(len(total_it_each_epochs) == len(train_loaders))
@@ -80,6 +84,16 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
 
         model.train()
 
+        # LiDAR Distillation: the loader hands back [student_batch, teacher_batch] for the same
+        # augmented frame at two beam resolutions (dataset.py::_split_for_beam_distillation).
+        teacher_batch = None
+        if distill_cfg is not None:
+            assert isinstance(batch, list) and len(batch) == 2, (
+                'DISTILL is configured but the loader yielded a single batch. The source '
+                'DATA_CONFIG needs a BEAM_DISTILL block for its dataset to produce '
+                '(student, teacher) pairs.')
+            batch, teacher_batch = batch
+
         outputs = model_func(model, batch)
         if len(outputs) == 2:
             loss = outputs[0]
@@ -91,6 +105,23 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
             disp_dict = outputs[2]
         else:
             raise ValueError('incompatible outputs with length {}'.format(len(outputs)))
+
+        loss_distill = None
+        if distill_cfg is not None:
+            # `batch` is the same dict the forward just ran, and every module mutates it in place,
+            # so the student's BEV feature map is already in it - no detector needs to return it.
+            # (The reference patches four detectors and three ROI heads to hand `batch_dict` back.)
+            load_data_to_gpu(teacher_batch)
+            teacher_batch = distill_utils.forward_to_bev(model_teacher, teacher_batch)
+            dataset = train_loaders[dataset_index].dataset.dataset
+            loss_distill = distill_utils.bev_imitation_loss(
+                batch, teacher_batch,
+                mode=distill_cfg.get('MODE', 'gt'),
+                point_cloud_range=dataset.point_cloud_range,
+                voxel_size=dataset.voxel_size,
+                grid_size=dataset.grid_size,
+            )
+            loss = loss + distill_cfg.get('WEIGHT', 1.0) * loss_distill
 
         # Loss weighting.
         # if dataset_ontology == 'lyft':
@@ -138,6 +169,11 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
 
             wandb.log({'train/' + dataset_ontology + '/loss': loss})
             wandb.log({'train/' + dataset_ontology + '/learning_rate': cur_lr})
+            if loss_distill is not None:
+                # Logged separately from 'loss', which already includes it: a distillation run whose
+                # imitation term is silently zero (every box out of range, or a student that is
+                # really the teacher) is otherwise indistinguishable from a plain source-only run.
+                wandb.log({'train/' + dataset_ontology + '/loss_distill': loss_distill})
             if backward_together == True:
                 if dataset_index ==  len(dataloader_iters) - 1:
                     wandb.log({'train/loss': loss_total})
@@ -170,8 +206,18 @@ def train_one_epoch(model, optimizer, train_loaders, model_func, lr_scheduler, a
 def train_model(model, model_teacher, optimizer, train_loaders, target_loader, model_func, lr_scheduler, optim_cfg,
                 start_epoch, total_epochs, start_iter, rank, tb_log, ckpt_save_dir, ps_label_dir,
                 source_samplers=None, target_sampler=None, lr_warmup_scheduler=None, ckpt_save_interval=1,
-                max_ckpt_save_num=50, merge_all_iters_to_one_epoch=False, logger=None, ema_model=None):
+                max_ckpt_save_num=50, merge_all_iters_to_one_epoch=False, logger=None, ema_model=None,
+                distill_cfg=None):
     accumulated_iter = start_iter
+    if distill_cfg is not None:
+        assert model_teacher is not None, (
+            'DISTILL is configured but no teacher model was built. A distillation run needs '
+            '--pretrained_model_teacher pointing at the higher-beam checkpoint.')
+        # Frozen for the whole run, unlike self-training's teacher: LiDAR Distillation's teacher is
+        # the previous stage's converged model and the curriculum advances by launching the next
+        # stage against it, not by updating it in place.
+        for param in model_teacher.parameters():
+            param.requires_grad_(False)
     with tqdm.trange(start_epoch, total_epochs, desc='epochs', dynamic_ncols=True, leave=(rank == 0)) as tbar:
         total_it_each_epochs = list()
         for train_loader in train_loaders:
@@ -202,7 +248,9 @@ def train_model(model, model_teacher, optimizer, train_loaders, target_loader, m
                 leave_pbar=(cur_epoch + 1 == total_epochs),
                 total_it_each_epochs=total_it_each_epochs,
                 dataloader_iters=dataloader_iters,
-                epoch_id=cur_epoch
+                epoch_id=cur_epoch,
+                model_teacher=model_teacher,
+                distill_cfg=distill_cfg
             )
 
             # save trained model
