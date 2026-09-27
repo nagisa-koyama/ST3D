@@ -47,7 +47,7 @@ print('TOP return-1 range image shape', ri.shape)
 rng = ri[..., 0]; valid = rng > 0; print('valid pixels %d' % valid.sum())
 cal = laser_calibrations(ROOT / 'raw_data' / (seq + '.tfrecord'))['TOP']
 inc = np.sort(cal['beam_inclinations'])[::-1]                     # rows top -> bottom
-H, W = rng.shape; az = np.pi - (np.arange(W) + 0.5) * 2 * np.pi / W  # Waymo column convention
+H, W = rng.shape; az = np.pi - (np.arange(W) + 0.5) * 2 * np.pi / W - np.arctan2(cal['extrinsic'][1, 0], cal['extrinsic'][0, 0])  # column azimuth MINUS the extrinsic yaw (range_image_utils.compute_range_image_polar); without it TOP is rotated - the 2026-09-27 report's 23 m xyz figure came from that omission
 INC, AZ = np.meshgrid(inc, az, indexing='ij')
 x = rng * np.cos(INC) * np.cos(AZ); y = rng * np.cos(INC) * np.sin(AZ); z = rng * np.sin(INC)
 P = np.stack([x, y, z], -1)[valid]                                 # sensor frame, no per-pixel pose
@@ -83,7 +83,7 @@ for fn, wt, v in _fields(frame):
                 if f3 == 2 and w3 == 2: rif = matrix_float(zlib.decompress(v3))
 c = allcal['FRONT']; rngf = rif[..., 0]; vf = rngf > 0; Hf, Wf = rngf.shape
 incf = np.linspace(c['inc_max'], c['inc_min'], Hf) if len(c['beam_inclinations']) == 0 else np.sort(c['beam_inclinations'])[::-1]
-azf = np.pi - (np.arange(Wf) + 0.5) * 2 * np.pi / Wf
+azf = np.pi - (np.arange(Wf) + 0.5) * 2 * np.pi / Wf - np.arctan2(Ef[1, 0], Ef[0, 0]) if False else np.pi - (np.arange(Wf) + 0.5) * 2 * np.pi / Wf - np.arctan2(c['extrinsic'][1, 0], c['extrinsic'][0, 0])
 INCf, AZf = np.meshgrid(incf, azf, indexing='ij')
 Pf = np.stack([rngf * np.cos(INCf) * np.cos(AZf), rngf * np.cos(INCf) * np.sin(AZf), rngf * np.sin(INCf)], -1)[vf]
 Ef = c['extrinsic']; Pfv = (Ef[:3, :3] @ Pf.T).T + Ef[:3, 3]
