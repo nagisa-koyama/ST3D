@@ -25,6 +25,10 @@ from matplotlib.patches import Ellipse  # noqa: E402
 import numpy as np  # noqa: E402
 
 W, OUT = sys.argv[1], sys.argv[2]
+# optional: a records file for Fig B other than nuScenes (e.g. the KITTI sweep), with a name/label
+REC = sys.argv[3] if len(sys.argv) > 3 else os.path.join(W, 'nusc_k500_records.pkl')
+LABEL = sys.argv[4] if len(sys.argv) > 4 else 'nuScenes'
+SUFFIX = '' if len(sys.argv) <= 3 else '_' + LABEL.lower()
 CUTS = np.array([0.10, 0.12, 0.14, 0.16, 0.18, 0.20, 0.22, 0.25, 0.30, 0.35, 0.40, 0.50, 0.60, 0.70, 0.80])
 BINS = [0.04, 0.06, 0.08, 0.10, 0.12, 0.14, 0.17, 0.20, 0.25, 0.30, 0.40, 0.50, 0.65, 0.80, 1.0]
 C_LF, C_VAL, C_GT = '#1f77b4', '#7f7f7f', '#d62728'
@@ -45,7 +49,7 @@ def cross(x, y, target):
 
 # ------------------------------------------------------------------ Fig A: persistence
 pf = os.path.join(W, 'persistence.pkl')
-if os.path.exists(pf):
+if os.path.exists(pf) and len(sys.argv) <= 3:
     PE = pickle.load(open(pf, 'rb'))          # cls, score, range, persistent, tp, frame ; GT markers: score=-1, tp=n_gt
     gtm = PE[PE[:, 1] < 0]
     frames = len(np.unique(gtm[:, 5]))
@@ -97,7 +101,7 @@ else:
     print('no persistence.pkl - skipping fig 1')
 
 # ------------------------------------------------------------------ Fig B: joint mixture
-rf = os.path.join(W, 'nusc_k500_records.pkl')
+rf = REC
 if os.path.exists(rf):
     from sklearn.mixture import GaussianMixture
     R = pickle.load(open(rf, 'rb'))
@@ -148,10 +152,10 @@ if os.path.exists(rf):
         ax[1].text(xs[i] - 0.18, est[i] + 0.05, 't=%.2f' % tcut[i], ha='center', fontsize=7.5, color='#2ca02c')
         ax[1].text(xs[i] + 0.18, real[i] + 0.05, 't=%.2f' % tgt[i], ha='center', fontsize=7.5, color=C_GT)
     ax[1].set_xticks(xs); ax[1].set_xticklabels([n + ' m' for _, n in rings]); ax[1].set_ylabel('Car boxes per frame')
-    ax[1].set_title('Per-ring count and the cut it implies: agrees inside 20 m, over-counts beyond', fontsize=9)
+    ax[1].set_title('Per-ring real count from the component weight, and the score cut it implies', fontsize=9)
     ax[1].legend(fontsize=8); ax[1].grid(alpha=0.3, axis='y')
-    fig.suptitle('Estimator 2 - joint (score, points-in-box) mixture per range ring, nuScenes Car, %d frames (teacher iwg6l5v1 ep30, K = 500)' % frames, fontsize=10)
-    fig.tight_layout(); fig.savefig(os.path.join(OUT, 'pseudo_label_estimator_fig2_joint_mixture.png'), dpi=150)
+    fig.suptitle('Estimator 2 - joint (score, points-in-box) mixture per range ring, %s Car, %d frames (%s)' % (LABEL, frames, os.path.basename(os.path.dirname(R['ps_label']))), fontsize=10)
+    fig.tight_layout(); fig.savefig(os.path.join(OUT, 'pseudo_label_estimator_fig2_joint_mixture%s.png' % SUFFIX), dpi=150)
     print('fig2: est/frame', np.round(est, 2), 'real/frame', np.round(real, 2), 'cut est', np.round(tcut, 3), 'cut gt', np.round(tgt, 3))
 else:
     print('no nusc_k500_records.pkl - skipping fig 2')
