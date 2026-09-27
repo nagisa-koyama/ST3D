@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
-# Keep the Slurm queue topped up to MAXJOBS, submitting from a fixed priority list.
+# Keep the Slurm queue topped up to MAXJOBS jobs / MAXGPUS GPUs, submitting from a fixed priority
+# list.
 #
 # Run in the BACKGROUND from the master node (tmux/nohup), not via sbatch - it is a submitter, not
-# a job. It submits one row at a time and only when a slot is free, so the per-user cap (4 running
-# / 8 queued) is never the thing that decides what runs.
+# a job. It submits one row at a time and only when a slot is free.
 #
-# Every row is submitted through run_sourceonly_2gpu.sh, which reads SLURM_GPUS_ON_NODE and picks
-# the plain or the DDP path accordingly - so a row's result does not depend on how many GPUs it
-# happened to land on. --batch_size 6 is the total across ranks either way.
+# The caps are a COURTESY limit, not Slurm's. Slurm allows this account 12 GPUs / 12 running / 16
+# submitted (QOS limit12), but the cluster's ~36 GPUs this container can use are shared by ~8
+# active users who each hold 4-8; 8 jobs and 8 GPUs keeps this queue in line with them
+# (experiments_md/20260927_04). Both counts include PENDING jobs, which is what stops a deep queue
+# from taking every GPU as it frees ahead of anyone who submits later.
+#
+# Every row goes through scripts/submit.sh with its own EST_H (hours on ONE GPU, from the closest
+# comparable run's real elapsed time), and size_job.py turns that into --gres (2 GPUs above 24 h),
+# --cpus-per-task and --time. run_sourceonly_2gpu.sh reads SLURM_GPUS_ON_NODE and picks the plain or
+# the DDP path accordingly, so a row's result does not depend on how many GPUs it landed on:
+# --batch_size 6 is the total across ranks either way.
 #
 # A row already present in squeue by job name is skipped, so re-running this after an interruption
 # does not double-submit.
@@ -16,43 +24,54 @@
 # anything is submitted - a row without one aborts the whole queue rather than running unlabelled.
 set -uo pipefail
 cd /home/koyama/code/ST3D/tools
-MAXJOBS=${MAXJOBS:-4}
+unset EST_H  # set per row below; one inherited from the caller's shell must not size every row
+MAXJOBS=${MAXJOBS:-8}
+MAXGPUS=${MAXGPUS:-8}
 POLL=${POLL:-180}
 S=scripts/run_sourceonly_2gpu.sh
 
-#     name      mem   config-or-source                                            tag                            run_name   notes
+# est_h = hours on ONE GPU, evaluation included. Where it comes from, per row:
+#   psflash 70  job 25827, same config, 1 GPU on node03: 69.2 h of training
+#   soKITTI 22  job 25817, same config, 1 GPU on node61: 21.3 h
+#   soLYFT  15  job 25835, same config, 1 GPU on node13: 14.2 h
+#   soPANDA 38  job 25782, PandaSet spin->flash, 1 GPU on node61: 37.6 h (same source, 115 epochs)
+#   soWAYMO 22  20260922_06 section 2e: 17.5 h exclusive, x1.16 for sharing as KITTI measured, + eval
+#     name      mem   est_h config-or-source                                        tag                            run_name   notes
 ROWS=(
-  "psflash|220G|cfgs/da-ieee-access/centerpoint-accum-global-pandaset-flash2spin.yaml|20260923_ps_flash2spin_global|accum_global_pandaset_flash2spin|PandaSet flash->spin, MAX_SWEEPS 5 accumulation + global density correction"
-  "PTSN|-|-|-|-|DALI Tier D1 PTSN scale sweep, nuScenes->KITTI (inference only)"
-  "soKITTI|96G|kitti|20260923_sourceonly|-|Source-only KITTI -> nuScenes val (da-ieee-access floor)"
-  "soLYFT|96G|lyft|20260923_sourceonly|-|Source-only Lyft -> nuScenes val (control for GBlobs and global correction rows)"
-  "soPANDA|96G|pandaset|20260923_sourceonly|-|Source-only PandaSet -> nuScenes val (da-ieee-access floor)"
-  "soWAYMO|96G|waymo|20260923_sourceonly|-|Source-only Waymo -> nuScenes val (da-ieee-access floor)"
+  "psflash|150G|70|cfgs/da-ieee-access/centerpoint-accum-global-pandaset-flash2spin.yaml|20260923_ps_flash2spin_global|accum_global_pandaset_flash2spin|PandaSet flash->spin, MAX_SWEEPS 5 accumulation + global density correction"
+  "PTSN|-|-|-|-|-|DALI Tier D1 PTSN scale sweep, nuScenes->KITTI (inference only)"
+  "soKITTI|96G|22|kitti|20260923_sourceonly|-|Source-only KITTI -> nuScenes val (da-ieee-access floor)"
+  "soLYFT|96G|15|lyft|20260923_sourceonly|-|Source-only Lyft -> nuScenes val (control for GBlobs and global correction rows)"
+  "soPANDA|96G|38|pandaset|20260923_sourceonly|-|Source-only PandaSet -> nuScenes val (da-ieee-access floor)"
+  "soWAYMO|96G|22|waymo|20260923_sourceonly|-|Source-only Waymo -> nuScenes val (da-ieee-access floor)"
 )
 
 njobs() { squeue -u "$USER" -h -o '%i' 2>/dev/null | wc -l; }
+# GPUs held or requested by every job in the queue, running or pending ('gres/gpu:2' -> 2).
+ngpus() { squeue -u "$USER" -h -o '%b' 2>/dev/null | awk -F: '/gpu/ {n += $NF} END {print n + 0}'; }
 queued() { squeue -u "$USER" -h -o '%j' 2>/dev/null | grep -qx "$1"; }
 
 for row in "${ROWS[@]}"; do
-  IFS='|' read -r NAME _ _ _ _ NOTES <<< "$row"
+  IFS='|' read -r NAME _ _ _ _ _ NOTES <<< "$row"
   if [ -z "${NOTES//[[:space:]]/}" ]; then echo "row $NAME has no notes; refusing to submit anything" >&2; exit 2; fi
 done
 
 for row in "${ROWS[@]}"; do
-  IFS='|' read -r NAME MEM CFG TAG RUN NOTES <<< "$row"
+  IFS='|' read -r NAME MEM EST CFG TAG RUN NOTES <<< "$row"
   export WANDB_NOTES="$NOTES"
   if queued "$NAME"; then echo "[$(date +%H:%M)] $NAME already queued, skipping"; continue; fi
-  while [ "$(njobs)" -ge "$MAXJOBS" ]; do sleep "$POLL"; done
+  # The GPUs this row will ask for, by size_job.py's own rule, so MAXGPUS is never overshot.
+  NEED=1; [ "$EST" != "-" ] && awk "BEGIN {exit !($EST > ${DDP_ABOVE_H:-24})}" && NEED=2
+  while [ "$(njobs)" -ge "$MAXJOBS" ] || [ $(( $(ngpus) + NEED )) -gt "$MAXGPUS" ]; do sleep "$POLL"; done
   if [ "$NAME" = "PTSN" ]; then
     # DALI Tier D1 has its own script: inference only, ~1 GPU-hour, no train.py involved.
     echo "[$(date +%H:%M)] submitting PTSN search"
-    sbatch scripts/run_ptsn_search.sh
+    scripts/submit.sh scripts/run_ptsn_search.sh
   else
-    echo "[$(date +%H:%M)] submitting $NAME ($CFG)"
-    ARGS=(--job-name="$NAME" --gres=gpu:1 --cpus-per-task=10 --mem="$MEM" --time=120:00:00
-          --partition=a6000_ada,a6000,rtx8000)
-    if [ "$RUN" = "-" ]; then sbatch "${ARGS[@]}" "$S" "$CFG" "$TAG"
-    else                      sbatch "${ARGS[@]}" "$S" "$CFG" "$TAG" "$RUN"; fi
+    echo "[$(date +%H:%M)] submitting $NAME ($CFG, EST_H $EST)"
+    ARGS=(--job-name="$NAME" --mem="$MEM" --partition=a6000_ada,a6000,rtx8000)
+    if [ "$RUN" = "-" ]; then EST_H=$EST scripts/submit.sh "${ARGS[@]}" "$S" "$CFG" "$TAG"
+    else                      EST_H=$EST scripts/submit.sh "${ARGS[@]}" "$S" "$CFG" "$TAG" "$RUN"; fi
   fi
   sleep 20
 done
