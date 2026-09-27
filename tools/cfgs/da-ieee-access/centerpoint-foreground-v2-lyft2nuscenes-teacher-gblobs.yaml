@@ -1,0 +1,29 @@
+# Foreground v2 with a STRONGER TEACHER: the GBlobs source-only model (job 25723, W&B qyerdcln,
+# 31.43 BEV on nuScenes val) as teacher AND student init, instead of the global-correction model
+# iwg6l5v1 (28.22). The student therefore carries the GBlobs VFE too (the checkpoint's architecture);
+# everything else is foreground-v2. One variable against centerpoint-foreground-v2-lyft2nuscenes:
+# the teacher (and, with it, the VFE). Sibling: ...-teacher-sourceonly (the MeanVFE baseline
+# ldb35c2o, 23.17, the weakest teacher), giving a three-point teacher-strength series.
+#
+# SCORE_THRESH is teacher-specific (count balance per class, 20260927_04 section 2b) and MUST be
+# re-derived for this teacher from its own pseudo-labels at floor 0.0001:
+#   scripts/generate_pseudo_labels.sh <this cfg> <ckpt> /storage/pseudo_labels/qyerdcln_ep30_nuscenes_train_thr0.0001
+#   then analysis/pseudo_label_threshold/{persistence.py, joint_mixture.py}.
+# The values below are the derived ones; see the commit that set them.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-foreground-v2-lyft2nuscenes.yaml
+
+MODEL:
+    VFE:
+        NAME: GBlobsVFE
+        RELATIVE_DISTANCE: True
+        COVARIANCE_ONLY: False
+        COVARIANCE_SCALE: 1.0
+
+SELF_TRAIN:
+    SCORE_THRESH: [0.21, 0.19, 0.18]   # PLACEHOLDER = v2's values for iwg6l5v1; re-derived below
+    MODEL_TEACHER:
+        VFE:
+            NAME: GBlobsVFE
+            RELATIVE_DISTANCE: True
+            COVARIANCE_ONLY: False
+            COVARIANCE_SCALE: 1.0
