@@ -319,15 +319,30 @@ def save_pseudo_label_batch(input_dict,
     return pos_ps_nmeter, ign_ps_nmeter
 
 
-def load_ps_label(frame_id):
+def load_ps_label(frame_id, pseudo_labels=None):
     """
     :param frame_id: file name of pseudo label
+    :param pseudo_labels: the dict to read from. The caller (DatasetTemplate.fill_pseudo_labels)
+        passes the copy it CARRIES, which is what a DataLoader worker holds after being pickled
+        into a fresh interpreter. Falls back to this module's global for callers that never set
+        one - in the main process, or in a FORKED worker, the two are the same dict object.
     :return gt_box: loaded gt boxes (N, 9) [x, y, z, w, l, h, ry, label, scores]
     """
-    if frame_id in PSEUDO_LABELS:
-        gt_box = PSEUDO_LABELS[frame_id]['gt_boxes']
+    # Why the parameter exists: under DDP the loader workers are SPAWNED (init_dist_pytorch forces
+    # it), and a spawned worker re-imports this module, so its PSEUDO_LABELS is a fresh EMPTY dict
+    # however full the main process's is. Reading the global there raised for every frame; the
+    # dict has to travel with the dataset object instead. Under fork the global is inherited by
+    # copy-on-write and the fallback keeps that path bit-identical.
+    labels = pseudo_labels if pseudo_labels is not None else PSEUDO_LABELS
+    if frame_id in labels:
+        gt_box = labels[frame_id]['gt_boxes']
     else:
-        print('PSEUDO_LABELS.keys()', PSEUDO_LABELS.keys())
-        raise ValueError('Cannot find pseudo label for frame: %s' % frame_id)
+        print('pseudo label keys (%d): %s' % (len(labels), list(labels.keys())[:10]))
+        raise ValueError(
+            'Cannot find pseudo label for frame: %s (%d labels visible in this process%s)'
+            % (frame_id, len(labels),
+               '' if pseudo_labels is not None else
+               '; reading the module global - in a SPAWNED worker that is always empty, so the '
+               'dataset must carry the dict: DatasetTemplate.set_pseudo_labels'))
 
     return gt_box

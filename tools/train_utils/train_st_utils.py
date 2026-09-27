@@ -1,5 +1,6 @@
 import torch
 import torch.distributed as dist
+import torch.nn as nn
 from torch.nn.functional import cosine_similarity
 import os
 import glob
@@ -8,6 +9,7 @@ import tqdm.auto as tqdm
 from torch.nn.utils import clip_grad_norm_
 from pcdet.utils import common_utils
 from pcdet.utils import self_training_utils
+from pcdet.utils import commu_utils
 from pcdet.config import cfg
 from pcdet.models import load_data_to_gpu
 from pcdet.models.model_utils.dsnorm import set_ds_source, set_ds_target
@@ -19,6 +21,20 @@ import torchjd
 from torchjd.aggregation import UPGrad, PCGrad
 
 from .train_utils import save_checkpoint, checkpoint_state
+
+
+def _set_ddp_grad_sync(model, enabled):
+    """Switch DistributedDataParallel's automatic gradient all-reduce on or off for `model`.
+
+    This is exactly the flag `model.no_sync()` toggles, exposed as a call rather than a context
+    manager because the two forwards it has to cover and the backward it has to cover sit ~150
+    lines apart in train_one_epoch_st and re-indenting the loop body would make the diff
+    unreviewable. Off, DDP registers nothing for the coming backward, so a backward that DDP
+    cannot see (torchjd's) is at least not lied about; the caller then all-reduces by hand with
+    commu_utils.all_reduce_grads. A plain nn.Module is left alone.
+    """
+    if isinstance(model, nn.parallel.DistributedDataParallel):
+        model.require_backward_grad_sync = bool(enabled)
 
 
 def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_func, lr_scheduler,
@@ -42,9 +58,24 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
 
     disp_dict = {}
 
+    # Gradient projection is opt-in per config rather than a hardcoded literal: whether it was
+    # active is an ablation variable (the loss-gradient conflict it addresses is itself a
+    # reported result), so it must be recorded in the run's config and W&B record instead of
+    # requiring a source edit between runs.
+    use_torchjd = bool(cfg.SELF_TRAIN.get('USE_TORCHJD', False))
+    # Under DDP, torchjd's backward never touches the reducer (it differentiates with
+    # torch.autograd.grad and writes .grad itself), so that path has to sync by hand: DDP's own
+    # sync is switched off around the whole iteration - forwards included, since DDP arms its
+    # hooks at forward time - and the aggregated gradient is all-reduced afterwards. The plain
+    # summed backward is left to DDP: two forwards then one backward over their sum fires each
+    # parameter's hook exactly once, which is what the reducer expects.
+    ddp_manual_sync = use_torchjd and isinstance(model, nn.parallel.DistributedDataParallel)
+
     draw_scene = True
     for cur_it in range(total_it_each_epoch):
         lr_scheduler.step(accumulated_iter)
+        if ddp_manual_sync:
+            _set_ddp_grad_sync(model, False)
         try:
             cur_lr = float(optimizer.param_groups[0]['lr'])
         except:
@@ -154,11 +185,6 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                         domain_preds_accuracy += val * 0.5  # 0.5 is the weight for target domain
 
         # Control backward and optimization.
-        # Gradient projection is opt-in per config rather than a hardcoded literal: whether it
-        # was active is an ablation variable (the loss-gradient conflict it addresses is itself
-        # a reported result), so it must be recorded in the run's config and W&B record instead
-        # of requiring a source edit between runs.
-        use_torchjd = cfg.SELF_TRAIN.get('USE_TORCHJD', False)
         # aggregator = UPGrad()
         aggregator = PCGrad()
         optimizer.zero_grad()
@@ -229,6 +255,8 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                     similarity_src_dann = cosine_similarity(matrix[0], matrix[1], dim=0)
                     similarity_src_target = cosine_similarity(matrix[0], matrix[2], dim=0)
                     similarity_dann_target = cosine_similarity(matrix[1], matrix[2], dim=0)
+                    if rank != 0:
+                        return  # wandb is initialised on rank 0 only; wandb.log elsewhere raises
                     wandb.log({'train/grad_similarity_pcgrad_mean': similarity_pcgrad_mean.item()})
                     wandb.log({'train/grad_similarity_pcgrad_src': similarity_pcgrad_src.item()})
                     wandb.log({'train/grad_similarity_pcgrad_dann': similarity_prgrad_dann.item()})
@@ -249,6 +277,12 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                 # parallel_chunk_size = 1 is required to avoid "cannot access data pointer of Tensor" issue
                 # https://torchjd.org/stable/docs/autojac/backward/
                 torchjd.backward([loss_src_sum, dann_loss_sum, st_loss_sum], aggregator, parallel_chunk_size=1)
+                if ddp_manual_sync:
+                    # torchjd left each rank's PCGrad-aggregated gradient in .grad and DDP saw
+                    # none of it. Average across ranks now - before clipping, so the clip norm is
+                    # that of the global gradient, as it would be under DDP's own reduction.
+                    _set_ddp_grad_sync(model, True)
+                    commu_utils.all_reduce_grads(model)
 
         clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
         optimizer.step()
@@ -401,6 +435,15 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
     if ps_pkl is not None:
         logger.info('==> Loading pseudo labels from {}'.format(ps_pkl))
 
+    # The target dataset must CARRY the pseudo-label dict, not merely share a module with it.
+    # Under DDP the loader workers are spawned, and a spawned worker re-imports
+    # self_training_utils and sees an empty PSEUDO_LABELS - every fill_pseudo_labels there raised
+    # "Cannot find pseudo label", which is why no self-training row had ever run on 2 GPUs. This is
+    # the live dict, not a copy: gather_and_dump_pseudo_label_result rewrites it in place, and the
+    # re-fork/re-spawn after each pass pickles the current contents into the new workers. Installed
+    # before any loader over the target is iterated.
+    target_loader.dataset.dataset.set_pseudo_labels(self_training_utils.PSEUDO_LABELS)
+
     # for continue training
     if cfg.SELF_TRAIN.get('PROG_AUG', None) and cfg.SELF_TRAIN.PROG_AUG.ENABLED and \
             start_epoch > 0:
@@ -501,6 +544,12 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
                 )
                 target_loader.dataset.dataset.train()
                 ps_labels_generated = True
+                # Release the generation loader's worker pool until the next pass. It is rebuilt
+                # in eval mode by the next iter() (dataset.eval() precedes it above), so nothing
+                # about the mode-freeze contract changes; what changes is that between passes -
+                # the whole run, under FROZEN_TEACHER_SINGLE_PASS - there are no idle workers,
+                # each of which under spawn is a full pickled copy of the target dataset.
+                restart_persistent_workers(ps_gen_loader)
 
                 # save_pseudo_label_epoch rewrites the module-level PSEUDO_LABELS dict in THIS
                 # process (clear() + update()), and fill_pseudo_labels reads that same global.

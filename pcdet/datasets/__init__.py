@@ -110,12 +110,18 @@ def build_dataloader(dataset_cfg, class_names, batch_size, dist, root_path=None,
         assert hasattr(dataset, 'merge_all_iters_to_one_epoch')
         dataset.merge_all_iters_to_one_epoch(merge=True, epochs=total_epochs)
 
+    # The sampler indexes the SAME object the DataLoader wraps - the Subset below - not the raw
+    # dataset. They have equal length unless --use_subset, where a sampler over the full dataset
+    # hands the 16-frame Subset indices up to len(dataset) and every DDP smoke test dies with an
+    # IndexError in a worker. Single-GPU runs were never affected (no sampler).
+    length = len(dataset) if not use_subset else min(16, len(dataset))
+    subset = Subset(dataset, indices=list(range(length)))
     if dist:
         if training:
-            sampler = torch.utils.data.distributed.DistributedSampler(dataset)
+            sampler = torch.utils.data.distributed.DistributedSampler(subset)
         else:
             rank, world_size = common_utils.get_dist_info()
-            sampler = DistributedSampler(dataset, world_size, rank, shuffle=False)
+            sampler = DistributedSampler(subset, world_size, rank, shuffle=False)
     else:
         sampler = None
     # `sampler is None`, NOT `is not None`. A sampler and shuffle=True are mutually exclusive in
@@ -130,10 +136,8 @@ def build_dataloader(dataset_cfg, class_names, batch_size, dist, root_path=None,
     shuffle = (sampler is None) and training
     if force_no_shuffle is not None:
         shuffle = shuffle and not force_no_shuffle
-    length = len(dataset) if not use_subset else min(16, len(dataset))
     if logger is not None:
         logger.info(f'Total number of samples: {length}, using subset: {use_subset}')
-    subset = Subset(dataset, indices=list(range(length)))
     dataloader = DataLoader(
         subset, batch_size=batch_size, pin_memory=True, num_workers=workers,
         shuffle=shuffle, collate_fn=dataset.collate_batch,

@@ -186,6 +186,14 @@ class DatasetTemplate(torch_data.Dataset):
         # to predictions can be read back from the very object that applied the forward transform
         # (self_training_utils.save_pseudo_label_epoch), rather than from config a second time.
         self.ptsn_scale = 1.0
+        # Self-training pseudo-labels, held ON the dataset so they reach DataLoader workers however
+        # those are started. `fill_pseudo_labels` used to read `self_training_utils.PSEUDO_LABELS`
+        # directly, which works under fork (copy-on-write inherits the dict) and fails under
+        # spawn, which is what every DDP run uses: a spawned worker re-imports the module and sees
+        # an EMPTY dict. train_model_st installs the live dict here (set_pseudo_labels) before any
+        # loader is iterated; each re-fork/re-spawn after a generation pass pickles the current
+        # contents. None means "read the module global", the pre-DDP behaviour.
+        self.pseudo_labels = None
         # LiDAR Distillation. Present => __getitem__ yields a (student, teacher) pair in training;
         # absent => this dataset behaves exactly as before, which is what keeps every other family
         # untouched. `beam_centroids` caches the fitted ring elevations per dataset instance, i.e.
@@ -331,8 +339,18 @@ class DatasetTemplate(torch_data.Dataset):
         fov_gt_mask = ((np.abs(gt_angle) < half_fov_degree) & (gt_boxes_lidar[:, 0] > 0))
         return fov_gt_mask
 
+    def set_pseudo_labels(self, pseudo_labels):
+        """Install the pseudo-label dict this dataset's workers must read (see __init__).
+
+        Pass `self_training_utils.PSEUDO_LABELS` itself, not a copy: generation passes rewrite that
+        dict IN PLACE (clear + update), so one reference stays current for the whole run, and each
+        worker re-fork/re-spawn after a pass pickles whatever it holds at that moment.
+        """
+        self.pseudo_labels = pseudo_labels
+
     def fill_pseudo_labels(self, input_dict):
-        gt_boxes = self_training_utils.load_ps_label(input_dict['frame_id'])
+        gt_boxes = self_training_utils.load_ps_label(
+            input_dict['frame_id'], getattr(self, 'pseudo_labels', None))
         gt_scores = gt_boxes[:, 8]
         gt_classes = gt_boxes[:, 7]
         gt_boxes = gt_boxes[:, :7]

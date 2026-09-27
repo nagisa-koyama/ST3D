@@ -117,3 +117,38 @@ def reduce_dict(input_dict, average=True):
             values /= world_size
         reduced_dict = {k: v for k, v in zip(names, values)}
     return reduced_dict
+
+
+def all_reduce_grads(model, average=True):
+    """Average every parameter gradient of `model` across ranks, in ONE collective.
+
+    For a backward that BYPASSES DistributedDataParallel's reducer. torchjd (PCGrad) computes its
+    per-loss Jacobian with `torch.autograd.grad` and writes the aggregated result to `.grad`
+    itself, so the AccumulateGrad hooks DDP registers never fire and no all-reduce ever happens -
+    each rank would step on its own gradient and the replicas silently drift apart, with nothing
+    erroring. The caller turns DDP's own sync off for that iteration (the same switch as
+    `model.no_sync()`), lets torchjd fill `.grad`, then calls this.
+
+    A parameter with no gradient is treated as a zero gradient rather than skipped, so every rank
+    contributes the same number of elements whatever its batch happened to exercise - a
+    rank-dependent skip would mismatch the buffer sizes and hang the collective.
+    """
+    if get_world_size() == 1:
+        return
+    params = [p for p in model.parameters() if p.requires_grad]
+    if not params:
+        return
+    grads = [p.grad if p.grad is not None else torch.zeros_like(p) for p in params]
+    flat = torch.cat([g.reshape(-1) for g in grads])
+    dist.all_reduce(flat, op=dist.ReduceOp.SUM)
+    if average:
+        flat.div_(get_world_size())
+    offset = 0
+    for p, g in zip(params, grads):
+        n = g.numel()
+        chunk = flat[offset:offset + n].view_as(p)
+        if p.grad is None:
+            p.grad = chunk.clone()
+        else:
+            p.grad.copy_(chunk)
+        offset += n
