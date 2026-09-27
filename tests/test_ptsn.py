@@ -17,7 +17,7 @@ trustworthy rather than anything about accuracy:
   * select_scale picks the argmin, and ties resolve to the first candidate so a deliberately
     ordered sweep is reproducible.
 
-See experiments_md/20260922_04 section 2 for the plan this implements, and section 2.3 for why a
+See experiments_md/20260922_10 section 1 for the plan this implements, and section 1.3 for why a
 PTSN row's UDA legality is inherited from whatever estimated the target size, not from PTSN.
 """
 import sys

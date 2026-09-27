@@ -10,7 +10,7 @@ The stub returns a fixed box in the SCALED frame, which is what a detector whose
 frozen at the source does. So these tests also pin the search end of the 1/s claim that
 test_ptsn.py pins at the transform end.
 
-See experiments_md/20260922_04 section 2.6.
+See experiments_md/20260922_10 section 1.6.
 """
 import sys
 from pathlib import Path

@@ -20,7 +20,7 @@ number is reported: `select_scale` needs an estimate of the target's mean object
 DALI paper takes that "from SN or ROS". An SN-derived estimate IS the target statistic, so a
 PTSN row built on it is not target-free. An ROS-derived estimate only perturbs the source and
 keeps the row comparable with our own target-free rows - see experiments_md/20260922_03 for the
-derived interval and 20260922_04 section 2.3 for why the distinction decides what the row may claim.
+derived interval and 20260922_10 section 1.3 for why the distinction decides what the row may claim.
 
 Upstream (xiaohulugo/T-RO2024-DALI) ships only the *result* of a search - a config constant
 CAD3D_CONFIG.SCALE - and not the search; `select_scale` is ours.

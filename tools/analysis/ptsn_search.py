@@ -6,7 +6,7 @@ divide the predicted boxes by `s`, and the resulting mean size moves as roughly 
 Sweep `s`, keep the one whose unscaled mean size is closest to an estimated target mean size.
 
 The upstream release does NOT contain this search - only its result, as the config constant
-CAD3D_CONFIG.SCALE: [1.20, 1.10, 1.10]. This script is ours. See experiments_md/20260922_04
+CAD3D_CONFIG.SCALE: [1.20, 1.10, 1.10]. This script is ours. See experiments_md/20260922_10
 section 2.2 for what else is missing from that release, and section 2.4 for the tier plan this
 belongs to.
 
@@ -388,7 +388,7 @@ def main():
         print('WARNING: at least one candidate produced under %d boxes. A mean size over a handful '
               'of boxes is noise; raise --frames or lower --score_thresh.' % MIN_BOXES)
 
-    # The stopping rule this search exists to serve (20260922_04 section 2.4): the sweep can only
+    # The stopping rule this search exists to serve (20260922_10 section 1.4): the sweep can only
     # justify Tier D2 if it first shows the size distribution is reachable at all.
     print('\nStopping rule: if this moves the pseudo-label mean size to within ~5 cm of '
           'E_est[Size]\n  (gap above) but target AP does not move, the distribution-level claim '

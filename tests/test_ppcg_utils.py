@@ -14,7 +14,7 @@ lying along the same rays. What has to be true for that to be meaningful:
   * angular difference is circular. Upstream's abs(diff % 2pi) scores a -epsilon match as ~2pi,
     the worst possible, which silently corrupts reference selection for half of all near matches.
 
-See experiments_md/20260922_04 section 2.4 for the tier plan and the module docstring of
+See experiments_md/20260922_10 section 1.4 for the tier plan and the module docstring of
 ppcg_utils.py for the four upstream defects not reproduced.
 """
 import sys

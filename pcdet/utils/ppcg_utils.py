@@ -7,7 +7,7 @@ l/w/h, and replaces each observed return with the reference surface point that l
 ray. The rays are unchanged - only what they hit is. That is what makes it ray-CONSTRAINED, and
 what keeps the result consistent with the sensor's own sampling pattern.
 
-This module is Tier D2.1/D2.2 of the plan in experiments_md/20260922_04 section 2.4: the reference
+This module is Tier D2.1/D2.2 of the plan in experiments_md/20260922_10 section 1.4: the reference
 library and the ray tracer. It does NOT contain the generation pass (D2.3) or the dataset that
 serves the result (D2.4), and it deliberately predates the Tier D1 stopping rule being applied -
 these two pieces are the ones CF-PPCG (D3) would reuse as well, so they are the cheapest part of

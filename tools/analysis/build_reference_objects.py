@@ -3,7 +3,7 @@
 DALI(Points) draws its clean reference objects from source-domain GT boxes carrying at least 300
 interior returns, which is what lets the Points variant avoid the CAD variant's mesh library,
 trimesh and custom CUDA op for 0.07-0.25 AP. This is Tier D2.1 of the plan in
-experiments_md/20260922_04 section 2.4, ported from upstream `tools/ppcg_points.py`.
+experiments_md/20260922_10 section 1.4, ported from upstream `tools/ppcg_points.py`.
 
 Using SOURCE labels keeps it UDA-legal: no target annotation is read at any point.
 
