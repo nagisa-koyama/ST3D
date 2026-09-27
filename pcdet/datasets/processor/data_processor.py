@@ -197,6 +197,22 @@ class DataProcessor(object):
 
         return data_dict
 
+    def __getstate__(self):
+        """Drop the spconv voxel generator when pickled.
+
+        Under DDP the loader workers are SPAWNED, so the dataset (and this processor) is pickled
+        into each worker. The generator wraps a C++ object (`Point2VoxelCPU`) that cannot be
+        pickled; the original design created it lazily in the worker for exactly that reason. The
+        on-the-fly density calibration broke the assumption: it walks source frames through
+        `__getitem__` in the MAIN process before training, creating the generator there, and the
+        first 2-GPU launch of a global-correction row (job 26326) died at `iter(train_loader)` with
+        `TypeError: cannot pickle ... Point2VoxelCPU`. It is re-created lazily on first use, and its
+        parameters are all in the bound config, so nothing is lost.
+        """
+        state = self.__dict__.copy()
+        state['voxel_generator'] = None
+        return state
+
     def transform_points_to_voxels(self, data_dict=None, config=None):
         if data_dict is None:
             grid_size = (self.point_cloud_range[3:6] - self.point_cloud_range[0:3]) / np.array(config.VOXEL_SIZE)
