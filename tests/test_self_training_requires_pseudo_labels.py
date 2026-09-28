@@ -18,11 +18,11 @@ all carry it.
 This test is static: reaching fill_pseudo_labels for real needs saved pseudo-labels on disk, which
 only exist after a generation pass on a GPU.
 """
+import os
 import re
 from pathlib import Path
 
 import pytest
-import yaml
 
 FAMILY = Path(__file__).resolve().parent.parent / 'tools' / 'cfgs' / 'da-ieee-access'
 TOOLS = FAMILY.parent.parent
@@ -31,10 +31,22 @@ TOOLS = FAMILY.parent.parent
 def _resolved(path):
     """The config as train.py sees it: `_BASE_CONFIG_` chains expanded. A child that inherits its
     DATA_CONFIG_TAR from a base (centerpoint-foreground-v2-lyft2nuscenes, 2026-09-27) has no such
-    key in its raw text, and testing the text instead of the resolved config failed on it."""
+    key in its raw text, and testing the text instead of the resolved config failed on it.
+
+    Loaded FROM tools/, whatever directory pytest was started in. `_BASE_CONFIG_` paths are
+    relative to tools/ (train.py is always run there), and this helper used to hand the loader a
+    tools/-relative path without changing directory - so the file passed from `tools/` and failed
+    27 of its 35 cases with FileNotFoundError from the repo root, which is the invocation AGENTS.md
+    documents. Same fixture logic as test_config_real_configs.in_tools_dir, inlined because the
+    parametrize lists are built at import time."""
     from easydict import EasyDict            # the repo import path is set up further down
     from pcdet.config import cfg_from_yaml_file
-    return cfg_from_yaml_file(str(path.relative_to(TOOLS)), EasyDict())
+    prev = os.getcwd()
+    os.chdir(TOOLS)
+    try:
+        return cfg_from_yaml_file(str(path.relative_to(TOOLS)), EasyDict())
+    finally:
+        os.chdir(prev)
 
 
 def _self_training_configs():
