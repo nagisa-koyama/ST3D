@@ -28,45 +28,47 @@ MAXJOBS=${MAXJOBS:-8}
 POLL=${POLL:-180}
 S=scripts/run_sourceonly_2gpu.sh
 
-# est_h = hours on ONE GPU, evaluation included. Where it comes from, per row:
-#   psflash 70  job 25827, same config, 1 GPU on node03: 69.2 h of training
-#   soKITTI 22  job 25817, same config, 1 GPU on node61: 21.3 h
-#   soLYFT  15  job 25835, same config, 1 GPU on node13: 14.2 h
-#   soPANDA 38  job 25782, PandaSet spin->flash, 1 GPU on node61: 37.6 h (same source, 115 epochs)
-#   soWAYMO 22  20260922_06 section 2e: 17.5 h exclusive, x1.16 for sharing as KITTI measured, + eval
-#     name      mem   est_h config-or-source                                        tag                            run_name   notes
+# Row format (9 columns, notes last):  name | mem | est_h | env | config-or-source | tag | run_name | extra | notes
+#   est_h  hours on ONE GPU, evaluation included, from the closest comparable run's real elapsed time
+#   env    space-separated VAR=value for this submission (NGPU=1, STAGE_PANDASET=1, ENTRY=...), or -
+#   extra  arguments appended after run_name, passed to the entry point verbatim, or -
+# DRY_RUN=1 prints each submission instead of sending it, and does not wait for free slots.
+#
+# Rows queued 2026-09-29 (experiments_md/20260928_03 section 5):
+#   st3dFull  40  26220 (foreground v1, same loop, 1 GPU on node61): 40.6 h. NGPU=1: full-length
+#                 self-training under DDP has only been smoke-tested (20260928_01).
+#   accumRosS 42  26388 (the parent config): 21.1 h on 2 GPUs.
+#   fgv2tso2   6  26386 (the same config): 4.4 h on node03. NGPU=1 like its first seed.
+#   t1S2Fcc2  15  26512 (the same config): 8.5 h on 2 GPUs incl. 12 min staging + 55 min calibration.
+LDB=/storage/wandb/run-20260924_111041-ldb35c2o/files/ckpt/checkpoint_epoch_30.pth
 ROWS=(
-  "psflash|150G|70|cfgs/da-ieee-access/centerpoint-accum-global-pandaset-flash2spin.yaml|20260923_ps_flash2spin_global|accum_global_pandaset_flash2spin|PandaSet flash->spin, MAX_SWEEPS 5 accumulation + global density correction"
-  "PTSN|-|-|-|-|-|DALI Tier D1 PTSN scale sweep, nuScenes->KITTI (inference only)"
-  "soKITTI|96G|22|kitti|20260923_sourceonly|-|Source-only KITTI -> nuScenes val (da-ieee-access floor)"
-  "soLYFT|96G|15|lyft|20260923_sourceonly|-|Source-only Lyft -> nuScenes val (control for GBlobs and global correction rows)"
-  "soPANDA|96G|38|pandaset|20260923_sourceonly|-|Source-only PandaSet -> nuScenes val (da-ieee-access floor)"
-  "soWAYMO|96G|22|waymo|20260923_sourceonly|-|Source-only Waymo -> nuScenes val (da-ieee-access floor)"
+  "fgv2tso2|150G|6|NGPU=1|cfgs/da-ieee-access-tier1/centerpoint-foreground-v2-lyft2nuscenes-teacher-sourceonly-4ep.yaml|tier1|fgv2-teacher-sourceonly-4ep-seed667|--pretrained_model $LDB --pretrained_model_teacher $LDB --seed 667|SECOND SEED (667) of 26386: foreground v2 4 ep with the source-only teacher ldb35c2o (23.17). 26386 scored 26.81 / 12.94, +3.6 over its teacher - the only self-training gain above noise; this checks it."
+  # t1S2Fcc2 (second seed of the cone arm 26512, 15 h on 2 GPUs) is DEFERRED until 26514 lands:
+  # if accumulation alone also reaches ~23.5, the correction adds nothing and the seed is moot.
+  "st3dFull|150G|40|NGPU=1|cfgs/da-ieee-access/centerpoint-st3d-lyft2nuscenes.yaml|20260929_st3d_full|st3d_lyft2nuscenes|--pretrained_model $LDB --pretrained_model_teacher $LDB|ST3D baseline row, Lyft->nuScenes, FULL 30 ep, 1 GPU: plain self-training (no correction), teacher+init = source-only ldb35c2o ep30 (23.17). The paper's textbook ST3D row; compare with foreground v1 26220 (29.49) and v2 26396."
+  "accumRosS|150G|42|-|cfgs/da-ieee-access/centerpoint-accum-rosshrink-nuscenes2kitti.yaml|20260929_accum_rosshrink|accum_rosshrink_nuscenes2kitti|-|nuScenes->KITTI accumulation only with a SHRINKING Car ROS interval [0.75, 1.00] (was [0.85, 1.20]); only that differs from 26388 (71.93 BEV / 39.95 3D moderate). Tests whether the 3D gap to the oracle (64.23) is box size, per 20260926_03. FOV filter on."
 )
 
 njobs() { squeue -u "$USER" -h -o '%i' 2>/dev/null | wc -l; }
 queued() { squeue -u "$USER" -h -o '%j' 2>/dev/null | grep -qx "$1"; }
 
 for row in "${ROWS[@]}"; do
-  IFS='|' read -r NAME _ _ _ _ _ NOTES <<< "$row"
+  IFS='|' read -r NAME _ _ _ _ _ _ _ NOTES <<< "$row"
   if [ -z "${NOTES//[[:space:]]/}" ]; then echo "row $NAME has no notes; refusing to submit anything" >&2; exit 2; fi
 done
 
 for row in "${ROWS[@]}"; do
-  IFS='|' read -r NAME MEM EST CFG TAG RUN NOTES <<< "$row"
+  IFS='|' read -r NAME MEM EST ENVS CFG TAG RUN EXTRA NOTES <<< "$row"
   export WANDB_NOTES="$NOTES"
   if queued "$NAME"; then echo "[$(date +%H:%M)] $NAME already queued, skipping"; continue; fi
+  ENVARR=(); [ "$ENVS" != "-" ] && read -ra ENVARR <<< "$ENVS"
+  EXTRARR=(); [ "$EXTRA" != "-" ] && read -ra EXTRARR <<< "$EXTRA"
+  CMD=(env ${ENVARR[@]+"${ENVARR[@]}"} EST_H="$EST" scripts/submit.sh --job-name="$NAME" --mem="$MEM"
+       --partition=a6000_ada,a6000,rtx8000 "$S" "$CFG" "$TAG" "$RUN" ${EXTRARR[@]+"${EXTRARR[@]}"})
+  if [ "${DRY_RUN:-0}" = "1" ]; then echo "[dry run] ${CMD[*]}"; continue; fi
   while [ "$(njobs)" -ge "$MAXJOBS" ]; do sleep "$POLL"; done
-  if [ "$NAME" = "PTSN" ]; then
-    # DALI Tier D1 has its own script: inference only, ~1 GPU-hour, no train.py involved.
-    echo "[$(date +%H:%M)] submitting PTSN search"
-    scripts/submit.sh scripts/run_ptsn_search.sh
-  else
-    echo "[$(date +%H:%M)] submitting $NAME ($CFG, EST_H $EST)"
-    ARGS=(--job-name="$NAME" --mem="$MEM" --partition=a6000_ada,a6000,rtx8000)
-    if [ "$RUN" = "-" ]; then EST_H=$EST scripts/submit.sh "${ARGS[@]}" "$S" "$CFG" "$TAG"
-    else                      EST_H=$EST scripts/submit.sh "${ARGS[@]}" "$S" "$CFG" "$TAG" "$RUN"; fi
-  fi
+  echo "[$(date +%H:%M)] submitting $NAME ($CFG, EST_H $EST, env: $ENVS)"
+  "${CMD[@]}"
   sleep 20
 done
 echo "[$(date +%H:%M)] all rows submitted"

@@ -45,6 +45,9 @@ def parse_config():
     parser.add_argument('--tcp_port', type=int, default=18888, help='tcp port for distrbuted training')
     parser.add_argument('--sync_bn', action='store_true', default=False, help='whether to use sync bn')
     parser.add_argument('--fix_random_seed', action='store_true', default=False, help='')
+    # The seed --fix_random_seed installs. 666 is what every run so far used, so a second seed of a
+    # row means passing a different value here; omitting it reproduces the historical behaviour.
+    parser.add_argument('--seed', type=int, default=666, help='seed used with --fix_random_seed')
     parser.add_argument('--ckpt_save_interval', type=int, default=1, help='number of training epochs')
     # Default falls back to LOCAL_RANK env var, not a hardcoded 0. Modern torch.distributed.launch
     # /torchrun (torch>=2.x) no longer passes --local_rank to the child process: by default it
@@ -126,7 +129,7 @@ def main():
         args.num_epochs_to_eval = cfg.get('OPTIMIZATION', {}).get('NUM_EPOCHS_TO_EVAL', 100)
 
     if args.fix_random_seed:
-        common_utils.set_random_seed(666)
+        common_utils.set_random_seed(args.seed)
 
     if cfg.LOCAL_RANK == 0:
         wandb.init(config=vars(cfg), project="st3d", name=args.run_name, dir="/storage", notes=common_utils.wandb_notes_with_job_id(), tags=common_utils.wandb_tags(cfg, 'train'))
