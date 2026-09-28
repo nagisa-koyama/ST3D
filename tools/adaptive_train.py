@@ -224,7 +224,9 @@ def main():
             num_frames=cfg.DATA_CONFIG.get("HIST_DIST_FRAMES", 1000),
             num_bins=cfg.DATA_CONFIG.get('HIST_DIST_BINS', 50),
             max_dist=cfg.DATA_CONFIG.get('HIST_DIST_MAX_DIST', 75.0),
-            logger=logger
+            logger=logger,
+            fov_degree=cfg.DATA_CONFIG.get('HIST_DIST_FOV_DEGREE', None),
+            fov_heading=cfg.DATA_CONFIG.get('HIST_DIST_FOV_HEADING', 0.0)
         )
 
     # -----------------------create networks---------------------------

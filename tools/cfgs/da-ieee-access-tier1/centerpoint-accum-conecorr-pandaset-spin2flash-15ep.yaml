@@ -1,0 +1,9 @@
+# TIER-1 PROXY of da-ieee-access/centerpoint-accum-conecorr-pandaset-spin2flash.yaml: MAX_SWEEPS 4 + cone-restricted global correction (no full run yet).
+# PandaSet spin->flash cone-aware ablation, experiments_md/20260928_02. Only the schedule changes.
+# 15 epochs, not 4: PandaSet has 814 steps per epoch at global batch 6, so 15 epochs is 12,210 steps,
+# matching the Lyft proxies' 12,600. Four PandaSet epochs (3,256 steps) would sit where the KITTI
+# distillation sweep did - near 0 AP, unable to rank anything.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-conecorr-pandaset-spin2flash.yaml
+
+OPTIMIZATION:
+    NUM_EPOCHS: 15

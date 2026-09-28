@@ -1,0 +1,48 @@
+# PandaSet Pandar64 (spinning) -> PandarGT (flash): accumulation to the cone-parity depth PLUS the
+# global density correction measured INSIDE PandarGT's cone.
+#
+# Variant 3 of 3 in the spin->flash cone-aware ablation (experiments_md/20260928_02); it differs from
+# centerpoint-accum-pandaset-spin2flash only by the correction.
+#
+# HIST_DIST_FOV_DEGREE / _HEADING restrict BOTH histograms to the +-30 deg cone the flash sensor
+# covers, the same cone it is evaluated in (da_pandaset_flash_dataset.yaml EVAL_FOV_*). The pooled
+# correction (centerpoint-global-pandaset-spin2flash, 20.88 BEV against the control's 21.63) compared
+# 360 degrees of spin against the cone of flash, read the source as too dense, and THINNED a source
+# that is 4x sparser where it is scored - the wrong direction. In the cone, at MAX_SWEEPS 4, the rate
+# is below 1 only beyond ~20 m, where four frames overshoot, and 1 inside 20 m, where they fall short.
+#
+# The rate is applied to every source point by radius, which assumes the spin sensor's density does
+# not depend on azimuth. The source is measured through its augmented training view; random world
+# rotation moves a spin cloud's points in azimuth without changing its density, so that is harmless
+# here - it would NOT be for a flash SOURCE, whose cone the rotation moves out of the window.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-pandaset-spin2flash.yaml
+
+DATA_CONFIG:
+    HIST_DIST_ON_THE_FLY: True
+    HIST_DIST_FRAMES: 1000
+    HIST_DIST_BINS: 50          # resolution is MAX_DIST / BINS = 1.5 m
+    HIST_DIST_MAX_DIST: 75.0
+    HIST_DIST_FOV_DEGREE: 60.0  # FULL angle, so +-30 deg - PandarGT's cone
+    HIST_DIST_FOV_HEADING: 0.0  # 0 = +x = forward
+
+    # mask -> shuffle -> correction -> voxelise. Restated in full because YAML lists replace.
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+
+        - NAME: sample_points_hist_based
+          MIN_HIST_BIN_FRACTION: 0.01
+
+        - NAME: transform_points_to_voxels
+          VOXEL_SIZE: [0.1, 0.1, 0.15]
+          MAX_POINTS_PER_VOXEL: 10
+          MAX_NUMBER_OF_VOXELS: {
+            'train': 250000,
+            'test': 250000
+          }

@@ -1,0 +1,56 @@
+# PandaSet Pandar64 (spinning) -> PandarGT (flash), ACCUMULATION ONLY, at the cone-parity depth.
+#
+# Variant 2 of 3 in the spin->flash cone-aware ablation (experiments_md/20260928_02):
+#   centerpoint-pandaset-spin2flash               - control, one frame, no correction
+#   centerpoint-accum-pandaset-spin2flash         - THIS: MAX_SWEEPS 4, no correction
+#   centerpoint-accum-conecorr-pandaset-spin2flash - MAX_SWEEPS 4 + cone-restricted global correction
+#
+# WHY THIS PAIR ACCUMULATES AFTER ALL. The first depth measurement (20260923_02 section 10) pooled
+# the radial histogram over azimuth and found spin 1.86x ABOVE flash, so this direction was set to
+# MAX_SWEEPS 1. But PandarGT puts 99.3% of its points inside +-30 deg, and that cone is also where
+# it is evaluated (EVAL_FOV_FILTER). Inside it, one spin frame holds 14,637 points against flash's
+# 58,928 - 0.25x, not 1.86x. Measured per 5 m bin, in the cone, 40 test frames each:
+#
+#   spin frames     5-20 m        20-60 m       60-70 m
+#   1               0.13-0.17     0.30-0.42     0.39-0.78
+#   3               0.32-0.48     0.86-1.12     1.12-2.21
+#   4 (this)        0.40-0.63     1.12-1.42     1.45-2.86
+#   10              0.74-1.38     2.39-2.83     3.18-6.33
+#
+# 4 is the smallest depth past parity everywhere beyond 20 m, so the correction arm has a surplus to
+# thin. Inside 20 m the flash sensor is too dense to reach at any practical depth (10-15 m reaches
+# only 0.74 at N=10); that shortfall is stated, not fixed.
+#
+# MAX_NUMBER_OF_VOXELS is raised 150k -> 250k in BOTH accumulating arms: at N=4 the cap bit in 19 of
+# 40 frames (median 141,638 voxels), and a capped arm silently drops voxels, which would confound the
+# accumulation-only comparison. The control never exceeds 73k, so the cap is not a variable there.
+#
+# GT_BOXES_MOTION_COMPENSATION moves each tracked object's points onto its anchor-frame box; moving
+# cars otherwise smear across the four frames (PandaSet moving/static 0.42 uncompensated vs 1.04
+# compensated at N=5, 20260923_02). The flash->spin accumulation configs never set it.
+#
+# Run on 2 GPUs (3 per rank): ~250k voxels x 6 samples on one 48 GB card is too close to the wall.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-pandaset-spin2flash.yaml
+
+DATA_CONFIG:
+    MAX_SWEEPS: 4
+    GT_BOXES_MOTION_COMPENSATION: True
+
+    # Restated in full because YAML lists replace rather than merge.
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+
+        - NAME: transform_points_to_voxels
+          VOXEL_SIZE: [0.1, 0.1, 0.15]
+          MAX_POINTS_PER_VOXEL: 10
+          MAX_NUMBER_OF_VOXELS: {
+            'train': 250000,
+            'test': 250000
+          }

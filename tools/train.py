@@ -258,6 +258,12 @@ def main():
         # THIS file dispatches to - so the requirement is a SELF_TRAIN config, not a different
         # entry point. (The message here used to say adaptive_train.py; that file has no
         # SELF_TRAIN handling at all, and following it cost job 25930.)
+        # The cone restriction exists for the whole-cloud histograms only. The foreground channel
+        # is points PER BOX and already excludes empty boxes, but its background channel is still
+        # pooled over azimuth - refuse rather than silently measure half the pair in a cone.
+        assert not (wants_foreground and any(dc.get('HIST_DIST_FOV_DEGREE', None) is not None
+                                             for dc in data_configs.values())), \
+            'HIST_DIST_FOV_DEGREE is implemented for the global correction only, not foreground.'
         assert not wants_foreground or cfg.get('SELF_TRAIN', None), \
             ('HIST_DIST_FOREGROUND_FROM_PSEUDO_LABELS needs the target foreground channel, which '
              'comes from pseudo-labels, so it requires a SELF_TRAIN block. This config has none, '
@@ -290,7 +296,9 @@ def main():
                 num_frames=dc.get('HIST_DIST_FRAMES', 1000),
                 num_bins=dc.get('HIST_DIST_BINS', 50),
                 max_dist=dc.get('HIST_DIST_MAX_DIST', 75.0),
-                logger=logger)
+                logger=logger,
+                fov_degree=dc.get('HIST_DIST_FOV_DEGREE', None),
+                fov_heading=dc.get('HIST_DIST_FOV_HEADING', 0.0))
 
     # A correction listed in the pipeline but never given histograms is a no-op that looks like a
     # run. Say so rather than letting the result be quietly identical to the uncorrected arm.

@@ -33,8 +33,15 @@ DEFAULT_BINS = 50
 DEFAULT_FRAMES = 1000
 
 
+def cone_mask(points, fov_degree, heading_degree=0.0):
+    """Points whose azimuth lies within `fov_degree` (FULL angle) of `heading_degree` (0 = +x)."""
+    az = np.degrees(np.arctan2(points[:, 1], points[:, 0])) - heading_degree
+    az = (az + 180.0) % 360.0 - 180.0
+    return np.abs(az) <= fov_degree / 2.0
+
+
 def compute_range_histogram(dataset, num_frames=DEFAULT_FRAMES, num_bins=DEFAULT_BINS,
-                            max_dist=MAX_DIST, logger=None):
+                            max_dist=MAX_DIST, logger=None, fov_degree=None, fov_heading=0.0):
     """Mean points per frame per radial bin, measured through the dataset's own pipeline.
 
     Sampling goes through `dataset[i]`, so the points counted are exactly the ones the correction
@@ -44,6 +51,16 @@ def compute_range_histogram(dataset, num_frames=DEFAULT_FRAMES, num_bins=DEFAULT
 
     Frames are taken on a stride rather than at random so the estimate is deterministic - two runs
     of the same config produce the same histogram.
+
+    `fov_degree` counts only points inside that azimuth cone (FULL angle, centred on
+    `fov_heading`). Needed whenever one side of the pair covers a narrower field of view than the
+    other: a radial histogram pooled over azimuth compares a cone-limited sensor against the whole
+    360 degrees of the other, which is a comparison of totals, not of density. PandarGT puts 99% of
+    its points inside +-30 deg, so pooled it reads 0.60x Pandar64 per frame while inside its own
+    cone it is 4.0x DENSER - the pooled pair gets even the DIRECTION of the correction wrong
+    (experiments_md/20260928_02). Both sides must be measured in the same cone; the rate is then
+    applied to every source point by radius, which assumes the source's density does not depend on
+    azimuth - true of a spinning sensor, and moot for a flash one whose points are all in the cone.
     """
     n = len(dataset)
     if n == 0:
@@ -58,6 +75,8 @@ def compute_range_histogram(dataset, num_frames=DEFAULT_FRAMES, num_bins=DEFAULT
         points = dataset[idx].get('points', None)
         if points is None or not len(points):
             continue
+        if fov_degree is not None:
+            points = points[cone_mask(points, fov_degree, fov_heading)]
         dist = np.linalg.norm(points[:, 0:2], axis=1)
         total += np.histogram(np.clip(dist, 0, max_dist - 1e-4), bins=edges)[0]
         used += 1
@@ -65,13 +84,16 @@ def compute_range_histogram(dataset, num_frames=DEFAULT_FRAMES, num_bins=DEFAULT
         raise ValueError('no usable frames while measuring a histogram')
     hist = total / used
     if logger is not None:
-        logger.info('point calibration: measured %s over %d frames, %.0f pts/frame in range'
-                    % (getattr(dataset, 'dataset_ontology', '?'), used, hist.sum()))
+        logger.info('point calibration: measured %s over %d frames, %.0f pts/frame in range%s'
+                    % (getattr(dataset, 'dataset_ontology', '?'), used, hist.sum(),
+                       '' if fov_degree is None
+                       else ' inside the %g deg cone at heading %g' % (fov_degree, fov_heading)))
     return hist
 
 
 def link_point_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
-                           num_bins=DEFAULT_BINS, max_dist=MAX_DIST, logger=None):
+                           num_bins=DEFAULT_BINS, max_dist=MAX_DIST, logger=None,
+                           fov_degree=None, fov_heading=0.0):
     """Measure both domains and install the pair into the SOURCE dataset's processor.
 
     Only the source is corrected: the target's own calibration target is itself, which makes its
@@ -80,9 +102,15 @@ def link_point_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
     Must run before the dataloaders are first iterated, since DataLoader workers fork a copy of the
     dataset and never see later mutations - the same hazard as
     experiments_md/20260921_02_persistent_workers_stale_dataset_state.md.
+
+    `fov_degree`/`fov_heading` (DATA_CONFIG.HIST_DIST_FOV_DEGREE / _HEADING) measure BOTH sides
+    inside one azimuth cone - see compute_range_histogram. None keeps the pooled 360-degree
+    measurement every existing config uses.
     """
-    src = compute_range_histogram(source_set, num_frames, num_bins, max_dist, logger=logger)
-    tgt = compute_range_histogram(target_set, num_frames, num_bins, max_dist, logger=logger)
+    src = compute_range_histogram(source_set, num_frames, num_bins, max_dist, logger=logger,
+                                  fov_degree=fov_degree, fov_heading=fov_heading)
+    tgt = compute_range_histogram(target_set, num_frames, num_bins, max_dist, logger=logger,
+                                  fov_degree=fov_degree, fov_heading=fov_heading)
     source_set.data_processor.set_hist_dist(src, tgt, max_dist=max_dist)
     if logger is not None:
         rate = source_set.data_processor.per_bin_sample_rate()
