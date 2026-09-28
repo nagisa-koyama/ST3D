@@ -99,7 +99,7 @@ def link_point_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
 
 def compute_foreground_histograms(dataset, num_frames=DEFAULT_FRAMES, num_bins=DEFAULT_BINS,
                                   max_dist=MAX_DIST, logger=None, label='', min_points_in_box=1,
-                                  class_ids=None):
+                                  class_ids=None, indices=None):
     """Mean points per frame per radial bin, split into inside-box and outside-box channels.
 
     Boxes come from `dataset[idx]['gt_boxes']`, which is real annotation for a source domain and
@@ -132,9 +132,16 @@ def compute_foreground_histograms(dataset, num_frames=DEFAULT_FRAMES, num_bins=D
     to those classes; points inside boxes of any other class are counted as BACKGROUND, which is
     how `sample_points_hist_based` will treat them. None pools every class.
 
+    `indices` restricts the sample to those dataset positions - the loader's Subset indices. The
+    loader wraps a Subset, and under --use_subset that is 16 frames while `len(dataset)` is the
+    whole split: striding over the whole split then asks the pseudo-labelled target for frames the
+    16-frame generation pass never labelled (job 26406). None means every position, the normal case
+    where the Subset is the identity.
+
     Returns (foreground per box, background per frame, total per frame).
     """
-    n = len(dataset)
+    positions = list(range(len(dataset))) if indices is None else list(indices)
+    n = len(positions)
     if n == 0:
         raise ValueError('cannot measure a histogram from an empty dataset')
     step = max(1, n // num_frames)
@@ -144,7 +151,7 @@ def compute_foreground_histograms(dataset, num_frames=DEFAULT_FRAMES, num_bins=D
     nbox = np.zeros(num_bins, dtype=np.float64)
     total = np.zeros(num_bins, dtype=np.float64)
     used, with_boxes, empty_boxes, seen_boxes = 0, 0, 0, 0
-    for idx in range(0, n, step):
+    for idx in positions[::step]:
         if used >= num_frames:
             break
         data_dict = dataset[idx]
@@ -218,7 +225,8 @@ def compute_foreground_histograms(dataset, num_frames=DEFAULT_FRAMES, num_bins=D
 
 def link_foreground_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
                                 num_bins=DEFAULT_BINS, max_dist=MAX_DIST, logger=None,
-                                source_hist=None, min_points_in_box=1, class_ids=None):
+                                source_hist=None, min_points_in_box=1, class_ids=None,
+                                source_indices=None, target_indices=None):
     """Foreground-aware calibration: correct inside-box and outside-box points separately.
 
     A single per-bin rate cannot change a bin's foreground SHARE - it scales the points on objects
@@ -245,7 +253,7 @@ def link_foreground_calibration(source_set, target_set, num_frames=DEFAULT_FRAME
     if source_hist is None:
         fg_s, bg_s, tot_s = compute_foreground_histograms(
             source_set, num_frames, num_bins, max_dist, logger=logger, label='source',
-            min_points_in_box=min_points_in_box, class_ids=class_ids)
+            min_points_in_box=min_points_in_box, class_ids=class_ids, indices=source_indices)
     else:
         # Re-measuring the source on a refresh would read points the correction installed last time
         # has ALREADY thinned, compounding the rate on every pass. The source distribution does not
@@ -253,7 +261,8 @@ def link_foreground_calibration(source_set, target_set, num_frames=DEFAULT_FRAME
         fg_s, bg_s, tot_s = source_hist
     fg_t, bg_t, tot_t = compute_foreground_histograms(
         target_set, num_frames, num_bins, max_dist, logger=logger,
-        label='target (pseudo-labels)', min_points_in_box=min_points_in_box, class_ids=class_ids)
+        label='target (pseudo-labels)', min_points_in_box=min_points_in_box, class_ids=class_ids,
+        indices=target_indices)
     # The whole-cloud pair is the per-FRAME total. It cannot be fg + bg any more: fg is per box.
     source_set.data_processor.set_hist_dist(tot_s, tot_t, max_dist=max_dist)
     source_set.data_processor.set_foreground_hist(fg_s, bg_s, fg_t, bg_t, class_ids=class_ids)

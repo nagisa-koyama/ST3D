@@ -69,12 +69,25 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
     # hooks at forward time - and the aggregated gradient is all-reduced afterwards. The plain
     # summed backward is left to DDP: two forwards then one backward over their sum fires each
     # parameter's hook exactly once, which is what the reducer expects.
-    ddp_manual_sync = use_torchjd and isinstance(model, nn.parallel.DistributedDataParallel)
+    is_ddp = isinstance(model, nn.parallel.DistributedDataParallel)
+    ddp_manual_sync = use_torchjd and is_ddp
+    # The plain path, under DDP, runs its FIRST forward with sync off as well - the pattern the DDP
+    # docs give for several forwards per backward. Not for the gradient hooks (one backward over
+    # the summed loss fires each exactly once either way) but for the BUFFER broadcast: with
+    # broadcast_buffers on, DDP rewrites every BatchNorm running_mean/var IN PLACE at each forward
+    # it syncs, and the source forward's graph has already saved those tensors for its backward -
+    # job 26404 died with "modified by an inplace operation: [64] is at version 4; expected 3".
+    # With the first forward unsynced, DDP's post-forward clears require_forward_param_sync, so
+    # the second forward skips the broadcast and buffers are synced once per iteration, before
+    # anything is saved. BN's own running-stat update never bumps the version counter (the op is
+    # not annotated as mutating), which is why single-GPU never saw this.
+    ddp_two_forwards = is_ddp and not ddp_manual_sync and \
+        bool(cfg.SELF_TRAIN.SRC.USE_DATA) and bool(cfg.SELF_TRAIN.TAR.USE_DATA)
 
     draw_scene = True
     for cur_it in range(total_it_each_epoch):
         lr_scheduler.step(accumulated_iter)
-        if ddp_manual_sync:
+        if ddp_manual_sync or ddp_two_forwards:
             _set_ddp_grad_sync(model, False)
         try:
             cur_lr = float(optimizer.param_groups[0]['lr'])
@@ -140,6 +153,8 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                         domain_preds_accuracy = val * 0.5 # 0.5 is the weight for source domain
 
         if cfg.SELF_TRAIN.TAR.USE_DATA:
+            if ddp_two_forwards:
+                _set_ddp_grad_sync(model, True)   # the LAST forward is the one DDP reduces for
             try:
                 target_batch = next(dataloader_iter)
             except StopIteration:
@@ -582,7 +597,12 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
                             min_points_in_box=src_cfg.get(
                                 'HIST_DIST_MIN_POINTS_IN_BOX', 1),
                             class_ids=_foreground_class_ids(
-                                src_cfg, reader.dataloader.dataset.dataset.class_names))
+                                src_cfg, reader.dataloader.dataset.dataset.class_names),
+                            # The loaders wrap Subsets; measure the frames they serve, not the
+                            # whole split (under --use_subset those differ, and the target has
+                            # pseudo-labels for the served frames only).
+                            source_indices=getattr(reader.dataloader.dataset, 'indices', None),
+                            target_indices=getattr(target_loader.dataset, 'indices', None))
                         # The source workers forked at construct_iter() holding the dataset as it
                         # was before this, and a forked worker never sees a later mutation. Re-fork
                         # them or the correction silently never runs.

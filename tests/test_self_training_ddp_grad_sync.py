@@ -38,8 +38,10 @@ from torchjd.aggregation import PCGrad  # noqa: E402
 WORLD = 2
 
 
-def _model():
+def _model(bn=False):
     torch.manual_seed(0)
+    if bn:
+        return nn.Sequential(nn.Linear(4, 8), nn.BatchNorm1d(8), nn.Linear(8, 2))
     return nn.Linear(4, 2)
 
 
@@ -52,9 +54,9 @@ def _flat_grad(model):
     return torch.cat([p.grad.reshape(-1) for p in model.parameters()])
 
 
-def _local_reference(rank, mode):
+def _local_reference(rank, mode, bn=False):
     """What this rank's gradient is WITHOUT any DDP: the quantity DDP must average."""
-    m = _model()
+    m = _model(bn)
     xs, xt = _batches(rank)
     ls, lt = (m(xs) ** 2).mean(), (m(xt) ** 2).mean() * 0.5
     if mode == 'plain':
@@ -84,6 +86,24 @@ def _worker(rank, init_file, out_dir):
                     commu_utils.all_reduce_grads(ddp)
             results[mode] = _flat_grad(ddp).clone()
             results[mode + '_local'] = _local_reference(rank, 'plain' if mode == 'plain' else 'torchjd')
+
+        # BatchNorm + broadcast_buffers: DDP rewrites running_mean/var in place at every synced
+        # forward, and the source forward's graph already saved them (job 26404). The first forward
+        # unsynced is the fix; the naive form is recorded as raised-or-not.
+        for mode, first_unsynced in (('bn_naive', False), ('bn_first_forward_unsynced', True)):
+            ddp = nn.parallel.DistributedDataParallel(_model(bn=True))
+            xs, xt = _batches(rank)
+            try:
+                if first_unsynced:
+                    ddp.require_backward_grad_sync = False
+                ls = (ddp(xs) ** 2).mean()
+                ddp.require_backward_grad_sync = True
+                lt = (ddp(xt) ** 2).mean() * 0.5
+                (ls + lt).backward()
+                results[mode] = _flat_grad(ddp).clone()
+            except RuntimeError as e:
+                results[mode] = str(e)
+        results['bn_local'] = _local_reference(rank, 'plain', bn=True)
         torch.save(results, Path(out_dir) / ('rank%d.pt' % rank))
     finally:
         dist.destroy_process_group()
@@ -135,3 +155,17 @@ def test_all_reduce_grads_is_a_no_op_outside_a_process_group():
     commu_utils.all_reduce_grads(m)
     assert m.bias.grad is None
     assert torch.equal(m.weight.grad, before)
+
+
+def test_bn_buffers_two_forwards_naive_raises_the_inplace_version_error(rank_results):
+    """The exact failure of job 26404, reproduced on CPU. If this stops raising, the toggle in
+    train_one_epoch_st is no longer load-bearing and should be re-examined, not deleted blindly."""
+    for r in rank_results:
+        assert isinstance(r['bn_naive'], str) and 'inplace operation' in r['bn_naive'], r['bn_naive']
+
+
+def test_bn_buffers_first_forward_unsynced_reduces_correctly(rank_results):
+    a, b = (r['bn_first_forward_unsynced'] for r in rank_results)
+    assert not isinstance(a, str), a
+    assert torch.allclose(a, b, atol=1e-6)
+    assert torch.allclose(a, _mean_local(rank_results, 'bn_local'), atol=1e-6)
