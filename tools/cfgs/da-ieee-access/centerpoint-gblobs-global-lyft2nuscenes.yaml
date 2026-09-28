@@ -1,0 +1,40 @@
+# GBlobs + GLOBAL density correction, Lyft -> nuScenes: are the two additive?
+#
+# The most valuable missing cell of the paper's S1 table (experiments_md/20260928_04 §1,
+# 20260928_05 Phase 1.2). On this pair the global correction gives 28.22 (job 25781) and GBlobs
+# 31.43 (25723) against a 23.17 MeanVFE control (25835) - a domain-GENERALIZATION baseline beats the
+# correction, and a reviewer will ask why not just use GBlobs. The answer the paper wants to give is
+# that they are different things - a VFE swap and a preprocessing step - and compose; this row is
+# that claim's measurement. Read against 31.43: >= 33.5 makes "complementary" a headline,
+# inside noise of 31.43 makes it a caption.
+#
+# ONE key away from its parent: MODEL.VFE. Everything else - both Lyft platforms as separate
+# sources with their own on-the-fly histograms against the shared nuScenes target, the processor
+# order, the 30-epoch budget, global batch 6, both SCORE_THRESH 0.0001 - is inherited from
+# centerpoint-global-lyft2nuscenes.yaml, and tests/test_gblobs_global_config.py pins that the
+# resolved difference is the VFE block and nothing else. The VFE block itself is copied verbatim
+# from centerpoint-gblobs-sourceonly-lyft.yaml (RELATIVE_DISTANCE on, as upstream's own configs).
+#
+# What the correction sees is unchanged by the VFE: sample_points_hist_based runs in the loader on
+# xyz, and GBlobsVFE consumes whatever voxels arrive. So this is "correct the distribution, then
+# describe each voxel by its local shape" - no interaction is built in; if there is one it is
+# learned.
+#
+# Same three caveats as the GBlobs row: NOT a reproduction of the GBlobs paper (CenterPoint, our
+# protocol, ROS on), the 32-channel LVoxelBackBone8x stem deliberately omitted, and
+# COVARIANCE_SCALE 1.0 is a bit-exact no-op.
+#
+# Launch (1 GPU, EST_H ~17 from 25723's 15:55 plus the ~5 min calibration):
+#   EST_H=17 WANDB_NOTES="GBlobs + global correction Lyft->nuScenes, 30 ep: additive? vs GBlobs \
+#   31.43 (25723) and global 28.22 (25781), control 23.17 (25835). 20260928_05 Phase 1.2" \
+#   scripts/submit.sh --job-name=gblobGL scripts/run_sourceonly_2gpu.sh \
+#   cfgs/da-ieee-access/centerpoint-gblobs-global-lyft2nuscenes.yaml
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-global-lyft2nuscenes.yaml
+
+MODEL:
+    VFE:
+        NAME: GBlobsVFE
+        # [mean - voxel centre, flatten(cov)] = 3 + 9 = 12 features per voxel.
+        RELATIVE_DISTANCE: True
+        COVARIANCE_ONLY: False
+        COVARIANCE_SCALE: 1.0
