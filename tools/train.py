@@ -23,7 +23,7 @@ from pcdet.models import build_network, model_fn_decorator
 from pcdet.utils import common_utils
 from train_utils.optimization import build_optimizer, build_scheduler
 from train_utils.train_utils import train_model
-from train_utils.train_st_utils import train_model_st
+from train_utils.train_st_utils import train_model_st, self_training_iters_per_epoch
 
 
 def parse_config():
@@ -410,9 +410,15 @@ def main():
         return len(dataloader) if not merge_all_iter_to_one_epoch else len(dataloader) // epochs
 
     if cfg.get('SELF_TRAIN', None):
-        total_iters_each_epoch = total_iters_each_epoch_per_dataloader(target_loader,
-                                                                       args.merge_all_iters_to_one_epoch,
-                                                                       args.epochs)
+        # The SAME rule train_model_st runs the loop by (SELF_TRAIN.EPOCH_FOLLOWS). Sizing the plan
+        # from the target loader alone, as this did until 2026-09-29, cut every source-following
+        # row's OneCycle anneal at 45% - see self_training_iters_per_epoch.
+        total_iters_each_epoch, epoch_follows = self_training_iters_per_epoch(
+            cfg.SELF_TRAIN, [d['loader'] for d in source_datasets], target_loader,
+            args.merge_all_iters_to_one_epoch, args.epochs)
+        logger.info('scheduler sized for %d iterations per epoch x %d epochs = %d steps '
+                    '(epoch follows %s)' % (total_iters_each_epoch, args.epochs,
+                                            total_iters_each_epoch * args.epochs, epoch_follows))
     else:
         iters_each_epoch_list = list()
         for source_dataset in source_datasets:

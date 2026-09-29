@@ -381,6 +381,36 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
     return accumulated_iter
 
 
+def self_training_iters_per_epoch(self_train_cfg, source_loaders, target_loader,
+                                  merge_all_iters_to_one_epoch=False, total_epochs=0):
+    """What a self-training EPOCH counts, as (iterations, 'source' | 'target').
+
+    ONE rule, read by both train.py (to size the OneCycle plan) and train_model_st (to run the
+    loop), so the two cannot disagree. They did: train.py sized the plan from the TARGET loader for
+    every SELF_TRAIN run while the loop followed SELF_TRAIN.EPOCH_FOLLOWS, and every da-ieee-access
+    self-training config follows the SOURCE (3,150 iterations per epoch on Lyft against 4,689 on
+    nuScenes). So each of those rows ran 94,500 steps on a plan of 140,670 and stopped at 45% of
+    its anneal - final LR ~1.7e-3 where a source-only row ends near 0. Comparisons among such rows
+    were fair (same steps, same truncation); a row read against its source-only teacher or against
+    a source-only GBlobs row carried a schedule difference. experiments_md/20260928_01 section 4.
+
+    The default stays 'target': every pre-existing SELF_TRAIN config outside the family assumes it.
+    """
+    epoch_follows = self_train_cfg.get('EPOCH_FOLLOWS', 'target')
+    assert epoch_follows in ('source', 'target'), \
+        "SELF_TRAIN.EPOCH_FOLLOWS must be 'source' or 'target', got %s" % epoch_follows
+    if epoch_follows == 'source':
+        iters = sum(len(loader) for loader in source_loaders)
+    else:
+        iters = len(target_loader)
+    if merge_all_iters_to_one_epoch:
+        assert epoch_follows == 'target', \
+            'merge_all_iters_to_one_epoch divides the TARGET length; it has no meaning when ' \
+            'the epoch follows the source'
+        iters = len(target_loader) // max(total_epochs, 1)
+    return iters, epoch_follows
+
+
 def _foreground_class_ids(data_cfg, class_names):
     """HIST_DIST_FOREGROUND_CLASSES (model class names) -> 1-based indices, or None to pool all.
 
@@ -478,24 +508,16 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
         # source-only arm at the same NUM_EPOCHS - otherwise the two arms differ in steps per
         # epoch and the comparison silently comes down to training length. The target is cycled
         # either way: train_one_epoch_st already restarts its iterator on StopIteration.
-        epoch_follows = cfg.SELF_TRAIN.get('EPOCH_FOLLOWS', 'target')
-        assert epoch_follows in ('source', 'target'), \
-            "SELF_TRAIN.EPOCH_FOLLOWS must be 'source' or 'target', got %s" % epoch_follows
-        if epoch_follows == 'source':
-            total_it_each_epoch = sum(len(r.dataloader) for r in source_readers)
-        else:
-            total_it_each_epoch = len(target_loader)
+        total_it_each_epoch, epoch_follows = self_training_iters_per_epoch(
+            cfg.SELF_TRAIN, [r.dataloader for r in source_readers], target_loader,
+            merge_all_iters_to_one_epoch, total_epochs)
         if logger is not None:
             logger.info('epoch length follows %s: %d iterations (source %d, target %d)'
                         % (epoch_follows, total_it_each_epoch,
                            sum(len(r.dataloader) for r in source_readers), len(target_loader)))
         if merge_all_iters_to_one_epoch:
-            assert epoch_follows == 'target', \
-                'merge_all_iters_to_one_epoch divides the TARGET length; it has no meaning when ' \
-                'the epoch follows the source'
             assert hasattr(target_loader.dataset.dataset, 'merge_all_iters_to_one_epoch')
             target_loader.dataset.dataset.merge_all_iters_to_one_epoch(merge=True, epochs=total_epochs)
-            total_it_each_epoch = len(target_loader) // max(total_epochs, 1)
 
         # Pseudo-label generation is an INFERENCE pass: it needs the target dataset in eval
         # mode, while training needs it in train mode. Persistent workers freeze whichever mode

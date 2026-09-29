@@ -20,7 +20,9 @@ SRC = (ROOT / 'tools/train_utils/train_st_utils.py').read_text(encoding='utf-8')
 
 
 def test_default_is_target_so_existing_configs_are_unchanged():
-    assert "cfg.SELF_TRAIN.get('EPOCH_FOLLOWS', 'target')" in SRC
+    # The rule lives in self_training_iters_per_epoch since 2026-09-29 (shared with train.py's
+    # scheduler sizing); the default is still read off the SELF_TRAIN block with 'target'.
+    assert ".get('EPOCH_FOLLOWS', 'target')" in SRC
 
 
 def test_source_branch_sums_every_source_loader():
