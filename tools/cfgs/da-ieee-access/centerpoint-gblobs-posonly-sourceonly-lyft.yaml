@@ -1,0 +1,21 @@
+# GBlobs POSITION-ONLY: what does GBlobs' +8.26 on Lyft -> nuScenes actually come from?
+#
+# experiments_md/20260929_06 gate B: at this family's 0.1 x 0.1 x 0.15 m voxels, 80% of voxels hold
+# fewer than 3 points inside 20 m and 100% beyond, on Lyft and nuScenes alike. A covariance needs 3
+# points, so GBlobs' 9 covariance features are ZERO for nearly every voxel the detector sees and for
+# every voxel past 20 m. What is left of the method is the centre-relative mean - the removal of
+# absolute xyz from the input feature - and the 12 -> 16 stem it forces. This row keeps everything
+# of centerpoint-gblobs-sourceonly-lyft.yaml and zeroes the covariance block (COVARIANCE_SCALE 0.0
+# multiplies it by 0; the feature width, and so the stem, stay 12), so the difference from 31.43 is
+# what the covariance did. If it matches 31.43 the DG gain here is "drop absolute position", which is
+# a different and more useful sentence than "Gaussian blobs"; if it falls to the MeanVFE control
+# (23.17) the covariance carried the gain in the near field, where it exists.
+#
+# Launch on ONE GPU (this parent still carries BATCH_SIZE_PER_GPU 6 = the 1-GPU recipe, global 6):
+#   EST_H=17 WANDB_NOTES="..." scripts/submit.sh --job-name=gblobPos \
+#     scripts/run_sourceonly_2gpu.sh cfgs/da-ieee-access/centerpoint-gblobs-posonly-sourceonly-lyft.yaml
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-gblobs-sourceonly-lyft.yaml
+
+MODEL:
+    VFE:
+        COVARIANCE_SCALE: 0.0
