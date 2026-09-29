@@ -11,6 +11,33 @@ from ...utils import common_utils, box_utils, self_training_utils, conf_calib_ut
 from ..dataset import DatasetTemplate
 
 
+def sweep_min_range(schedule, sweep_age):
+    """Smallest range (m) at which the schedule asks for more than `sweep_age` frames.
+
+    `schedule` is a list of [range_start_m, depth_N] pairs, depth non-decreasing with range, e.g.
+    [[0, 5], [20, 10], [40, 15]]: 5 frames inside 20 m, 10 from 20 m, 15 from 40 m. A sweep of age
+    k (1 = the sweep just before the anchor) contributes only where depth_N >= k + 1. Returns None
+    when no ring asks for that sweep at all (it is dropped), 0.0 when every ring does.
+    """
+    pairs = sorted((float(r), int(n)) for r, n in schedule)
+    assert all(pairs[i][1] <= pairs[i + 1][1] for i in range(len(pairs) - 1)), \
+        'ACCUMULATION_DEPTH_BY_RANGE must be non-decreasing in depth with range: %s' % (schedule,)
+    for r, n in pairs:
+        if n >= sweep_age + 1:
+            return r
+    return None
+
+
+def sweep_range_mask(points, sweep_age, schedule):
+    """Boolean mask over `points` (anchor-frame xyz in the first 3 columns) for sweep_min_range."""
+    r_min = sweep_min_range(schedule, sweep_age)
+    if r_min is None:
+        return np.zeros(len(points), dtype=bool)
+    if r_min <= 0:
+        return np.ones(len(points), dtype=bool)
+    return np.linalg.norm(points[:, :2], axis=1) >= r_min
+
+
 class NuScenesDataset(DatasetTemplate):
     def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None, model_ontology=None):
         root_path = (root_path if root_path is not None else Path(dataset_cfg.DATA_PATH)) / dataset_cfg.VERSION
@@ -163,6 +190,11 @@ class NuScenesDataset(DatasetTemplate):
         sweep_points_list = [points]
         sweep_times_list = [np.zeros((points.shape[0], 1))]
 
+        # Per-range depth schedule (experiments_md/20260929_06 §1): one MAX_SWEEPS over-accumulates
+        # the near field and leaves the far field short, and the remaining nuScenes->KITTI gap to the
+        # oracle sits at 30-50 m. ACCUMULATION_DEPTH_BY_RANGE keeps sweep k's points only beyond the
+        # range at which the schedule asks for more than k sweeps. The anchor frame is always whole.
+        schedule = self.dataset_cfg.get('ACCUMULATION_DEPTH_BY_RANGE', None)
         # for k in np.random.choice(len(info['sweeps']), max_sweeps - 1, replace=False):
         for k in range(max_sweeps - 1):
             points_sweep, times_sweep = self.get_sweep(info['sweeps'][k])
@@ -171,6 +203,9 @@ class NuScenesDataset(DatasetTemplate):
                 # moves each tracked object's points onto that object's box in the anchor frame.
                 points_sweep = self._sweep_compensator.compensate_sweep(
                     info, info['sweeps'][k], points_sweep)
+            if schedule is not None:
+                keep = sweep_range_mask(points_sweep, k + 1, schedule)
+                points_sweep, times_sweep = points_sweep[keep], times_sweep[keep]
             sweep_points_list.append(points_sweep)
             sweep_times_list.append(times_sweep)
 
