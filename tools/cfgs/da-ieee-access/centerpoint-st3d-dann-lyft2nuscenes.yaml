@@ -1,7 +1,7 @@
 # Pseudo-label self-training + DANN, Lyft -> nuScenes, NO density correction.
 #
 # The "DANN without correction" arm of claim 1's 2x2 ({pseudo-label ST, DANN} x {no correction,
-# correction}; experiments_md/20260929_02 section 6). The plain row centerpoint-st3d-lyft2nuscenes
+# correction}; experiments_md/20260929_05 section 6). The plain row centerpoint-st3d-lyft2nuscenes
 # (both corrections switched off) plus the in-head domain classifier at the same dann_weight as
 # centerpoint-st3d-global-dann-lyft2nuscenes, so the pair (this, that) differs only by the
 # correction and the pair (this, centerpoint-st3d-lyft2nuscenes) only by DANN.
