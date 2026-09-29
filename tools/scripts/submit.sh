@@ -27,6 +27,13 @@ if [ -n "${EST_H:-}" ]; then
   SIZE=($(cd "$TOOLS" && singularity exec /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif \
           python3 scripts/size_job.py "$@")) || { echo "submit.sh: sizing failed" >&2; exit 2; }
   [ "${#SIZE[@]}" -gt 0 ] || { echo "submit.sh: size_job.py printed no flags" >&2; exit 2; }
+  # Adaptive CPUs: size_job asks the per-GPU share cap; if the only nodes with free GPUs right now
+  # have fewer free CPUs than that (the usual case - 2026-09-29), ask what fits, never below
+  # CPU_FLOOR per GPU. FIT=0 disables. Runs on the host: it needs scontrol, not torch.
+  if [ "${FIT:-1}" != "0" ]; then
+    SIZE=($(python3 "$TOOLS/scripts/free_slots.py" --min "${CPU_FLOOR:-5}" --adjust "${SIZE[@]}")) \
+      || { echo "submit.sh: free_slots.py failed" >&2; exit 2; }
+  fi
 fi
 # --comment puts the note on the Slurm job too, so the queue says what each job is for:
 #   squeue -u $USER -o "%.8i %.10j %.3t %.10M %.8N %k"
