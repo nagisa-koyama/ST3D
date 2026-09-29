@@ -1,0 +1,12 @@
+# Plain ST3D with an UNFROZEN teacher, Lyft -> nuScenes: the student regenerates its own
+# pseudo-labels every UPDATE_PSEUDO_LABEL_INTERVAL, memory-ensembled - which is what the ST3D paper
+# actually does. Every "ST3D" row this family had run before 2026-09-30 (26289, 26695, 26698) used
+# a FROZEN teacher and ONE generation pass, i.e. a single round of pseudo-labelling; this is the
+# faithful baseline, and the control for centerpoint-foreground-v2-unfrozen-lyft2nuscenes (one
+# variable: the correction). Start from --pretrained_model iwg6l5v1 ep30 (or ldb35c2o ep30 for the
+# textbook, source-only-initialised version); no --pretrained_model_teacher.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-st3d-lyft2nuscenes.yaml
+
+SELF_TRAIN:
+    TEACHER_IS_STUDENT: True
+    FROZEN_TEACHER_SINGLE_PASS: False

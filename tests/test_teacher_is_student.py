@@ -61,3 +61,10 @@ def test_train_py_skips_the_teacher_and_refuses_a_teacher_checkpoint():
     assert 'args.pretrained_model is not None' in block
     # the frozen-teacher branch still exists for every other config
     assert "elif cfg.get('SELF_TRAIN', None) and cfg.SELF_TRAIN.get('MODEL_TEACHER', None)" in src
+
+
+def test_plain_st3d_unfrozen_row_differs_from_plain_st3d_in_the_teacher_policy_only(in_tools_dir):
+    a = _flat(cfg_from_yaml_file(FAMILY + 'centerpoint-st3d-lyft2nuscenes.yaml', EasyDict()))
+    b = _flat(cfg_from_yaml_file(FAMILY + 'centerpoint-st3d-unfrozen-lyft2nuscenes.yaml', EasyDict()))
+    diffs = sorted(k for k in set(a) | set(b) if not k.endswith('_BASE_CONFIG_') and str(a.get(k)) != str(b.get(k)))
+    assert diffs == ['SELF_TRAIN.FROZEN_TEACHER_SINGLE_PASS', 'SELF_TRAIN.TEACHER_IS_STUDENT']
