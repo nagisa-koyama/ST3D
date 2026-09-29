@@ -1,0 +1,36 @@
+# ST3D + foreground-aware correction v2 with an UNFROZEN teacher: the student generates its own
+# pseudo-labels, Lyft -> nuScenes. The user's proposal, 2026-09-30.
+#
+# ONE variable from centerpoint-foreground-v2-lyft2nuscenes.yaml (job 26697 on the completed
+# schedule; 26396 = 30.83 on the truncated one): the teacher policy. There the teacher is
+# iwg6l5v1 ep30, frozen, and pseudo-labels are generated ONCE. Here the same checkpoint is only the
+# student's INITIALISATION (--pretrained_model), so the epoch-0 labels are identical, and from then
+# on every UPDATE_PSEUDO_LABEL_INTERVAL (2 epochs) the labels are regenerated from the improving
+# student, memory-ensembled against the previous set (NMS + voting, ENABLED in the parent), and the
+# target FOREGROUND channel is re-measured from the fresh labels - train_model_st already does that
+# after every pass, reusing the once-measured source histogram so the rate never compounds.
+#
+# WHY IT MIGHT WORK: the teacher-strength series says the final AP ranks by teacher (26.81 /
+# 29.17 / 31.60 for teachers 23.17 / 28.22 / 31.43) and each student ends above its teacher. If the
+# student's improvement is real, feeding it back is compounding; ST3D's own design relies on it.
+# WHY IT MIGHT NOT: confirmation bias - errors the student learns become its labels. Memory voting
+# and the ignore band are the two brakes the recipe has.
+#
+# KNOWN LIMITATION, stated on purpose: SCORE_THRESH [0.21, 0.19, 0.18] is the count-balance cut of
+# the INITIAL teacher (20260927_01). An improving student's score distribution drifts, and no
+# in-run estimator exists yet, so the cuts stay fixed for the run. If this row helps, an in-run
+# count-balance re-derivation at each pass is the follow-up; if it hurts, drift of the fixed cuts
+# is the first suspect, and ps_box/pos_* per epoch in W&B is where to look.
+#
+# COST: 15 regeneration passes over the 28,130-frame target (sharded across ranks under DDP) plus
+# 15 foreground re-calibrations on top of the ~20 h the frozen row takes on 2 GPUs. EST_H ~60.
+#
+# Launch (NO --pretrained_model_teacher - train.py refuses it under TEACHER_IS_STUDENT):
+#   EST_H=60 WANDB_NOTES="..." scripts/submit.sh --job-name=fgv2Unfr \
+#     scripts/run_sourceonly_2gpu.sh cfgs/da-ieee-access/centerpoint-foreground-v2-unfrozen-lyft2nuscenes.yaml \
+#     sched foreground_v2_unfrozen_lyft2nuscenes --pretrained_model /storage/wandb/run-20260923_093504-iwg6l5v1/files/ckpt/checkpoint_epoch_30.pth
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-foreground-v2-lyft2nuscenes.yaml
+
+SELF_TRAIN:
+    TEACHER_IS_STUDENT: True
+    FROZEN_TEACHER_SINGLE_PASS: False

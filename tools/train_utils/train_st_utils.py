@@ -381,6 +381,21 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
     return accumulated_iter
 
 
+def student_is_teacher(self_train_cfg):
+    """SELF_TRAIN.TEACHER_IS_STUDENT: the student generates its own pseudo-labels (ST3D's native
+    mode), so no separate teacher is built even when a MODEL_TEACHER block is present, and every
+    UPDATE_PSEUDO_LABEL_INTERVAL the labels - and, for a foreground-aware row, the target
+    foreground channel measured from them - are regenerated from the improving model. Memory
+    ensembling (NMS + voting) is what keeps that from drifting; it is a no-op with a frozen teacher
+    and load-bearing here. Incompatible with FROZEN_TEACHER_SINGLE_PASS, which exists to skip the
+    regeneration this mode is for."""
+    on = bool(self_train_cfg.get('TEACHER_IS_STUDENT', False))
+    if on:
+        assert not self_train_cfg.get('FROZEN_TEACHER_SINGLE_PASS', False), \
+            'TEACHER_IS_STUDENT and FROZEN_TEACHER_SINGLE_PASS contradict each other'
+    return on
+
+
 def self_training_iters_per_epoch(self_train_cfg, source_loaders, target_loader,
                                   merge_all_iters_to_one_epoch=False, total_epochs=0):
     """What a self-training EPOCH counts, as (iterations, 'source' | 'target').
