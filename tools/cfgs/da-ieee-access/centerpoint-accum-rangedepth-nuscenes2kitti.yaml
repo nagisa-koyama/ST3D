@@ -1,0 +1,44 @@
+# nuScenes -> KITTI, accumulation with a PER-RANGE depth schedule, no density correction.
+# experiments_md/20260929_06 item 4. ONE variable from centerpoint-accum-nuscenes2kitti.yaml
+# (job 26388: 71.93 moderate at a uniform MAX_SWEEPS 15): the depth now follows range.
+#
+# WHY. Per-range AP (20260929_06 §1) puts the remaining gap to the KITTI oracle at 30-50 m
+# (-12 / -10) and at 0-10 m (-8), with 10-30 m closed. Per-bin global parity (§5) says a uniform
+# N = 15 leaves the near field 2-4x OVER the target's radial profile while Boston's 45-50 m bin sits
+# exactly at 1.0x. One depth cannot serve both ends; this schedule lowers the near field and raises
+# the far one.
+#
+# THE RULE, target-free: equalise the global SURPLUS across range at the level the near field
+# already carries at N = 15 (~2x) - per ring, the smallest chained depth whose accumulated radial
+# profile reaches 2x KITTI's, non-decreasing with range, capped at 30. Only target POINT CLOUDS
+# enter. The constant 2x is the one free choice and is stated as such. Measured with
+# analysis/gates/per_ring_parity_depth.py (12 anchors per platform, 40 KITTI frames).
+#
+# MECHANISM (nuscenes_dataset.get_lidar_with_sweeps): sweep k's points are kept only beyond the
+# range at which the schedule asks for more than k frames; the anchor is always whole; applied
+# AFTER per-object motion compensation, so moving objects are compensated before being cut.
+# MAX_SWEEPS must equal the schedule's largest depth. Every info carries 199 sweeps, so 30 is
+# servable everywhere.
+#
+# COST. Up to 30 files per sample against 15, though the far-only sweeps add few points; 26388
+# ran 21 h on 2 GPUs at 4 workers. NUM_WORKERS 8 and CPU_FLOOR 8 for this loader-heavy row;
+# --mem=150G (the 200-sweep infos are 11 GB resident and pickled into every spawned worker).
+# Read PER RING against 26388 and the oracle with analysis/gates/per_range_ap.py.
+#
+# Launch:
+#   EST_H=90 CPU_FLOOR=8 WANDB_NOTES="..." scripts/submit.sh --job-name=accumRD --mem=150G \
+#     scripts/run_sourceonly_2gpu.sh cfgs/da-ieee-access/centerpoint-accum-rangedepth-nuscenes2kitti.yaml
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-nuscenes2kitti.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        MAX_SWEEPS: 30
+        # Boston: ratio >= 2 needs N 12 inside 30 m, 20 at 30-40, 30 beyond 40 (60-65 m needs 25).
+        ACCUMULATION_DEPTH_BY_RANGE: [[0, 12], [30, 20], [40, 30]]
+    NUSCENES_N015:
+        MAX_SWEEPS: 20
+        # Singapore: ratio >= 2 needs N 10 inside 20 m, 12 at 20-50, 20 beyond 50.
+        ACCUMULATION_DEPTH_BY_RANGE: [[0, 10], [20, 12], [50, 20]]
+
+OPTIMIZATION:
+    NUM_WORKERS: 8
