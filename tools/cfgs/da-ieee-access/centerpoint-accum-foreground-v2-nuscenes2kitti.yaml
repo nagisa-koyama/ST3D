@@ -1,0 +1,38 @@
+# nuScenes -> KITTI, accumulation + FOREGROUND-AWARE correction v2, self-training. Phase 2.1 of
+# experiments_md/20260928_05 - after job 26388 showed accumulation alone (71.93 moderate) equals the
+# accumulation + GLOBAL correction bundle (71.11), this is the only S2 experiment left that can show
+# the correction itself doing anything on the headline pair.
+#
+# ONE variable from its parent (centerpoint-accum-foreground-nuscenes2kitti.yaml, the v1 row that
+# never ran): the v2 recipe of 20260927_01 / 20260927_04 -
+#   1. foreground channel measured on Car only (HIST_DIST_FOREGROUND_CLASSES), because Pedestrian's
+#      pseudo-labels are dilution-dominated on this target (20260927_04 section 7c);
+#   2. per-class pseudo-label cuts at COUNT BALANCE inside 30 m, derived LABEL-FREE for THIS
+#      teacher (7k0jxlv7 epoch 20, the 25780 model) with the joint (score, points-in-box) mixture
+#      estimator - persistence cannot run on KITTI (no sequences). Measured 2026-09-29 over 1,000
+#      strided KITTI train frames of the stored 0.0001-floor pseudo-labels
+#      (/storage/pseudo_labels/7k0jxlv7_ep20_kitti_train_thr0.0001): Car 0.305 (per ring 0-10 /
+#      10-20 / 20-30 m: 0.457 / 0.398 / 0.268), Pedestrian 0.182, Cyclist 0.166.
+#   3. NEG_THRESH 0.1 = the teacher's background plateau, as on Lyft -> nuScenes.
+# The GT-validation columns of that derivation, for the caption and NOT used in selection: at the
+# Car cut precision 0.29 / recall 0.95 (2.0 real Cars per frame in the camera FOV against 6.2
+# estimated over 360 deg - KITTI labels the front only, so much of the "excess" is real cars the
+# annotation never sees); Pedestrian and Cyclist are clutter at their cuts (precision 0.03 / 0.02,
+# 15.7 and 2.2 boxes per frame against 0.5 and 0.06 real) - the same failure v2 carried on
+# Lyft -> nuScenes for Cyclist, accepted there too; it never reaches the calibration (Car-only
+# channel) and touches the loss only through those two classes.
+#
+# Read against 26388 (accumulation alone, 71.93 / 39.95 moderate), 25780 (bundle, 71.11) and the
+# KITTI oracle (75.17). Launch: 2 GPUs, --mem=150G (the nuScenes 15-sweep infos are 11 GB resident
+# and pickled into every spawned worker), EST_H ~75 on one GPU (25780 took 68 h on one).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-foreground-nuscenes2kitti.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        HIST_DIST_FOREGROUND_CLASSES: ['Car']
+    NUSCENES_N015:
+        HIST_DIST_FOREGROUND_CLASSES: ['Car']
+
+SELF_TRAIN:
+    SCORE_THRESH: [0.30, 0.18, 0.17]   # count balance inside 30 m, joint-mixture estimator, teacher 7k0jxlv7 ep20 on KITTI train
+    NEG_THRESH: [0.1, 0.1, 0.1]
