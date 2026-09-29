@@ -54,7 +54,8 @@ def test_two_gpu_job_fits_node61_at_eight_per_gpu_not_the_ten_cap():
 def test_floor_is_respected_and_down_nodes_never_chosen():
     nodes = fs.parse_nodes(FIXTURE)
     assert fs.best_fit(nodes, gpus=2, cpu_min=9, cpu_max=10) is None   # node61 gives 8, node62 is down
-    assert fs.best_fit(nodes, gpus=1, cpu_min=4, cpu_max=10)[0]['name'] == 'node61'  # 16 > node12's 10
+    # node12 and node61 both give the 10-per-GPU cap; the tie goes to the node with more CPUs left
+    assert fs.best_fit(nodes, gpus=1, cpu_min=4, cpu_max=10)[0]['name'] == 'node61'
 
 
 def test_adjust_shrinks_only_when_the_request_is_larger_than_the_fit():

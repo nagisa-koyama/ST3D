@@ -80,7 +80,8 @@ def best_fit(nodes, gpus, cpu_min, cpu_max):
         per_gpu = min(cpu_max, n['cpu_free'] // gpus)
         if per_gpu < cpu_min:
             continue
-        if best is None or per_gpu > best[1]:
+        # more CPUs per GPU first; on a tie the node with more CPUs left, so the next job fits too
+        if best is None or (per_gpu, n['cpu_free']) > (best[1], best[0]['cpu_free']):
             best = (n, per_gpu)
     return best
 
