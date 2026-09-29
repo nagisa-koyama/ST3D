@@ -1,0 +1,19 @@
+# Pseudo-label self-training + DANN, Lyft -> nuScenes, NO density correction.
+#
+# The "DANN without correction" arm of claim 1's 2x2 ({pseudo-label ST, DANN} x {no correction,
+# correction}; experiments_md/20260929_02 section 6). The plain row centerpoint-st3d-lyft2nuscenes
+# (both corrections switched off) plus the in-head domain classifier at the same dann_weight as
+# centerpoint-st3d-global-dann-lyft2nuscenes, so the pair (this, that) differs only by the
+# correction and the pair (this, centerpoint-st3d-lyft2nuscenes) only by DANN.
+#
+# "Self-training" here is pseudo-labelling from a FROZEN teacher (--pretrained_model_teacher), not
+# the original ST3D's self-teacher with memory voting. Launch exactly like the other ST rows:
+# train.py, --pretrained_model and --pretrained_model_teacher both iwg6l5v1 epoch 30.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-st3d-lyft2nuscenes.yaml
+
+MODEL:
+    DENSE_HEAD:
+        LOSS_CONFIG:
+            LOSS_WEIGHTS: {
+                'dann_weight': 0.1
+            }

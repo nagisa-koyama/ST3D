@@ -1,0 +1,12 @@
+# TIER-1 PROXY of da-ieee-access/centerpoint-st3d-dann-lyft2nuscenes.yaml (DANN, no correction).
+# Schedule only: NUM_EPOCHS 30 -> 4, PROG_AUG's ramp [8, 15, 23] -> [1, 2, 3], as for the other ST
+# proxies. Completes claim 1's 2x2 at proxy length: read against st3d-4ep (26289, no DANN, no
+# correction) and st3d-global-dann-4ep (26382, DANN + correction). See README.md.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-st3d-dann-lyft2nuscenes.yaml
+
+OPTIMIZATION:
+    NUM_EPOCHS: 4
+
+SELF_TRAIN:
+    PROG_AUG:
+        UPDATE_AUG: [1, 2, 3]
