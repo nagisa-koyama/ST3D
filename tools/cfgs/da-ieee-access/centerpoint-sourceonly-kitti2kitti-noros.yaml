@@ -1,0 +1,16 @@
+# KITTI in-domain ORACLE without object scaling: the ceiling of Table C, re-measured.
+#
+# WHY. Job 26536 (nuScenes->KITTI, accumulation with a SHRINKING Car interval [0.75, 1.00]) scored
+# 78.88 moderate BEV - ABOVE the oracle 26257's 75.17, which trained with the family's any-target
+# interval [0.85, 1.20]. That interval has mean 1.025 and ENLARGES cars; it was chosen for
+# cross-domain rows (20260922_03) and has no business in an in-domain ceiling. A ceiling handicapped
+# by a DA augmentation is not a ceiling. This row is centerpoint-sourceonly-kitti2kitti with
+# random_object_scaling DISABLED and nothing else changed (152 epochs, the same budget); the sibling
+# -rosshrink keeps the augmentation at the shrinking interval, for the like-for-like reading of 26536.
+# Both scored with the camera-FOV filter, reported at moderate; per ring with
+# analysis/gates/per_range_ap.py.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-kitti2kitti.yaml
+
+DATA_CONFIG:
+    DATA_AUGMENTOR:
+        DISABLE_AUG_LIST: ['normalize_object_size', 'random_object_rotation', 'random_object_scaling']
