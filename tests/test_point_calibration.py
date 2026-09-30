@@ -427,3 +427,18 @@ def test_link_foreground_installs_the_class_set_it_measured_with():
     tgt = FakeBoxDataset(fg_radii=[10.0, 10.0], bg_radii=[20.0], ontology='tgt')
     link_foreground_calibration(src, tgt, num_frames=5, num_bins=15, class_ids=[1])
     assert src.data_processor.hist_fg_class_ids == [1]
+
+
+def test_foreground_calibration_second_pass_takes_its_own_source_return():
+    """The unfrozen-teacher loop re-calibrates after every pseudo-label pass, passing the FIRST
+    pass's source channel back in. The return must be the triple `source_hist` expects (job 26706
+    died on `not enough values to unpack (expected 3, got 2)` at the second pass)."""
+    src = FakeBoxDataset(fg_radii=[10.0], bg_radii=[10.0, 20.0], ontology='src')
+    tgt = FakeBoxDataset(fg_radii=[10.0, 10.0], bg_radii=[20.0], ontology='tgt')
+    src_hist, tgt_hist = link_foreground_calibration(src, tgt, num_frames=5, num_bins=15)
+    assert len(src_hist) == 3 and len(tgt_hist) == 3
+    rates_first = src.data_processor.per_bin_sample_rate(None, 'fg').copy()
+    src_hist2, _ = link_foreground_calibration(src, tgt, num_frames=5, num_bins=15, source_hist=src_hist)
+    for a, b in zip(src_hist, src_hist2):
+        assert (a == b).all()                       # the source is measured once and reused
+    assert src.data_processor.per_bin_sample_rate(None, 'fg').shape == rates_first.shape

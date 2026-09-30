@@ -339,4 +339,9 @@ def link_foreground_calibration(source_set, target_set, num_frames=DEFAULT_FRAME
                        'PSEUDO-LABELS, so any teacher recall below 1 UNDER-estimates it and biases '
                        'the foreground rate DOWNWARD - the same direction as the defect this is '
                        'meant to fix. Generate pseudo-labels at a high-recall SCORE_THRESH.')
-    return (fg_s, bg_s), (fg_t, bg_t)
+    # The SOURCE triple is returned in exactly the form `source_hist` takes back, so a caller can do
+    # `src_hist, _ = link_foreground_calibration(...)` on the first pass and pass `source_hist=src_hist`
+    # on every later one. It used to return the pair (fg, bg) while expecting the triple back: the
+    # second pass raised `not enough values to unpack` - never seen before 2026-09-30 because no row
+    # had ever regenerated pseudo-labels twice (frozen teacher, single pass). Job 26706.
+    return (fg_s, bg_s, tot_s), (fg_t, bg_t, tot_t)
