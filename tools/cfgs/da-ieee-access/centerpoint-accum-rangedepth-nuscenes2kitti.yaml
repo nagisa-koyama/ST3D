@@ -1,6 +1,7 @@
 # nuScenes -> KITTI, accumulation with a PER-RANGE depth schedule, no density correction.
-# experiments_md/20260929_06 item 4. ONE variable from centerpoint-accum-nuscenes2kitti.yaml
-# (job 26388: 71.93 moderate at a uniform MAX_SWEEPS 15): the depth now follows range.
+# experiments_md/20260929_06 item 4. ONE variable from the shrinking-ROS accumulation row
+# centerpoint-accum-rosshrink-nuscenes2kitti.yaml (job 26536: 78.88 moderate at a uniform MAX_SWEEPS 15):
+# the depth now follows range.
 #
 # WHY. Per-range AP (20260929_06 §1) puts the remaining gap to the KITTI oracle at 30-50 m
 # (-12 / -10) and at 0-10 m (-8), with 10-30 m closed. Per-bin global parity (§5) says a uniform
@@ -28,7 +29,11 @@
 # Launch:
 #   EST_H=90 CPU_FLOOR=8 WANDB_NOTES="..." scripts/submit.sh --job-name=accumRD --mem=150G \
 #     scripts/run_sourceonly_2gpu.sh cfgs/da-ieee-access/centerpoint-accum-rangedepth-nuscenes2kitti.yaml
-_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-nuscenes2kitti.yaml
+# RE-PARENTED 2026-09-30 onto the shrinking-ROS accumulation row (26536: 78.88 moderate), not the
+# [0.85, 1.20] one (26388: 71.93): the size prior is worth +6.9 BEV / +11.4 3D (20260930_01), so a
+# depth-schedule row on the old base would be read against a base the table no longer uses. ONE
+# variable from 26536: the depth schedule. Read per ring against 26536.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-rosshrink-nuscenes2kitti.yaml
 
 DATA_CONFIGS:
     NUSCENES_N008:

@@ -1,4 +1,4 @@
-"""centerpoint-accum-rangedepth-nuscenes2kitti = the accumulation-only row + a per-range depth schedule."""
+"""centerpoint-accum-rangedepth-nuscenes2kitti = the shrinking-ROS accumulation row (26536) + a per-range depth schedule."""
 import os
 import sys
 from pathlib import Path
@@ -13,7 +13,7 @@ from pcdet.config import cfg_from_yaml_file  # noqa: E402
 from pcdet.datasets.nuscenes.nuscenes_dataset import sweep_min_range  # noqa: E402
 
 FAMILY = 'cfgs/da-ieee-access/'
-PARENT, CHILD = 'centerpoint-accum-nuscenes2kitti.yaml', 'centerpoint-accum-rangedepth-nuscenes2kitti.yaml'
+PARENT, CHILD = 'centerpoint-accum-rosshrink-nuscenes2kitti.yaml', 'centerpoint-accum-rangedepth-nuscenes2kitti.yaml'
 
 
 @pytest.fixture
@@ -35,7 +35,7 @@ def _flat(d, prefix=''):
     return out
 
 
-def test_one_variable_from_the_accumulation_only_row(in_tools_dir):
+def test_one_variable_from_the_shrinking_ros_accumulation_row(in_tools_dir):
     a = _flat(cfg_from_yaml_file(FAMILY + PARENT, EasyDict())); b = _flat(cfg_from_yaml_file(FAMILY + CHILD, EasyDict()))
     allowed_suffix = ('.MAX_SWEEPS', '.ACCUMULATION_DEPTH_BY_RANGE')
     diffs = sorted(k for k in set(a) | set(b) if not k.endswith('_BASE_CONFIG_')
@@ -54,3 +54,10 @@ def test_schedule_is_consistent_with_max_sweeps_and_motion_compensation(in_tools
         assert sweep_min_range(sched, blk.MAX_SWEEPS) is None  # nothing asks for more than MAX_SWEEPS
         assert sweep_min_range(sched, 1) == 0.0                # the second frame is used everywhere
     assert cfg.DATA_CONFIGS.NUSCENES_N008.MAX_SWEEPS == 30 and cfg.DATA_CONFIGS.NUSCENES_N015.MAX_SWEEPS == 20
+
+
+def test_inherits_the_shrinking_car_interval(in_tools_dir):
+    cfg = cfg_from_yaml_file(FAMILY + CHILD, EasyDict())
+    for name, blk in cfg.DATA_CONFIGS.items():
+        ros = next(a for a in blk.DATA_AUGMENTOR.AUG_CONFIG_LIST if a['NAME'] == 'random_object_scaling')
+        assert ros['SCALE_UNIFORM_NOISE']['Car'] == [0.75, 1.00], name
