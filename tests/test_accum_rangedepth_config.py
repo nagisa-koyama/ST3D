@@ -39,7 +39,7 @@ def test_one_variable_from_the_shrinking_ros_accumulation_row(in_tools_dir):
     a = _flat(cfg_from_yaml_file(FAMILY + PARENT, EasyDict())); b = _flat(cfg_from_yaml_file(FAMILY + CHILD, EasyDict()))
     allowed_suffix = ('.MAX_SWEEPS', '.ACCUMULATION_DEPTH_BY_RANGE')
     diffs = sorted(k for k in set(a) | set(b) if not k.endswith('_BASE_CONFIG_')
-                   and not k.endswith(allowed_suffix) and k != 'OPTIMIZATION.NUM_WORKERS'
+                   and not k.endswith(allowed_suffix)
                    and str(a.get(k)) != str(b.get(k)))
     assert not diffs, diffs
 

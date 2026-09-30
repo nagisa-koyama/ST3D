@@ -22,12 +22,12 @@
 # servable everywhere.
 #
 # COST. Up to 30 files per sample against 15, though the far-only sweeps add few points; 26388
-# ran 21 h on 2 GPUs at 4 workers. NUM_WORKERS 8 and CPU_FLOOR 8 for this loader-heavy row;
-# --mem=150G (the 200-sweep infos are 11 GB resident and pickled into every spawned worker).
+# ran 21 h on 2 GPUs at 4 workers. --mem=150G (the 200-sweep infos are 11 GB resident and pickled
+# into every spawned worker) - and NOT more workers, see below.
 # Read PER RING against 26388 and the oracle with analysis/gates/per_range_ap.py.
 #
 # Launch:
-#   EST_H=90 CPU_FLOOR=8 WANDB_NOTES="..." scripts/submit.sh --job-name=accumRD --mem=150G \
+#   EST_H=90 WANDB_NOTES="..." scripts/submit.sh --job-name=accumRD --mem=150G \
 #     scripts/run_sourceonly_2gpu.sh cfgs/da-ieee-access/centerpoint-accum-rangedepth-nuscenes2kitti.yaml
 # RE-PARENTED 2026-09-30 onto the shrinking-ROS accumulation row (26536: 78.88 moderate), not the
 # [0.85, 1.20] one (26388: 71.93): the size prior is worth +6.9 BEV / +11.4 3D (20260930_03), so a
@@ -45,5 +45,7 @@ DATA_CONFIGS:
         # Singapore: ratio >= 2 needs N 10 inside 20 m, 12 at 20-50, 20 beyond 50.
         ACCUMULATION_DEPTH_BY_RANGE: [[0, 10], [20, 12], [50, 20]]
 
-OPTIMIZATION:
-    NUM_WORKERS: 8
+# NUM_WORKERS stays at the parent's 4. The first launch (26774) raised it to 8 and HUNG at epoch 0 on
+# node13 with 872 MB free: under DDP spawn every worker carries a full pickled copy of the 200-sweep
+# infos (~52 GB per GPU at 4 workers), memory is not a consumable resource here (CR_CPU), and a
+# second 150G nuScenes-source row had been placed on the same node. Two such rows fit at 4 workers.
