@@ -127,6 +127,23 @@ class DataAugmentor(object):
         data_dict['points'] = points
         return data_dict
 
+    def random_world_translation(self, data_dict=None, config=None):
+        """Shift the whole scene by one Gaussian vector per sample, as upstream OpenPCDet does.
+
+        NOISE_TRANSLATE_STD is per axis (x, y, z) in metres. Added for the z-only case: the
+        CenterPoint KITTI oracle misses most cars on descending roads (experiments_md/20260930_07),
+        and nothing else in the list moves the ground - after SHIFT_COOR it sits at z ~ 0, which
+        world scaling (about the origin) leaves in place.
+        """
+        if data_dict is None:
+            return partial(self.random_world_translation, config=config)
+        std = np.asarray(config['NOISE_TRANSLATE_STD'], dtype=np.float32)
+        assert std.shape == (3,), 'NOISE_TRANSLATE_STD is [x, y, z]'
+        offset = (np.random.normal(size=3) * std).astype(np.float32)
+        data_dict['points'][:, 0:3] += offset
+        data_dict['gt_boxes'][:, 0:3] += offset
+        return data_dict
+
     def normalize_object_size(self, data_dict=None, config=None):
         if data_dict is None:
             return partial(self.normalize_object_size, config=config)

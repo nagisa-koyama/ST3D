@@ -1,0 +1,36 @@
+# ST3D's OWN KITTI oracle recipe, run in this pipeline: does it reach the published 83.29 / 73.45?
+#
+# WHY. Our CenterPoint KITTI oracle scores 76.56 / 65.71 moderate (26717) against the literature's
+# SECOND-IoU oracle 83.29 / 73.45 (ST3D++ tables). experiments_md/20260930_07 found the evaluator and
+# GT identical and ~half of the BEV gap in scaling, NMS and a downhill blind spot; the rest is the
+# recipe. Running upstream's recipe here settles "pipeline or recipe" outright: near 83 = the pipeline
+# is sound and the rest is detector/class set; far below = something in this fork costs AP.
+#
+# This is upstream's `kitti_models/secondiou_orcale.yaml` (the fork's copy, unchanged) with three
+# changes, all forced:
+#   - FOV_POINTS_ONLY False: True hits the `assert(0)` canary in kitti_dataset.py (commit 1d20716).
+#     The front-half POINT_CLOUD_RANGE [0, -75.2, ...] is kept, so only the sides (|azimuth| 45-90
+#     deg in front of the car) are extra input compared with upstream.
+#   - TEST.BOX_FILTER.FOV_FILTER True: upstream's FOV-only points gave FOV-only predictions for free;
+#     with the sides visible, predictions there would be scored against camera-FOV-only labels as
+#     false positives. The filter keeps a prediction whose centre projects into the image - the same
+#     filter every KITTI-target row in this family uses.
+#   - ONTOLOGY 'kitti' on the dataset: this fork's DatasetTemplate looks up the density-correction
+#     histogram by it and raises KeyError: None without it (upstream had no such key). With no
+#     model-level ONTOLOGY no class remap runs, and CLASS_NAMES ['Car'] is KITTI's own label.
+#   - NUM_EPOCHS_TO_EVAL 1 (the last two checkpoints, off by one), instead of the default 100.
+# Batch: upstream's config records none (it came from the CLI). The launcher passes the TOTAL batch
+# (`BATCH=16`), stated with the result. NUM_EPOCHS 80, LR 0.003 OneCycle, 0.1 / 0.1 / 0.15 voxels,
+# Car only, xyz features, no gt_sampling: all upstream's.
+_BASE_CONFIG_: cfgs/kitti_models/secondiou_orcale.yaml
+
+DATA_CONFIG:
+    ONTOLOGY: 'kitti'
+    FOV_POINTS_ONLY: False
+    TEST:
+        BOX_FILTER: {
+            'FOV_FILTER': True
+        }
+
+OPTIMIZATION:
+    NUM_EPOCHS_TO_EVAL: 1

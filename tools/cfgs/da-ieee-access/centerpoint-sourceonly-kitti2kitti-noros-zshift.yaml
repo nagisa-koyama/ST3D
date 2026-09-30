@@ -1,0 +1,50 @@
+# KITTI in-domain ORACLE, no object scaling, PLUS a vertical scene shift - the test of the oracle's
+# downhill blind spot.
+#
+# WHY. The no-ROS oracle (26717, 76.56 moderate BEV) misses 67-72% of moderate cars whose bottom sits
+# below -2.1 m in the LiDAR frame, against ~5% on normal ground, and scores 55.7 BEV on the 151 val
+# frames (4%) whose road 4-8 m ahead sits below -1.78 m, against 77.8 on the rest
+# (experiments_md/20260930_07 section 3). The nuScenes-trained accumulation rows have no such hole.
+# One candidate cause is that no augmentation in this list ever moves the ground: after SHIFT_COOR
+# it sits at z ~ 0, and random_world_scaling acts about the origin. This row adds a Gaussian z shift
+# of the whole scene and changes NOTHING else, so it is read against 26717 directly - pooled, and on
+# the low-road frames with `analysis/kitti_eval_cpu.py --split-ground -1.78`.
+#
+# THE STD. The misses start ~0.2 m below the nominal ground (-1.73 m) and reach ~0.9 m (cars at
+# -2.6 m); 0.3 m puts 2 sigma at 0.6 m. x and y stay 0 so the row isolates height. A closed hole means
+# the cause is the missing vertical augmentation and the same shift belongs in every KITTI-target
+# row; an open one points at the other candidates (a flat 3.7k-frame training set, pitch rather than
+# offset).
+#
+# AUG_CONFIG_LIST is a list, and lists do not merge: the whole resolved list of the -noros parent is
+# restated here with the translation appended, and tests/test_world_translation.py pins that the
+# rest is identical to the parent's.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-kitti2kitti-noros.yaml
+
+DATA_CONFIG:
+    DATA_AUGMENTOR:
+        AUG_CONFIG_LIST:
+            - NAME: normalize_object_size
+              SIZE_RES: [-0.91, -0.49, -0.26]
+
+            - NAME: random_object_rotation
+              ROT_PROB: 1.0
+              ROT_UNIFORM_NOISE: [-0.78539816, 0.78539816]
+
+            - NAME: random_object_scaling
+              SCALE_UNIFORM_NOISE: {
+                  'Car': [0.85, 1.2],
+                  'Pedestrian': [0.8, 1.25]
+              }
+
+            - NAME: random_world_flip
+              ALONG_AXIS_LIST: ['x', 'y']
+
+            - NAME: random_world_rotation
+              WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+
+            - NAME: random_world_scaling
+              WORLD_SCALE_RANGE: [0.95, 1.05]
+
+            - NAME: random_world_translation
+              NOISE_TRANSLATE_STD: [0.0, 0.0, 0.3]

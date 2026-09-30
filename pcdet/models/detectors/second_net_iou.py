@@ -28,7 +28,10 @@ class SECONDNetIoU(Detector3DTemplate):
 
     def get_training_loss(self, weights=None):
         disp_dict = {}
-        loss_rpn, tb_dict = self.dense_head.get_loss(weights)
+        # AnchorHeadTemplate.get_loss returns (loss, tb_dict, domain_loss) since the DANN port; the
+        # third value is None here (no domain label reaches this detector). Unpacking two raised
+        # "too many values to unpack" on the first iteration of every SECOND-IoU config.
+        loss_rpn, tb_dict, _ = self.dense_head.get_loss(weights)
         loss_rcnn, tb_dict = self.roi_head.get_loss(tb_dict)
 
         iou_weight = 1.0
