@@ -18,7 +18,6 @@ from torchinfo import summary
 
 from pcdet.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_file
 from pcdet.datasets import assert_target_labels_are_not_used, build_dataloader, link_point_calibration
-from pcdet.datasets.point_calibration import calibration_target_config
 from pcdet.models.model_utils.dsnorm import DSNorm
 from pcdet.models import build_network, model_fn_decorator
 from pcdet.utils import common_utils
@@ -293,6 +292,11 @@ def main():
         # calibration_target_config for the measured impact.
         calib_target = None
         if not wants_foreground:
+            # Imported HERE, not at module level: DDP DataLoader workers are spawned and re-run this
+            # file's module-level code from the LIVE checkout while resolving pcdet to the job's
+            # frozen snapshot, so a new module-level import from pcdet kills every running job's
+            # evaluation (job 26696, 2026-09-30). Keep new pcdet imports in train.py function-local.
+            from pcdet.datasets.point_calibration import calibration_target_config
             calib_cfg, calib_split = calibration_target_config(cfg.DATA_CONFIG_TAR)
             calib_target, _, _ = build_dataloader(
                 dataset_cfg=calib_cfg, class_names=cfg.CLASS_NAMES, batch_size=1,
