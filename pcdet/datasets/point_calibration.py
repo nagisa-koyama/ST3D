@@ -91,6 +91,35 @@ def compute_range_histogram(dataset, num_frames=DEFAULT_FRAMES, num_bins=DEFAULT
     return hist
 
 
+def calibration_target_config(target_cfg, split=None):
+    """The target dataset config to MEASURE the calibration target on, as a copy.
+
+    The calibration target is built in eval mode (no augmentation, no labels read), and eval mode
+    reads the config's 'test' split - which for every target here is the EVALUATION set (nuScenes
+    val, KITTI val, PandaSet val). No label is used, but measuring on the frames that are later
+    scored makes the procedure transductive. `split='train'` points the eval-mode view at the
+    target's TRAIN split instead - inductive UDA - by copying DATA_SPLIT/INFO_PATH 'train' into
+    'test' on a deep copy; the original config is untouched.
+
+    `split` defaults to `target_cfg.HIST_DIST_TARGET_SPLIT`, else 'train' since 2026-09-30. Before
+    that date every train.py calibration read 'test'. Measured impact (experiments_md/20260930_02),
+    as the median / p90 per-bin rate change against a same-split noise floor: nuScenes 3.8% / 8.5%
+    (noise 2.6% / 7.5%), PandarGT in-cone 4.1% / 11% (noise 2.6% / 8.0%), KITTI 8.4% / 25% (noise
+    2.9% / 7.4%) - KITTI's train and val drives differ beyond sampling noise. Set 'test' to reproduce
+    a pre-2026-09-30 row exactly.
+    """
+    import copy
+    split = split or target_cfg.get('HIST_DIST_TARGET_SPLIT', 'train')
+    if split not in ('train', 'test'):
+        raise ValueError("HIST_DIST_TARGET_SPLIT must be 'train' or 'test', got %r" % (split,))
+    cfg = copy.deepcopy(target_cfg)
+    if split == 'train':
+        for key in ('DATA_SPLIT', 'INFO_PATH'):
+            if key in cfg and 'train' in cfg[key]:
+                cfg[key]['test'] = cfg[key]['train']
+    return cfg, split
+
+
 def link_point_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
                            num_bins=DEFAULT_BINS, max_dist=MAX_DIST, logger=None,
                            fov_degree=None, fov_heading=0.0):

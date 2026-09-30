@@ -59,3 +59,37 @@ def test_no_fov_is_the_pooled_measurement_unchanged():
     a = compute_range_histogram(SPIN, num_frames=4, num_bins=13, max_dist=70)
     b = compute_range_histogram(SPIN, num_frames=4, num_bins=13, max_dist=70, fov_degree=None)
     np.testing.assert_array_equal(a, b)
+
+
+# --- calibration_target_config: which target split the density correction is measured on ---------
+from easydict import EasyDict
+
+from pcdet.datasets.point_calibration import calibration_target_config
+
+
+def _target_cfg(**extra):
+    return EasyDict(dict(DATA_SPLIT={'train': 'train', 'test': 'val'},
+                         INFO_PATH={'train': ['x_train.pkl'], 'test': ['x_val.pkl']}, **extra))
+
+
+def test_default_is_the_train_split():
+    cfg, split = calibration_target_config(_target_cfg())
+    assert split == 'train' and cfg.DATA_SPLIT.test == 'train' and cfg.INFO_PATH.test == ['x_train.pkl']
+
+
+def test_test_split_reproduces_the_historical_behaviour():
+    cfg, split = calibration_target_config(_target_cfg(HIST_DIST_TARGET_SPLIT='test'))
+    assert split == 'test' and cfg.DATA_SPLIT.test == 'val' and cfg.INFO_PATH.test == ['x_val.pkl']
+
+
+def test_train_split_points_the_eval_view_at_train_and_leaves_the_original_alone():
+    original = _target_cfg(HIST_DIST_TARGET_SPLIT='train')
+    cfg, split = calibration_target_config(original)
+    assert split == 'train'
+    assert cfg.DATA_SPLIT.test == 'train' and cfg.INFO_PATH.test == ['x_train.pkl']
+    assert original.DATA_SPLIT.test == 'val' and original.INFO_PATH.test == ['x_val.pkl']
+
+
+def test_unknown_split_refuses():
+    with pytest.raises(ValueError):
+        calibration_target_config(_target_cfg(HIST_DIST_TARGET_SPLIT='val'))

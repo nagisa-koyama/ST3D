@@ -18,6 +18,7 @@ from torchinfo import summary
 
 from pcdet.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_file
 from pcdet.datasets import assert_target_labels_are_not_used, build_dataloader, link_point_calibration
+from pcdet.datasets.point_calibration import calibration_target_config
 from pcdet.models.model_utils.dsnorm import DSNorm
 from pcdet.models import build_network, model_fn_decorator
 from pcdet.utils import common_utils
@@ -285,12 +286,22 @@ def main():
         # so dataset[i] would call fill_pseudo_labels before any pseudo-label pass has run and
         # raise, and would measure augmented clouds besides. No SELF_TRAIN run had ever used the
         # GLOBAL correction before the da-ieee-access-tier1 ST3D+global control, so this was latent.
+        # Which target SPLIT that view reads is DATA_CONFIG_TAR.HIST_DIST_TARGET_SPLIT: eval mode
+        # reads the config's 'test' split, which is the EVALUATION set, so the historical default
+        # measured the correction's target on the frames later scored (no labels, but transductive).
+        # Since 2026-09-30 the default is 'train'; 'test' reproduces an earlier row. See
+        # calibration_target_config for the measured impact.
         calib_target = None
         if not wants_foreground:
+            calib_cfg, calib_split = calibration_target_config(cfg.DATA_CONFIG_TAR)
             calib_target, _, _ = build_dataloader(
-                dataset_cfg=cfg.DATA_CONFIG_TAR, class_names=cfg.CLASS_NAMES, batch_size=1,
+                dataset_cfg=calib_cfg, class_names=cfg.CLASS_NAMES, batch_size=1,
                 dist=False, workers=0, logger=logger, training=False,
                 model_ontology=cfg.get('ONTOLOGY', None))
+            logger.info('point calibration: target measured on its %s split (%d frames)%s'
+                        % (calib_split, len(calib_target),
+                           '' if calib_split == 'train' else
+                           ' - the EVALUATION split (transductive); the default is train'))
         for dc, source in zip(data_configs.values(), source_datasets):
             if wants_foreground or not dc.get('HIST_DIST_ON_THE_FLY', False):
                 continue
