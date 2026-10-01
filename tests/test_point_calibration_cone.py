@@ -93,3 +93,61 @@ def test_train_split_points_the_eval_view_at_train_and_leaves_the_original_alone
 def test_unknown_split_refuses():
     with pytest.raises(ValueError):
         calibration_target_config(_target_cfg(HIST_DIST_TARGET_SPLIT='val'))
+
+
+# ---------------------------------------------------------------- augmentation during the measurement
+
+class _Augmentor:
+    def __init__(self, fns):
+        self.data_augmentor_queue = list(fns)
+
+
+class _Processor:
+    def set_hist_dist(self, src, tgt, max_dist):
+        self.src, self.tgt = src, tgt
+
+    def per_bin_sample_rate(self):
+        return np.ones_like(self.src)
+
+
+class _AugmentedFrames(_Frames):
+    """A training-mode source: __getitem__ runs the augmentor's queue, as prepare_data does."""
+
+    def __init__(self, clouds, fns):
+        super().__init__(clouds)
+        self.data_augmentor = _Augmentor(fns)
+        self.data_processor = _Processor()
+        self.calls = 0
+
+    def __getitem__(self, i):
+        d = {'points': self.clouds[i].copy()}
+        for fn in self.data_augmentor.data_augmentor_queue:
+            self.calls += 1
+            d = fn(d)
+        return d
+
+
+def _turn_around(d):  # a world flip / large rotation: the forward cone now points backwards
+    d['points'][:, :2] *= -1
+    return d
+
+
+def test_cone_calibration_measures_a_rotated_source_unrotated():
+    """Job 27001: augmentation turned PandarGT's cone away from heading 0 before it was counted, so
+    the flash source read ~1/3 of its points and the thinning was a no-op (20261001_03 section 5c)."""
+    from pcdet.datasets.point_calibration import link_point_calibration
+    src = _AugmentedFrames(FLASH.clouds, [_turn_around])
+    link_point_calibration(src, SPIN, num_frames=4, fov_degree=60.0)
+    expected = compute_range_histogram(FLASH, num_frames=4, fov_degree=60.0)
+    np.testing.assert_allclose(src.data_processor.src, expected)
+    assert src.calls == 0, 'the augmentation ran during a cone-restricted measurement'
+    assert src.data_augmentor.data_augmentor_queue == [_turn_around], 'the queue was not restored'
+
+
+def test_pooled_calibration_keeps_measuring_through_the_augmentation():
+    """Without a cone every existing row measures exactly as before, augmentation included."""
+    from pcdet.datasets.point_calibration import link_point_calibration
+    src = _AugmentedFrames(FLASH.clouds, [_turn_around])
+    link_point_calibration(src, SPIN, num_frames=4)
+    assert src.calls == 4
+    np.testing.assert_allclose(src.data_processor.src, compute_range_histogram(FLASH, num_frames=4))

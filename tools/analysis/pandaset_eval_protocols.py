@@ -61,6 +61,8 @@ ROWS = [  # label, result.pkl, target device, cone
     ('S4 old flash->spin, accum+pooled (26314), cone', O + 'centerpoint-accum-global-pandaset-flash2spin/20260923_psaccum_w16_staged/eval/epoch_115/val/recover_25827_ep115/result.pkl', 0, True),
     ('S4 control flash->spin, 15 ep (26974), 360', W + 'run-20261001_222222-uzi23xbs/files/eval/eval_with_train/epoch_15/val/result.pkl', 0, False),
     ('S4 control flash->spin, 15 ep (26974), cone', W + 'run-20261001_222222-uzi23xbs/files/eval/eval_with_train/epoch_15/val/result.pkl', 0, True),
+    ('S4 thinning in the cone, 15 ep (27001), 360', W + 'run-20261002_002220-3nbs4nyu/files/eval/eval_with_train/epoch_15/val/result.pkl', 0, False),
+    ('S4 thinning in the cone, 15 ep (27001), cone', W + 'run-20261002_002220-3nbs4nyu/files/eval/eval_with_train/epoch_15/val/result.pkl', 0, True),
     ('S3 oracle flash->flash, 15 ep (26974 ckpt)', O + 'centerpoint-pandaset-flash2flash/20261001_pandaset/eval/epoch_15/val/s3oracle15/result.pkl', 1, True),
 ]
 PROTOCOLS = ['as_scored', 'pts>=1', 'in_range', 'in_range,pts>=1', 'in_range,pts>=5', 'rule_A']
@@ -127,7 +129,7 @@ def ignore_mask(frame, protocol):
     raise ValueError(protocol)
 
 
-def score(gt, dets, cone, protocol, official):
+def score(gt, dets, cone, protocol, official, cls='Car'):
     from pcdet.datasets.pandaset.pandaset_dataset import fov_mask
     g_annos, d_annos = [], []
     for f, d in zip(gt, dets):
@@ -153,21 +155,22 @@ def score(gt, dets, cone, protocol, official):
     kitti_utils.transform_annotations_to_kitti_format(g_annos, map_name_to_kitti=MAP, info_with_fakelidar=False)
     for g in g_annos:
         g['occluded'] = np.where(g.pop('ignore'), 3, 0)  # beyond every difficulty level: ignored
-    _, ap = official.get_official_eval_result(g_annos, d_annos, ['Car'])
-    return ap['Car_bev/moderate_R40'], ap['Car_3d/moderate_R40']
+    _, ap = official.get_official_eval_result(g_annos, d_annos, [cls])  # Car at IoU 0.7, Pedestrian at 0.5
+    return ap[f'{cls}_bev/moderate_R40'], ap[f'{cls}_3d/moderate_R40']
 
 
 def main():
     import argparse
     ap = argparse.ArgumentParser(); ap.add_argument('--protocols', nargs='+', default=PROTOCOLS, choices=PROTOCOLS)
     ap.add_argument('--only', nargs='*', default=None, help='score only rows whose label contains one of these')
+    ap.add_argument('--cls', default='Car', choices=['Car', 'Pedestrian'])
     args = ap.parse_args(); protocols = args.protocols
     os.chdir(TOOLS)
     official = load_official_eval()
     gts = {d: gt_with_counts(d) for d in (0, 1)}
     for d in (0, 1):
         summarise_counts(gts[d], d)
-    print('\nCar AP_R40 BEV / 3D (the three difficulty columns are identical on this target)')
+    print(f'\n{args.cls} AP_R40 BEV / 3D (the three difficulty columns are identical on this target)')
     print(f"{'row':48s} " + ' '.join(f'{p:>17s}' for p in protocols))
     for label, path, device, cone in ROWS:
         if args.only is not None and not any(t in label for t in args.only):
@@ -175,7 +178,7 @@ def main():
         if not os.path.exists(path):
             print(f'{label:48s} (no predictions yet: {path})'); continue
         dets = pickle.load(open(path, 'rb'))
-        cells = [score(gts[device], dets, cone, p, official) for p in protocols]
+        cells = [score(gts[device], dets, cone, p, official, args.cls) for p in protocols]
         print(f'{label:48s} ' + ' '.join(f'{b:7.2f} / {t:6.2f}' for b, t in cells), flush=True)
 
 

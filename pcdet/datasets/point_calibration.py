@@ -120,6 +120,35 @@ def calibration_target_config(target_cfg, split=None):
     return cfg, split
 
 
+class _augmentation_off:
+    """Measure a dataset with its training augmentation switched off, restoring it afterwards.
+
+    A cone-restricted histogram assumes the sensor's own orientation: the cone is fixed at
+    `fov_heading`. A SOURCE dataset is sampled in training mode, so random world flips and rotations
+    turn a limited-FOV source (PandarGT, all points within +-30 deg) away from that heading before
+    the cone is applied. Job 27001 (flash -> spin) counted 18,802 flash points per frame in the cone
+    against the ~59k really there, so its source looked SPARSER than the spin target and the
+    thinning it existed to test was a no-op in 40 of 50 bins (experiments_md/20261001_03 section 5c).
+    Radial rates are applied by radius, which rotation does not change, so measuring unrotated and
+    applying to rotated points is consistent. Emptying the augmentor's queue (rather than flipping
+    `training`) leaves every other part of the training-mode pipeline as it is.
+    """
+
+    def __init__(self, dataset):
+        base = dataset if hasattr(dataset, 'data_augmentor') else getattr(dataset, 'dataset', dataset)
+        self.augmentor = getattr(base, 'data_augmentor', None)
+
+    def __enter__(self):
+        if self.augmentor is not None:
+            self.saved, self.augmentor.data_augmentor_queue = self.augmentor.data_augmentor_queue, []
+        return self
+
+    def __exit__(self, *exc):
+        if self.augmentor is not None:
+            self.augmentor.data_augmentor_queue = self.saved
+        return False
+
+
 def link_point_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
                            num_bins=DEFAULT_BINS, max_dist=MAX_DIST, logger=None,
                            fov_degree=None, fov_heading=0.0):
@@ -136,8 +165,14 @@ def link_point_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
     inside one azimuth cone - see compute_range_histogram. None keeps the pooled 360-degree
     measurement every existing config uses.
     """
-    src = compute_range_histogram(source_set, num_frames, num_bins, max_dist, logger=logger,
-                                  fov_degree=fov_degree, fov_heading=fov_heading)
+    # With a cone, measure the source unrotated (see _augmentation_off); without one, exactly as before.
+    if fov_degree is not None:
+        with _augmentation_off(source_set):
+            src = compute_range_histogram(source_set, num_frames, num_bins, max_dist, logger=logger,
+                                          fov_degree=fov_degree, fov_heading=fov_heading)
+    else:
+        src = compute_range_histogram(source_set, num_frames, num_bins, max_dist, logger=logger,
+                                      fov_degree=fov_degree, fov_heading=fov_heading)
     tgt = compute_range_histogram(target_set, num_frames, num_bins, max_dist, logger=logger,
                                   fov_degree=fov_degree, fov_heading=fov_heading)
     source_set.data_processor.set_hist_dist(src, tgt, max_dist=max_dist)
