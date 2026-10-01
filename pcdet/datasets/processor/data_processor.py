@@ -302,7 +302,15 @@ class DataProcessor(object):
         this stage.
         """
         if data_dict is None:
-            return partial(self.downsample_beams, config=config)
+            # Refused at BUILD time, before any frame is read. A processor stage runs after
+            # SHIFT_COOR and after world augmentation, and ring recovery from there is no better
+            # than chance (purity 0.09-0.13, keep-mask agreement 0.50, 2026-10-01): elevation must
+            # be measured about the sensor, whose position this stage cannot know. Use the
+            # dataset-level BEAM_DROP / BEAM_DISTILL blocks, which label rings before augmentation.
+            raise NotImplementedError(
+                'downsample_beams as a DATA_PROCESSOR stage measures ring elevation about the '
+                'SHIFT_COOR-shifted, augmented origin and does not recover rings. Use BEAM_DROP or '
+                'BEAM_DISTILL in the dataset config instead (see beam_downsample_utils.ring_labels).')
 
         beam_ratio = config.get('BEAM_RATIO', 1)
         bin_ratio = config.get('BIN_RATIO', 1)
@@ -428,6 +436,12 @@ class DataProcessor(object):
         src = np.asarray(pair[0], dtype=np.float64)
         tgt = np.asarray(pair[1], dtype=np.float64)
         frac = 0.01 if config is None else config.get('MIN_HIST_BIN_FRACTION', 0.01)
+        if config is not None and config.get('UNIFORM_RATE', False):
+            # Control for the radial SHAPE of the correction: one keep-probability for the whole
+            # cloud, set so the expected total matches the target's points per frame. Same
+            # histograms, same calibration pass, same frames - only the per-bin structure is gone.
+            assert channel == 'all', 'UNIFORM_RATE is a control for the global correction only'
+            return np.full_like(src, tgt.sum() / src.sum())
         trusted = (src > max(frac * src.mean(), 0.0)) & (tgt > max(frac * tgt.mean(), 0.0))
         rate = np.ones_like(src)
         np.divide(tgt, src, out=rate, where=trusted)

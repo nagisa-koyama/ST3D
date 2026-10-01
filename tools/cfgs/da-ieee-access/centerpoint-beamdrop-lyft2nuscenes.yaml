@@ -1,0 +1,63 @@
+# BEAM-COUNT MATCHING control for the dense -> sparse density correction - Lyft -> nuScenes.
+#
+# The direct competitor to the global correction on this pair: make the dense source look like the
+# 32-beam target by dropping whole laser rings (random beam re-sampling, as in DTS, CVPR 2023, and
+# the beam half of LiDAR Distillation, ECCV 2022), instead of thinning points per range bin. Each
+# frame keeps 32 rings chosen at random from its platform's rings, so every elevation still appears
+# over training. Lyft's dominant platform has 40 rings, and 40 -> 32 is not an integer decimation,
+# which is why this uses a random subset rather than keep-every-k-th.
+#
+# ONE VARIABLE from centerpoint-global-lyft2nuscenes (job 25781, 28.22 / 13.12): same per-platform
+# split, SHIFT_COOR, model, schedule and batch; the sample_points_hist_based stage is removed and
+# BEAM_DROP added. Read against 25781 and the MeanVFE control 25835 (23.17 / 10.16).
+#
+# Rings are labelled about the SENSOR before augmentation (dataset.py _attach_ring_labels; ST3D
+# 2026-10-01). The earlier processor-stage path measured elevation about the SHIFT_COOR origin and
+# recovered no rings (purity 0.09-0.13), so it is refused at build time. The 40-beam platform also
+# carries two bumper lidars merged into the roof frame; their points are assigned to the nearest
+# roof ring and dropped with it - stated, not corrected.
+#
+# Launch: 1 GPU, global batch 6, train.py (source-only; nuScenes is eval-only).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-global-lyft2nuscenes.yaml
+
+DATA_CONFIGS:
+    LYFT_40BEAM:
+        HIST_DIST_ON_THE_FLY: False
+        BEAM_DROP:
+            NUM_BEAMS: 40
+            KEEP_BEAMS: 32
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }
+    LYFT_64BEAM:
+        HIST_DIST_ON_THE_FLY: False
+        BEAM_DROP:
+            NUM_BEAMS: 64
+            KEEP_BEAMS: 32
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }

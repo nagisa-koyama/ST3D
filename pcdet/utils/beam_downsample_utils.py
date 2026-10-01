@@ -132,6 +132,48 @@ def generate_mask(phi, label, num_beams, beam_ratio=1, bin_ratio=1):
     return mask
 
 
+def ring_labels(points, num_beams, sensor_origin=(0.0, 0.0, 0.0), centroids=None,
+                max_fit_points=20000, seed=0):
+    """Laser ring of every point, with elevation measured about the SENSOR.
+
+    A ring is a cone of constant elevation about the sensor, so the angle must be measured from
+    where the sensor is. Every loader in this repo adds SHIFT_COOR to the points at load time,
+    which moves the origin to the ground (~1.7-2.0 m below the sensor); measured about that
+    origin, one ring's points spread over several degrees with range and the KMeans clusters
+    mix rings. Measured 2026-10-01 on six frames each: with the origin left at the shifted
+    position, cluster purity against the true rings is 0.09 (KITTI), 0.13 (Lyft 40-beam) and
+    0.11 (Lyft 64-beam), and a keep-every-other-ring mask agrees with the true one 50% of the
+    time - chance - at every range. Pass `sensor_origin = SHIFT_COOR` for a shifted cloud.
+
+    Must run BEFORE world augmentation: global scaling moves the sensor to `s * SHIFT_COOR` and
+    is not recorded, which would bring the same error back at a few cm per percent of scale.
+
+    Returns:
+        label: (N,) int ring index in ascending elevation, -1 where the angle is undefined.
+        centroids: the ring elevations used; pass them back to skip the fit on the next frame.
+    """
+    q = np.asarray(points[:, 0:3], dtype=np.float64) - np.asarray(sensor_origin, dtype=np.float64)
+    theta, _, valid = compute_angles(q)
+    if centroids is None:
+        centroids = fit_beam_centroids(theta[valid], num_beams, max_fit_points=max_fit_points,
+                                       seed=seed)
+    return beam_label_from_centroids(theta, centroids, valid=valid), centroids
+
+
+def random_ring_subset_mask(label, num_beams, keep_beams, rng=None):
+    """Keep `keep_beams` of the `num_beams` rings, chosen uniformly at random for this frame.
+
+    The beam-count-matching control for a dense -> sparse pair whose ratio is not an integer
+    (Lyft 40-beam -> nuScenes 32 cannot be reached by keeping every k-th ring). Drawing the subset
+    per frame, rather than fixing it, keeps every elevation represented over training, as random
+    beam re-sampling does. Points with no ring (label -1) are dropped, as in `generate_mask`.
+    """
+    assert 0 < keep_beams <= num_beams, (keep_beams, num_beams)
+    rng = np.random if rng is None else rng
+    kept = rng.choice(num_beams, keep_beams, replace=False)
+    return np.isin(label, kept)
+
+
 def downsample_beams(points, num_beams, beam_ratio=1, bin_ratio=1, centroids=None,
                      max_fit_points=20000, seed=0):
     """One-call beam downsampling. Returns the kept points and the centroids used.

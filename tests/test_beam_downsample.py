@@ -278,11 +278,20 @@ class TestPairedSplit:
     class _FakeDataset:
         from pcdet.datasets.dataset import DatasetTemplate
         _split_for_beam_distillation = DatasetTemplate._split_for_beam_distillation
+        _attach_ring_labels = DatasetTemplate._attach_ring_labels
+        _pop_ring_labels = staticmethod(DatasetTemplate._pop_ring_labels)
 
-        def __init__(self, cfg):
+        def __init__(self, cfg, shift=None):
+            from easydict import EasyDict
             self.beam_distill_cfg = cfg
+            self.dataset_cfg = EasyDict({} if shift is None else {'SHIFT_COOR': list(shift)})
             self.beam_centroids = None
             self.processed = []
+
+        def run(self, data_dict):
+            """What prepare_data does: label rings first, split after (augmentation in between)."""
+            return self._split_for_beam_distillation(
+                self._attach_ring_labels(data_dict, self.beam_distill_cfg))
 
         class _Identity:
             def __init__(self, outer):
@@ -310,7 +319,7 @@ class TestPairedSplit:
     def test_student_is_thinner_and_the_teacher_untouched(self):
         points, _ = make_rings(ELEVATIONS, n_azimuth=32)
         ds = self._FakeDataset(self._cfg())
-        student, teacher = ds._split_for_beam_distillation(
+        student, teacher = ds.run(
             {'points': points, 'gt_boxes': np.zeros((3, 8), dtype=np.float32),
              'gt_names': np.array(['Car'] * 3)})
         assert len(teacher['points']) == len(points)
@@ -323,7 +332,7 @@ class TestPairedSplit:
         boxes = np.zeros((3, 8), dtype=np.float32)
         ds = self._FakeDataset(self._cfg())
         data = {'points': points, 'gt_boxes': boxes, 'gt_names': np.array(['Car'] * 3)}
-        student, teacher = ds._split_for_beam_distillation(data)
+        student, teacher = ds.run(data)
         for key in ('points', 'gt_boxes'):
             assert student[key] is not teacher[key]
             assert teacher[key] is not data[key]
@@ -333,7 +342,7 @@ class TestPairedSplit:
         points, _ = make_rings(ELEVATIONS, n_azimuth=32)
         boxes = np.arange(24, dtype=np.float32).reshape(3, 8)
         ds = self._FakeDataset(self._cfg())
-        student, teacher = ds._split_for_beam_distillation(
+        student, teacher = ds.run(
             {'points': points, 'gt_boxes': boxes, 'gt_names': np.array(['Car'] * 3)})
         assert np.array_equal(student['gt_boxes'], teacher['gt_boxes'])
 
@@ -343,15 +352,15 @@ class TestPairedSplit:
         points, _ = make_rings(ELEVATIONS, n_azimuth=8)
         ds = self._FakeDataset(self._cfg(BEAM_RATIO=1, BIN_RATIO=1))
         with pytest.raises(AssertionError, match='identically zero'):
-            ds._split_for_beam_distillation({'points': points})
+            ds.run({'points': points})
 
     def test_centroids_are_fitted_once_and_cached(self):
         points, _ = make_rings(ELEVATIONS, n_azimuth=32)
         ds = self._FakeDataset(self._cfg())
-        ds._split_for_beam_distillation({'points': points})
+        ds.run({'points': points})
         assert ds.beam_centroids is not None
         first = ds.beam_centroids
-        ds._split_for_beam_distillation({'points': points})
+        ds.run({'points': points})
         assert ds.beam_centroids is first
 
 
@@ -434,3 +443,107 @@ class TestReferenceNormalization:
         ref = distill_utils.bev_imitation_loss({'spatial_features_2d': student, 'gt_boxes': boxes}, {'spatial_features_2d': teacher}, normalization='reference', **kw)
         val = distill_utils.bev_imitation_loss({'spatial_features_2d': student, 'gt_boxes': boxes}, {'spatial_features_2d': teacher}, normalization='valid', **kw)
         assert val.item() == pytest.approx(ref.item() * (2 * 3) / 4, rel=1e-5)
+
+
+def make_rings_multi_range(elevations, radii=(4.0, 8.0, 15.0, 30.0, 60.0), n_azimuth=90):
+    """Rings sampled at several ranges, as a real sweep is - so a wrong origin smears each ring."""
+    pts, ids = [], []
+    for r in radii:
+        p, i = make_rings(elevations, n_azimuth=n_azimuth, radius=r)
+        pts.append(p); ids.append(i)
+    return np.concatenate(pts), np.concatenate(ids)
+
+
+class TestRingLabelsAboutTheSensor:
+    """Regression for 2026-10-01: rings were recovered about the SHIFT_COOR-shifted origin."""
+
+    SHIFT = (0.0, 0.0, 1.87)
+
+    def _shifted(self):
+        points, true = make_rings_multi_range(ELEVATIONS)
+        points = points.copy()
+        points[:, 2] += self.SHIFT[2]          # what every loader does at load time
+        return points, true
+
+    def test_sensor_origin_recovers_every_ring(self):
+        points, true = self._shifted()
+        label, _ = bd.ring_labels(points, len(ELEVATIONS), sensor_origin=self.SHIFT)
+        assert np.array_equal(label, true)
+
+    def test_the_shifted_origin_does_not(self):
+        """The pre-fix behaviour, kept as a test so the failure mode stays documented."""
+        points, true = self._shifted()
+        label, _ = bd.ring_labels(points, len(ELEVATIONS), sensor_origin=(0.0, 0.0, 0.0))
+        assert np.mean(label == true) < 0.6
+
+    def test_labels_survive_world_augmentation(self):
+        """Rotation, flip and scaling move x, y, z and must carry the trailing label column."""
+        from pcdet.utils import common_utils
+        points, true = self._shifted()
+        ds = TestPairedSplit._FakeDataset(TestPairedSplit()._cfg(), shift=self.SHIFT)
+        data = ds._attach_ring_labels({'points': points}, ds.beam_distill_cfg)
+        aug = data['points']
+        aug = common_utils.rotate_points_along_z(aug[np.newaxis], np.array([0.6]))[0]
+        aug[:, 1] = -aug[:, 1]
+        aug[:, :3] *= 1.04
+        label, stripped = ds._pop_ring_labels(aug)
+        assert stripped.shape[1] == points.shape[1]
+        assert np.array_equal(label, true)
+
+    def test_distillation_student_keeps_whole_true_rings(self):
+        points, true = self._shifted()
+        ds = TestPairedSplit._FakeDataset(TestPairedSplit()._cfg(), shift=self.SHIFT)
+        student, teacher = ds.run({'points': points})
+        kept_z = np.round(student['points'][:, 2], 4)
+        # every kept point belongs to an even true ring, and every even ring is kept in full
+        expected = points[true % 2 == 0]
+        assert len(student['points']) == len(expected)
+        assert np.allclose(np.sort(kept_z), np.sort(np.round(expected[:, 2], 4)))
+        assert teacher['points'].shape == points.shape
+
+
+class TestRandomRingSubset:
+    def test_exactly_k_rings_survive(self):
+        points, true = make_rings_multi_range(ELEVATIONS)
+        mask = bd.random_ring_subset_mask(true, len(ELEVATIONS), 12, rng=np.random.RandomState(3))
+        assert len(np.unique(true[mask])) == 12
+        for ring in np.unique(true[mask]):          # whole rings, never partial
+            assert mask[true == ring].all()
+
+    def test_subset_changes_between_frames(self):
+        _, true = make_rings_multi_range(ELEVATIONS)
+        rng = np.random.RandomState(0)
+        a = set(np.unique(true[bd.random_ring_subset_mask(true, 16, 12, rng=rng)]))
+        b = set(np.unique(true[bd.random_ring_subset_mask(true, 16, 12, rng=rng)]))
+        assert a != b
+
+    def test_points_without_a_ring_are_dropped(self):
+        label = np.array([-1, 0, 1, 2])
+        mask = bd.random_ring_subset_mask(label, 3, 3)
+        assert not mask[0] and mask[1:].all()
+
+
+class TestProcessorStageRefused:
+    def test_build_time_refusal(self):
+        from pcdet.datasets.processor.data_processor import DataProcessor
+        dp = DataProcessor.__new__(DataProcessor)
+        with pytest.raises(NotImplementedError, match='BEAM_DROP or'):
+            dp.downsample_beams(data_dict=None, config={'NUM_BEAMS': 64, 'BEAM_RATIO': 2})
+
+
+class TestUniformRate:
+    def _dp(self):
+        from pcdet.datasets.processor.data_processor import DataProcessor
+        dp = DataProcessor.__new__(DataProcessor)
+        dp.hist_dist_src = np.array([100.0, 50.0, 10.0, 0.0])
+        dp.hist_dist_tgt = np.array([20.0, 30.0, 30.0, 5.0])
+        dp.hist_fg_src = dp.hist_fg_tgt = dp.hist_bg_src = dp.hist_bg_tgt = None
+        return dp
+
+    def test_one_rate_equal_to_the_total_ratio(self):
+        rate = self._dp().per_bin_sample_rate({'UNIFORM_RATE': True})
+        assert np.allclose(rate, 85.0 / 160.0)
+
+    def test_default_stays_per_bin(self):
+        rate = self._dp().per_bin_sample_rate({})
+        assert np.allclose(rate[:3], [0.2, 0.6, 3.0])

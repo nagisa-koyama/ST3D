@@ -199,6 +199,13 @@ class DatasetTemplate(torch_data.Dataset):
         # untouched. `beam_centroids` caches the fitted ring elevations per dataset instance, i.e.
         # per DataLoader worker.
         self.beam_distill_cfg = self.dataset_cfg.get('BEAM_DISTILL', None)
+        # BEAM_DROP: keep KEEP_BEAMS of the source's NUM_BEAMS rings, a random subset per frame, in
+        # training only - the beam-count-matching control for a dense -> sparse pair. Both blocks
+        # need ring labels, which `_attach_ring_labels` computes BEFORE augmentation, about the
+        # sensor (SHIFT_COOR), and carries through the augmentor as a trailing point column.
+        self.beam_drop_cfg = self.dataset_cfg.get('BEAM_DROP', None)
+        assert self.beam_distill_cfg is None or self.beam_drop_cfg is None, \
+            'BEAM_DISTILL and BEAM_DROP both drop rings from the same cloud; set one of them'
         self.beam_centroids = None
         self.total_epochs = 0
         self._merge_all_iters_to_one_epoch = False
@@ -470,6 +477,10 @@ class DatasetTemplate(torch_data.Dataset):
             data_dict['gt_names'] = np.array(updated_gt_names)
             # print("data_dict[gt_names] in prepare_data after multi-head label update", data_dict['gt_names'])
 
+        ring_cfg = self.beam_distill_cfg if self.beam_distill_cfg is not None else self.beam_drop_cfg
+        if ring_cfg is not None and self.training:
+            data_dict = self._attach_ring_labels(data_dict, ring_cfg)
+
         # `and not self.unsupervised`: everything in this block reads or rewrites ground truth -
         # the zero-point filter, the assert, the class mask and the augmentor - so a DA target
         # must skip all of it. See the note at self.unsupervised in __init__.
@@ -516,6 +527,10 @@ class DatasetTemplate(torch_data.Dataset):
         # LiDAR Distillation: one augmented cloud, two beam resolutions.
         if self.beam_distill_cfg is not None and self.training:
             return self._split_for_beam_distillation(data_dict)
+        if self.beam_drop_cfg is not None and self.training:
+            ring, data_dict['points'] = self._pop_ring_labels(data_dict['points'])
+            data_dict['points'] = data_dict['points'][beam_downsample_utils.random_ring_subset_mask(
+                ring, self.beam_drop_cfg.NUM_BEAMS, self.beam_drop_cfg.KEEP_BEAMS)]
 
         data_dict = self.point_feature_encoder.forward(data_dict)
 
@@ -532,6 +547,29 @@ class DatasetTemplate(torch_data.Dataset):
         # data_dict.pop('gt_classes', None)
 
         return data_dict
+
+    def _attach_ring_labels(self, data_dict, ring_cfg):
+        """Append each point's laser ring as a trailing column, measured about the SENSOR.
+
+        Runs before augmentation, when the only transform applied since the file was read is
+        SHIFT_COOR, so the sensor sits exactly at SHIFT_COOR. Every augmentation in use keeps
+        trailing columns: world flip / rotation / scaling touch x, y, z only, and object scaling
+        moves whole rows (and removes some), so a per-point label survives where a precomputed
+        mask would not. `_pop_ring_labels` strips the column before the point feature encoder.
+        """
+        points = data_dict['points']
+        origin = self.dataset_cfg.get('SHIFT_COOR', None) or (0.0, 0.0, 0.0)
+        label, self.beam_centroids = beam_downsample_utils.ring_labels(
+            points, ring_cfg.NUM_BEAMS, sensor_origin=origin, centroids=self.beam_centroids,
+            max_fit_points=ring_cfg.get('MAX_FIT_POINTS', 20000))
+        data_dict['points'] = np.concatenate(
+            [points, label.reshape(-1, 1).astype(points.dtype)], axis=1)
+        return data_dict
+
+    @staticmethod
+    def _pop_ring_labels(points):
+        """(ring label per point, the points without the label column)."""
+        return points[:, -1].astype(np.int64), np.ascontiguousarray(points[:, :-1])
 
     def _split_for_beam_distillation(self, data_dict):
         """Return (student, teacher) views of ONE augmented frame, at two beam resolutions.
@@ -559,14 +597,15 @@ class DatasetTemplate(torch_data.Dataset):
             'BEAM_DISTILL with BEAM_RATIO 1 and BIN_RATIO 1 would give the student the teacher\'s ' \
             'own cloud, making the imitation loss identically zero. Set one of them.'
 
-        student_points, self.beam_centroids = beam_downsample_utils.downsample_beams(
-            data_dict['points'],
-            num_beams=self.beam_distill_cfg.NUM_BEAMS,
-            beam_ratio=beam_ratio,
-            bin_ratio=bin_ratio,
-            centroids=self.beam_centroids,
-            max_fit_points=self.beam_distill_cfg.get('MAX_FIT_POINTS', 20000),
-        )
+        # Rings come from the label `_attach_ring_labels` computed before augmentation, about the
+        # sensor. Until 2026-10-01 they were re-derived here from the shifted, augmented cloud,
+        # which recovers no rings at all (keep-mask agreement 0.50 with the true one) - so the
+        # student was thinned by elevation bands about the ground, not by laser rings.
+        ring, points = self._pop_ring_labels(data_dict['points'])
+        _, phi, _ = beam_downsample_utils.compute_angles(points)
+        student_points = points[beam_downsample_utils.generate_mask(
+            phi, ring, self.beam_distill_cfg.NUM_BEAMS, beam_ratio=beam_ratio, bin_ratio=bin_ratio)]
+        data_dict['points'] = points
 
         def _stream(points):
             # Fresh arrays per stream: the processor edits 'points' and 'gt_boxes' in place, so two

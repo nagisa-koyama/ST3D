@@ -1,0 +1,51 @@
+# UNIFORM-RATE control for the dense -> sparse density correction - Lyft -> nuScenes.
+#
+# Does the RADIAL SHAPE of the correction matter, or only the total point count? Same calibration
+# pass, same histograms, same frames as centerpoint-global-lyft2nuscenes (job 25781), but one
+# keep-probability for the whole cloud (target points per frame / source points per frame, per
+# platform) instead of one per 1.5 m range bin (`UNIFORM_RATE: True`, data_processor.py
+# per_bin_sample_rate). If this row matches 28.22, the per-bin profile is not what the correction
+# buys; if it sits near the control 23.17, it is.
+#
+# ONE VARIABLE from 25781. Launch: 1 GPU, global batch 6, train.py.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-global-lyft2nuscenes.yaml
+
+DATA_CONFIGS:
+    LYFT_40BEAM:
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+            - NAME: sample_points_hist_based
+              MIN_HIST_BIN_FRACTION: 0.01
+              UNIFORM_RATE: True
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }
+    LYFT_64BEAM:
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+            - NAME: sample_points_hist_based
+              MIN_HIST_BIN_FRACTION: 0.01
+              UNIFORM_RATE: True
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }
