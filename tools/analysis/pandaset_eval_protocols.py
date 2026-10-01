@@ -14,8 +14,12 @@ Protocols (applied to GT of every class; Car AP is reported):
   in_range        ignore GT whose centre lies outside +-75.2 m (where no prediction can be placed)
   in_range,pts>=1 both
   in_range,pts>=5 both, with Waymo's LEVEL_1 bar (more than 5 points)
+  rule_A          THE PROTOCOL ADOPTED (2026-10-02), the nuScenes devkit's filter_eval_boxes with our range:
+                  GT REMOVED unless its centre is within RADIUS of the ego vehicle and it holds >= 1 point
+                  of the target sensor; predictions REMOVED if their centre is beyond RADIUS. Removal, not
+                  ignore, and a circle, not the detector's square - as nuScenes does it.
 
-    python pandaset_eval_protocols.py   # counts (cached under output/analysis/), then the table
+    python pandaset_eval_protocols.py [--protocols rule_A ...]   # counts (cached), then the table
 """
 import copy
 import os
@@ -35,6 +39,7 @@ from pcdet.ops.roiaware_pool3d.roiaware_pool3d_utils import points_in_boxes_cpu 
 from kitti_eval_cpu import load_official_eval  # noqa: E402
 
 LIMIT = 75.2
+RADIUS = 75.0  # rule_A evaluation range (centre distance in the ground plane)
 CACHE = TOOLS.parent / 'output' / 'analysis'
 W = '/home/koyama/data/wandb/'
 O = str(TOOLS.parent / 'output' / 'da-ieee-access') + '/'
@@ -51,10 +56,14 @@ ROWS = [  # label, result.pkl, target device, cone
     ('S4 oracle spin->spin, full (26389), 360', O + 'centerpoint-pandaset-spin2spin/20261001_pandaset/eval/epoch_115/val/s4oracle_360/result.pkl', 0, False),
     ('S4 oracle spin->spin, full (26389), cone', O + 'centerpoint-pandaset-spin2spin/20261001_pandaset/eval/epoch_115/val/s4oracle_360/result.pkl', 0, True),
     ('S4 oracle, 15 ep (26510), 360', O + 'centerpoint-pandaset-spin2spin/20261001_pandaset/eval/epoch_15/val/s4oracle15_360/result.pkl', 0, False),
+    ('S4 oracle, 15 ep (26510), cone', O + 'centerpoint-pandaset-spin2spin/20261001_pandaset/eval/epoch_15/val/s4oracle15_360/result.pkl', 0, True),
     ('S4 old flash->spin, accum+pooled (26314), 360', O + 'centerpoint-accum-global-pandaset-flash2spin/20260923_psaccum_w16_staged/eval/epoch_115/val/recover_25827_ep115/result.pkl', 0, False),
     ('S4 old flash->spin, accum+pooled (26314), cone', O + 'centerpoint-accum-global-pandaset-flash2spin/20260923_psaccum_w16_staged/eval/epoch_115/val/recover_25827_ep115/result.pkl', 0, True),
+    ('S4 control flash->spin, 15 ep (26974), 360', W + 'run-20261001_222222-uzi23xbs/files/eval/eval_with_train/epoch_15/val/result.pkl', 0, False),
+    ('S4 control flash->spin, 15 ep (26974), cone', W + 'run-20261001_222222-uzi23xbs/files/eval/eval_with_train/epoch_15/val/result.pkl', 0, True),
+    ('S3 oracle flash->flash, 15 ep (26974 ckpt)', O + 'centerpoint-pandaset-flash2flash/20261001_pandaset/eval/epoch_15/val/s3oracle15/result.pkl', 1, True),
 ]
-PROTOCOLS = ['as_scored', 'pts>=1', 'in_range', 'in_range,pts>=1', 'in_range,pts>=5']
+PROTOCOLS = ['as_scored', 'pts>=1', 'in_range', 'in_range,pts>=1', 'in_range,pts>=5', 'rule_A']
 
 
 def gt_with_counts(device):
@@ -124,8 +133,15 @@ def score(gt, dets, cone, protocol, official):
     for f, d in zip(gt, dets):
         assert d['frame_id'] == f['frame_idx'], 'prediction and GT lists are not in the same order'
         g = {'gt_boxes': f['gt_boxes'].copy(), 'gt_names': f['gt_names'].copy()}
-        ign = ignore_mask(f, protocol)
         d = {k: copy.deepcopy(d[k]) for k in ('boxes_lidar', 'name', 'score')}
+        if protocol == 'rule_A':  # nuScenes filter_eval_boxes: remove, both sides
+            keep = (np.hypot(g['gt_boxes'][:, 0], g['gt_boxes'][:, 1]) <= RADIUS) & (f['n_pts'] >= 1)
+            g = {k: v[keep] for k, v in g.items()}
+            dk = np.hypot(d['boxes_lidar'][:, 0], d['boxes_lidar'][:, 1]) <= RADIUS
+            d = {k: v[dk] for k, v in d.items()}
+            ign = np.zeros(len(g['gt_boxes']), bool)
+        else:
+            ign = ignore_mask(f, protocol)
         if cone:
             gm = fov_mask(g['gt_boxes'], 60.0, 0.0) if len(g['gt_boxes']) else np.zeros(0, bool)
             g = {k: v[gm] for k, v in g.items()}; ign = ign[gm]
@@ -142,16 +158,24 @@ def score(gt, dets, cone, protocol, official):
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser(); ap.add_argument('--protocols', nargs='+', default=PROTOCOLS, choices=PROTOCOLS)
+    ap.add_argument('--only', nargs='*', default=None, help='score only rows whose label contains one of these')
+    args = ap.parse_args(); protocols = args.protocols
     os.chdir(TOOLS)
     official = load_official_eval()
     gts = {d: gt_with_counts(d) for d in (0, 1)}
     for d in (0, 1):
         summarise_counts(gts[d], d)
     print('\nCar AP_R40 BEV / 3D (the three difficulty columns are identical on this target)')
-    print(f"{'row':48s} " + ' '.join(f'{p:>17s}' for p in PROTOCOLS))
+    print(f"{'row':48s} " + ' '.join(f'{p:>17s}' for p in protocols))
     for label, path, device, cone in ROWS:
+        if args.only is not None and not any(t in label for t in args.only):
+            continue
+        if not os.path.exists(path):
+            print(f'{label:48s} (no predictions yet: {path})'); continue
         dets = pickle.load(open(path, 'rb'))
-        cells = [score(gts[device], dets, cone, p, official) for p in PROTOCOLS]
+        cells = [score(gts[device], dets, cone, p, official) for p in protocols]
         print(f'{label:48s} ' + ' '.join(f'{b:7.2f} / {t:6.2f}' for b, t in cells), flush=True)
 
 
