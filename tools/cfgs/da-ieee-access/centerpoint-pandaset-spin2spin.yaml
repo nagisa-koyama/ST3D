@@ -1,0 +1,8 @@
+# EVAL-ONLY: a spin-trained checkpoint (the S3 control 26389, or its 15-epoch proxy 26510) scored on
+# Pandar64 val over 360 deg - the S4 ORACLE (in-domain ceiling for flash -> spin). No training run.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-pandaset-spin2flash.yaml
+
+DATA_CONFIG_TAR:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_pandaset_spin_dataset.yaml
+    LIDAR_DEVICE: 0
+    EVAL_FOV_FILTER: False

@@ -1,0 +1,38 @@
+# PandaSet FLASH -> SPIN with the density correction measured INSIDE the flash cone (S4 method row):
+# the thinning branch on a dense -> sparse sensor-only pair.
+#
+# centerpoint-pandaset-flash2spin (the S4 control) plus the global, on-the-fly density correction with
+# both histograms restricted to PandarGT's +-30 deg cone (HIST_DIST_FOV_DEGREE), the target measured on
+# Pandar64's TRAIN split (HIST_DIST_TARGET_SPLIT default). Inside the cone flash is ~4x denser than one
+# spin frame, so the per-bin keep rates fall below 1 and the source is thinned toward the target - the
+# direction the pooled flash -> spin rows (25827, 26397) got backwards by accumulating. No
+# accumulation, one frame, 150k voxels as in the control. Nothing else changes.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-pandaset-flash2spin.yaml
+
+DATA_CONFIG:
+    HIST_DIST_ON_THE_FLY: True
+    HIST_DIST_FRAMES: 1000
+    HIST_DIST_BINS: 50          # resolution is MAX_DIST / BINS = 1.5 m
+    HIST_DIST_MAX_DIST: 75.0
+    HIST_DIST_FOV_DEGREE: 60.0  # FULL angle, so +-30 deg - PandarGT's cone
+    HIST_DIST_FOV_HEADING: 0.0  # 0 = +x = forward
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+
+        - NAME: sample_points_hist_based
+          MIN_HIST_BIN_FRACTION: 0.01
+
+        - NAME: transform_points_to_voxels
+          VOXEL_SIZE: [0.1, 0.1, 0.15]
+          MAX_POINTS_PER_VOXEL: 10
+          MAX_NUMBER_OF_VOXELS: {
+            'train': 150000,
+            'test': 150000
+          }

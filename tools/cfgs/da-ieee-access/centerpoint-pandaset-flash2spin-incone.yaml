@@ -1,0 +1,10 @@
+# EVAL-ONLY variant of centerpoint-pandaset-flash2spin: score a flash-trained checkpoint on Pandar64
+# val INSIDE PandarGT's cone (GT and predictions both cut to +-30 deg, the filter the flash target
+# always uses). Separates S4's density gap (inside the cone) from its coverage gap (outside it).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-pandaset-flash2spin.yaml
+
+DATA_CONFIG_TAR:
+    LIDAR_DEVICE: 0
+    EVAL_FOV_FILTER: True
+    EVAL_FOV_DEGREE: 60.0
+    EVAL_FOV_HEADING: 0.0

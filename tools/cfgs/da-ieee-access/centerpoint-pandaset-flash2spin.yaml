@@ -1,0 +1,28 @@
+# PandaSet FLASH -> SPIN control (S4): PandarGT source-only, one frame, no correction, scored on
+# Pandar64 val over 360 deg (in-run) and inside the flash cone (rescore with the -incone config).
+#
+# The mirror of centerpoint-pandaset-spin2flash (S3 control, 26389): the model, schedule, budget and
+# augmentation are inherited unchanged and only the two dataset identities swap. The same checkpoint,
+# scored on flash val (centerpoint-pandaset-flash2flash), is also the S3 ORACLE - one training run,
+# two Table D cells.
+#
+# Why S4 matters: inside PandarGT's +-30 deg cone one spin frame holds about 0.25x the flash points
+# (20260928_02), so flash -> spin is DENSE -> SPARSE where both sensors see - the thinning branch of
+# the method, on the cleanest sensor-only pair in the study (same vehicle, scenes, timestamps,
+# labels). Outside the cone the source sees nothing at all, which is a coverage gap no density
+# correction addresses; the in-cone score separates the two.
+#
+# Every target key is stated explicitly: this file inherits from the spin -> flash row, whose target
+# block carries the flash cone filter, and nearest-definition merging would otherwise leak it.
+# tests/test_pandaset_s4_configs.py pins the resolved values.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-pandaset-spin2flash.yaml
+
+DATA_CONFIG:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_pandaset_flash_dataset.yaml
+    LIDAR_DEVICE: 1
+    MAX_SWEEPS: 1
+
+DATA_CONFIG_TAR:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_pandaset_spin_dataset.yaml
+    LIDAR_DEVICE: 0
+    EVAL_FOV_FILTER: False

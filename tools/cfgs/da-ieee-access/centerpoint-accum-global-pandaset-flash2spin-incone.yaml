@@ -1,0 +1,9 @@
+# EVAL-ONLY: rescore 25827 / 26314 (flash -> spin, accumulation + pooled correction, 26.08 BEV over
+# 360 deg) inside PandarGT's cone, to split its gap into coverage (outside) and density (inside).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-global-pandaset-flash2spin.yaml
+
+DATA_CONFIG_TAR:
+    LIDAR_DEVICE: 0
+    EVAL_FOV_FILTER: True
+    EVAL_FOV_DEGREE: 60.0
+    EVAL_FOV_HEADING: 0.0

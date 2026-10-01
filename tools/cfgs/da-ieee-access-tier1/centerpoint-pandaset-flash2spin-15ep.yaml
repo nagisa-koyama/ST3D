@@ -1,0 +1,6 @@
+# Tier-1 proxy of centerpoint-pandaset-flash2spin: 15 epochs, the same matched-step budget as the S3 proxies
+# (26510 / 26692 / 26512), whose control tracks its full-length run to 0.5 AP.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-pandaset-flash2spin.yaml
+
+OPTIMIZATION:
+    NUM_EPOCHS: 15
