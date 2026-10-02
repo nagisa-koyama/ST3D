@@ -1,0 +1,22 @@
+# KITTI in-domain oracle WITH intensity - the ceiling gate for 20261002_03 (per-class intensity
+# calibration). ONE VARIABLE from centerpoint-sourceonly-kitti2kitti-noros (job 26717, 76.56 / 65.71
+# moderate, x,y,z): the point feature list gains KITTI's own intensity (already in [0, 1]) on both the
+# train and the eval side. If this row does not beat 26717 by >= 1.5 AP (Car moderate) or >= 2 (Pedestrian
+# moderate), intensity has nothing to give on KITTI and no cross-domain intensity arm is launched.
+# Source and target are the same dataset, so the channel mismatch that broke the old `_xyzi` DA configs
+# does not arise here.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-kitti2kitti-noros.yaml
+
+DATA_CONFIG:
+    POINT_FEATURE_ENCODING: {
+        encoding_type: absolute_coordinates_encoding,
+        used_feature_list: ['x', 'y', 'z', 'intensity'],
+        src_feature_list: ['x', 'y', 'z', 'intensity'],
+    }
+
+DATA_CONFIG_TAR:
+    POINT_FEATURE_ENCODING: {
+        encoding_type: absolute_coordinates_encoding,
+        used_feature_list: ['x', 'y', 'z', 'intensity'],
+        src_feature_list: ['x', 'y', 'z', 'intensity'],
+    }
