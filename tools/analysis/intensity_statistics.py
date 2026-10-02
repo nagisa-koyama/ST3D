@@ -56,21 +56,35 @@ def main():
     ap.add_argument('--frames', type=int, default=300, help='per source platform, and per target half')
     ap.add_argument('--target_fov', type=float, default=None, help='full-angle cone for the TARGET (KITTI: 80)')
     ap.add_argument('--save', default=None)
+    ap.add_argument('--reuse', default=None, help='npz from an earlier run: reuse its source and real-label tables')
+    ap.add_argument('--ps_min_score', default='', help='e.g. "Pedestrian:0.5,Cyclist:0.5": pseudo-labels of '
+                    'those classes scoring below are treated as IGNORED for the statistics only. The statistics '
+                    'need pure boxes, not many, so a stricter cut than training\'s count balance is label-free and fair.')
     a = ap.parse_args()
     log = logging.getLogger('intensity'); log.addHandler(logging.StreamHandler()); log.setLevel(logging.WARNING)
     cfg = cfg_from_yaml_file(a.cfg_file, EasyDict())
 
-    sources = cfg.DATA_CONFIGS if cfg.get('DATA_CONFIGS', None) else {'SOURCE': cfg.DATA_CONFIG}
-    src = sum(stats(build(d, cfg, log), a.frames, label=k) for k, d in sources.items())
+    ps_labels = pickle.load(open(a.ps_label, 'rb'))
+    for item in filter(None, a.ps_min_score.split(',')):
+        name, thr = item.split(':'); cls = cfg.CLASS_NAMES.index(name) + 1
+        for v in ps_labels.values():
+            b = v['gt_boxes']
+            low = (np.abs(b[:, 7]) == cls) & (b[:, 8] < float(thr))
+            b[low, 7] = -cls
 
     tgt_ps = build(cfg.DATA_CONFIG_TAR, cfg, log)
-    tgt_ps.set_pseudo_labels(pickle.load(open(a.ps_label, 'rb')))
-    gt_cfg = copy.deepcopy(cfg.DATA_CONFIG_TAR); gt_cfg.USE_PSEUDO_LABEL = False
-    tgt_gt = build(gt_cfg, cfg, log)
-    half_a, half_b = list(range(0, len(tgt_gt), 2)), list(range(1, len(tgt_gt), 2))
+    tgt_ps.set_pseudo_labels(ps_labels)
+    half_a, half_b = list(range(0, len(tgt_ps), 2)), list(range(1, len(tgt_ps), 2))
     ps_a = stats(tgt_ps, a.frames, half_a, a.target_fov, 'target ps A')
-    gt_a = stats(tgt_gt, a.frames, half_a, a.target_fov, 'target gt A')
-    gt_b = stats(tgt_gt, a.frames, half_b, a.target_fov, 'target gt B')
+    if a.reuse:
+        old = np.load(a.reuse); src, gt_a, gt_b = old['src'], old['gt_a'], old['gt_b']
+    else:
+        sources = cfg.DATA_CONFIGS if cfg.get('DATA_CONFIGS', None) else {'SOURCE': cfg.DATA_CONFIG}
+        src = sum(stats(build(d, cfg, log), a.frames, label=k) for k, d in sources.items())
+        gt_cfg = copy.deepcopy(cfg.DATA_CONFIG_TAR); gt_cfg.USE_PSEUDO_LABEL = False
+        tgt_gt = build(gt_cfg, cfg, log)
+        gt_a = stats(tgt_gt, a.frames, half_a, a.target_fov, 'target gt A')
+        gt_b = stats(tgt_gt, a.frames, half_b, a.target_fov, 'target gt B')
     if a.save:
         np.savez(a.save, src=src, ps_a=ps_a, gt_a=gt_a, gt_b=gt_b, edges=np.asarray(ic.DEFAULT_RING_EDGES),
                  class_names=np.asarray(cfg.CLASS_NAMES))
