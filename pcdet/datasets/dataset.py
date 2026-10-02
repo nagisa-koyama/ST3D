@@ -532,6 +532,12 @@ class DatasetTemplate(torch_data.Dataset):
             data_dict['points'] = data_dict['points'][beam_downsample_utils.random_ring_subset_mask(
                 ring, self.beam_drop_cfg.NUM_BEAMS, self.beam_drop_cfg.KEEP_BEAMS)]
 
+        # Intensity statistics (pcdet/datasets/intensity_calibration.py) need the points as they stand
+        # here: augmented exactly like `gt_boxes`, and still carrying every source feature - the encoder
+        # below drops intensity in the x, y, z protocol. Off unless a statistics pass sets it.
+        if getattr(self, 'keep_raw_points', False):
+            data_dict['points_raw'] = np.array(data_dict['points'], copy=True)
+
         data_dict = self.point_feature_encoder.forward(data_dict)
 
         data_dict = self.data_processor.forward(
