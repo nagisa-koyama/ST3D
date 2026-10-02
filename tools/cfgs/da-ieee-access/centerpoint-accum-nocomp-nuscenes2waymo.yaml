@@ -1,0 +1,18 @@
+# Waymo-target twin of centerpoint-accum-nocomp-nuscenes2kitti.yaml (eval-only rescoring of its checkpoint on Waymo val, 2026-10-03).
+#
+# Accumulation WITHOUT per-object motion compensation - nuScenes -> KITTI.
+#
+# Does the box compensation matter? ONE VARIABLE from centerpoint-accum-nuscenes2kitti (job 26388,
+# 71.93 / 39.95 moderate, Car ROS [0.85, 1.20]): same MAX_SWEEPS 15 per platform, same everything,
+# GT_BOXES_MOTION_COMPENSATION off, so moving objects smear along their tracks as in plain
+# multi-sweep training. If this row matches 71.93 the compensation is cosmetic for AP and the
+# contribution is the depth-selection rule alone. Read per ring with analysis/gates/per_range_ap.py.
+#
+# Launch: 2 GPUs, global batch 6, 150G (nuScenes-source: 11 GB infos per spawned worker).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-nuscenes2waymo.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        GT_BOXES_MOTION_COMPENSATION: False
+    NUSCENES_N015:
+        GT_BOXES_MOTION_COMPENSATION: False

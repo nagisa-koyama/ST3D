@@ -1,0 +1,22 @@
+# Waymo-target twin of centerpoint-accum10-nocomp-nuscenes2kitti.yaml (eval-only rescoring of its checkpoint on Waymo val, 2026-10-03).
+#
+# The OBVIOUS accumulation: the 10 stored sweeps, no motion compensation - nuScenes -> KITTI.
+#
+# What a practitioner gets by setting MAX_SWEEPS 10 (nuScenes' stored sweeps, no keyframe chaining)
+# and nothing else. Against centerpoint-accum-nuscenes2kitti (job 26388: depth 15 chosen by the
+# target-free radial-parity rule, with box compensation) it measures what the selection rule and the
+# compensation buy TOGETHER over the default; against centerpoint-accum-nocomp it isolates the depth.
+# The usual nuScenes recipe also feeds a per-point time-lag channel; it is omitted because the KITTI
+# target has no sweeps (every target point would carry time 0), and the DA literature's own
+# nuScenes -> KITTI protocol is a single sweep (upstream ST3D: MAX_SWEEPS 1), which is 26265's 41.57.
+#
+# Launch: 2 GPUs, global batch 6, 150G.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-nuscenes2waymo.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        MAX_SWEEPS: 10
+        GT_BOXES_MOTION_COMPENSATION: False
+    NUSCENES_N015:
+        MAX_SWEEPS: 10
+        GT_BOXES_MOTION_COMPENSATION: False

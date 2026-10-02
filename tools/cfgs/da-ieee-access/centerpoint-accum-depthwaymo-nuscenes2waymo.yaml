@@ -1,0 +1,26 @@
+# nuScenes -> WAYMO accumulation at the TARGET-FREE DEPTH FOR WAYMO (2026-10-03) - the test of the depth
+# rule on the second sparse -> dense pair.
+#
+# analysis/accumulation_deep_nuscenes.py --targets 'KITTI,Waymo' (CPU, global radial parity in every
+# 5-70 m bin, keyframe chaining) gives Boston 50 and Singapore 20 for Waymo, against 15 / 10 for KITTI
+# (which it reproduces). The eval-only reading of 26388 (depth 15 for both platforms, KITTI's) on Waymo
+# val is 49.21 / 25.21 against the single-sweep control's 2.20 / 0.84 and the oracle's 65.92 / 51.77
+# (jobs 27180, 27178, 27179). This row asks whether the rule's deeper Waymo depth closes more of that.
+# One variable set from centerpoint-accum-nuscenes2waymo: MAX_SWEEPS per platform. Box motion compensation
+# on, no density correction, family Car ROS [0.85, 1.20].
+#
+# BOSTON IS CAPPED AT 30, NOT THE RULE'S 50, and this must be stated with the result. Measured on CPU
+# (12 training frames): at 50 sweeps 8 of 12 Boston frames hit the 150,000-voxel cap (1.17 M points), so
+# voxels past the cap would be silently dropped at random - a hidden thinning - and the loader costs
+# 3.6 s/sample; at 30 sweeps 1 of 12 touches the cap (p50 117,704 voxels, 0.70 M points) at 1.5 s/sample,
+# the cost of the per-range row that trained in 17 h. Boston at 30 reaches parity in 11 of the 13
+# 5-70 m bins; the two it misses are far bins. Singapore at 20 reaches all 13.
+#
+# Launch: 2 GPUs, 150G (nuScenes source), off any node holding another nuScenes-source row.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-nuscenes2waymo.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        MAX_SWEEPS: 30
+    NUSCENES_N015:
+        MAX_SWEEPS: 20
