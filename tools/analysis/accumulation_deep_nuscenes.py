@@ -15,6 +15,7 @@ so are points-in-box counts against the anchor's boxes - so one backward pass ev
 No motion compensation: at these windows an uncompensated moving object gains almost nothing
 (20260922_05 Ablation 3, x1.01 over 30 frames), so deep foreground gain is carried by parked cars.
 """
+import sys
 import json, pickle, sys
 import numpy as np
 from pathlib import Path
@@ -38,6 +39,8 @@ BAND = slice(1, 14)                       # 5-70 m
 GRID = [1, 5, 10, 15, 20, 30, 50, 75, 100, 150, 200]
 NMAX, ANCHORS = max(GRID), 12
 TARGETS = ['KITTI', 'Lyft (all)', 'Lyft 40-beam', 'Lyft 64-beam']
+if '--targets' in sys.argv:   # e.g. --targets 'KITTI,Waymo'; names must match build_platforms()
+    TARGETS = [x.strip() for x in sys.argv[sys.argv.index('--targets') + 1].split(',') if x.strip()]
 
 
 def frames_back(a, nmax):
