@@ -1,0 +1,181 @@
+# S2 HEADLINE ROW: self-training on the TARGET-FREE accumulation base - nuScenes -> KITTI.
+#
+# Composes the two target-free S2 steps (20261001_02 rows 2 and 6): the source is accumulated to the
+# target-free depth with box motion compensation and trained with the Car size interval [0.81, 1.06]
+# derived from the model's own confident boxes (job 26814, 78.20 / 46.67 moderate), and that model is
+# both the frozen teacher and the student's init for plain ST3D pseudo-label self-training. NO density
+# correction: it measured nothing on S2 once accumulated (20261002_01), so it is left out to keep one
+# variable from 26814. Also arm A of the intensity plan (20261002_03): every intensity arm differs from
+# this row only in the student's input.
+#
+# Score cuts: Car at the label-free count-balance cut of THIS teacher's pseudo-labels on KITTI train
+# (per-ring joint (score, points) mixture inside 30 m, the estimator that works on a sequence-less
+# target); Pedestrian and Cyclist at a PRE-DECLARED 0.6 (20261002_03 §5): the mixture over-counts KITTI
+# pedestrians 3-15x, and at the count-balance-style 0.18 the teacher emits ~32 pedestrian positives per
+# frame, 97% of them false. NEG_THRESH 0.1 = the plateau edge, as everywhere.
+#
+# Launch (2 GPUs, 150G, ~27 h; keep off any node holding another nuScenes-source row):
+#   EST_H=45 scripts/submit.sh --mem=150G scripts/run_sourceonly_2gpu.sh \
+#       cfgs/da-ieee-access/centerpoint-accum-st3d-nuscenes2kitti.yaml <tag> <run> \
+#       --pretrained_model <26814 ep20> --pretrained_model_teacher <26814 ep20>
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-rosext-nuscenes2kitti.yaml
+
+DATA_CONFIG_TAR:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_kitti_dataset.yaml
+    USE_PSEUDO_LABEL: True
+
+SELF_TRAIN:
+    # An epoch is one pass over the SOURCE, matching what train.py does for the no-correction and
+    # global arms. Without this the self-training arm would count epochs in TARGET passes - this
+    # repo's default - and at the same NUM_EPOCHS the three arms would differ in gradient steps,
+    # so the ablation would partly be measuring training length. The target is cycled instead.
+    EPOCH_FOLLOWS: source
+    # Generated at a HIGH-RECALL threshold on purpose. The foreground channel is measured per box,
+    # so it is insensitive to how many boxes the teacher finds - destroying 80% of its detections
+    # cost 12% of object density in the offline sweep - but a bin the teacher empties entirely
+    # falls back to no correction, so recall still buys robustness.
+    SCORE_THRESH: [0.30, 0.6, 0.6]   # Car: count balance inside 30 m, joint (score, points) mixture, teacher 2da6oz6e ep20 on KITTI train = 0.301 (FOV-restricted score-only mixture: 0.35 / 0.26 by ring, within 2% of the real count); Ped/Cyc: pre-declared 0.6
+    NEG_THRESH: [0.1, 0.1, 0.1]
+    UPDATE_PSEUDO_LABEL: [0]
+    UPDATE_PSEUDO_LABEL_INTERVAL: 2
+
+    # The teacher is a separate frozen model, loaded with --pretrained_model_teacher and never
+    # written to. Generation is therefore deterministic - eval mode, no augmentation, no weight
+    # update, and memory voting only re-confirms boxes that matched themselves at IoU 1 - so every
+    # pass after the first reproduces the same labels at the cost of a full inference sweep over
+    # the target. At INTERVAL 2 over 20 epochs that is 9 of 10 passes wasted.
+    FROZEN_TEACHER_SINGLE_PASS: True
+
+    INIT_PS: None
+
+    SRC:
+        USE_DATA: True
+        USE_GRAD: True
+        LOSS_WEIGHT: 1.0
+        BACKWARD_TOGETHER: True
+
+    TAR:
+        USE_DATA: True
+        LOSS_WEIGHT: 1.0
+        BACKWARD_TOGETHER: True
+
+    PROG_AUG:
+        ENABLED: True
+        UPDATE_AUG: [5, 10, 15]
+        SCALE: 1.1
+
+    MEMORY_ENSEMBLE:
+        ENABLED: True
+        NAME: nms_ensemble
+        IOU_THRESH: 0.1
+        NMS_CONFIG:
+            NMS_TYPE: nms_gpu
+            MULTI_CLASSES_NMS: False
+            NMS_PRE_MAXSIZE: 512
+            NMS_POST_MAXSIZE: 100
+            NMS_THRESH: 0.1
+        MEMORY_VOTING:
+            ENABLED: True
+            IGNORE_THRESH: 2
+            RM_THRESH: 3
+
+    # Mirrors the student exactly. SCORE_THRESH stays at the high-recall 0.0001 it inherits.
+    MODEL_TEACHER:
+        CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
+        ONTOLOGY: 'kitti'
+        NAME: CenterPoint
+
+        VFE:
+            NAME: MeanVFE
+
+        BACKBONE_3D:
+            NAME: VoxelResBackBone8x
+
+        MAP_TO_BEV:
+            NAME: HeightCompression
+            NUM_BEV_FEATURES: 256
+
+        BACKBONE_2D:
+            NAME: BaseBEVBackbone
+
+            LAYER_NUMS: [5]
+            LAYER_STRIDES: [1]
+            NUM_FILTERS: [128]
+            UPSAMPLE_STRIDES: [2]
+            NUM_UPSAMPLE_FILTERS: [256]
+
+        DENSE_HEAD:
+            NAME: CenterHead
+            CLASS_AGNOSTIC: False
+
+            CLASS_NAMES_EACH_HEAD: [
+                ['Car', 'Pedestrian', 'Cyclist'],
+            ]
+
+            SHARED_CONV_CHANNEL: 64
+            USE_BIAS_BEFORE_NORM: True
+            NUM_HM_CONV: 2
+            SEPARATE_HEAD_CFG:
+                HEAD_ORDER: ['center', 'center_z', 'dim', 'rot']
+                HEAD_DICT: {
+                    'center': {'out_channels': 2, 'num_conv': 2},
+                    'center_z': {'out_channels': 1, 'num_conv': 2},
+                    'dim': {'out_channels': 3, 'num_conv': 2},
+                    'rot': {'out_channels': 2, 'num_conv': 2},
+                }
+
+            TARGET_ASSIGNER_CONFIG:
+                FEATURE_MAP_STRIDE: 4
+                NUM_MAX_OBJS: 500
+                GAUSSIAN_OVERLAP: 0.1
+                MIN_RADIUS: 2
+
+            LOSS_CONFIG:
+                LOSS_WEIGHTS: {
+                    'cls_weight': 1.0,
+                    'loc_weight': 2.0,
+                    'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+                }
+
+            # CenterPoint has TWO live POST_PROCESSING blocks - this one and the model-level one below -
+            # each with its own SCORE_THRESH and NMS_CONFIG. Both are set to 0.0001 here; changing only
+            # one is a common way to get an unexplained AP shift.
+            POST_PROCESSING:
+                SCORE_THRESH: 0.0001
+                POST_CENTER_LIMIT_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+                MAX_OBJ_PER_SAMPLE: 500
+                NMS_CONFIG:
+                    NMS_TYPE: nms_gpu
+                    NMS_THRESH: 0.5
+                    NMS_PRE_MAXSIZE: 4096
+                    NMS_POST_MAXSIZE: 500
+
+        POST_PROCESSING:
+            RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+
+            # 0.0001, uniform across this whole family, and NOT the 0.01 the existing sourceonly
+            # configs use. eval_class() fills only len(thresholds) of its 41 R40 precision slots and
+            # averages the rest as ZERO, so discarding low-confidence detections before scoring caps
+            # achievable recall and biases AP DOWNWARD - worst exactly in the weak cross-domain regime
+            # a source-only floor lives in. Never raise this to relieve eval-time OOM; if numba's
+            # separate CUDA pool runs out (it is not PyTorch's allocator), add
+            # torch.cuda.empty_cache() before dataset.evaluation() in tools/eval_utils/eval_utils.py.
+            # See experiments_md/20260920_01 and 20260920_02.
+            SCORE_THRESH: 0.0001
+            OUTPUT_RAW_SCORE: False
+
+            # KITTI R40 AP. Note what this means with a NON-KITTI evaluation target: nuscenes_dataset.py
+            # fabricates the 2D bbox as [0, 0, 50, 50] with truncation/occlusion 0, so every GT passes
+            # all three difficulty levels, nothing is ever ignored, and easy == moderate == hard
+            # identically. Three identical AP values in the log is the expected output, not a bug. Those
+            # numbers are "all objects, no difficulty filter" - stricter than KITTI hard, and NOT
+            # comparable with a KITTI-target row's "moderate". The bbox/aos columns are meaningless here
+            # (all boxes identical, so 2D IoU is trivially 1). See experiments_md/20260919_05 sections 6-8.
+            EVAL_METRIC: kitti
+
+            NMS_CONFIG:
+                MULTI_CLASSES_NMS: False
+                NMS_TYPE: nms_gpu
+                NMS_THRESH: 0.5
+                NMS_PRE_MAXSIZE: 4096
+                NMS_POST_MAXSIZE: 500
