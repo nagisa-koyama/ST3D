@@ -63,6 +63,10 @@ ROWS = [  # label, result.pkl, target device, cone
     ('S4 control flash->spin, 15 ep (26974), cone', W + 'run-20261001_222222-uzi23xbs/files/eval/eval_with_train/epoch_15/val/result.pkl', 0, True),
     ('S4 thinning in the cone, 15 ep (27001), 360', W + 'run-20261002_002220-3nbs4nyu/files/eval/eval_with_train/epoch_15/val/result.pkl', 0, False),
     ('S4 thinning in the cone, 15 ep (27001), cone', W + 'run-20261002_002220-3nbs4nyu/files/eval/eval_with_train/epoch_15/val/result.pkl', 0, True),
+    ('S3 control seed 667, 15 ep (27003)', W + 'run-20261002_012748-r65hpn4e/files/eval/eval_with_train/epoch_15/val/result.pkl', 1, True),
+    ('S3 accumulation seed 667, 15 ep (27004)', W + 'run-20261002_025227-oj1yf0mg/files/eval/eval_with_train/epoch_15/val/result.pkl', 1, True),
+    ('S4 thinning FIXED, 15 ep (27005), 360', W + 'run-20261002_041932-xrk47zew/files/eval/eval_with_train/epoch_15/val/result.pkl', 0, False),
+    ('S4 thinning FIXED, 15 ep (27005), cone', W + 'run-20261002_041932-xrk47zew/files/eval/eval_with_train/epoch_15/val/result.pkl', 0, True),
     ('S3 oracle flash->flash, 15 ep (26974 ckpt)', O + 'centerpoint-pandaset-flash2flash/20261001_pandaset/eval/epoch_15/val/s3oracle15/result.pkl', 1, True),
 ]
 PROTOCOLS = ['as_scored', 'pts>=1', 'in_range', 'in_range,pts>=1', 'in_range,pts>=5', 'rule_A']
