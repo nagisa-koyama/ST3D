@@ -100,6 +100,25 @@ def main():
     tz = float(calib_cfg.get('SHIFT_COOR', [0, 0, 0])[2]); sz = float(dc.get('SHIFT_COOR', [0, 0, 0])[2])
     print(f'source {key} ({type(source).__name__}, augmentation off), target {type(target).__name__} {split} split', flush=True)
 
+    cache = Path(args.out).with_suffix('.cache.npz')
+    if cache.exists():
+        z = np.load(cache, allow_pickle=True)
+        rate, max_dist = z['rate'], float(z['max_dist']); F, R, E, C, T, Tc = z['F'], z['R'], z['E'], z['C'], z['T'], z['Tc']
+        feats, rings, ebins = list(z['feats']), list(z['rings']), list(z['ebins']); n_src_frames = len(feats); n_tgt = int(z['n_tgt'])
+        n_cells = N_SECTORS * (len(RANGE_EDGES) - 1)
+        print(f'loaded cached features from {cache} ({len(F)} points, {n_src_frames} source frames, {n_tgt} target frames)', flush=True)
+    else:
+        rate, max_dist, F, R, E, C, T, Tc, feats, rings, ebins, n_src_frames, n_tgt = _measure(source, target, dc, sz, tz, args, logger)
+        n_cells = N_SECTORS * (len(RANGE_EDGES) - 1)
+        np.savez(cache, rate=rate, max_dist=max_dist, F=F, R=R, E=E, C=C, T=T, Tc=Tc, n_tgt=n_tgt,
+                 feats=np.array(feats, dtype=object), rings=np.array(rings, dtype=object), ebins=np.array(ebins, dtype=object))
+        print(f'cached features to {cache}', flush=True)
+
+    sampler = LearnedPointSampler.from_rule(rate, max_dist, sz, F.mean(0), F.std(0) + 1e-6)
+    _train_and_report(sampler, F, R, E, C, T, Tc, n_src_frames, n_cells, feats, rings, ebins, args)
+
+
+def _measure(source, target, dc, sz, tz, args, logger):
     # 1. the rule, measured as train.py would (gives the sampler its initialisation)
     with _augmentation_off(source):
         link_point_calibration(source, target, num_frames=args.hist_frames, num_bins=dc.get('HIST_DIST_BINS', 50),
@@ -126,9 +145,12 @@ def main():
             m = rg == k
             T[k] += np.bincount(eb[m], minlength=T.shape[1])
     Tc /= max(n_tgt, 1)
-    print(f'cached {len(F)} source points from {n_src_frames} frames; target histograms from {n_tgt} frames', flush=True)
+    print(f'measured {len(F)} source points from {n_src_frames} frames; target histograms from {n_tgt} frames', flush=True)
+    return rate, max_dist, F, R, E, C, T, Tc, feats, rings, ebins, n_src_frames, n_tgt
 
-    sampler = LearnedPointSampler.from_rule(rate, max_dist, sz, F.mean(0), F.std(0) + 1e-6)
+
+def _train_and_report(sampler, F, R, E, C, T, Tc, n_src_frames, n_cells, feats, rings, ebins, args):
+    rate, max_dist = sampler.rate, sampler.max_dist
     # 4. train the MLP on cached features
     x = torch.tensor((F - sampler.feat_mean) / sampler.feat_std)
     base = torch.tensor(sampler.rule_logit(_points_from_feats(F)))  # the rule's logit per cached point
@@ -154,8 +176,11 @@ def main():
         # so a sparse far cell and a dense near cell weigh alike. Where the source cannot reach the
         # target (count below it at p = 1) the term saturates, which is the accumulate-first design.
         count = torch.zeros(n_cells).index_add_(0, cell_t, p) / n_src_frames
-        rel = (count - Tct) / (Tct + 1.0)
-        return js_total, (rel ** 2).mean(), per_ring
+        # log-count error: scale-free, so a cell the target never covers (count 0, e.g. outside a
+        # flash cone) pulls the source there to zero without dominating every other cell - a relative
+        # error did, and drove EVERY keep probability to 0 on S3 (2026-10-03).
+        err = torch.log1p(count) - torch.log1p(Tct)
+        return js_total, (err ** 2).mean(), per_ring
 
     with torch.no_grad():
         j0, c0, ring0 = losses(p0)
