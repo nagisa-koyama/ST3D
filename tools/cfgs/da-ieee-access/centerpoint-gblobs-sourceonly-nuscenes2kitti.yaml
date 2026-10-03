@@ -1,0 +1,17 @@
+# GBlobs on S2, single sweep: nuScenes -> KITTI with the GBlobs voxel encoder and NOTHING else changed.
+#
+# Completes the modern baselines on the headline pair (UADA3D on S2 is 27174, 66.62 / 31.22). One
+# variable from the single-sweep control: the nuScenes source-only model (25743, trained with
+# centerpoint-sourceonly-nuscenes) scored on KITTI with this file's parent = 41.57 / 22.58 moderate
+# (26265). Trains on nuScenes exactly as 25743 did, scored in-run on KITTI; rescoring its checkpoint
+# with a nuScenes target gives the GBlobs nuScenes oracle for free. On S1 GBlobs is the strongest row
+# (31.43 vs 23.17); whether its gain survives a sparse -> dense pair is the question.
+# experiments_md/20260928_05 Phase 3.2.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-nuscenes2kitti.yaml
+
+MODEL:
+    VFE:
+        NAME: GBlobsVFE
+        RELATIVE_DISTANCE: True
+        COVARIANCE_ONLY: False
+        COVARIANCE_SCALE: 1.0

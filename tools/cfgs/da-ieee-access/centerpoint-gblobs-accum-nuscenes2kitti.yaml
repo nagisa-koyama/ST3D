@@ -1,0 +1,15 @@
+# GBlobs on S2, with accumulation: centerpoint-accum-nuscenes2kitti (job 26388: 15 sweeps + per-object
+# motion compensation, 71.93 / 39.95 moderate) with the GBlobs voxel encoder and NOTHING else changed.
+#
+# Does the DG baseline compose with accumulation? On S1 GBlobs did NOT compose with the global
+# thinning (28.88 vs 31.43 alone). Read against 26388 (one variable: the encoder) and against the
+# single-sweep GBlobs row (centerpoint-gblobs-sourceonly-nuscenes2kitti, one variable: accumulation).
+# experiments_md/20260928_05 Phase 3.2.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-nuscenes2kitti.yaml
+
+MODEL:
+    VFE:
+        NAME: GBlobsVFE
+        RELATIVE_DISTANCE: True
+        COVARIANCE_ONLY: False
+        COVARIANCE_SCALE: 1.0
