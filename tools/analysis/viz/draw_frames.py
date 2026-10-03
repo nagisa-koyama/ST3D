@@ -93,8 +93,9 @@ def bev(ax, pts, title, gt=None, pred=None, ps=None, wedge=None, yaw=0.0):
     ax.set_title(title, fontsize=8)
 
 
-def image(ax, path, title):
+def image(ax, path, title, fid=None):
     ax.axis('off')
+    path = IMAGE.get(fid) or path          # the frame list is authoritative (Waymo images were added later)
     if path:
         try:
             ax.imshow(plt.imread(path))
@@ -113,6 +114,7 @@ def stat_text(ax, lines):
 def car_pts(c):
     """median points per Car box per 10 m ring, and box counts."""
     cb = c['car_boxes']
+    cb = cb[cb[:, 1] >= 1] if len(cb) else cb          # boxes holding >= 1 point (the pipeline's convention)
     med, n = [], []
     for lo, hi in zip(BOX_RINGS[:-1], BOX_RINGS[1:]):
         v = cb[(cb[:, 0] >= lo) & (cb[:, 0] < hi), 1] if len(cb) else np.zeros(0)
@@ -120,7 +122,7 @@ def car_pts(c):
     return np.array(med), np.array(n)
 
 
-YAW, BAND = {}, {}
+YAW, BAND, IMAGE = {}, {}, {}
 
 
 def load_yaw():
@@ -129,14 +131,59 @@ def load_yaw():
         for f in v['frames']:
             YAW[f['fid']] = f.get('yaw', 0.0)
             BAND[f['fid']] = 'car + ped in front at %d-%d m' % tuple(f['band']) if f.get('band') else ''
+            IMAGE[f['fid']] = f.get('image')
 
 
 def short(fid):
-    return Path(str(fid)).name[-42:]
+    s = str(fid)
+    return Path(s).name[-42:] if s.endswith('.bin') else s[-42:]
+
+
+KNOBS = {}
+
+
+def describe_sources(row):
+    """What the run does to each source cloud, read off its config: sweeps, motion compensation, the
+    Car size interval, beam drop / distillation. Fills KNOBS[(job, source name)]."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import viz_common as vc
+    try:
+        cfg, _ = vc.load_run_cfg(row['run'])
+    except Exception:  # noqa: BLE001
+        return
+    for name, dc in vc.source_configs(cfg):
+        k = ['%d sweep(s)%s' % (dc.get('MAX_SWEEPS', 1), ' + motion comp.' if dc.get('GT_BOXES_MOTION_COMPENSATION', False) else '')]
+        if dc.get('ACCUMULATION_DEPTH_BY_RANGE', None):
+            k.append('per-range depth %s' % list(dc.ACCUMULATION_DEPTH_BY_RANGE))
+        aug = dc.get('DATA_AUGMENTOR', {})
+        for a in aug.get('AUG_CONFIG_LIST', []):
+            if a.get('NAME') == 'random_object_scaling' and a['NAME'] not in aug.get('DISABLE_AUG_LIST', []):
+                car = a.get('SCALE_UNIFORM_NOISE', {})
+                car = car.get('Car', car) if isinstance(car, dict) else car
+                k.append('Car size x[%s]' % ', '.join('%.2f' % v for v in car))
+            if a.get('NAME') == 'normalize_object_size' and a['NAME'] not in aug.get('DISABLE_AUG_LIST', []):
+                k.append('SN %s' % list(a.get('SIZE_RES', [])))
+        if dc.get('BEAM_DROP', None):
+            k.append('random %s of %s rings kept' % (dc.BEAM_DROP.get('KEEP_BEAMS'), dc.BEAM_DROP.get('NUM_BEAMS')))
+        if dc.get('BEAM_DISTILL', None):
+            k.append('student beams 1/%s (LiDAR Distillation)' % dc.BEAM_DISTILL.get('BEAM_RATIO', '?'))
+        KNOBS[(row['job'], name)] = ', '.join(k)
+
+
+def canon_names(d):
+    """Older dumps kept head_per_dataset names ('kitti:Car'); normalise them as viz_common.canon does."""
+    m = {'car': 'Car', 'vehicle': 'Car', 'pedestrian': 'Pedestrian'}
+    c = lambda a: np.array([m.get(str(n).split(':')[-1].lower(), str(n).split(':')[-1]) for n in a])
+    for f in d['target']['frames'] + [f for s in d['sources'] for f in s['frames']]:
+        for k in ('gt', 'raw_gt', 'pred', 'pseudo'):
+            if f.get(k) is not None:
+                t = list(f[k]); t[2 if k in ('pred', 'pseudo') else 1] = c(t[2 if k in ('pred', 'pseudo') else 1]); f[k] = tuple(t)
 
 
 def draw(d, out):
     row = d['row']
+    describe_sources(row)
     S, T = d['sources'], d['target']
     nf = 3
     fig = plt.figure(figsize=(6.2 * nf, 18.5))
@@ -144,14 +191,14 @@ def draw(d, out):
                   top=0.905, bottom=0.03, left=0.04, right=0.99)
     src_frames = [(s, f) for s in S for f in s['frames']][:nf]
     for j, (s, f) in enumerate(src_frames):
-        image(fig.add_subplot(gs[0, 2 * j:2 * j + 2]), f['image'], 'SOURCE %s (%s) %s\n%s' % (s['kind'], s['name'], short(f['fid']), BAND.get(f['fid'], '')))
+        image(fig.add_subplot(gs[0, 2 * j:2 * j + 2]), f['image'], 'SOURCE %s (%s) %s\n%s' % (s['kind'], s['name'], short(f['fid']), BAND.get(f['fid'], '')), f['fid'])
         y = YAW[f['fid']]
         bev(fig.add_subplot(gs[1, 2 * j]), f['raw'], 'raw sweep: %s pts' % format(len(f['raw']), ','), gt=f['raw_gt'], yaw=y)
         bev(fig.add_subplot(gs[1, 2 * j + 1]), f['points'], 'model input: %s pts' % format(len(f['points']), ','),
             gt=f['gt'], pred=f['pred'], yaw=y)
-    wedge = 90 if T['kind'] == 'kitti' else None
+    wedge = 90 if T['kind'] == 'kitti' else (d.get('close_cone') if T['kind'] == 'pandaset' else None)
     for j, f in enumerate(T['frames'][:nf]):
-        image(fig.add_subplot(gs[2, 2 * j:2 * j + 2]), f['image'], 'TARGET %s %s\n%s' % (T['kind'], short(f['fid']), BAND.get(f['fid'], '')))
+        image(fig.add_subplot(gs[2, 2 * j:2 * j + 2]), f['image'], 'TARGET %s %s\n%s' % (T['kind'], short(f['fid']), BAND.get(f['fid'], '')), f['fid'])
         bev(fig.add_subplot(gs[3, 2 * j]), f['points'], 'model input: %s pts' % format(len(f['points']), ','),
             gt=f['gt'], pred=f['pred'], wedge=wedge, yaw=YAW[f['fid']])
         lines = ['target frame %d' % (j + 1), '']
@@ -162,7 +209,7 @@ def draw(d, out):
         lines += ['pred>=%.1f Car %d  Ped %d' % (DRAW_SCORE, (n[k] == 'Car').sum(), (n[k] == 'Pedestrian').sum())]
         if f.get('check'):
             c = f['check']
-            lines += ['', 'vs scored result.pkl: %d / %d boxes' % (c['n_ours'], c['n_ref']),
+            lines += ['', 'vs scored result.pkl: %s / %s boxes' % (c['n_ours'], c['n_ref']),
                       '  max centre offset %s' % ('%.4f m' % c['max_offset'] if c['max_offset'] is not None else '-')]
         stat_text(fig.add_subplot(gs[3, 2 * j + 1]), lines)
 
@@ -179,7 +226,9 @@ def draw(d, out):
             ax2.plot(mid, s['close_raw']['rings'].mean(0) / tr, color=c, ls='--', lw=1)
             ax2.plot(mid, s['close']['rings'].mean(0) / tr, color=c, lw=1.6)
     ax1.set_yscale('log'); ax1.set_xlabel('range ring (m)', fontsize=8); ax1.set_ylabel('points / frame / 5 m ring', fontsize=8)
-    ax1.legend(fontsize=6.5); ax1.set_title('(a) density by range, %d frames per cloud' % T['close']['n_frames'], fontsize=8)
+    cone = d.get('close_cone')
+    ax1.legend(fontsize=6.5); ax1.set_title('(a) density by range, %d frames per cloud%s' % (
+        T['close']['n_frames'], ', INSIDE the %g deg flash cone (all clouds)' % cone if cone else ''), fontsize=8)
     ax2.axhline(1, color='k', lw=1); ax2.set_yscale('log'); ax2.set_ylim(0.05, 50)
     ax2.set_xlabel('range ring (m)', fontsize=8); ax2.set_ylabel('source / target', fontsize=8)
     ax2.set_title('(b) how close: source over target per ring (1 = matched)', fontsize=8)
@@ -194,7 +243,7 @@ def draw(d, out):
         m, _ = car_pts(s['close_raw']); ax3.plot(bm, m, color=c, ls='--', lw=1, marker='.', ms=3)
         m, n = car_pts(s['close']); ax3.plot(bm, m, color=c, lw=1.6, marker='o', ms=3, label='%s input' % s['name'])
     ax3.set_yscale('log'); ax3.set_xlabel('Car box centre ring (m)', fontsize=8); ax3.set_ylabel('median points per Car box', fontsize=8)
-    ax3.set_title('(c) object density by range (target box counts printed; < 3 boxes not drawn)', fontsize=8)
+    ax3.set_title('(c) median points per Car box holding >= 1 point (target box counts printed; < 3 boxes not drawn)', fontsize=8)
     ax3.legend(fontsize=6.5)
     for a in (ax1, ax2, ax3):
         a.tick_params(labelsize=7); a.grid(alpha=0.3, lw=0.4)
@@ -203,14 +252,23 @@ def draw(d, out):
     desc = []
     for s in S:
         cal = s.get('calib')
-        if cal and 'error' in cal:
+        if cal and cal.get('shipped'):
+            c = 'density correction from SHIPPED histograms (%s): rate %.2f..%.2f, below 1 in %d bins' % (
+                Path(cal['files'][0]).stem.rsplit('_', 1)[-1] if cal['files'] else '?', cal['rate_min'], cal['rate_max'], cal['bins_below_1'])
+        elif cal and 'error' in cal:
             c = 'correction: %s' % cal['error']
+        elif cal and cal.get('foreground'):
+            c = 'FOREGROUND-aware correction recomputed from the run\'s first-pass pseudo-labels: fg rate %.2f..%.2f, bg rate %.2f..%.2f, classes %s' % (
+                cal['fg_rate'] + cal['bg_rate'] + (cal['classes'] or 'all',))
         elif cal:
-            c = 'density correction recomputed: rate %.2f..%.2f, below 1 in %d bins (src %.0f / tgt %.0f pts/frame)' % (
+            c = 'density correction recomputed%s%s: rate %.2f..%.2f, below 1 in %d bins (src %.0f / tgt %.0f pts/frame)' % (
+                ' (ONE uniform rate)' if cal.get('uniform') else '',
+                (' inside the cone, source measured WITH augmentation as the run did (pre-2e5ae50)' if cal.get('cone_aug_on')
+                 else ' inside the cone') if cal.get('cone') else '',
                 cal['rate_min'], cal['rate_max'], cal['bins_below_1'], cal['src_pts'], cal['tgt_pts'])
         else:
             c = 'no density correction'
-        desc.append('%s: %d sweep(s)%s; %s' % (s['name'], s['max_sweeps'], ' + motion comp.' if s['motion_comp'] else '', c))
+        desc.append('%s: %s; %s' % (s['name'], KNOBS.get((row['job'], s['name']), '%d sweep(s)' % s['max_sweeps']), c))
     if d.get('pseudo_rule'):
         desc.append('pseudo-labels: separate figure %s_pseudo.jpg' % row['job'])
     fig.suptitle('job %s  ·  %s  ·  %s\n%s\nconfig: %s\ndensity: points per %.1f m cell, log 1..%d, same scale in every panel'
@@ -233,9 +291,9 @@ def draw_pseudo(d, out):
     fig = plt.figure(figsize=(6.2 * nf, 9.6))
     gs = GridSpec(2, 2 * nf, figure=fig, height_ratios=[1.45, 3.1], hspace=0.13, wspace=0.04,
                   top=0.86, bottom=0.02, left=0.04, right=0.99)
-    wedge = 90 if T['kind'] == 'kitti' else None
+    wedge = 90 if T['kind'] == 'kitti' else (d.get('close_cone') if T['kind'] == 'pandaset' else None)
     for j, f in enumerate(T['frames'][:nf]):
-        image(fig.add_subplot(gs[0, 2 * j:2 * j + 2]), f['image'], 'TARGET %s %s\n%s' % (T['kind'], short(f['fid']), BAND.get(f['fid'], '')))
+        image(fig.add_subplot(gs[0, 2 * j:2 * j + 2]), f['image'], 'TARGET %s %s\n%s' % (T['kind'], short(f['fid']), BAND.get(f['fid'], '')), f['fid'])
         bev(fig.add_subplot(gs[1, 2 * j]), f['points'], 'model input: %s pts' % format(len(f['points']), ','),
             gt=f['gt'], ps=f['pseudo'], wedge=wedge, yaw=YAW[f['fid']])
         gb, gn = f['gt']
@@ -262,8 +320,12 @@ if __name__ == '__main__':
     ap.add_argument('--out', default='/home/koyama/code/experiments_md/viz')
     a = ap.parse_args()
     load_yaw()
+    import yaml
+    manifest = {str(r['job']): r for r in yaml.safe_load(open(Path(__file__).resolve().parent / 'manifest.yaml'))}
     for job in a.rows.split(','):
         d = pickle.load(open(Path(a.dump) / ('%s.pkl' % job), 'rb'))
+        d['row'].update({k: v for k, v in manifest.get(job, {}).items() if k in ('row', 'ap', 'section', 'run')})
+        canon_names(d)
         o = Path(a.out) / ('%s.jpg' % job)
         draw(d, o)
         print('wrote', o, '%.0f KB' % (o.stat().st_size / 1024))

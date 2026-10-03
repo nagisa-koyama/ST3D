@@ -308,5 +308,426 @@
     ]
    }
   ]
+ },
+ "pandaset/val/spin": {
+  "config": "cfgs/da-ieee-access/da_pandaset_spin_dataset.yaml",
+  "training": false,
+  "frames": [
+   {
+    "fid": "021/66",
+    "group": "021",
+    "image": "/home/koyama/data/pandaset/dataset/021/camera/front_camera/66.jpg",
+    "yaw": 0.0,
+    "band": [
+     0,
+     20
+    ],
+    "min_pts": 5,
+    "n_car": 1,
+    "n_ped": 1,
+    "ranges": [
+     17.6,
+     17.9
+    ]
+   },
+   {
+    "fid": "078/33",
+    "group": "078",
+    "image": "/home/koyama/data/pandaset/dataset/078/camera/front_camera/33.jpg",
+    "yaw": 0.0,
+    "band": [
+     20,
+     40
+    ],
+    "min_pts": 5,
+    "n_car": 3,
+    "n_ped": 4,
+    "ranges": [
+     20.4,
+     35.6,
+     37.9,
+     38.5,
+     38.5,
+     39.1,
+     39.3
+    ]
+   },
+   {
+    "fid": "020/06",
+    "group": "020",
+    "image": "/home/koyama/data/pandaset/dataset/020/camera/front_camera/06.jpg",
+    "yaw": 0.0,
+    "band": [
+     40,
+     60
+    ],
+    "min_pts": 5,
+    "n_car": 2,
+    "n_ped": 7,
+    "ranges": [
+     43.6,
+     46.8,
+     48.3,
+     50.7,
+     51.5,
+     53.2,
+     54.3,
+     55.7,
+     57.0
+    ]
+   }
+  ]
+ },
+ "pandaset/val/flash": {
+  "config": "cfgs/da-ieee-access/da_pandaset_flash_dataset.yaml",
+  "training": false,
+  "frames": [
+   {
+    "fid": "021/66",
+    "group": "021",
+    "image": "/home/koyama/data/pandaset/dataset/021/camera/front_camera/66.jpg",
+    "yaw": 0.0,
+    "band": [
+     0,
+     20
+    ],
+    "min_pts": 5,
+    "n_car": 1,
+    "n_ped": 1,
+    "ranges": [
+     17.6,
+     17.9
+    ]
+   },
+   {
+    "fid": "078/33",
+    "group": "078",
+    "image": "/home/koyama/data/pandaset/dataset/078/camera/front_camera/33.jpg",
+    "yaw": 0.0,
+    "band": [
+     20,
+     40
+    ],
+    "min_pts": 5,
+    "n_car": 3,
+    "n_ped": 4,
+    "ranges": [
+     20.4,
+     35.6,
+     37.9,
+     38.5,
+     38.5,
+     39.1,
+     39.3
+    ]
+   },
+   {
+    "fid": "020/06",
+    "group": "020",
+    "image": "/home/koyama/data/pandaset/dataset/020/camera/front_camera/06.jpg",
+    "yaw": 0.0,
+    "band": [
+     40,
+     60
+    ],
+    "min_pts": 5,
+    "n_car": 2,
+    "n_ped": 7,
+    "ranges": [
+     43.6,
+     46.8,
+     48.3,
+     50.7,
+     51.5,
+     53.2,
+     54.3,
+     55.7,
+     57.0
+    ]
+   }
+  ]
+ },
+ "pandaset/train/spin": {
+  "config": "cfgs/da-ieee-access/da_pandaset_spin_dataset.yaml",
+  "training": true,
+  "frames": [
+   {
+    "fid": "048/68",
+    "group": "048",
+    "image": "/home/koyama/data/pandaset/dataset/048/camera/front_camera/68.jpg",
+    "yaw": 0.0,
+    "band": [
+     0,
+     20
+    ],
+    "min_pts": 5,
+    "n_car": 6,
+    "n_ped": 3,
+    "ranges": [
+     9.4,
+     12.5,
+     12.8,
+     15.7,
+     16.2,
+     16.8,
+     18.2,
+     19.0,
+     19.1
+    ]
+   },
+   {
+    "fid": "015/54",
+    "group": "015",
+    "image": "/home/koyama/data/pandaset/dataset/015/camera/front_camera/54.jpg",
+    "yaw": 0.0,
+    "band": [
+     20,
+     40
+    ],
+    "min_pts": 5,
+    "n_car": 7,
+    "n_ped": 1,
+    "ranges": [
+     22.5,
+     25.6,
+     26.9,
+     32.7,
+     33.3,
+     33.4,
+     36.2,
+     38.8
+    ]
+   },
+   {
+    "fid": "024/54",
+    "group": "024",
+    "image": "/home/koyama/data/pandaset/dataset/024/camera/front_camera/54.jpg",
+    "yaw": 0.0,
+    "band": [
+     40,
+     60
+    ],
+    "min_pts": 5,
+    "n_car": 2,
+    "n_ped": 4,
+    "ranges": [
+     43.2,
+     44.0,
+     44.2,
+     51.3,
+     55.0,
+     59.8
+    ]
+   }
+  ]
+ },
+ "pandaset/train/flash": {
+  "config": "cfgs/da-ieee-access/da_pandaset_flash_dataset.yaml",
+  "training": true,
+  "frames": [
+   {
+    "fid": "048/68",
+    "group": "048",
+    "image": "/home/koyama/data/pandaset/dataset/048/camera/front_camera/68.jpg",
+    "yaw": 0.0,
+    "band": [
+     0,
+     20
+    ],
+    "min_pts": 5,
+    "n_car": 6,
+    "n_ped": 3,
+    "ranges": [
+     9.4,
+     12.5,
+     12.8,
+     15.7,
+     16.2,
+     16.8,
+     18.2,
+     19.0,
+     19.1
+    ]
+   },
+   {
+    "fid": "015/54",
+    "group": "015",
+    "image": "/home/koyama/data/pandaset/dataset/015/camera/front_camera/54.jpg",
+    "yaw": 0.0,
+    "band": [
+     20,
+     40
+    ],
+    "min_pts": 5,
+    "n_car": 7,
+    "n_ped": 1,
+    "ranges": [
+     22.5,
+     25.6,
+     26.9,
+     32.7,
+     33.3,
+     33.4,
+     36.2,
+     38.8
+    ]
+   },
+   {
+    "fid": "024/54",
+    "group": "024",
+    "image": "/home/koyama/data/pandaset/dataset/024/camera/front_camera/54.jpg",
+    "yaw": 0.0,
+    "band": [
+     40,
+     60
+    ],
+    "min_pts": 5,
+    "n_car": 2,
+    "n_ped": 4,
+    "ranges": [
+     43.2,
+     44.0,
+     44.2,
+     51.3,
+     55.0,
+     59.8
+    ]
+   }
+  ]
+ },
+ "waymo/val": {
+  "config": "cfgs/da-ieee-access/da_waymo_dataset.yaml",
+  "training": false,
+  "frames": [
+   {
+    "fid": "segment-4195774665746097799_7300_960_7320_960_with_camera_labels/0084",
+    "group": "segment-4195774665746097799_7300_960_7320_960_with_camera_labels",
+    "image": "/home/koyama/data/viz/waymo_front/segment-4195774665746097799_7300_960_7320_960_with_camera_labels_0084.jpg",
+    "yaw": 0.0,
+    "band": [
+     0,
+     20
+    ],
+    "min_pts": 5,
+    "n_car": 1,
+    "n_ped": 1,
+    "ranges": [
+     6.4,
+     14.7
+    ]
+   },
+   {
+    "fid": "segment-7119831293178745002_1094_720_1114_720_with_camera_labels/0194",
+    "group": "segment-7119831293178745002_1094_720_1114_720_with_camera_labels",
+    "image": "/home/koyama/data/viz/waymo_front/segment-7119831293178745002_1094_720_1114_720_with_camera_labels_0194.jpg",
+    "yaw": 0.0,
+    "band": [
+     20,
+     40
+    ],
+    "min_pts": 5,
+    "n_car": 2,
+    "n_ped": 1,
+    "ranges": [
+     21.5,
+     24.9,
+     28.3
+    ]
+   },
+   {
+    "fid": "segment-1105338229944737854_1280_000_1300_000_with_camera_labels/0159",
+    "group": "segment-1105338229944737854_1280_000_1300_000_with_camera_labels",
+    "image": "/home/koyama/data/viz/waymo_front/segment-1105338229944737854_1280_000_1300_000_with_camera_labels_0159.jpg",
+    "yaw": 0.0,
+    "band": [
+     40,
+     60
+    ],
+    "min_pts": 5,
+    "n_car": 4,
+    "n_ped": 1,
+    "ranges": [
+     43.7,
+     45.1,
+     49.9,
+     55.1,
+     55.7
+    ]
+   }
+  ]
+ },
+ "waymo/train": {
+  "config": "cfgs/da-ieee-access/da_waymo_dataset.yaml",
+  "training": true,
+  "frames": [
+   {
+    "fid": "segment-9016865488168499365_4780_000_4800_000_with_camera_labels/0136",
+    "group": "segment-9016865488168499365_4780_000_4800_000_with_camera_labels",
+    "image": "/home/koyama/data/viz/waymo_front/segment-9016865488168499365_4780_000_4800_000_with_camera_labels_0136.jpg",
+    "yaw": 0.0,
+    "band": [
+     0,
+     20
+    ],
+    "min_pts": 5,
+    "n_car": 2,
+    "n_ped": 5,
+    "ranges": [
+     10.0,
+     10.4,
+     12.5,
+     18.6,
+     18.7,
+     19.0,
+     19.7
+    ]
+   },
+   {
+    "fid": "segment-12896629105712361308_4520_000_4540_000_with_camera_labels/0075",
+    "group": "segment-12896629105712361308_4520_000_4540_000_with_camera_labels",
+    "image": "/home/koyama/data/viz/waymo_front/segment-12896629105712361308_4520_000_4540_000_with_camera_labels_0075.jpg",
+    "yaw": 0.0,
+    "band": [
+     20,
+     40
+    ],
+    "min_pts": 5,
+    "n_car": 3,
+    "n_ped": 10,
+    "ranges": [
+     22.6,
+     27.2,
+     28.3,
+     28.6,
+     29.2,
+     30.0,
+     30.8,
+     30.9,
+     31.1,
+     32.7,
+     34.1,
+     38.1,
+     38.7
+    ]
+   },
+   {
+    "fid": "segment-15787777881771177481_8820_000_8840_000_with_camera_labels/0116",
+    "group": "segment-15787777881771177481_8820_000_8840_000_with_camera_labels",
+    "image": "/home/koyama/data/viz/waymo_front/segment-15787777881771177481_8820_000_8840_000_with_camera_labels_0116.jpg",
+    "yaw": 0.0,
+    "band": [
+     40,
+     60
+    ],
+    "min_pts": 5,
+    "n_car": 2,
+    "n_ped": 1,
+    "ranges": [
+     44.5,
+     55.1,
+     58.5
+    ]
+   }
+  ]
  }
 }

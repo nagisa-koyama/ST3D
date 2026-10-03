@@ -37,6 +37,15 @@ SETS = {
     'nuscenes/train/n015': ('cfgs/da-ieee-access/da_nuscenes_n015_dataset.yaml', True, [FAR]),
     'lyft/train/40': ('cfgs/da-ieee-access/da_lyft40_dataset.yaml', True, [NEAR, MID]),
     'lyft/train/64': ('cfgs/da-ieee-access/da_lyft64_dataset.yaml', True, [FAR]),
+    'waymo/val': ('cfgs/da-ieee-access/da_waymo_dataset.yaml', False, [NEAR, MID, FAR]),
+    'waymo/train': ('cfgs/da-ieee-access/da_waymo_dataset.yaml', True, [NEAR, MID, FAR]),
+}
+# PandaSet's two sensors share timestamps: one selection, valid on BOTH clouds, written to both keys.
+JOINT = {
+    'pandaset/val': (('cfgs/da-ieee-access/da_pandaset_spin_dataset.yaml', 'spin'),
+                     ('cfgs/da-ieee-access/da_pandaset_flash_dataset.yaml', 'flash'), False, [NEAR, MID, FAR]),
+    'pandaset/train': (('cfgs/da-ieee-access/da_pandaset_spin_dataset.yaml', 'spin'),
+                       ('cfgs/da-ieee-access/da_pandaset_flash_dataset.yaml', 'flash'), True, [NEAR, MID, FAR]),
 }
 LYFT_ROOT = Path('/home/koyama/code/ST3D/data/lyft/trainval')
 
@@ -66,7 +75,8 @@ def front_in_band(ds, info, band):
     return boxes, names, (np.abs(az) <= FRONT_DEG) & (r >= band[0]) & (r < band[1])
 
 
-def pick(ds, I, order, band, groups, min_pts):
+def pick(ds, I, order, band, groups, min_pts, also=()):
+    """`also`: further datasets over the SAME infos (PandaSet's other sensor) that must qualify too."""
     tried = 0
     for i in order:
         info = I[i]
@@ -78,6 +88,8 @@ def pick(ds, I, order, band, groups, min_pts):
             continue
         tried += 1
         ok = m & (vc.points_per_box(vc.raw_points(ds, info), boxes) >= min_pts)
+        for other in also:
+            ok &= vc.points_per_box(vc.raw_points(other, vc.infos(other)[i]), boxes) >= min_pts
         n_car, n_ped = int((ok & (names == vc.CAR)).sum()), int((ok & (names == vc.PED)).sum())
         if n_car and n_ped:
             r = np.linalg.norm(boxes[ok, :2], axis=1)
@@ -102,6 +114,10 @@ def select(name, cfg_path, training, bands):
             tried += t
         assert c is not None, '%s: no frame with a Car and a Pedestrian in front at %s m' % (name, band)
         chosen.append(c); groups.add(c['group'])
+    if vc.dataset_kind(ds) == 'waymo':
+        for c in chosen:
+            seq, idx = c['fid'].rsplit('/', 1)
+            c['image'] = vc.waymo_front_image(seq, int(idx))
     if vc.dataset_kind(ds) == 'lyft':
         imgs = lyft_front_images([c['fid'] for c in chosen])
         for c in chosen:
@@ -111,10 +127,34 @@ def select(name, cfg_path, training, bands):
     return dict(config=cfg_path, training=training, frames=chosen)
 
 
+def select_joint(name, a, b, training, bands):
+    dss = []
+    for cfg_path, _ in (a, b):
+        dc = EasyDict()
+        cfg_from_yaml_file(cfg_path, dc)
+        dss.append(vc.build_dataset(dc, ['Car', 'Pedestrian', 'Cyclist'], training, 'kitti'))
+    I = vc.infos(dss[0])
+    assert [vc.frame_id(dss[0], x) for x in I] == [vc.frame_id(dss[1], x) for x in vc.infos(dss[1])], 'sensor infos differ'
+    order = np.random.RandomState(SEED).permutation(len(I))
+    chosen, groups = [], set()
+    for band in bands:
+        c, _ = pick(dss[0], I, order, band, groups, MIN_PTS, also=dss[1:])
+        if c is None:
+            c, _ = pick(dss[0], I, order, band, groups, MIN_PTS_FALLBACK, also=dss[1:])
+        assert c is not None, '%s: no frame at %s m valid on both sensors' % (name, band)
+        chosen.append(c); groups.add(c['group'])
+    print('%-20s %s (both sensors)' % (name, ['%s %s m, %d car %d ped >=%d pts' % (
+        c['fid'], c['band'], c['n_car'], c['n_ped'], c['min_pts']) for c in chosen]))
+    return {'%s/%s' % (name, plat): dict(config=cfg_path, training=training, frames=chosen) for cfg_path, plat in (a, b)}
+
+
 if __name__ == '__main__':
-    names = sys.argv[1:] or list(SETS)
+    names = sys.argv[1:] or list(SETS) + list(JOINT)
     out = json.load(open(OUT)) if OUT.exists() else {}
     for n in names:
+        if n in JOINT:
+            out.update(select_joint(n, *JOINT[n]))
+            continue
         out[n] = select(n, *SETS[n])
     json.dump(out, open(OUT, 'w'), indent=1)
     print('wrote', OUT)

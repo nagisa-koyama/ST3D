@@ -32,6 +32,12 @@ CAR, PED = 'Car', 'Pedestrian'
 NAME_MAP = {'car': CAR, 'vehicle': CAR, 'pedestrian': PED}
 
 
+def canon(names):
+    """Model / dataset class names -> 'Car' / 'Pedestrian' / other. Drops a head_per_dataset prefix
+    ('kitti:Car', 'lyft:car' in the MIRU2025 Table E configs)."""
+    return np.array([NAME_MAP.get(str(n).split(':')[-1].lower(), str(n).split(':')[-1]) for n in names])
+
+
 # ---------------------------------------------------------------- runs and configs
 def find_run_dir(run_id):
     for root in WANDB_DIRS:
@@ -62,6 +68,18 @@ def load_run_cfg(run_id):
         raw = yaml.safe_load(open(f))
         cfg = EasyDict({k: v for k, v in _unwrap_wandb(raw).items() if k.isupper()})
         src = 'W&B-recorded config'
+        # W&B silently drops some nested keys (PandaSet's TRAINING_CATEGORIES, whose keys hold spaces).
+        # Fill ONLY keys the record lacks from the repo config the run names; recorded values win.
+        try:
+            from pcdet.config import cfg_from_yaml_file
+            a = run_args(run_id)
+            repo = EasyDict()
+            cfg_from_yaml_file(str(TOOLS / a[a.index('--cfg_file') + 1]), repo)
+            filled = _fill_missing(cfg, repo)
+            if filled:
+                src += ' (+%d key(s) W&B dropped, from the repo config: %s)' % (len(filled), ', '.join(filled[:3]))
+        except Exception:  # noqa: BLE001 - a missing repo config leaves the record as it is
+            pass
     else:
         from pcdet.config import cfg_from_yaml_file
         a = run_args(run_id)
@@ -71,6 +89,22 @@ def load_run_cfg(run_id):
         src = 'repo config %s at HEAD (no W&B config.yaml)' % path
     cfg.LOCAL_RANK = 0
     return cfg, src
+
+
+def _fill_missing(dst, src, prefix=''):
+    filled = []
+    for k, v in src.items():
+        if k not in dst:
+            dst[k] = v
+            filled.append(prefix + k)
+        elif isinstance(v, dict) and isinstance(dst[k], dict):
+            filled += _fill_missing(dst[k], v, prefix + k + '.')
+    return filled
+
+
+def eval_config(cfg):
+    """The dataset a run is SCORED on - test.py's get_eval_configs rule."""
+    return cfg.DATA_CONFIG_TAR if cfg.get('DATA_CONFIG_TAR', None) else cfg.DATA_CONFIG
 
 
 def source_configs(cfg):
@@ -126,7 +160,11 @@ def frame_id(ds, info):
         return info['point_cloud']['lidar_idx']
     if kind in ('nuscenes', 'lyft'):
         return info['lidar_path']
-    raise NotImplementedError('frame_id for %s (P2)' % kind)
+    if kind == 'pandaset':
+        return '%s/%02d' % (info['sequence'], info['frame_idx'])
+    if kind == 'waymo':
+        return '%s/%04d' % (info['point_cloud']['lidar_sequence'], info['point_cloud']['sample_idx'])
+    raise NotImplementedError('frame_id for %s' % kind)
 
 
 def frame_group(ds, info):
@@ -138,11 +176,28 @@ def frame_group(ds, info):
         return Path(info['lidar_path']).name.split('__')[0]          # the log
     if kind == 'lyft':
         return '%s_%d' % (Path(info['lidar_path']).name.split('_')[0], int(info['timestamp']) // 120)
+    if kind == 'pandaset':
+        return info['sequence']
+    if kind == 'waymo':
+        return info['point_cloud']['lidar_sequence']
     raise NotImplementedError(kind)
 
 
 def infos(ds):
-    return ds.kitti_infos if hasattr(ds, 'kitti_infos') else ds.infos
+    for a in ('kitti_infos', 'pandaset_infos'):
+        if hasattr(ds, a):
+            return getattr(ds, a)
+    return ds.infos
+
+
+def platform(data_cfg):
+    """The platform a dataset config selects, as used in viz_frames.json keys, or None (all)."""
+    p = data_cfg.get('LIDAR_CONFIG', None) or data_cfg.get('VEHICLE', None)
+    if isinstance(p, (list, tuple)):
+        p = p[0] if len(p) == 1 else None
+    if p is None and 'LIDAR_DEVICE' in data_cfg:
+        p = {0: 'spin', 1: 'flash'}.get(int(data_cfg.LIDAR_DEVICE), None)
+    return None if p is None else str(p)
 
 
 def index_of(ds, fid):
@@ -161,6 +216,11 @@ def raw_points(ds, info):
         p = np.fromfile(str(ds.root_path / info['lidar_path']), dtype=np.float32)
         p = p[: p.shape[0] - p.shape[0] % 5]
         return p.reshape(-1, 5)[:, :4]
+    if kind == 'pandaset':          # the configured device, ego frame, x forward (the loader's own transform)
+        return ds._get_lidar_points(info, ds._get_pose(info))[:, :4]
+    if kind == 'waymo':             # every stored point, all five lidars, NLZ points included
+        pc = info['point_cloud']
+        return np.load(ds.data_path / pc['lidar_sequence'] / ('%04d.npy' % pc['sample_idx']))[:, :4].astype(np.float32)
     raise NotImplementedError(kind)
 
 
@@ -170,6 +230,10 @@ def raw_labels(ds, info):
     if kind == 'kitti':
         boxes = info['annos']['gt_boxes_lidar']
         names = info['annos']['name'][:len(boxes)]
+    elif kind == 'pandaset':
+        boxes, names, _ = ds._get_annotations(info, ds._get_pose(info))
+    elif kind == 'waymo':
+        boxes, names = info['annos']['gt_boxes_lidar'][:, :7], info['annos']['name']
     else:
         boxes, names = info['gt_boxes'][:, :7], info['gt_names']
     names = np.array([NAME_MAP.get(str(n).lower(), '') for n in names])
@@ -183,16 +247,48 @@ def image_path(ds, info):
         return str((ds.root_split_path / 'image_2' / ('%s.png' % info['point_cloud']['lidar_idx'])).resolve())
     if kind == 'nuscenes':
         return str((ds.root_path / info['cam_front_path']).resolve())
-    return None          # Lyft: resolved through sample_data.json at selection time
+    if kind == 'pandaset':
+        return str((Path(ds.dataset_cfg.DATA_PATH) / 'dataset' / info['sequence'] / 'camera' / 'front_camera'
+                    / ('%02d.jpg' % info['frame_idx'])).resolve())
+    return None          # Lyft: resolved through sample_data.json at selection time; Waymo: only in the tfrecords
 
 
 def forward_yaw(ds, info):
     """Direction the vehicle faces, as a yaw in the LIDAR frame (degrees). KITTI's velodyne faces +x;
     nuScenes' LIDAR_TOP faces +y and Lyft's -x, read off each frame's own lidar-from-car rotation."""
-    if dataset_kind(ds) == 'kitti':
+    if dataset_kind(ds) in ('kitti', 'pandaset', 'waymo'):     # all three are x-forward frames
         return 0.0
     f = np.asarray(info['ref_from_car'])[:3, :3] @ np.array([1.0, 0.0, 0.0])
     return float(np.degrees(np.arctan2(f[1], f[0])))
+
+
+WAYMO_RAW = Path('/home/koyama/data/waymo_open_dataset_v_1_4_0/pcdet_structure/raw_data')
+WAYMO_IMG = Path('/home/koyama/data/viz/waymo_front')
+
+
+def waymo_front_image(sequence, sample_idx):
+    """FRONT camera JPEG of one frame, cut straight out of the raw tfrecord (no tensorflow): record
+    `sample_idx` of <sequence>.tfrecord, Frame.images (field 4) whose CameraImage.name (field 1) is
+    FRONT = 1, bytes in field 2. Verified on a real record: five images per frame, names 1-5."""
+    import struct
+    from waymo_calib import _fields
+    out = WAYMO_IMG / ('%s_%04d.jpg' % (sequence, sample_idx))
+    if out.exists():
+        return str(out)
+    with open(WAYMO_RAW / ('%s.tfrecord' % sequence), 'rb') as f:
+        for _ in range(sample_idx):
+            ln = struct.unpack('<Q', f.read(8))[0]
+            f.seek(4 + ln + 4, 1)
+        ln = struct.unpack('<Q', f.read(8))[0]; f.read(4)
+        frame = f.read(ln)
+    for fn, wt, v in _fields(frame):
+        if fn == 4 and wt == 2:
+            sub = {f2: x for f2, w2, x in _fields(v) if f2 in (1, 2)}
+            if sub.get(1) == 1:
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_bytes(bytes(sub[2]))
+                return str(out)
+    return None
 
 
 def points_per_box(points, boxes):
