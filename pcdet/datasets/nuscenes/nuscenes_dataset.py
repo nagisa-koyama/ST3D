@@ -228,6 +228,14 @@ class NuScenesDataset(DatasetTemplate):
         info = copy.deepcopy(self.infos[index])
         points = self.get_lidar_with_sweeps(index, max_sweeps=self.dataset_cfg.MAX_SWEEPS)
 
+        # nuScenes stores intensity as raw 0-255 returns, while KITTI (as stored), Waymo (tanh in its
+        # loader) and PandaSet (/255 in its loader) all arrive in [0, 1]. INTENSITY_SCALE: 255.0 puts
+        # nuScenes on the same scale for any config that feeds intensity across datasets
+        # (experiments_md/20261003_03); absent, nothing changes - every x,y,z config.
+        intensity_scale = self.dataset_cfg.get('INTENSITY_SCALE', None)
+        if intensity_scale:
+            points[:, 3] /= np.float32(intensity_scale)
+
         if self.dataset_cfg.get('SHIFT_COOR', None):
             points[:, 0:3] += np.array(self.dataset_cfg.SHIFT_COOR, dtype=np.float32)
 

@@ -1,0 +1,23 @@
+# Waymo in-domain ORACLE WITH INTENSITY - a diagonal cell of the cross-dataset intensity matrix
+# (experiments_md/20261003_03). ONE VARIABLE from centerpoint-sourceonly-waymo2waymo, i.e. the training
+# config of job 26398 (7 epochs on the re-extracted cloud, scored on Waymo val by 27179: 65.92 / 51.77):
+# intensity is added to the point features on both sides. The Waymo loader already applies tanh to the
+# raw value, so it arrives in [0, 1] like KITTI and PandaSet; elongation stays out. Keeps the family's
+# Car ROS [0.85, 1.20], like its twin.
+#
+# Also the EVAL-ONLY scoring config for any x,y,z,intensity checkpoint on Waymo val.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-waymo2waymo.yaml
+
+DATA_CONFIG:
+    POINT_FEATURE_ENCODING: {
+        encoding_type: absolute_coordinates_encoding,
+        used_feature_list: ['x', 'y', 'z', 'intensity'],
+        src_feature_list: ['x', 'y', 'z', 'intensity', 'elongation'],
+    }
+
+DATA_CONFIG_TAR:
+    POINT_FEATURE_ENCODING: {
+        encoding_type: absolute_coordinates_encoding,
+        used_feature_list: ['x', 'y', 'z', 'intensity'],
+        src_feature_list: ['x', 'y', 'z', 'intensity', 'elongation'],
+    }

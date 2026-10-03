@@ -1,0 +1,23 @@
+# PandaSet SPIN (Pandar64) in-domain ORACLE WITH INTENSITY - a diagonal cell of the cross-dataset
+# intensity matrix (experiments_md/20261003_03). Training is ONE VARIABLE from the x,y,z twin, job
+# 26510 (centerpoint-pandaset-spin2flash-15ep; its checkpoint scored on spin val by 26971 is the proxy
+# S4 oracle), full length 26389: intensity (the PandaSet loader's /255, already [0, 1]) is added on
+# both sides. The eval target is spin val over 360 deg (spin2spin), so the in-run number is the
+# oracle; in-cone and rule A by rescore. Run at the 15-epoch proxy length via
+# da-ieee-access-tier1/centerpoint-pandaset-spin2spin-xyzi-15ep.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-pandaset-spin2spin.yaml
+
+DATA_CONFIG:
+    POINT_FEATURE_ENCODING: {
+        encoding_type: absolute_coordinates_encoding,
+        used_feature_list: ['x', 'y', 'z', 'intensity'],
+        src_feature_list: ['x', 'y', 'z', 'intensity'],
+    }
+
+DATA_CONFIG_TAR:
+    POINT_FEATURE_ENCODING: {
+        encoding_type: absolute_coordinates_encoding,
+        used_feature_list: ['x', 'y', 'z', 'intensity'],
+        src_feature_list: ['x', 'y', 'z', 'intensity'],
+    }
+

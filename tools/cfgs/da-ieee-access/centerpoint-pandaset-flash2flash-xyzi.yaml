@@ -1,0 +1,23 @@
+# PandaSet FLASH (PandarGT) in-domain ORACLE WITH INTENSITY - a diagonal cell of the cross-dataset
+# intensity matrix (experiments_md/20261003_03). Training is ONE VARIABLE from the x,y,z twin, job
+# 26974 (centerpoint-pandaset-flash2spin-15ep; its checkpoint rescored with flash2flash is the S3
+# oracle, 75.75 BEV under rule A): intensity (the PandaSet loader's /255, already [0, 1]) is added on
+# both sides. The eval target is flash val inside its 60 deg cone (flash2flash), so the in-run number
+# is the oracle; rule A by rescore. Run at the 15-epoch proxy length via
+# da-ieee-access-tier1/centerpoint-pandaset-flash2flash-xyzi-15ep.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-pandaset-flash2flash.yaml
+
+DATA_CONFIG:
+    POINT_FEATURE_ENCODING: {
+        encoding_type: absolute_coordinates_encoding,
+        used_feature_list: ['x', 'y', 'z', 'intensity'],
+        src_feature_list: ['x', 'y', 'z', 'intensity'],
+    }
+
+DATA_CONFIG_TAR:
+    POINT_FEATURE_ENCODING: {
+        encoding_type: absolute_coordinates_encoding,
+        used_feature_list: ['x', 'y', 'z', 'intensity'],
+        src_feature_list: ['x', 'y', 'z', 'intensity'],
+    }
+

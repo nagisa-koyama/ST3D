@@ -1,0 +1,6 @@
+# Tier-1 proxy of da-ieee-access/centerpoint-pandaset-spin2spin-xyzi.yaml: 15 epochs, the matched-step budget of
+# the PandaSet proxies (26510 / 26974), whose controls track their full-length runs to 0.5 AP.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-pandaset-spin2spin-xyzi.yaml
+
+OPTIMIZATION:
+    NUM_EPOCHS: 15
