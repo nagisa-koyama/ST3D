@@ -4,8 +4,9 @@
 
 Clouds are drawn as BEV point DENSITY (points per 0.4 m cell) on one fixed log scale shared by every
 panel of every figure, so equal shading means equal density - across source and target, and across
-runs. Full detection grid, +-75.2 m. Ground truth green, predictions (score >= 0.3) red, pseudo-label
-rule blue (positives solid, ignore band dashed). Car thick, Pedestrian thin; Cyclist is not drawn.
+runs. Full detection grid, +-75.2 m. Ground truth green, predictions (score >= 0.3) red. Self-training
+rows also get <job>_pseudo.jpg: the target frames with the pseudo-label rule in blue (positives solid,
+ignore band dashed). Car thick, Pedestrian thin; Cyclist is not drawn.
 Every BEV is rotated so the vehicle faces UP (forward yaw per frame, from viz_frames.json).
 """
 import argparse
@@ -119,7 +120,7 @@ def car_pts(c):
     return np.array(med), np.array(n)
 
 
-YAW = {}
+YAW, BAND = {}, {}
 
 
 def load_yaw():
@@ -127,6 +128,7 @@ def load_yaw():
     for v in json.load(open(Path(__file__).resolve().parent / 'viz_frames.json')).values():
         for f in v['frames']:
             YAW[f['fid']] = f.get('yaw', 0.0)
+            BAND[f['fid']] = 'car + ped in front at %d-%d m' % tuple(f['band']) if f.get('band') else ''
 
 
 def short(fid):
@@ -139,30 +141,25 @@ def draw(d, out):
     nf = 3
     fig = plt.figure(figsize=(6.2 * nf, 18.5))
     gs = GridSpec(6, 2 * nf, figure=fig, height_ratios=[1.45, 3.1, 1.45, 3.1, 0.15, 2.3], hspace=0.13, wspace=0.04,
-                  top=0.925, bottom=0.03, left=0.04, right=0.99)
+                  top=0.905, bottom=0.03, left=0.04, right=0.99)
     src_frames = [(s, f) for s in S for f in s['frames']][:nf]
     for j, (s, f) in enumerate(src_frames):
-        image(fig.add_subplot(gs[0, 2 * j:2 * j + 2]), f['image'], 'SOURCE %s (%s) %s' % (s['kind'], s['name'], short(f['fid'])))
+        image(fig.add_subplot(gs[0, 2 * j:2 * j + 2]), f['image'], 'SOURCE %s (%s) %s\n%s' % (s['kind'], s['name'], short(f['fid']), BAND.get(f['fid'], '')))
         y = YAW[f['fid']]
         bev(fig.add_subplot(gs[1, 2 * j]), f['raw'], 'raw sweep: %s pts' % format(len(f['raw']), ','), gt=f['raw_gt'], yaw=y)
         bev(fig.add_subplot(gs[1, 2 * j + 1]), f['points'], 'model input: %s pts' % format(len(f['points']), ','),
             gt=f['gt'], pred=f['pred'], yaw=y)
     wedge = 90 if T['kind'] == 'kitti' else None
     for j, f in enumerate(T['frames'][:nf]):
-        image(fig.add_subplot(gs[2, 2 * j:2 * j + 2]), f['image'], 'TARGET %s %s' % (T['kind'], short(f['fid'])))
+        image(fig.add_subplot(gs[2, 2 * j:2 * j + 2]), f['image'], 'TARGET %s %s\n%s' % (T['kind'], short(f['fid']), BAND.get(f['fid'], '')))
         bev(fig.add_subplot(gs[3, 2 * j]), f['points'], 'model input: %s pts' % format(len(f['points']), ','),
-            gt=f['gt'], pred=f['pred'], ps=f.get('pseudo'), wedge=wedge, yaw=YAW[f['fid']])
+            gt=f['gt'], pred=f['pred'], wedge=wedge, yaw=YAW[f['fid']])
         lines = ['target frame %d' % (j + 1), '']
         gb, gn = f['gt']
         lines += ['labels   Car %d  Ped %d' % ((gn == 'Car').sum(), (gn == 'Pedestrian').sum())]
         b, s_, n = f['pred']
         k = s_ >= DRAW_SCORE
         lines += ['pred>=%.1f Car %d  Ped %d' % (DRAW_SCORE, (n[k] == 'Car').sum(), (n[k] == 'Pedestrian').sum())]
-        if f.get('pseudo') is not None:
-            pb, ps_, pn, pos = f['pseudo']
-            lines += ['pseudo   Car %d (+%d ign)  Ped %d (+%d ign)' % (
-                ((pn == 'Car') & pos).sum(), ((pn == 'Car') & ~pos).sum(),
-                ((pn == 'Pedestrian') & pos).sum(), ((pn == 'Pedestrian') & ~pos).sum())]
         if f.get('check'):
             c = f['check']
             lines += ['', 'vs scored result.pkl: %d / %d boxes' % (c['n_ours'], c['n_ref']),
@@ -215,14 +212,45 @@ def draw(d, out):
             c = 'no density correction'
         desc.append('%s: %d sweep(s)%s; %s' % (s['name'], s['max_sweeps'], ' + motion comp.' if s['motion_comp'] else '', c))
     if d.get('pseudo_rule'):
-        r = d['pseudo_rule']
-        desc.append('pseudo-label rule on these val frames: teacher %s, SCORE_THRESH %s, NEG_THRESH %s' % (
-            Path(r['teacher']).parts[-4] if 'wandb' in r['teacher'] else r['teacher'], r['score'], r['neg']))
+        desc.append('pseudo-labels: separate figure %s_pseudo.jpg' % row['job'])
     fig.suptitle('job %s  ·  %s  ·  %s\n%s\nconfig: %s\ndensity: points per %.1f m cell, log 1..%d, same scale in every panel'
-                 ' · vehicle faces up · green labels, red predictions >= %.1f, blue pseudo-label rule (dashed = ignore band)' % (
+                 ' · vehicle faces up · green labels, red predictions >= %.1f' % (
                      row['job'], row['row'], row.get('ap', ''), '\n'.join(desc), d['cfg_source'], CELL, VMAX, DRAW_SCORE),
                  fontsize=10, y=0.985, x=0.01, ha='left')
     out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=100, pil_kwargs=dict(quality=82))
+    plt.close(fig)
+
+
+def ps_counts(pn, pos, cls):
+    return ((pn == cls) & pos).sum(), ((pn == cls) & ~pos).sum()
+
+
+def draw_pseudo(d, out):
+    """Self-training rows only: the same target frames with real labels and the pseudo-label rule."""
+    row, T, r = d['row'], d['target'], d['pseudo_rule']
+    nf = 3
+    fig = plt.figure(figsize=(6.2 * nf, 9.6))
+    gs = GridSpec(2, 2 * nf, figure=fig, height_ratios=[1.45, 3.1], hspace=0.13, wspace=0.04,
+                  top=0.86, bottom=0.02, left=0.04, right=0.99)
+    wedge = 90 if T['kind'] == 'kitti' else None
+    for j, f in enumerate(T['frames'][:nf]):
+        image(fig.add_subplot(gs[0, 2 * j:2 * j + 2]), f['image'], 'TARGET %s %s\n%s' % (T['kind'], short(f['fid']), BAND.get(f['fid'], '')))
+        bev(fig.add_subplot(gs[1, 2 * j]), f['points'], 'model input: %s pts' % format(len(f['points']), ','),
+            gt=f['gt'], ps=f['pseudo'], wedge=wedge, yaw=YAW[f['fid']])
+        gb, gn = f['gt']
+        pb, ps_, pn, pos = f['pseudo']
+        lines = ['target frame %d' % (j + 1), '',
+                 'labels   Car %d  Ped %d' % ((gn == 'Car').sum(), (gn == 'Pedestrian').sum()),
+                 'pseudo   Car %d (+%d ignored)' % ps_counts(pn, pos, 'Car'),
+                 '         Ped %d (+%d ignored)' % ps_counts(pn, pos, 'Pedestrian')]
+        stat_text(fig.add_subplot(gs[1, 2 * j + 1]), lines)
+    teacher = Path(r['teacher']).parts[-4] if 'wandb' in r['teacher'] else r['teacher']
+    fig.suptitle('job %s  ·  %s  ·  PSEUDO-LABELS\nthe row\'s pseudo-label rule applied on these val frames: teacher %s, '
+                 'SCORE_THRESH %s (positive, solid blue), NEG_THRESH %s (ignore band, dashed)\n'
+                 'pseudo-labels proper exist only on target TRAIN frames; this is what the same rule gives on the shown val frames'
+                 ' · green real labels · same density scale as the main figure' % (row['job'], row['row'], teacher, r['score'], r['neg']),
+                 fontsize=10, y=0.985, x=0.01, ha='left')
     fig.savefig(out, dpi=100, pil_kwargs=dict(quality=82))
     plt.close(fig)
 
@@ -239,3 +267,7 @@ if __name__ == '__main__':
         o = Path(a.out) / ('%s.jpg' % job)
         draw(d, o)
         print('wrote', o, '%.0f KB' % (o.stat().st_size / 1024))
+        if d.get('pseudo_rule'):
+            o = Path(a.out) / ('%s_pseudo.jpg' % job)
+            draw_pseudo(d, o)
+            print('wrote', o, '%.0f KB' % (o.stat().st_size / 1024))

@@ -1,8 +1,12 @@
 """Choose the common frames every run's figure shows (experiments_md/20261003_02 §4).
 
-Per frame set: frames with >= 1 Car and >= 1 Pedestrian label, each holding >= MIN_PTS points of the
-STORED sweep, centre inside the detection grid; taken from distinct drives, by a seeded draw. Real
-labels decide only which frames are shown. Writes viz_frames.json next to this file; run from tools/
+Per frame set, one frame per RANGE BAND (near 0-20 m, mid 20-40 m, far 40-60 m): a frame qualifies
+for a band when it holds >= 1 Car and >= 1 Pedestrian label IN FRONT of the vehicle (box centre within
++-FRONT_DEG of its heading, so both are in the front image) with centre range inside the band, each
+holding >= MIN_PTS points of the STORED sweep. Frames come from distinct drives, by a seeded draw. If
+no frame in a band reaches MIN_PTS, the band is retried at MIN_PTS_FALLBACK and the frame records it.
+Real labels decide only which frames are shown. (Rule updated by the user 2026-10-03 16:30: "car and
+pedestrian in front, distributed across the range"; it replaced "anywhere in the grid".) Writes viz_frames.json next to this file; run from tools/
 in the container (CPU):
 
     python analysis/viz/select_frames.py [set ...]
@@ -21,16 +25,18 @@ import viz_common as vc  # noqa: E402
 from pcdet.config import cfg_from_yaml_file  # noqa: E402
 
 OUT = Path(__file__).resolve().parent / 'viz_frames.json'
-SEED, MIN_PTS, GRID = 0, 5, 75.2
-# name: (dataset config, training split?, how many). Two-platform sources split 2 + 1 (§4).
+SEED, MIN_PTS, MIN_PTS_FALLBACK, FRONT_DEG = 0, 5, 3, 35.0
+NEAR, MID, FAR = (0, 20), (20, 40), (40, 60)
+# name: (dataset config, training split?, range bands). Two-platform sources: near + mid from the
+# majority platform, far from the other (§4).
 SETS = {
-    'kitti/val': ('cfgs/da-ieee-access/da_kitti_dataset.yaml', False, 3),
-    'kitti/train': ('cfgs/da-ieee-access/da_kitti_dataset.yaml', True, 3),
-    'nuscenes/val': ('cfgs/da-ieee-access/da_nuscenes_dataset.yaml', False, 3),
-    'nuscenes/train/n008': ('cfgs/da-ieee-access/da_nuscenes_n008_dataset.yaml', True, 2),
-    'nuscenes/train/n015': ('cfgs/da-ieee-access/da_nuscenes_n015_dataset.yaml', True, 1),
-    'lyft/train/40': ('cfgs/da-ieee-access/da_lyft40_dataset.yaml', True, 2),
-    'lyft/train/64': ('cfgs/da-ieee-access/da_lyft64_dataset.yaml', True, 1),
+    'kitti/val': ('cfgs/da-ieee-access/da_kitti_dataset.yaml', False, [NEAR, MID, FAR]),
+    'kitti/train': ('cfgs/da-ieee-access/da_kitti_dataset.yaml', True, [NEAR, MID, FAR]),
+    'nuscenes/val': ('cfgs/da-ieee-access/da_nuscenes_dataset.yaml', False, [NEAR, MID, FAR]),
+    'nuscenes/train/n008': ('cfgs/da-ieee-access/da_nuscenes_n008_dataset.yaml', True, [NEAR, MID]),
+    'nuscenes/train/n015': ('cfgs/da-ieee-access/da_nuscenes_n015_dataset.yaml', True, [FAR]),
+    'lyft/train/40': ('cfgs/da-ieee-access/da_lyft40_dataset.yaml', True, [NEAR, MID]),
+    'lyft/train/64': ('cfgs/da-ieee-access/da_lyft64_dataset.yaml', True, [FAR]),
 }
 LYFT_ROOT = Path('/home/koyama/code/ST3D/data/lyft/trainval')
 
@@ -49,39 +55,59 @@ def lyft_front_images(lidar_paths):
             for p in lidar_paths}
 
 
-def select(name, cfg_path, training, k):
-    dc = EasyDict()
-    cfg_from_yaml_file(cfg_path, dc)
-    ds = vc.build_dataset(dc, ['Car', 'Pedestrian', 'Cyclist'], training, 'kitti')
-    rng = np.random.RandomState(SEED)
-    I = vc.infos(ds)
-    order = rng.permutation(len(I))
-    chosen, groups, tried = [], set(), 0
+def front_in_band(ds, info, band):
+    """Mask of labels in front of the vehicle with centre range inside `band`, and the names."""
+    boxes, names = vc.raw_labels(ds, info)
+    if not len(boxes):
+        return boxes, names, np.zeros(0, bool)
+    az = np.degrees(np.arctan2(boxes[:, 1], boxes[:, 0])) - vc.forward_yaw(ds, info)
+    az = (az + 180.0) % 360.0 - 180.0
+    r = np.linalg.norm(boxes[:, :2], axis=1)
+    return boxes, names, (np.abs(az) <= FRONT_DEG) & (r >= band[0]) & (r < band[1])
+
+
+def pick(ds, I, order, band, groups, min_pts):
+    tried = 0
     for i in order:
         info = I[i]
-        boxes, names = vc.raw_labels(ds, info)
-        inside = (np.abs(boxes[:, 0]) < GRID) & (np.abs(boxes[:, 1]) < GRID) if len(boxes) else np.zeros(0, bool)
-        if not ((names[inside] == vc.CAR).any() and (names[inside] == vc.PED).any()):
+        boxes, names, m = front_in_band(ds, info, band)
+        if not ((names[m] == vc.CAR).any() and (names[m] == vc.PED).any()):
             continue
         g = vc.frame_group(ds, info)
         if g in groups:
             continue
         tried += 1
-        n = vc.points_per_box(vc.raw_points(ds, info), boxes)
-        ok = inside & (n >= MIN_PTS)
+        ok = m & (vc.points_per_box(vc.raw_points(ds, info), boxes) >= min_pts)
         n_car, n_ped = int((ok & (names == vc.CAR)).sum()), int((ok & (names == vc.PED)).sum())
         if n_car and n_ped:
-            chosen.append(dict(fid=vc.frame_id(ds, info), group=str(g), image=vc.image_path(ds, info), yaw=vc.forward_yaw(ds, info),
-                               n_car=n_car, n_ped=n_ped))
-            groups.add(g)
-            if len(chosen) == k:
-                break
-    assert len(chosen) == k, '%s: only %d qualifying frames' % (name, len(chosen))
+            r = np.linalg.norm(boxes[ok, :2], axis=1)
+            return dict(fid=vc.frame_id(ds, info), group=str(g), image=vc.image_path(ds, info),
+                        yaw=vc.forward_yaw(ds, info), band=list(band), min_pts=min_pts, n_car=n_car,
+                        n_ped=n_ped, ranges=[round(float(x), 1) for x in sorted(r)]), tried
+    return None, tried
+
+
+def select(name, cfg_path, training, bands):
+    dc = EasyDict()
+    cfg_from_yaml_file(cfg_path, dc)
+    ds = vc.build_dataset(dc, ['Car', 'Pedestrian', 'Cyclist'], training, 'kitti')
+    I = vc.infos(ds)
+    order = np.random.RandomState(SEED).permutation(len(I))
+    chosen, groups, tried = [], set(), 0
+    for band in bands:
+        c, t = pick(ds, I, order, band, groups, MIN_PTS)
+        tried += t
+        if c is None:
+            c, t = pick(ds, I, order, band, groups, MIN_PTS_FALLBACK)
+            tried += t
+        assert c is not None, '%s: no frame with a Car and a Pedestrian in front at %s m' % (name, band)
+        chosen.append(c); groups.add(c['group'])
     if vc.dataset_kind(ds) == 'lyft':
         imgs = lyft_front_images([c['fid'] for c in chosen])
         for c in chosen:
             c['image'] = imgs[c['fid']]
-    print('%-22s %s (point-checked %d candidates)' % (name, [(c['fid'][-40:], c['n_car'], c['n_ped']) for c in chosen], tried))
+    print('%-20s %s (point-checked %d)' % (name, ['%s %s m, %d car %d ped >=%d pts' % (
+        c['fid'][-28:], c['band'], c['n_car'], c['n_ped'], c['min_pts']) for c in chosen], tried))
     return dict(config=cfg_path, training=training, frames=chosen)
 
 

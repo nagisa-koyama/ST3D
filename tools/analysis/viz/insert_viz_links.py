@@ -1,7 +1,7 @@
 """Add (or refresh) a `viz` column in every result table of a report (experiments_md/20261003_02 §6).
 
 A table qualifies when its header has a `job` column. Each job number in that column that has a
-figure at <experiments_md>/viz/<job>.jpg gets a link; rows without one get an em dash. Re-runnable:
+figure at <experiments_md>/viz/<job>.jpg gets a link (and its <job>_pseudo.jpg, if any); rows without one get an em dash. Re-runnable:
 an existing `viz` column is rewritten in place, never duplicated.
 
     python3 analysis/viz/insert_viz_links.py <report.md> [...]
@@ -44,7 +44,12 @@ def process(path):
         while i < len(lines) and lines[i].startswith('|'):
             cs = cells(lines[i])
             jobs = re.findall(r'\b(2\d{4})\b', cs[jcol]) if jcol < len(cs) else []
-            links = ['[%s](viz/%s.jpg)' % (j, j) for j in jobs if (ROOT / 'viz' / ('%s.jpg' % j)).exists()]
+            links = []
+            for j in jobs:
+                if (ROOT / 'viz' / ('%s.jpg' % j)).exists():
+                    links.append('[%s](viz/%s.jpg)' % (j, j))
+                if (ROOT / 'viz' / ('%s_pseudo.jpg' % j)).exists():
+                    links.append('[pseudo](viz/%s_pseudo.jpg)' % j)
             v = ' · '.join(links) if links else '—'
             if has and vcol < len(cs):
                 cs[vcol] = v

@@ -8,24 +8,52 @@
     "group": "9",
     "image": "/home/koyama/data/kitti/training/image_2/001979.png",
     "yaw": 0.0,
-    "n_car": 5,
-    "n_ped": 1
-   },
-   {
-    "fid": "002348",
-    "group": "11",
-    "image": "/home/koyama/data/kitti/training/image_2/002348.png",
-    "yaw": 0.0,
+    "band": [
+     0,
+     20
+    ],
+    "min_pts": 5,
     "n_car": 1,
-    "n_ped": 1
+    "n_ped": 1,
+    "ranges": [
+     8.8,
+     16.6
+    ]
    },
    {
     "fid": "005037",
     "group": "25",
     "image": "/home/koyama/data/kitti/training/image_2/005037.png",
     "yaw": 0.0,
+    "band": [
+     20,
+     40
+    ],
+    "min_pts": 5,
     "n_car": 1,
-    "n_ped": 3
+    "n_ped": 1,
+    "ranges": [
+     31.6,
+     35.7
+    ]
+   },
+   {
+    "fid": "000308",
+    "group": "1",
+    "image": "/home/koyama/data/kitti/training/image_2/000308.png",
+    "yaw": 0.0,
+    "band": [
+     40,
+     60
+    ],
+    "min_pts": 5,
+    "n_car": 1,
+    "n_ped": 2,
+    "ranges": [
+     46.3,
+     51.8,
+     52.3
+    ]
    }
   ]
  },
@@ -34,28 +62,61 @@
   "training": true,
   "frames": [
    {
-    "fid": "001676",
-    "group": "8",
-    "image": "/home/koyama/data/kitti/training/image_2/001676.png",
+    "fid": "000154",
+    "group": "0",
+    "image": "/home/koyama/data/kitti/training/image_2/000154.png",
     "yaw": 0.0,
-    "n_car": 9,
-    "n_ped": 1
+    "band": [
+     0,
+     20
+    ],
+    "min_pts": 5,
+    "n_car": 1,
+    "n_ped": 1,
+    "ranges": [
+     16.3,
+     16.5
+    ]
    },
    {
     "fid": "007393",
     "group": "36",
     "image": "/home/koyama/data/kitti/training/image_2/007393.png",
     "yaw": 0.0,
-    "n_car": 10,
-    "n_ped": 1
+    "band": [
+     20,
+     40
+    ],
+    "min_pts": 5,
+    "n_car": 5,
+    "n_ped": 1,
+    "ranges": [
+     20.2,
+     21.3,
+     21.5,
+     26.4,
+     30.5,
+     35.7
+    ]
    },
    {
-    "fid": "003078",
-    "group": "15",
-    "image": "/home/koyama/data/kitti/training/image_2/003078.png",
+    "fid": "002822",
+    "group": "14",
+    "image": "/home/koyama/data/kitti/training/image_2/002822.png",
     "yaw": 0.0,
-    "n_car": 6,
-    "n_ped": 2
+    "band": [
+     40,
+     60
+    ],
+    "min_pts": 5,
+    "n_car": 1,
+    "n_ped": 3,
+    "ranges": [
+     42.8,
+     43.5,
+     54.3,
+     58.5
+    ]
    }
   ]
  },
@@ -64,28 +125,55 @@
   "training": false,
   "frames": [
    {
-    "fid": "samples/LIDAR_TOP/n008-2018-08-30-10-33-52-0400__LIDAR_TOP__1535639726800708.pcd.bin",
-    "group": "n008-2018-08-30-10-33-52-0400",
-    "image": "/home/koyama/data/nuscenes_full_v_1_0/v1.0-trainval/samples/CAM_FRONT/n008-2018-08-30-10-33-52-0400__CAM_FRONT__1535639726762407.jpg",
+    "fid": "samples/LIDAR_TOP/n008-2018-08-31-11-37-23-0400__LIDAR_TOP__1535729918446425.pcd.bin",
+    "group": "n008-2018-08-31-11-37-23-0400",
+    "image": "/home/koyama/data/nuscenes_full_v_1_0/v1.0-trainval/samples/CAM_FRONT/n008-2018-08-31-11-37-23-0400__CAM_FRONT__1535729918412404.jpg",
     "yaw": 90.03113315051014,
-    "n_car": 3,
-    "n_ped": 1
+    "band": [
+     0,
+     20
+    ],
+    "min_pts": 5,
+    "n_car": 1,
+    "n_ped": 1,
+    "ranges": [
+     8.5,
+     9.3
+    ]
    },
    {
-    "fid": "samples/LIDAR_TOP/n008-2018-08-01-15-16-36-0400__LIDAR_TOP__1533151837797618.pcd.bin",
+    "fid": "samples/LIDAR_TOP/n008-2018-08-28-16-43-51-0400__LIDAR_TOP__1535489341548260.pcd.bin",
+    "group": "n008-2018-08-28-16-43-51-0400",
+    "image": "/home/koyama/data/nuscenes_full_v_1_0/v1.0-trainval/samples/CAM_FRONT/n008-2018-08-28-16-43-51-0400__CAM_FRONT__1535489341512404.jpg",
+    "yaw": 90.03113315051014,
+    "band": [
+     20,
+     40
+    ],
+    "min_pts": 5,
+    "n_car": 1,
+    "n_ped": 1,
+    "ranges": [
+     29.0,
+     38.8
+    ]
+   },
+   {
+    "fid": "samples/LIDAR_TOP/n008-2018-08-01-15-16-36-0400__LIDAR_TOP__1533151519046948.pcd.bin",
     "group": "n008-2018-08-01-15-16-36-0400",
-    "image": "/home/koyama/data/nuscenes_full_v_1_0/v1.0-trainval/samples/CAM_FRONT/n008-2018-08-01-15-16-36-0400__CAM_FRONT__1533151837762404.jpg",
+    "image": "/home/koyama/data/nuscenes_full_v_1_0/v1.0-trainval/samples/CAM_FRONT/n008-2018-08-01-15-16-36-0400__CAM_FRONT__1533151519012404.jpg",
     "yaw": 90.03113315051014,
-    "n_car": 8,
-    "n_ped": 4
-   },
-   {
-    "fid": "samples/LIDAR_TOP/n015-2018-07-11-11-54-16+0800__LIDAR_TOP__1531281840200181.pcd.bin",
-    "group": "n015-2018-07-11-11-54-16+0800",
-    "image": "/home/koyama/data/nuscenes_full_v_1_0/v1.0-trainval/samples/CAM_FRONT/n015-2018-07-11-11-54-16+0800__CAM_FRONT__1531281840162472.jpg",
-    "yaw": 89.8834677816579,
-    "n_car": 2,
-    "n_ped": 6
+    "band": [
+     40,
+     60
+    ],
+    "min_pts": 5,
+    "n_car": 1,
+    "n_ped": 1,
+    "ranges": [
+     41.7,
+     47.4
+    ]
    }
   ]
  },
@@ -94,20 +182,40 @@
   "training": true,
   "frames": [
    {
-    "fid": "samples/LIDAR_TOP/n008-2018-08-06-15-06-32-0400__LIDAR_TOP__1533583340696820.pcd.bin",
-    "group": "n008-2018-08-06-15-06-32-0400",
-    "image": "/home/koyama/data/nuscenes_full_v_1_0/v1.0-trainval/samples/CAM_FRONT/n008-2018-08-06-15-06-32-0400__CAM_FRONT__1533583340662404.jpg",
-    "yaw": 90.03113315051014,
-    "n_car": 5,
-    "n_ped": 1
-   },
-   {
     "fid": "samples/LIDAR_TOP/n008-2018-09-18-13-10-39-0400__LIDAR_TOP__1537291139399725.pcd.bin",
     "group": "n008-2018-09-18-13-10-39-0400",
     "image": "/home/koyama/data/nuscenes_full_v_1_0/v1.0-trainval/samples/CAM_FRONT/n008-2018-09-18-13-10-39-0400__CAM_FRONT__1537291139362404.jpg",
     "yaw": 90.03113315051014,
-    "n_car": 3,
-    "n_ped": 3
+    "band": [
+     0,
+     20
+    ],
+    "min_pts": 5,
+    "n_car": 1,
+    "n_ped": 1,
+    "ranges": [
+     16.2,
+     19.6
+    ]
+   },
+   {
+    "fid": "samples/LIDAR_TOP/n008-2018-09-18-12-53-31-0400__LIDAR_TOP__1537290234149466.pcd.bin",
+    "group": "n008-2018-09-18-12-53-31-0400",
+    "image": "/home/koyama/data/nuscenes_full_v_1_0/v1.0-trainval/samples/CAM_FRONT/n008-2018-09-18-12-53-31-0400__CAM_FRONT__1537290234112404.jpg",
+    "yaw": 90.03113315051014,
+    "band": [
+     20,
+     40
+    ],
+    "min_pts": 5,
+    "n_car": 2,
+    "n_ped": 2,
+    "ranges": [
+     23.5,
+     23.7,
+     26.7,
+     31.0
+    ]
    }
   ]
  },
@@ -116,12 +224,21 @@
   "training": true,
   "frames": [
    {
-    "fid": "samples/LIDAR_TOP/n015-2018-09-25-11-10-38+0800__LIDAR_TOP__1537845408698050.pcd.bin",
-    "group": "n015-2018-09-25-11-10-38+0800",
-    "image": "/home/koyama/data/nuscenes_full_v_1_0/v1.0-trainval/samples/CAM_FRONT/n015-2018-09-25-11-10-38+0800__CAM_FRONT__1537845408662460.jpg",
+    "fid": "samples/LIDAR_TOP/n015-2018-11-21-19-38-26+0800__LIDAR_TOP__1542800839398776.pcd.bin",
+    "group": "n015-2018-11-21-19-38-26+0800",
+    "image": "/home/koyama/data/nuscenes_full_v_1_0/v1.0-trainval/samples/CAM_FRONT/n015-2018-11-21-19-38-26+0800__CAM_FRONT__1542800839362460.jpg",
     "yaw": 89.8834677816579,
-    "n_car": 5,
-    "n_ped": 1
+    "band": [
+     40,
+     60
+    ],
+    "min_pts": 5,
+    "n_car": 1,
+    "n_ped": 1,
+    "ranges": [
+     40.6,
+     44.0
+    ]
    }
   ]
  },
@@ -130,20 +247,40 @@
   "training": true,
   "frames": [
    {
-    "fid": "lidar/host-a007_lidar1_1233079637100738046.bin",
-    "group": "host-a007_12908703",
-    "image": "/home/koyama/code/ST3D/data/lyft/trainval/images/host-a007_cam0_1233079637050897006.jpeg",
-    "yaw": -177.09195023207747,
-    "n_car": 38,
-    "n_ped": 3
+    "fid": "lidar/host-a011_lidar1_1232905796802554606.bin",
+    "group": "host-a011_12907254",
+    "image": "/home/koyama/code/ST3D/data/lyft/trainval/images/host-a011_cam0_1232905796751142006.jpeg",
+    "yaw": -176.60287206269334,
+    "band": [
+     0,
+     20
+    ],
+    "min_pts": 5,
+    "n_car": 1,
+    "n_ped": 2,
+    "ranges": [
+     10.0,
+     15.5,
+     15.6
+    ]
    },
    {
     "fid": "lidar/host-a009_lidar1_1236015619601226606.bin",
     "group": "host-a009_12933170",
     "image": "/home/koyama/code/ST3D/data/lyft/trainval/images/host-a009_cam0_1236015619551162006.jpeg",
     "yaw": -176.37914275311357,
-    "n_car": 21,
-    "n_ped": 3
+    "band": [
+     20,
+     40
+    ],
+    "min_pts": 5,
+    "n_car": 2,
+    "n_ped": 1,
+    "ranges": [
+     24.1,
+     29.5,
+     37.4
+    ]
    }
   ]
  },
@@ -152,12 +289,23 @@
   "training": true,
   "frames": [
    {
-    "fid": "lidar/host-a101_lidar1_1241889731302620306.bin",
+    "fid": "lidar/host-a101_lidar1_1241889723302628076.bin",
     "group": "host-a101_12982121",
-    "image": "/home/koyama/code/ST3D/data/lyft/trainval/images/host-a101_cam0_1241889731250000006.jpeg",
+    "image": "/home/koyama/code/ST3D/data/lyft/trainval/images/host-a101_cam0_1241889723250000006.jpeg",
     "yaw": -179.27362775724183,
-    "n_car": 13,
-    "n_ped": 2
+    "band": [
+     40,
+     60
+    ],
+    "min_pts": 5,
+    "n_car": 2,
+    "n_ped": 2,
+    "ranges": [
+     40.6,
+     42.7,
+     44.2,
+     51.3
+    ]
    }
   ]
  }
