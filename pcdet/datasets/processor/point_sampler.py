@@ -88,7 +88,7 @@ class LearnedPointSampler:
     def keep_probability(self, points, feats=None):
         if feats is None:
             feats = point_features(points, self.shift_z)
-        logit = self.rule_logit(points) + self.mlp(feats)
+        logit = np.clip(self.rule_logit(points) + self.mlp(feats), -30, 30)  # exp overflow is harmless but noisy
         return 1.0 / (1.0 + np.exp(-logit))
 
     def sample(self, points, rng=np.random):
