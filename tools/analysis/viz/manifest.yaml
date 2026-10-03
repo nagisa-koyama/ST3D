@@ -1,0 +1,11 @@
+# One entry per result-table row (experiments_md/20261003_02 §6).
+#   run:  W&B run whose recorded config the row used (for an eval-only rescoring: the rescoring run)
+#   ckpt: <W&B run of the checkpoint>:<epoch> that produced the tabled number
+#   calib_split: target split the run's density calibration measured ('test' before ST3D 20d1fef)
+#   teacher: optional override; otherwise --pretrained_model_teacher from the run's own arguments
+- {job: 25835, report: 20261001_02, row: "S1 · Source-only control", run: ldb35c2o, ckpt: "ldb35c2o:30"}
+- {job: 25781, report: 20261001_02, row: "S1 · + global density correction (thinning)", run: iwg6l5v1, ckpt: "iwg6l5v1:30", calib_split: test}
+- {job: 26696, report: 20261001_02, row: "S1 · Pseudo-labelling + global correction", run: kgewdi3w, ckpt: "kgewdi3w:30", calib_split: test}
+- {job: 26265, report: 20261001_02, row: "S2 · Source-only control (25743's checkpoint)", run: frpjh5ah, ckpt: "wfdcq75s:20"}
+- {job: 26388, report: 20261001_02, row: "S2 · Accumulation alone (15 sweeps + motion comp.)", run: exbb9chu, ckpt: "exbb9chu:20"}
+- {job: 26814, report: 20261001_02, row: "S2 · Accumulation + target-free size [0.81, 1.06]", run: 2da6oz6e, ckpt: "2da6oz6e:20"}

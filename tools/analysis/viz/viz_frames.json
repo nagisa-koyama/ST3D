@@ -1,0 +1,164 @@
+{
+ "kitti/val": {
+  "config": "cfgs/da-ieee-access/da_kitti_dataset.yaml",
+  "training": false,
+  "frames": [
+   {
+    "fid": "001979",
+    "group": "9",
+    "image": "/home/koyama/data/kitti/training/image_2/001979.png",
+    "yaw": 0.0,
+    "n_car": 5,
+    "n_ped": 1
+   },
+   {
+    "fid": "002348",
+    "group": "11",
+    "image": "/home/koyama/data/kitti/training/image_2/002348.png",
+    "yaw": 0.0,
+    "n_car": 1,
+    "n_ped": 1
+   },
+   {
+    "fid": "005037",
+    "group": "25",
+    "image": "/home/koyama/data/kitti/training/image_2/005037.png",
+    "yaw": 0.0,
+    "n_car": 1,
+    "n_ped": 3
+   }
+  ]
+ },
+ "kitti/train": {
+  "config": "cfgs/da-ieee-access/da_kitti_dataset.yaml",
+  "training": true,
+  "frames": [
+   {
+    "fid": "001676",
+    "group": "8",
+    "image": "/home/koyama/data/kitti/training/image_2/001676.png",
+    "yaw": 0.0,
+    "n_car": 9,
+    "n_ped": 1
+   },
+   {
+    "fid": "007393",
+    "group": "36",
+    "image": "/home/koyama/data/kitti/training/image_2/007393.png",
+    "yaw": 0.0,
+    "n_car": 10,
+    "n_ped": 1
+   },
+   {
+    "fid": "003078",
+    "group": "15",
+    "image": "/home/koyama/data/kitti/training/image_2/003078.png",
+    "yaw": 0.0,
+    "n_car": 6,
+    "n_ped": 2
+   }
+  ]
+ },
+ "nuscenes/val": {
+  "config": "cfgs/da-ieee-access/da_nuscenes_dataset.yaml",
+  "training": false,
+  "frames": [
+   {
+    "fid": "samples/LIDAR_TOP/n008-2018-08-30-10-33-52-0400__LIDAR_TOP__1535639726800708.pcd.bin",
+    "group": "n008-2018-08-30-10-33-52-0400",
+    "image": "/home/koyama/data/nuscenes_full_v_1_0/v1.0-trainval/samples/CAM_FRONT/n008-2018-08-30-10-33-52-0400__CAM_FRONT__1535639726762407.jpg",
+    "yaw": 90.03113315051014,
+    "n_car": 3,
+    "n_ped": 1
+   },
+   {
+    "fid": "samples/LIDAR_TOP/n008-2018-08-01-15-16-36-0400__LIDAR_TOP__1533151837797618.pcd.bin",
+    "group": "n008-2018-08-01-15-16-36-0400",
+    "image": "/home/koyama/data/nuscenes_full_v_1_0/v1.0-trainval/samples/CAM_FRONT/n008-2018-08-01-15-16-36-0400__CAM_FRONT__1533151837762404.jpg",
+    "yaw": 90.03113315051014,
+    "n_car": 8,
+    "n_ped": 4
+   },
+   {
+    "fid": "samples/LIDAR_TOP/n015-2018-07-11-11-54-16+0800__LIDAR_TOP__1531281840200181.pcd.bin",
+    "group": "n015-2018-07-11-11-54-16+0800",
+    "image": "/home/koyama/data/nuscenes_full_v_1_0/v1.0-trainval/samples/CAM_FRONT/n015-2018-07-11-11-54-16+0800__CAM_FRONT__1531281840162472.jpg",
+    "yaw": 89.8834677816579,
+    "n_car": 2,
+    "n_ped": 6
+   }
+  ]
+ },
+ "nuscenes/train/n008": {
+  "config": "cfgs/da-ieee-access/da_nuscenes_n008_dataset.yaml",
+  "training": true,
+  "frames": [
+   {
+    "fid": "samples/LIDAR_TOP/n008-2018-08-06-15-06-32-0400__LIDAR_TOP__1533583340696820.pcd.bin",
+    "group": "n008-2018-08-06-15-06-32-0400",
+    "image": "/home/koyama/data/nuscenes_full_v_1_0/v1.0-trainval/samples/CAM_FRONT/n008-2018-08-06-15-06-32-0400__CAM_FRONT__1533583340662404.jpg",
+    "yaw": 90.03113315051014,
+    "n_car": 5,
+    "n_ped": 1
+   },
+   {
+    "fid": "samples/LIDAR_TOP/n008-2018-09-18-13-10-39-0400__LIDAR_TOP__1537291139399725.pcd.bin",
+    "group": "n008-2018-09-18-13-10-39-0400",
+    "image": "/home/koyama/data/nuscenes_full_v_1_0/v1.0-trainval/samples/CAM_FRONT/n008-2018-09-18-13-10-39-0400__CAM_FRONT__1537291139362404.jpg",
+    "yaw": 90.03113315051014,
+    "n_car": 3,
+    "n_ped": 3
+   }
+  ]
+ },
+ "nuscenes/train/n015": {
+  "config": "cfgs/da-ieee-access/da_nuscenes_n015_dataset.yaml",
+  "training": true,
+  "frames": [
+   {
+    "fid": "samples/LIDAR_TOP/n015-2018-09-25-11-10-38+0800__LIDAR_TOP__1537845408698050.pcd.bin",
+    "group": "n015-2018-09-25-11-10-38+0800",
+    "image": "/home/koyama/data/nuscenes_full_v_1_0/v1.0-trainval/samples/CAM_FRONT/n015-2018-09-25-11-10-38+0800__CAM_FRONT__1537845408662460.jpg",
+    "yaw": 89.8834677816579,
+    "n_car": 5,
+    "n_ped": 1
+   }
+  ]
+ },
+ "lyft/train/40": {
+  "config": "cfgs/da-ieee-access/da_lyft40_dataset.yaml",
+  "training": true,
+  "frames": [
+   {
+    "fid": "lidar/host-a007_lidar1_1233079637100738046.bin",
+    "group": "host-a007_12908703",
+    "image": "/home/koyama/code/ST3D/data/lyft/trainval/images/host-a007_cam0_1233079637050897006.jpeg",
+    "yaw": -177.09195023207747,
+    "n_car": 38,
+    "n_ped": 3
+   },
+   {
+    "fid": "lidar/host-a009_lidar1_1236015619601226606.bin",
+    "group": "host-a009_12933170",
+    "image": "/home/koyama/code/ST3D/data/lyft/trainval/images/host-a009_cam0_1236015619551162006.jpeg",
+    "yaw": -176.37914275311357,
+    "n_car": 21,
+    "n_ped": 3
+   }
+  ]
+ },
+ "lyft/train/64": {
+  "config": "cfgs/da-ieee-access/da_lyft64_dataset.yaml",
+  "training": true,
+  "frames": [
+   {
+    "fid": "lidar/host-a101_lidar1_1241889731302620306.bin",
+    "group": "host-a101_12982121",
+    "image": "/home/koyama/code/ST3D/data/lyft/trainval/images/host-a101_cam0_1241889731250000006.jpeg",
+    "yaw": -179.27362775724183,
+    "n_car": 13,
+    "n_ped": 2
+   }
+  ]
+ }
+}
