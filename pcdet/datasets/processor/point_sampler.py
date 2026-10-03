@@ -13,31 +13,39 @@ the target's local geometry says so.
 
 Everything is numpy: no torch state, so the object pickles into spawned DataLoader workers unchanged
 and runs inside the CPU loader. Features per point: planar range, height about the sensor, elevation
-angle, log nearest-neighbour distance, log point counts within 0.5 m and 1.0 m, and azimuth (cos, sin) -
-so a target that covers only a cone (PandarGT) is learned from its clouds, not declared by a key.
+angle, log point counts in 0.25 / 0.5 / 1.0 m grid cells, and azimuth (cos, sin) - so a target that
+covers only a cone (PandarGT) is learned from its clouds, not declared by a key.
 """
 import numpy as np
-from scipy.spatial import cKDTree
 
-FEATURE_NAMES = ('range', 'z', 'elev_deg', 'log_nn', 'log_n05', 'log_n10', 'cos_az', 'sin_az')
+FEATURE_NAMES = ('range', 'z', 'elev_deg', 'log_n025', 'log_n05', 'log_n10', 'cos_az', 'sin_az')
+
+
+def _cell_counts(xyz, size):
+    """Points per occupied cubic cell of `size`, looked up per point: one integer key per cell, no tree."""
+    cells = np.floor(xyz / size).astype(np.int64) + (1 << 20)  # non-negative within +-262 km
+    key = (cells[:, 0] << 42) | (cells[:, 1] << 21) | cells[:, 2]
+    _, inv, counts = np.unique(key, return_inverse=True, return_counts=True)
+    return counts[inv].astype(np.float32)
 
 
 def point_features(points, shift_z=0.0):
-    """(N, 8) float32 features; `shift_z` undoes the dataset's SHIFT_COOR so elevation is about the sensor."""
+    """(N, 8) float32 features; `shift_z` undoes the dataset's SHIFT_COOR so elevation is about the sensor.
+
+    Local density is read from cubic grid cells at 0.25 / 0.5 / 1.0 m (log counts), not from
+    radius queries: a KD-tree with two ball queries cost ~4 s per accumulated frame and made the
+    first learned-sampler rows (27259 / 27260) loader-bound by ~8x. Three unique-with-counts hashes
+    are ~0.1 s on a 360k-point cloud, and the sampler only needs density to within a cell.
+    """
     xyz = points[:, :3].astype(np.float32)
     r = np.hypot(xyz[:, 0], xyz[:, 1])
     z = xyz[:, 2] - shift_z
     elev = np.degrees(np.arctan2(z, np.maximum(r, 1e-3)))
-    n = len(xyz)
-    if n > 1:
-        tree = cKDTree(xyz)
-        nn = tree.query(xyz, k=2)[0][:, 1]
-        n05 = np.asarray(tree.query_ball_point(xyz, 0.5, return_length=True), dtype=np.float32)
-        n10 = np.asarray(tree.query_ball_point(xyz, 1.0, return_length=True), dtype=np.float32)
-    else:
-        nn = np.ones(n); n05 = n10 = np.ones(n, dtype=np.float32)
     az = np.arctan2(xyz[:, 1], xyz[:, 0])  # the FOV lives here: a limited-FOV target is learned, never set by a key
-    return np.stack([r, z, elev, np.log(np.maximum(nn, 1e-3)), np.log(n05), np.log(n10), np.cos(az), np.sin(az)],
+    if len(xyz) == 0:
+        return np.zeros((0, len(FEATURE_NAMES)), np.float32)
+    n025, n05, n10 = (_cell_counts(xyz, s) for s in (0.25, 0.5, 1.0))
+    return np.stack([r, z, elev, np.log(n025), np.log(n05), np.log(n10), np.cos(az), np.sin(az)],
                     axis=1).astype(np.float32)
 
 
