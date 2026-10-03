@@ -12,7 +12,7 @@ sampler learns to drop the source there. A keep probability cannot add points, s
 below the target the count term saturates (the accumulate-first design). Everything is on cached
 features; minutes on CPU.
 
-    python train_point_sampler.py <cfg> --out <weights.npz> [--frames 200] [--steps 400] [--count_weight 1.0]
+    python train_point_sampler.py <cfg> --out /home/koyama/data/samplers/<pair>.npz   (OUTSIDE the repo: jobs run from a snapshot without output/) [--frames 200] [--steps 400] [--count_weight 1.0]
 
 The weights go into a config as
     DATA_PROCESSOR: - NAME: sample_points_learned

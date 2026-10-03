@@ -19,7 +19,7 @@ DATA_CONFIG:
           }
 
         - NAME: sample_points_learned
-          WEIGHTS: ../output/samplers/s3_spin4_flash.npz
+          WEIGHTS: /home/koyama/data/samplers/s3_spin4_flash.npz
 
         - NAME: transform_points_to_voxels
           VOXEL_SIZE: [0.1, 0.1, 0.15]

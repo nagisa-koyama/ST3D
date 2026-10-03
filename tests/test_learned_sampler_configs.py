@@ -41,3 +41,6 @@ def test_only_the_sampler_step_is_added(child, parent):
         assert 'HIST_DIST_FOV_DEGREE' not in dc and not dc.get('HIST_DIST_ON_THE_FLY', False), 'no per-pair density key may remain'
         step = [s for s in dc.DATA_PROCESSOR if s.NAME == 'sample_points_learned'][0]
         assert step.WEIGHTS.endswith('.npz')
+        # ABSOLUTE and outside the repo: run_sourceonly_2gpu.sh binds a snapshot that excludes output/ over
+        # the repo path, so a repo-relative weights path does not exist inside the job (27257 died on it).
+        assert step.WEIGHTS.startswith('/home/koyama/data/'), step.WEIGHTS

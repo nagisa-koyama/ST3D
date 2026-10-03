@@ -23,7 +23,7 @@ DATA_CONFIGS:
               }
 
             - NAME: sample_points_learned
-              WEIGHTS: ../output/samplers/s2_n008_kitti.npz
+              WEIGHTS: /home/koyama/data/samplers/s2_n008_kitti.npz
 
             - NAME: transform_points_to_voxels
               VOXEL_SIZE: [0.1, 0.1, 0.15]
@@ -44,7 +44,7 @@ DATA_CONFIGS:
               }
 
             - NAME: sample_points_learned
-              WEIGHTS: ../output/samplers/s2_n015_kitti.npz
+              WEIGHTS: /home/koyama/data/samplers/s2_n015_kitti.npz
 
             - NAME: transform_points_to_voxels
               VOXEL_SIZE: [0.1, 0.1, 0.15]
