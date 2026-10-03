@@ -1,0 +1,55 @@
+# L3 of experiments_md/20261003_04: the S2 target-free row (centerpoint-accum-rosext-nuscenes2kitti,
+# job 26814: 15 sweeps + motion compensation + Car ROS [0.81, 1.06], 78.20 / 46.67 moderate) with the
+# LEARNED point sampler added as the processor step before voxelisation - one per nuScenes platform,
+# trained by tools/analysis/train_point_sampler.py on KITTI's unlabelled TRAIN clouds. Nothing else
+# changes. Read against 26814 (one variable: the sampler) under the parity criterion (20261003_04
+# section 12): within noise of the rule with no per-pair knob. L0 = the same config with the *_init.npz
+# weights (untrained MLP = the per-bin rule exactly).
+#
+# DATA_PROCESSOR is a list and lists do not merge, so each platform restates its parent's three steps
+# plus the sampler. tests/test_learned_sampler_configs.py pins the resolved blocks against the parent.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-rosext-nuscenes2kitti.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+
+            - NAME: sample_points_learned
+              WEIGHTS: ../output/samplers/s2_n008_kitti.npz
+
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }
+    NUSCENES_N015:
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+
+            - NAME: sample_points_learned
+              WEIGHTS: ../output/samplers/s2_n015_kitti.npz
+
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }

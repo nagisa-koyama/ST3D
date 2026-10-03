@@ -1,0 +1,30 @@
+# L5 of experiments_md/20261003_04, the decisive row (full length; the tier-1 -15ep file is the proxy
+# that is actually run): S3 spin -> flash with 4 accumulated spin frames (centerpoint-accum-pandaset-
+# spin2flash; proxies 26692 / 27004: 76.45 / 76.57 rule-A) plus the
+# LEARNED point sampler and NO cone key anywhere: the sampler was trained on PandarGT's unlabelled
+# train clouds and has azimuth as a feature, so a target that covers only +-30 deg is learned from its
+# clouds, not declared with HIST_DIST_FOV_DEGREE (the human decision that the pooled rows 25932 /
+# 26314 got wrong). Parity criterion: within noise of 76.5 with nothing set per pair.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-pandaset-spin2flash.yaml
+
+DATA_CONFIG:
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+
+        - NAME: sample_points_learned
+          WEIGHTS: ../output/samplers/s3_spin4_flash.npz
+
+        - NAME: transform_points_to_voxels
+          VOXEL_SIZE: [0.1, 0.1, 0.15]
+          MAX_POINTS_PER_VOXEL: 10
+          MAX_NUMBER_OF_VOXELS: {
+            'train': 250000,
+            'test': 250000
+          }

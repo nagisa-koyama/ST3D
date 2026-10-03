@@ -94,6 +94,9 @@ class DataProcessor(object):
         # instance, which means per DataLoader worker - each worker pays the fit once.
         self.beam_centroids = None
 
+        names = [c.NAME for c in processor_configs]
+        assert not ('sample_points_learned' in names and 'sample_points_hist_based' in names), \
+            'sample_points_learned replaces sample_points_hist_based; a config may not list both'
         for cur_cfg in processor_configs:
             cur_processor = getattr(self, cur_cfg.NAME)(config=cur_cfg)
             self.data_processor_queue.append(cur_processor)
@@ -326,6 +329,23 @@ class DataProcessor(object):
             max_fit_points=config.get('MAX_FIT_POINTS', 20000),
         )
         data_dict['points'] = points
+        return data_dict
+
+    def sample_points_learned(self, data_dict=None, config=None):
+        """Keep each point with the learned sampler's probability (point_sampler.py).
+
+        WEIGHTS is produced by tools/analysis/train_point_sampler.py for one source-target pair and
+        loaded HERE, at construction, so the sampler is on the dataset before any DataLoader worker
+        is forked or spawned (the stale-worker lesson, experiments_md/20260921_02). Training mode
+        only, like the histogram rule; mutually exclusive with sample_points_hist_based.
+        """
+        if data_dict is None:
+            from .point_sampler import LearnedPointSampler
+            self.learned_sampler = LearnedPointSampler.load(config.WEIGHTS)
+            return partial(self.sample_points_learned, config=config)
+        if not self.training:
+            return data_dict
+        data_dict['points'] = self.learned_sampler.sample(data_dict['points'])
         return data_dict
 
     def sample_points_hist_based(self, data_dict=None, config=None):

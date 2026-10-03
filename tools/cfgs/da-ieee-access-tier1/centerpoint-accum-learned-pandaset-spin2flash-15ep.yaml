@@ -1,0 +1,6 @@
+# Tier-1 proxy of centerpoint-accum-learned-pandaset-spin2flash (L5 of experiments_md/20261003_04):
+# 15 epochs, the matched-step budget of the S3 proxies 26510 / 26692 / 27003 / 27004 it is read against.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-learned-pandaset-spin2flash.yaml
+
+OPTIMIZATION:
+    NUM_EPOCHS: 15
