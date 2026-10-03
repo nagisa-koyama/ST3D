@@ -1,0 +1,70 @@
+# S2 under the LITERATURE'S PROTOCOL: plain ST3D self-training on the prior-knowledge accumulation base
+# - nuScenes -> KITTI. Twin of centerpoint-accum-st3d-nuscenes2kitti (job 27171, the target-free row).
+#
+# Differs from 27171 in exactly what its teacher differs in: the frozen teacher and the student's init
+# are job 26536 (zpndk3rh ep20: 15 sweeps + box compensation + Car ROS [0.75, 1.00]; 78.88 / 51.31
+# moderate) instead of 26814 ([0.81, 1.06], from the model's own boxes; 78.20 / 46.67), the student keeps
+# that teacher's Car interval, and the Car cut is THIS teacher's count balance. Schedule, Ped/Cyc cuts,
+# memory ensemble, PROG_AUG and the frozen single pass are inherited unchanged.
+#
+# WHY this protocol is the literature's: ST3D's ROS, and the SN/ROS rows in that line of work, shrink
+# source objects towards the target's car size because the target's cars are KNOWN to be smaller. That
+# is prior knowledge about the target; [0.75, 1.00] (mean 0.875) is the interval da-MIRU2025 used for
+# KITTI targets, not one tuned on KITTI labels. The target-free row (27171) estimates the interval from
+# point extents instead and is the STRICTER protocol. Report both, labelled.
+#
+# Launch (2 GPUs, 150G, ~13 h like 27171; keep off any node holding another nuScenes-source row):
+#   EST_H=26 scripts/submit.sh --mem=150G scripts/run_sourceonly_2gpu.sh \
+#       cfgs/da-ieee-access/centerpoint-accum-st3d-rosshrink-nuscenes2kitti.yaml <tag> <run> \
+#       --pretrained_model <26536 ep20> --pretrained_model_teacher <26536 ep20>
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-st3d-nuscenes2kitti.yaml
+
+# YAML lists replace rather than merge, so the whole AUG_CONFIG_LIST is restated in both platform blocks,
+# copied from centerpoint-accum-rosshrink-nuscenes2kitti (the teacher's config).
+DATA_CONFIGS:
+    NUSCENES_N008:
+        DATA_AUGMENTOR:
+            DISABLE_AUG_LIST: ['normalize_object_size', 'random_object_rotation']
+            AUG_CONFIG_LIST:
+                - NAME: normalize_object_size  # DISABLED - not UDA-legal
+                  SIZE_RES: [-0.91, -0.49, -0.26]
+                - NAME: random_object_rotation  # DISABLED
+                  ROT_PROB: 1.0
+                  ROT_UNIFORM_NOISE: [-0.78539816, 0.78539816]
+                - NAME: random_object_scaling
+                  SCALE_UNIFORM_NOISE: {
+                      'Car': [0.75, 1.00],
+                      'Pedestrian': [0.80, 1.25]
+                  }
+                - NAME: random_world_flip
+                  ALONG_AXIS_LIST: ['x', 'y']
+                - NAME: random_world_rotation
+                  WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+                - NAME: random_world_scaling
+                  WORLD_SCALE_RANGE: [0.95, 1.05]
+    NUSCENES_N015:
+        DATA_AUGMENTOR:
+            DISABLE_AUG_LIST: ['normalize_object_size', 'random_object_rotation']
+            AUG_CONFIG_LIST:
+                - NAME: normalize_object_size  # DISABLED - not UDA-legal
+                  SIZE_RES: [-0.91, -0.49, -0.26]
+                - NAME: random_object_rotation  # DISABLED
+                  ROT_PROB: 1.0
+                  ROT_UNIFORM_NOISE: [-0.78539816, 0.78539816]
+                - NAME: random_object_scaling
+                  SCALE_UNIFORM_NOISE: {
+                      'Car': [0.75, 1.00],
+                      'Pedestrian': [0.80, 1.25]
+                  }
+                - NAME: random_world_flip
+                  ALONG_AXIS_LIST: ['x', 'y']
+                - NAME: random_world_rotation
+                  WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+                - NAME: random_world_scaling
+                  WORLD_SCALE_RANGE: [0.95, 1.05]
+
+SELF_TRAIN:
+    # Car: count balance inside 30 m by the per-ring joint (score, points) mixture - the same script and inputs
+    # that gave 27171 its 0.301 - on teacher zpndk3rh ep20 pseudo-labels of KITTI train (job 27211, floor
+    # 0.0001): est. 6.60 real Car/frame (26814: 6.48), cut 0.275. Ped/Cyc: pre-declared 0.6 as in 27171.
+    SCORE_THRESH: [0.275, 0.6, 0.6]
