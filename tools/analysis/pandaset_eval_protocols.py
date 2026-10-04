@@ -68,6 +68,7 @@ ROWS = [  # label, result.pkl, target device, cone
     ('S4 thinning FIXED, 15 ep (27005), 360', W + 'run-20261002_041932-xrk47zew/files/eval/eval_with_train/epoch_15/val/result.pkl', 0, False),
     ('S4 thinning FIXED, 15 ep (27005), cone', W + 'run-20261002_041932-xrk47zew/files/eval/eval_with_train/epoch_15/val/result.pkl', 0, True),
     ('S3 LEARNED sampler, no cone key, 15 ep (27261, L5)', W + 'run-20261004_033923-zzlv5y6a/files/eval/eval_with_train/epoch_15/val/result.pkl', 1, True),
+    ('S3 LEARNED sampler, observed-cell recipe, 15 ep (27308, L5b)', W + 'run-20261004_222327-6saz3big/files/eval/eval_with_train/epoch_15/val/result.pkl', 1, True),
     ('S3 oracle flash->flash, 15 ep (26974 ckpt)', O + 'centerpoint-pandaset-flash2flash/20261001_pandaset/eval/epoch_15/val/s3oracle15/result.pkl', 1, True),
 ]
 PROTOCOLS = ['as_scored', 'pts>=1', 'in_range', 'in_range,pts>=1', 'in_range,pts>=5', 'rule_A']
