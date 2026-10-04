@@ -35,12 +35,15 @@ from easydict import EasyDict  # noqa: E402
 from pcdet.config import cfg_from_yaml_file  # noqa: E402
 from pcdet.datasets import build_dataloader, link_point_calibration  # noqa: E402
 from pcdet.datasets.point_calibration import _augmentation_off, calibration_target_config  # noqa: E402
-from pcdet.datasets.processor.point_sampler import LearnedPointSampler, point_features  # noqa: E402
+from pcdet.datasets.processor.point_sampler import (LearnedPointSampler, point_features, cell_index,  # noqa: E402
+                                                    N_SECTORS, RANGE_EDGES)
 
 RINGS = [(0, 10), (10, 20), (20, 30), (30, 40), (40, 50)]
 ELEV_EDGES = np.arange(-30, 10.01, 0.25)
-N_SECTORS = 24  # 15 deg azimuth sectors
-RANGE_EDGES = np.arange(0, 75.01, 2.5)  # 30 range bins for the (sector, range) count target
+# N_SECTORS / RANGE_EDGES (24 sectors of 15 deg x 30 range bins of 2.5 m) live in point_sampler.py: the sampler's
+# gate uses the same cells at inference.
+COVER_RING = (2, 20)  # range bins 5-50 m: where a sector's coverage is judged
+COVER_FRAC = 0.05     # a sector is covered if its 5-50 m count is >= 5% of the best-covered sector's
 
 
 def strided(dataset, n_frames):
@@ -65,10 +68,31 @@ def ring_of(feats):
 
 def cell_of(feats):
     """(azimuth sector, range bin) cell index per point, from the cos/sin azimuth features."""
-    az = np.arctan2(feats[:, 7], feats[:, 6])
-    sec = np.clip(np.floor((az + np.pi) / (2 * np.pi) * N_SECTORS).astype(np.int64), 0, N_SECTORS - 1)
-    rb = np.clip(np.digitize(feats[:, 0], RANGE_EDGES) - 1, 0, len(RANGE_EDGES) - 2)
-    return sec * (len(RANGE_EDGES) - 1) + rb
+    return cell_index(feats[:, 0], np.arctan2(feats[:, 7], feats[:, 6]))
+
+
+def target_cone(Tc):
+    """The target's azimuth coverage, read off its own per-cell counts: (fov_degree, heading_degree) of the
+    largest contiguous arc of covered sectors, or None when every sector is covered (a 360 deg sensor).
+    This is what HIST_DIST_FOV_DEGREE / _HEADING declared by hand for PandarGT; here it is measured."""
+    n_rb = len(RANGE_EDGES) - 1
+    per_sec = Tc.reshape(N_SECTORS, n_rb)[:, COVER_RING[0]:COVER_RING[1]].sum(1)
+    cov = per_sec >= COVER_FRAC * per_sec.max()
+    if cov.all():
+        return None
+    best, start = (0, 0), None
+    for k in range(2 * N_SECTORS):  # circular: walk twice
+        if cov[k % N_SECTORS]:
+            start = k if start is None else start
+            if k - start + 1 > best[0] and k - start + 1 <= N_SECTORS:
+                best = (k - start + 1, start)
+        else:
+            start = None
+    n, s0 = best
+    width = 360.0 / N_SECTORS
+    heading = -180.0 + (s0 + n / 2.0) * width
+    heading = (heading + 180.0) % 360.0 - 180.0
+    return n * width, heading
 
 
 def js_torch(p, q, eps=1e-8):
@@ -85,6 +109,16 @@ def main():
     ap.add_argument('--steps', type=int, default=400); ap.add_argument('--lr', type=float, default=3e-3)
     ap.add_argument('--count_weight', type=float, default=1.0, help='weight of the (azimuth, range) count term against the elevation term')
     ap.add_argument('--source', default=None, help='DATA_CONFIGS key when the config has several sources (default: first)')
+    ap.add_argument('--count_cells', default='observed', choices=['observed', 'all'],
+                    help="'observed' (default since 2026-10-04): the count term ignores cells the target never returns a "
+                         "point in; 'all' reproduces the samplers trained before (S2 s2_n0*_kitti, S3 s3_spin4_flash)")
+    ap.add_argument('--cache', default=None, help='feature cache to reuse (default: <out>.cache.npz)')
+    ap.add_argument('--rule_fov', default='auto', choices=['auto', 'none'],
+                    help="'auto' (default since 2026-10-04): if the target covers only an azimuth arc (read off its own "
+                         "cell counts), measure the rule inside that arc; 360 deg targets are unchanged")
+    ap.add_argument('--gate', default='observed', choices=['observed', 'none'],
+                    help="'observed' (default since 2026-10-04): the learned correction acts only in cells the target "
+                         "returned points in, the rule alone elsewhere")
     args = ap.parse_args()
     os.chdir(TOOLS)
     import logging
@@ -100,7 +134,7 @@ def main():
     tz = float(calib_cfg.get('SHIFT_COOR', [0, 0, 0])[2]); sz = float(dc.get('SHIFT_COOR', [0, 0, 0])[2])
     print(f'source {key} ({type(source).__name__}, augmentation off), target {type(target).__name__} {split} split', flush=True)
 
-    cache = Path(args.out).with_suffix('.cache.npz')
+    cache = Path(args.cache) if args.cache else Path(args.out).with_suffix('.cache.npz')
     if cache.exists():
         z = np.load(cache, allow_pickle=True)
         rate, max_dist = z['rate'], float(z['max_dist']); F, R, E, C, T, Tc = z['F'], z['R'], z['E'], z['C'], z['T'], z['Tc']
@@ -114,7 +148,25 @@ def main():
                  feats=np.array(feats, dtype=object), rings=np.array(rings, dtype=object), ebins=np.array(ebins, dtype=object))
         print(f'cached features to {cache}', flush=True)
 
+    if args.rule_fov == 'auto':
+        cone = target_cone(Tc)
+        if cone is None:
+            print('target covers every azimuth sector: the rule is measured over 360 deg (unchanged)', flush=True)
+        else:
+            # The pooled rule compares the source's 360 deg against a target that covers only this arc, i.e.
+            # totals, not density (the inverted S3 measurement of 20260928_02). Measure it inside the arc.
+            print(f'target covers a {cone[0]:.0f} deg arc at heading {cone[1]:.0f} deg (from its own cell counts): '
+                  f'the rule is re-measured inside it', flush=True)
+            with _augmentation_off(source):
+                link_point_calibration(source, target, num_frames=args.hist_frames, num_bins=dc.get('HIST_DIST_BINS', 50),
+                                       max_dist=dc.get('HIST_DIST_MAX_DIST', 75.0), logger=logger,
+                                       fov_degree=cone[0], fov_heading=cone[1])
+                proc = source.data_processor
+                rate = proc.per_bin_sample_rate().astype(np.float32); max_dist = float(proc.hist_max_dist)
+                proc.hist_dist_src = None
     sampler = LearnedPointSampler.from_rule(rate, max_dist, sz, F.mean(0), F.std(0) + 1e-6)
+    if args.gate == 'observed':
+        sampler.obs_mask = Tc > 0  # the learned correction acts only where the target returned points
     _train_and_report(sampler, F, R, E, C, T, Tc, n_src_frames, n_cells, feats, rings, ebins, args)
 
 
@@ -162,9 +214,11 @@ def _train_and_report(sampler, F, R, E, C, T, Tc, n_src_frames, n_cells, feats, 
     p0 = torch.sigmoid(base)
     opt = torch.optim.Adam([w1, b1, w2, b2, w3, b3], lr=args.lr)
 
+    gate = torch.ones(len(F)) if sampler.obs_mask is None else torch.tensor(sampler.obs_mask[C], dtype=torch.float32)
+
     def forward():
         h = torch.relu(x @ w1 + b1); h = torch.relu(h @ w2 + b2)
-        return torch.sigmoid(base + (h @ w3 + b3)[:, 0])
+        return torch.sigmoid(base + gate * (h @ w3 + b3)[:, 0])
 
     def losses(p):
         js_total = 0.0; per_ring = []
@@ -176,10 +230,17 @@ def _train_and_report(sampler, F, R, E, C, T, Tc, n_src_frames, n_cells, feats, 
         # so a sparse far cell and a dense near cell weigh alike. Where the source cannot reach the
         # target (count below it at p = 1) the term saturates, which is the accumulate-first design.
         count = torch.zeros(n_cells).index_add_(0, cell_t, p) / n_src_frames
-        # log-count error: scale-free, so a cell the target never covers (count 0, e.g. outside a
-        # flash cone) pulls the source there to zero without dominating every other cell - a relative
-        # error did, and drove EVERY keep probability to 0 on S3 (2026-10-03).
+        # log-count error: scale-free, so a sparse far cell and a dense near cell weigh alike (a relative
+        # error drove EVERY keep probability to 0 on S3, 2026-10-03).
+        # Cells the target NEVER returns a point in (count exactly 0 over the measured frames) are left
+        # out by default (--count_cells observed): they say where the target sensor cannot see, not how
+        # dense it is. Pulling the source to zero there cut everything outside PandarGT's cone, which
+        # emptied 80% of the source's TRAINING boxes - and the zero-point GT filter runs before the data
+        # processor, so those empty boxes stayed as labels (L5, job 27261, 20261003_04 section 16). On S1
+        # / S2 the excluded cells are the 0-2.5 m bin in a few sectors (the ego body), nothing else.
         err = torch.log1p(count) - torch.log1p(Tct)
+        if args.count_cells == 'observed':
+            err = err[Tct > 0]
         return js_total, (err ** 2).mean(), per_ring
 
     with torch.no_grad():

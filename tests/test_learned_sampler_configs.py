@@ -27,6 +27,7 @@ def _sources(cfg):
 @pytest.mark.parametrize('child, parent', [
     ('cfgs/da-ieee-access/centerpoint-accum-rosext-learned-nuscenes2kitti.yaml', 'cfgs/da-ieee-access/centerpoint-accum-rosext-nuscenes2kitti.yaml'),
     ('cfgs/da-ieee-access/centerpoint-accum-learned-pandaset-spin2flash.yaml', 'cfgs/da-ieee-access/centerpoint-accum-pandaset-spin2flash.yaml'),
+    ('cfgs/da-ieee-access/centerpoint-accum-learnedobs-pandaset-spin2flash.yaml', 'cfgs/da-ieee-access/centerpoint-accum-pandaset-spin2flash.yaml'),
 ])
 def test_only_the_sampler_step_is_added(child, parent):
     c, p = _load(child), _load(parent)

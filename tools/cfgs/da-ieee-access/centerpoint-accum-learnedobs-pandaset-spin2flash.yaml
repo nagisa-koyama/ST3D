@@ -1,0 +1,31 @@
+# L5b of experiments_md/20261003_04 section 16: L5 (centerpoint-accum-learned-pandaset-spin2flash, job
+# 27261) with the sampler retrained under the OBSERVED-CELLS count term (train_point_sampler.py
+# --count_cells observed, the default since 2026-10-04): cells PandarGT never returns a point in are left
+# out, so the sampler no longer cuts the source outside the +-30 deg cone. L5's sampler did, which emptied
+# 80% of the spin source's TRAINING boxes; the zero-point GT filter runs before the data processor, so
+# those stayed as labels; L5 scored 74.35 / 58.12 rule-A (BEV / 3D) against accumulation alone 76.45 and
+# 76.57 BEV (two seeds).
+# Still no cone key. Parity criterion as L5: within noise of 26692 / 27004 with nothing set per pair.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-pandaset-spin2flash.yaml
+
+DATA_CONFIG:
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+
+        - NAME: sample_points_learned
+          WEIGHTS: /home/koyama/data/samplers/s3_spin4_flash_obs.npz
+
+        - NAME: transform_points_to_voxels
+          VOXEL_SIZE: [0.1, 0.1, 0.15]
+          MAX_POINTS_PER_VOXEL: 10
+          MAX_NUMBER_OF_VOXELS: {
+            'train': 250000,
+            'test': 250000
+          }

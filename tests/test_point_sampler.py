@@ -87,3 +87,44 @@ def test_both_sampling_steps_in_one_config_are_refused(tmp_path):
     cfg = [EasyDict(NAME='sample_points_hist_based'), EasyDict(NAME='sample_points_learned', WEIGHTS=str(tmp_path / 'w.npz'))]
     with pytest.raises(AssertionError):
         DataProcessor(cfg, point_cloud_range=np.array([-75.2, -75.2, -2, 75.2, 75.2, 4]), training=True, num_point_features=3)
+
+
+def test_gate_leaves_the_rule_outside_the_observed_cells():
+    from pcdet.datasets.processor.point_sampler import N_CELLS, cell_index
+    rate = np.full(50, 0.4, np.float32)
+    s = _rule_sampler(rate); s.w3 = np.ones_like(s.w3) * 0.5; s.b3 = np.ones_like(s.b3)
+    pts = _cloud(seed=3)
+    f = point_features(pts, s.shift_z)
+    cells = cell_index(f[:, 0], np.arctan2(f[:, 7], f[:, 6]))
+    mask = np.zeros(N_CELLS, bool); mask[: N_CELLS // 2] = True
+    s.obs_mask = mask
+    p = s.keep_probability(pts)
+    inside = mask[cells]
+    np.testing.assert_allclose(p[~inside], 0.4, atol=1e-5)       # the rule exactly where the target saw nothing
+    assert not np.allclose(p[inside], 0.4)                       # the learned correction where it did
+
+
+def test_weights_without_a_mask_load_ungated(tmp_path):
+    s = _rule_sampler(np.full(50, 0.3, np.float32)); s.w3 += 0.1
+    s.save(tmp_path / 'old.npz')                                 # obs_mask None -> not written, as before 2026-10-04
+    assert 'obs_mask' not in np.load(tmp_path / 'old.npz').files
+    assert LearnedPointSampler.load(tmp_path / 'old.npz').obs_mask is None
+    s.obs_mask = np.ones(720, bool); s.obs_mask[:10] = False
+    s.save(tmp_path / 'new.npz')
+    np.testing.assert_array_equal(LearnedPointSampler.load(tmp_path / 'new.npz').obs_mask, s.obs_mask)
+
+
+def test_target_cone_is_measured_from_cell_counts():
+    sys.path.insert(0, str(ROOT / 'tools'))
+    from analysis.train_point_sampler import target_cone
+    from pcdet.datasets.processor.point_sampler import N_SECTORS, RANGE_EDGES
+    n_rb = len(RANGE_EDGES) - 1
+    full = np.ones((N_SECTORS, n_rb))
+    assert target_cone(full.ravel()) is None                     # a 360 deg sensor: the rule is unchanged
+    cone = np.zeros((N_SECTORS, n_rb)); cone[10:14] = 5.0        # sectors 10..13 = azimuth -30..+30 deg
+    cone[9, 3] = 0.01                                            # a stray return beside the cone is not coverage
+    fov, heading = target_cone(cone.ravel())
+    assert fov == 60.0 and abs(heading) < 1e-9
+    wrap = np.zeros((N_SECTORS, n_rb)); wrap[[22, 23, 0, 1]] = 1.0  # an arc across +-180 deg
+    fov, heading = target_cone(wrap.ravel())
+    assert fov == 60.0 and abs(abs(heading) - 180.0) < 1e-9

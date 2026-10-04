@@ -19,6 +19,17 @@ covers only a cone (PandarGT) is learned from its clouds, not declared by a key.
 import numpy as np
 
 FEATURE_NAMES = ('range', 'z', 'elev_deg', 'log_n025', 'log_n05', 'log_n10', 'cos_az', 'sin_az')
+# (azimuth sector, range bin) cells: the trainer's count target and the gate of the learned correction.
+N_SECTORS = 24  # 15 deg azimuth sectors
+RANGE_EDGES = np.arange(0, 75.01, 2.5)  # 30 planar-range bins
+N_CELLS = N_SECTORS * (len(RANGE_EDGES) - 1)
+
+
+def cell_index(r, az):
+    """Cell per point from planar range and azimuth (radians, as arctan2(y, x))."""
+    sec = np.clip(np.floor((az + np.pi) / (2 * np.pi) * N_SECTORS).astype(np.int64), 0, N_SECTORS - 1)
+    rb = np.clip(np.digitize(r, RANGE_EDGES) - 1, 0, len(RANGE_EDGES) - 2)
+    return sec * (len(RANGE_EDGES) - 1) + rb
 
 
 def _cell_counts(xyz, size):
@@ -52,23 +63,29 @@ def point_features(points, shift_z=0.0):
 class LearnedPointSampler:
     """Holds the rate table, feature normalisation and MLP weights; pure numpy at inference."""
 
-    def __init__(self, rate, max_dist, shift_z, feat_mean, feat_std, w1, b1, w2, b2, w3, b3):
+    def __init__(self, rate, max_dist, shift_z, feat_mean, feat_std, w1, b1, w2, b2, w3, b3, obs_mask=None):
         self.rate = np.asarray(rate, np.float32)
         self.max_dist = float(max_dist)
         self.shift_z = float(shift_z)
         self.feat_mean = np.asarray(feat_mean, np.float32)
         self.feat_std = np.asarray(feat_std, np.float32)
         self.w1, self.b1, self.w2, self.b2, self.w3, self.b3 = [np.asarray(a, np.float32) for a in (w1, b1, w2, b2, w3, b3)]
+        # Cells the TARGET returned points in. The learned correction acts only there; elsewhere the keep
+        # probability is the rule's (measured where the target observes). None = every cell (samplers
+        # trained before 2026-10-04 carry no mask and behave exactly as before). 20261003_04 section 17.
+        self.obs_mask = None if obs_mask is None else np.asarray(obs_mask, bool)
 
     # ---- persistence
     @classmethod
     def load(cls, path):
         d = np.load(path)
-        return cls(**{k: d[k] for k in ('rate', 'max_dist', 'shift_z', 'feat_mean', 'feat_std', 'w1', 'b1', 'w2', 'b2', 'w3', 'b3')})
+        kw = {k: d[k] for k in ('rate', 'max_dist', 'shift_z', 'feat_mean', 'feat_std', 'w1', 'b1', 'w2', 'b2', 'w3', 'b3')}
+        return cls(**kw, obs_mask=d['obs_mask'] if 'obs_mask' in d.files else None)
 
     def save(self, path):
+        extra = {} if self.obs_mask is None else {'obs_mask': self.obs_mask}
         np.savez(path, rate=self.rate, max_dist=self.max_dist, shift_z=self.shift_z, feat_mean=self.feat_mean,
-                 feat_std=self.feat_std, w1=self.w1, b1=self.b1, w2=self.w2, b2=self.b2, w3=self.w3, b3=self.b3)
+                 feat_std=self.feat_std, w1=self.w1, b1=self.b1, w2=self.w2, b2=self.b2, w3=self.w3, b3=self.b3, **extra)
 
     @classmethod
     def from_rule(cls, rate, max_dist, shift_z, feat_mean, feat_std, hidden=32, seed=0):
@@ -96,7 +113,10 @@ class LearnedPointSampler:
     def keep_probability(self, points, feats=None):
         if feats is None:
             feats = point_features(points, self.shift_z)
-        logit = np.clip(self.rule_logit(points) + self.mlp(feats), -30, 30)  # exp overflow is harmless but noisy
+        corr = self.mlp(feats)
+        if self.obs_mask is not None:
+            corr = corr * self.obs_mask[cell_index(feats[:, 0], np.arctan2(feats[:, 7], feats[:, 6]))]
+        logit = np.clip(self.rule_logit(points) + corr, -30, 30)  # exp overflow is harmless but noisy
         return 1.0 / (1.0 + np.exp(-logit))
 
     def sample(self, points, rng=np.random):
