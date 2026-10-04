@@ -1,0 +1,26 @@
+# Eval-only arm C (2026-10-04, experiments_md/20261003_03 s7) for the accumulated S2 row with intensity
+# (centerpoint-xi-accum-rosext-nuscenes2kitti): KITTI intensity mapped onto the ACCUMULATED nuScenes source's
+# distribution (one map per range ring), from unlabelled train-split point clouds - both platforms at
+# 15 sweeps, pooled in their training proportion (analysis/intensity_testtime_tables.py). Inserted just before
+# voxelisation; nothing else changed.
+_BASE_CONFIG_: cfgs/da-ieee-access-intensity/centerpoint-xi-accum-rosext-nuscenes2kitti.yaml
+DATA_CONFIG_TAR:
+  DATA_PROCESSOR:
+  - NAME: mask_points_and_boxes_outside_range
+    REMOVE_OUTSIDE_BOXES: true
+  - NAME: shuffle_points
+    SHUFFLE_ENABLED:
+      train: true
+      test: false
+  - NAME: map_intensity_to_reference
+    TABLES: /storage/intensity_tables/accum_nuscenes2kitti_rings.npz
+    INTENSITY_INDEX: 3
+  - NAME: transform_points_to_voxels
+    VOXEL_SIZE:
+    - 0.1
+    - 0.1
+    - 0.15
+    MAX_POINTS_PER_VOXEL: 10
+    MAX_NUMBER_OF_VOXELS:
+      train: 150000
+      test: 150000
