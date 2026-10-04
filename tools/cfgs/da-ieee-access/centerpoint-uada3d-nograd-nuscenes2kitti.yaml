@@ -1,0 +1,14 @@
+# UADA3D on S2 with the adversarial gradient switched OFF (GRL lambda 0.0): the attribution control
+# for 27174 (66.62 / 31.22 vs single-sweep control 41.57 / 22.58), experiments_md/20261004_01.
+#
+# Everything else is the parent's: both forward passes every iteration, the discriminator still trains
+# its own weights, and target batches still pass through BatchNorm in train mode - so the running
+# statistics end up ~half target exactly as in 27174. Only the reversed gradient into the detector is
+# zero. Test-time evidence already points one way: 27174's checkpoint with its BN statistics
+# re-estimated on the SOURCE scores 39.32, below the control (AdaBN job 27287), while the plain control
+# with half-target statistics scores 69.86. This run makes the attribution at training time.
+# ENTRY adaptive_train.py, 2 GPUs, total batch 12, 150G, as the parent.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-uada3d-nuscenes2kitti.yaml
+
+OPTIMIZATION:
+    GRL_LAMBDA: 0.0

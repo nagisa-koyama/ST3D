@@ -1,0 +1,36 @@
+# Three-level DA grid on S2 (experiments_md/20261004_01), cell I+F+O: all three levels.
+# Accumulation to the target-free depth with motion compensation (input), UADA3D (feature), Car ROS
+# centred on the target-free size ratio, [0.81, 1.06] (output). Read against 26814 (I+O, 78.20 /
+# 46.67; seed 2 77.31 / 43.70): the decisive cell for whether feature alignment earns a place.
+# ENTRY adaptive_train.py, 2 GPUs, total batch 12 (3+3 per rank), 150G.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-uada3d-nuscenes2kitti.yaml
+
+DATA_CONFIG:
+    # Input level: the S2 accumulation recipe of 26388 on ONE source block (adaptive_train.py reads
+    # DATA_CONFIG, not DATA_CONFIGS). Both platforms ran at depth 15 there and no correction is used,
+    # so the per-platform split carried nothing this block loses.
+    MAX_SWEEPS: 15
+    GT_BOXES_MOTION_COMPENSATION: True
+    INFO_PATH: {
+        'train': [nuscenes_infos_200sweeps_train.pkl],
+        'test': [nuscenes_infos_200sweeps_val.pkl],
+    }
+    DATA_AUGMENTOR:
+        DISABLE_AUG_LIST: ['normalize_object_size', 'random_object_rotation']
+        AUG_CONFIG_LIST:
+            - NAME: normalize_object_size  # DISABLED - not UDA-legal
+              SIZE_RES: [-0.91, -0.49, -0.26]
+            - NAME: random_object_rotation  # DISABLED
+              ROT_PROB: 1.0
+              ROT_UNIFORM_NOISE: [-0.78539816, 0.78539816]
+            - NAME: random_object_scaling
+              SCALE_UNIFORM_NOISE: {
+                  'Car': [0.81, 1.06],
+                  'Pedestrian': [0.80, 1.25]
+              }
+            - NAME: random_world_flip
+              ALONG_AXIS_LIST: ['x', 'y']
+            - NAME: random_world_rotation
+              WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+            - NAME: random_world_scaling
+              WORLD_SCALE_RANGE: [0.95, 1.05]

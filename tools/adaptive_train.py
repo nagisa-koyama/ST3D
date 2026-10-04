@@ -271,7 +271,14 @@ def main():
         optimizer, total_iters_each_epoch=total_iters_each_epoch, total_epochs=args.epochs,
         last_epoch=last_epoch, optim_cfg=cfg.OPTIMIZATION
     )
-    grl_scheduler = build_grl_scheduler(total_iters_each_epoch=total_iters_each_epoch, total_epochs=args.epochs)
+    # OPTIMIZATION.GRL_LAMBDA (default 0.1, the released value). 0.0 keeps every forward pass, the
+    # discriminator's own training and the target batches' effect on BatchNorm statistics, and removes
+    # only the adversarial gradient into the detector: the control that attributes a UADA3D gain to the
+    # adversarial loss or to BN statistics (experiments_md/20261004_01).
+    grl_lambda = cfg.OPTIMIZATION.get('GRL_LAMBDA', 0.1)
+    logger.info('GRL lambda: %s' % grl_lambda)
+    grl_scheduler = build_grl_scheduler(total_iters_each_epoch=total_iters_each_epoch, total_epochs=args.epochs,
+                                        lambda_=grl_lambda)
 
     # -----------------------start training---------------------------
     logger.info('**********************Start training %s/%s(%s)**********************'

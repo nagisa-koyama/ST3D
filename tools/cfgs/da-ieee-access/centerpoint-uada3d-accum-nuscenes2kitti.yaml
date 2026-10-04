@@ -1,0 +1,18 @@
+# Three-level DA grid on S2 (experiments_md/20261004_01), cell I+F: UADA3D (feature level) on the
+# accumulated source (input level), family Car ROS [0.85, 1.20]. Read against 26388 (accumulation
+# alone, 71.93 / 39.95) and 27174 (UADA3D alone, 66.62 / 31.22): does feature alignment add
+# anything once the input distributions already match?
+# ENTRY adaptive_train.py, 2 GPUs, total batch 12 (3+3 per rank), 150G (11 GB resident 200-sweep
+# infos in every spawned worker).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-uada3d-nuscenes2kitti.yaml
+
+DATA_CONFIG:
+    # Input level: the S2 accumulation recipe of 26388 on ONE source block (adaptive_train.py reads
+    # DATA_CONFIG, not DATA_CONFIGS). Both platforms ran at depth 15 there and no correction is used,
+    # so the per-platform split carried nothing this block loses.
+    MAX_SWEEPS: 15
+    GT_BOXES_MOTION_COMPENSATION: True
+    INFO_PATH: {
+        'train': [nuscenes_infos_200sweeps_train.pkl],
+        'test': [nuscenes_infos_200sweeps_val.pkl],
+    }
