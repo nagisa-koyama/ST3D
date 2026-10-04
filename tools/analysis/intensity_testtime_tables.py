@@ -1,6 +1,7 @@
 """Tables for the test-time intensity calibration stage (`map_intensity_to_reference`).
 
-For a cross-dataset config (DATA_CONFIG = the model's SOURCE sensor, DATA_CONFIG_TAR = the target), measure
+For a cross-dataset config (DATA_CONFIG, or every DATA_CONFIGS entry pooled in training proportion = the
+model's SOURCE sensor, DATA_CONFIG_TAR = the target), measure
 the per-range-ring intensity distribution of each dataset's TRAIN split from point clouds alone - every point
 pooled, no class split, so no label is used - and write two tables that map TARGET intensity onto the SOURCE's:
 
@@ -33,12 +34,33 @@ STEP = {'NuScenesDataset': 1 / 255.0, 'KittiDataset': 0.01, 'PandasetDataset': 1
 MIN_POINTS = 2000
 
 
-def pooled_hist(dcfg, cfg, frames, log):
+def pooled_hist(dcfg, cfg, frames, log, per_dataset_frame=False):
+    """(rings, levels) histogram with every channel pooled. With `per_dataset_frame`, rescaled from the
+    `frames` measured to the dataset's full length, so several sources sum in their training proportion."""
     ds, _, _ = build_dataloader(dataset_cfg=dcfg, class_names=cfg.CLASS_NAMES, batch_size=1, dist=False, workers=0,
                                 logger=log, training=True, model_ontology=cfg.get('ONTOLOGY', None))
     idx = dcfg.POINT_FEATURE_ENCODING.src_feature_list.index('intensity')
     st = ic.compute_intensity_statistics(ds, num_frames=frames, scale=1.0, step=STEP[dcfg.DATASET], intensity_index=idx)
-    return st['hist'].sum(axis=1), st['edges'], STEP[dcfg.DATASET]      # (rings, levels): every channel pooled
+    hist = st['hist'].sum(axis=1)
+    if per_dataset_frame:
+        print('  source %s: MAX_SWEEPS %s, %d in-range points per frame over %d frames, weighted by %d training frames' % (
+            dcfg.get('VEHICLE', dcfg.DATASET), dcfg.get('MAX_SWEEPS', 1), hist.sum() / st['frames'], st['frames'], len(ds)))
+        hist = hist / st['frames'] * len(ds)
+    return hist, st['edges'], STEP[dcfg.DATASET]
+
+
+def source_hist(cfg, frames, log):
+    """The model's training source. A multi-source config (DATA_CONFIGS, e.g. the two nuScenes platforms of
+    the accumulated S2 rows) is measured per source - each at its own MAX_SWEEPS, as training sees it - and
+    summed in proportion to each source's training frames."""
+    sources = cfg.get('DATA_CONFIGS', None)
+    if not sources:
+        return pooled_hist(cfg.DATA_CONFIG, cfg, frames, log)
+    total, edges, step = None, None, None
+    for name, dcfg in sources.items():
+        h, edges, step = pooled_hist(dcfg, cfg, frames, log, per_dataset_frame=True)
+        total = h if total is None else total + h
+    return total, edges, step
 
 
 def main():
@@ -49,12 +71,13 @@ def main():
     a = ap.parse_args()
     log = logging.getLogger('tables'); log.addHandler(logging.StreamHandler()); log.setLevel(logging.WARNING)
     cfg = cfg_from_yaml_file(a.cfg, EasyDict())
-    src, edges, _ = pooled_hist(cfg.DATA_CONFIG, cfg, a.frames, log)
+    src, edges, _ = source_hist(cfg, a.frames, log)
     tgt, _, tgt_step = pooled_hist(cfg.DATA_CONFIG_TAR, cfg, a.frames, log)
     Q = ic.quantiles
     s_all, t_all = src.sum(axis=0), tgt.sum(axis=0)
     from_q, to_q = [], []
-    print('%s -> %s (map TARGET onto SOURCE), %d frames each' % (cfg.DATA_CONFIG_TAR.DATASET, cfg.DATA_CONFIG.DATASET, a.frames))
+    src_name = '+'.join(cfg.DATA_CONFIGS.keys()) if cfg.get('DATA_CONFIGS', None) else cfg.DATA_CONFIG.DATASET
+    print('%s -> %s (map TARGET onto SOURCE), %d frames each' % (cfg.DATA_CONFIG_TAR.DATASET, src_name, a.frames))
     for r in range(len(edges) - 1):
         own = src[r].sum() >= MIN_POINTS and tgt[r].sum() >= MIN_POINTS
         from_q.append(Q(tgt[r] if own else t_all)); to_q.append(Q(src[r] if own else s_all))

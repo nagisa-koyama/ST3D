@@ -1,0 +1,37 @@
+# Accumulated S2 row WITH INTENSITY (2026-10-04, experiments_md/20261003_03 §7). ONE VARIABLE from
+# da-ieee-access/centerpoint-accum-rosext-nuscenes2kitti (job 26814, 78.20 / 46.67 BEV / 3D moderate on KITTI val,
+# W&B 2da6oz6e): intensity is added to the point features of both nuScenes platforms and of the KITTI target.
+# Same 15 sweeps per platform, same box motion compensation, same target-free Car size prior [0.81, 1.06],
+# same schedule (20 epochs, global batch 6).
+#
+# INTENSITY_SCALE 255 puts nuScenes' raw 0-255 returns on KITTI's [0, 1] scale. It is applied in __getitem__
+# AFTER get_lidar_with_sweeps has concatenated the sweeps, so every accumulated sweep is scaled, and box motion
+# compensation moves x, y, z only, so each point keeps its own return strength.
+#
+# Scored three ways, all eval-only on this run's checkpoint: raw (this config), and with the label-free test-time
+# map of KITTI intensity onto this source's distribution, per range ring (-calrings) and pooled (-calglobal).
+# The single-sweep version of the same question is centerpoint-xi-nuscenes2kitti (B 37.27 -> C 47.31 -> C' 50.17).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-rosext-nuscenes2kitti.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        INTENSITY_SCALE: 255.0
+        POINT_FEATURE_ENCODING: {
+            encoding_type: absolute_coordinates_encoding,
+            used_feature_list: ['x', 'y', 'z', 'intensity'],
+            src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp'],
+        }
+    NUSCENES_N015:
+        INTENSITY_SCALE: 255.0
+        POINT_FEATURE_ENCODING: {
+            encoding_type: absolute_coordinates_encoding,
+            used_feature_list: ['x', 'y', 'z', 'intensity'],
+            src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp'],
+        }
+
+DATA_CONFIG_TAR:
+    POINT_FEATURE_ENCODING: {
+        encoding_type: absolute_coordinates_encoding,
+        used_feature_list: ['x', 'y', 'z', 'intensity'],
+        src_feature_list: ['x', 'y', 'z', 'intensity'],
+    }
