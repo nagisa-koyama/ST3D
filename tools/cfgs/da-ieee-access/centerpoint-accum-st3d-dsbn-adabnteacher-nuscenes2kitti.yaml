@@ -1,0 +1,20 @@
+# S2 headline recipe with PER-DOMAIN BatchNorm on both sides, nuScenes -> KITTI (experiments_md/20261004_01).
+#
+# centerpoint-accum-st3d-nuscenes2kitti (27171: 80.69 / 48.29; seed 2 27248: 81.47 / 49.75) plus
+# SELF_TRAIN.DSNORM (student keeps source and target BN statistics apart; evaluation uses the target
+# set) and SELF_TRAIN.TEACHER_ADABN (the frozen teacher 26814's TARGET statistics re-estimated on 1,000
+# strided KITTI train frames, eval-mode view, no labels, before it labels). Test time, the adapted
+# teacher scores 76.54 / 53.77 against 78.20 / 46.67 as trained (AdaBN job 27287): BEV -1.7, 3D +7.1.
+# Cuts: the adapted teacher's own Car count balance (per-ring joint (score, points) mixture inside 30 m,
+# kitti_car_count_balance_cut.py on pseudo-labels from job 27300) is 0.301 - the SAME as the
+# unadapted teacher's - so the cuts are unchanged: Car 0.30, Pedestrian / Cyclist pre-declared 0.6.
+# Launch as 27171 (2 GPUs, 150G, ~13 h on 2 GPUs), --pretrained_model and --pretrained_model_teacher =
+# 26814 ep20 (/storage/wandb/run-20261001_022243-2da6oz6e/files/ckpt/checkpoint_epoch_20.pth).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-st3d-nuscenes2kitti.yaml
+
+SELF_TRAIN:
+    DSNORM: True
+    TEACHER_ADABN:
+        FRAMES: 1000
+        MIX: 1.0
+        BATCH_SIZE: 4

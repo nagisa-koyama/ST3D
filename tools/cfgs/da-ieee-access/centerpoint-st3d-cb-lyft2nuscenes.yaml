@@ -1,0 +1,12 @@
+# Textbook pseudo-labelling at the SETTLED cut rule, Lyft -> nuScenes (experiments_md/20261004_01).
+# centerpoint-st3d-lyft2nuscenes (26698 ran it with the flat 0.1 plateau-edge cut: 23.55) with the
+# per-class COUNT-BALANCE cuts of ITS OWN teacher, ldb35c2o ep30, from temporal persistence on nuScenes
+# train (count_balance_from_persistence.py, label-free): [0.241, 0.203, 0.246]. At these cuts the teacher
+# keeps 14.5 Car / frame at precision 0.36 (5.30 true / frame; GT read for this diagnosis only).
+# The matched baseline for the BN-adapted-teacher rows, which use their teacher's own count-balance cuts.
+# Launch as 26698: 2 GPUs, --pretrained_model and --pretrained_model_teacher = ldb35c2o ep30.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-st3d-lyft2nuscenes.yaml
+
+SELF_TRAIN:
+    SCORE_THRESH: [0.241, 0.203, 0.246]   # count balance, persistence, teacher ldb35c2o ep30
+    NEG_THRESH: [0.1, 0.1, 0.1]

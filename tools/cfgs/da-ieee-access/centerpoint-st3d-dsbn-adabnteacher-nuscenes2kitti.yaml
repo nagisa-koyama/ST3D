@@ -1,0 +1,75 @@
+# S2 WITHOUT input correction: pseudo-labelling from the SINGLE-SWEEP source-only model with per-domain
+# BatchNorm on both sides, nuScenes -> KITTI (experiments_md/20261004_01). The feature-level path to S2:
+# - teacher + init = 25743 ep20 (single sweep, Car ROS [0.85, 1.20]; 41.57 / 22.58 on KITTI as trained,
+#   65.26 / 26.22 with test-time target statistics, AdaBN job 27287);
+# - SELF_TRAIN.TEACHER_ADABN re-estimates the teacher's TARGET statistics before it labels;
+# - SELF_TRAIN.DSNORM keeps the student's source and target statistics apart;
+# - the source is the plain single sweep (both platforms, 10-sweep infos, no compensation needed) with
+#   the teacher's own Car interval [0.85, 1.20], so nothing but the self-training differs from 25743.
+# Cuts: the adapted teacher's Car count balance on KITTI train (joint (score, points) mixture inside
+# 30 m, job 27300's pseudo-labels) = 0.419; Pedestrian / Cyclist pre-declared 0.6 as in the S2 rows.
+# Read against 26814 -> 27171 (input level + pseudo-labels: 80.69 / 48.29) and the AdaBN teacher.
+# Launch: 2 GPUs, --pretrained_model and --pretrained_model_teacher = 25743 ep20
+# (/storage/wandb/run-20260922_155434-wfdcq75s/files/ckpt/checkpoint_epoch_20.pth).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-st3d-nuscenes2kitti.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        MAX_SWEEPS: 1
+        INFO_PATH: {
+            'train': [nuscenes_infos_10sweeps_train.pkl],
+            'test': [nuscenes_infos_10sweeps_val.pkl],
+        }
+        DATA_AUGMENTOR:
+            DISABLE_AUG_LIST: ['normalize_object_size', 'random_object_rotation']
+            AUG_CONFIG_LIST:
+                - NAME: normalize_object_size  # DISABLED - not UDA-legal
+                  SIZE_RES: [-0.91, -0.49, -0.26]
+                - NAME: random_object_rotation  # DISABLED
+                  ROT_PROB: 1.0
+                  ROT_UNIFORM_NOISE: [-0.78539816, 0.78539816]
+                - NAME: random_object_scaling
+                  SCALE_UNIFORM_NOISE: {
+                      'Car': [0.85, 1.20],
+                      'Pedestrian': [0.80, 1.25]
+                  }
+                - NAME: random_world_flip
+                  ALONG_AXIS_LIST: ['x', 'y']
+                - NAME: random_world_rotation
+                  WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+                - NAME: random_world_scaling
+                  WORLD_SCALE_RANGE: [0.95, 1.05]
+    NUSCENES_N015:
+        MAX_SWEEPS: 1
+        INFO_PATH: {
+            'train': [nuscenes_infos_10sweeps_train.pkl],
+            'test': [nuscenes_infos_10sweeps_val.pkl],
+        }
+        DATA_AUGMENTOR:
+            DISABLE_AUG_LIST: ['normalize_object_size', 'random_object_rotation']
+            AUG_CONFIG_LIST:
+                - NAME: normalize_object_size  # DISABLED - not UDA-legal
+                  SIZE_RES: [-0.91, -0.49, -0.26]
+                - NAME: random_object_rotation  # DISABLED
+                  ROT_PROB: 1.0
+                  ROT_UNIFORM_NOISE: [-0.78539816, 0.78539816]
+                - NAME: random_object_scaling
+                  SCALE_UNIFORM_NOISE: {
+                      'Car': [0.85, 1.20],
+                      'Pedestrian': [0.80, 1.25]
+                  }
+                - NAME: random_world_flip
+                  ALONG_AXIS_LIST: ['x', 'y']
+                - NAME: random_world_rotation
+                  WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+                - NAME: random_world_scaling
+                  WORLD_SCALE_RANGE: [0.95, 1.05]
+
+SELF_TRAIN:
+    DSNORM: True
+    TEACHER_ADABN:
+        FRAMES: 1000
+        MIX: 1.0
+        BATCH_SIZE: 4
+    SCORE_THRESH: [0.419, 0.6, 0.6]   # Car: count balance of the ADAPTED 25743 teacher on KITTI train; Ped / Cyc: pre-declared 0.6
+    NEG_THRESH: [0.1, 0.1, 0.1]

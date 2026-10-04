@@ -1,0 +1,13 @@
+# S2 headline recipe with a BN-ADAPTED TEACHER only (student keeps one shared BatchNorm), nuScenes -> KITTI
+# (experiments_md/20261004_01). One variable from 27171 / 27248: the frozen teacher 26814's BatchNorm
+# statistics are re-estimated on 1,000 strided KITTI train frames before it labels. Its Car
+# count-balance cut stays 0.301 (job 27300's pass), so the cuts are unchanged. With
+# centerpoint-accum-st3d-dsbn-adabnteacher it separates the teacher's share of a per-domain-BN effect.
+# Launch as 27171 (2 GPUs, 150G), teacher + init = 26814 ep20.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-st3d-nuscenes2kitti.yaml
+
+SELF_TRAIN:
+    TEACHER_ADABN:
+        FRAMES: 1000
+        MIX: 1.0
+        BATCH_SIZE: 4

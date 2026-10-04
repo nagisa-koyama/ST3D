@@ -1,7 +1,7 @@
 # Pseudo-labelling with PER-DOMAIN BatchNorm (student side), Lyft -> nuScenes (experiments_md/20261004_01).
 #
-# Textbook pseudo-labelling (centerpoint-st3d-lyft2nuscenes with teacher + init = the source-only
-# model ldb35c2o ep30: job 26698, 23.55) with SELF_TRAIN.DSNORM: every BatchNorm becomes a DSNorm with
+# centerpoint-st3d-cb (textbook pseudo-labelling from ldb35c2o ep30 at its count-balance cuts) with
+# SELF_TRAIN.DSNORM: every BatchNorm becomes a DSNorm with
 # a SOURCE and a TARGET set of statistics; source batches use and update the source set, target
 # (pseudo-labelled) batches the target set, and evaluation uses the target set. The teacher is
 # converted too, but loaded from a source-only checkpoint its target set is a copy of the source set,
@@ -13,3 +13,5 @@ _BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-st3d-lyft2nuscenes.yaml
 
 SELF_TRAIN:
     DSNORM: True
+    SCORE_THRESH: [0.241, 0.203, 0.246]   # the plain teacher's count balance, as centerpoint-st3d-cb
+    NEG_THRESH: [0.1, 0.1, 0.1]

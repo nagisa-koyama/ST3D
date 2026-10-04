@@ -1,8 +1,9 @@
 # Pseudo-labelling with a BN-ADAPTED TEACHER only (student keeps one shared BatchNorm), Lyft -> nuScenes
 # (experiments_md/20261004_01). centerpoint-st3d-lyft2nuscenes + SELF_TRAIN.TEACHER_ADABN: the frozen
 # teacher's BatchNorm statistics are re-estimated on 1,000 strided nuScenes TRAIN frames (no labels,
-# weights untouched) before it generates. One variable from 26698 (23.55); with the DSNORM rows it
-# separates the teacher's share of a per-domain-BN gain from the student's.
+# weights untouched) before it generates, cut at its own count balance. Read against
+# centerpoint-st3d-cb (plain teacher, its own count balance); with the DSNORM rows it separates the
+# teacher's share of a per-domain-BN gain from the student's.
 # Launch as 26698: 2 GPUs, --pretrained_model and --pretrained_model_teacher = ldb35c2o ep30.
 _BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-st3d-lyft2nuscenes.yaml
 
@@ -11,3 +12,11 @@ SELF_TRAIN:
         FRAMES: 1000
         MIX: 1.0
         BATCH_SIZE: 4
+    # Count-balance cuts of the ADAPTED teacher (temporal persistence on nuScenes train, label-free, from
+    # pseudo-labels generated with --teacher_adabn 1.0 in job 27300): [0.394, 0.299, 0.291]. The adapted
+    # teacher's scores run higher, so the flat 0.1 of 26698 would keep 77 Car / frame at precision 0.11.
+    # At these cuts: 12.1 Car / frame, precision 0.49, 5.88 true / frame, against the plain teacher's
+    # 14.5 / 0.36 / 5.30 at its own cuts (GT read for this diagnosis only). Pedestrians: 8.9 / frame at
+    # 0.26 (plain: 1.9 at 0.51) - the adapted teacher over-emits them.
+    SCORE_THRESH: [0.394, 0.299, 0.291]
+    NEG_THRESH: [0.1, 0.1, 0.1]
