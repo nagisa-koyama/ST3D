@@ -211,6 +211,11 @@ def _train_and_report(sampler, F, R, E, C, T, Tc, n_src_frames, n_cells, feats, 
     w3 = torch.tensor(sampler.w3, requires_grad=True); b3 = torch.tensor(sampler.b3, requires_grad=True)
     Tt = torch.tensor(T, dtype=torch.float32); Tct = torch.tensor(Tc, dtype=torch.float32)
     ring_t = torch.tensor(R); ebin_t = torch.tensor(E); cell_t = torch.tensor(C)
+    # Source points in cells the target returned points in. The elevation term compares only these: the
+    # target's histograms are, by construction, measured there, and the correction is gated to them - so on
+    # a cone-shaped target (PandarGT) the out-of-cone 5/6 of the source would otherwise dominate a histogram
+    # the sampler is not allowed to change (S3, 2026-10-04: no learning at all, 0.89 -> 0.90).
+    seen_t = torch.ones(len(F), dtype=torch.bool) if sampler.obs_mask is None else torch.tensor(sampler.obs_mask[C])
     p0 = torch.sigmoid(base)
     opt = torch.optim.Adam([w1, b1, w2, b2, w3, b3], lr=args.lr)
 
@@ -223,7 +228,7 @@ def _train_and_report(sampler, F, R, E, C, T, Tc, n_src_frames, n_cells, feats, 
     def losses(p):
         js_total = 0.0; per_ring = []
         for k in range(len(RINGS)):
-            m = ring_t == k
+            m = (ring_t == k) & seen_t  # only where the target observes: its histograms come from there
             hist = torch.zeros(T.shape[1]).index_add_(0, ebin_t[m], p[m])
             d = js_torch(hist, Tt[k]); per_ring.append(float(d)); js_total = js_total + d
         # expected count per (sector, range) cell PER FRAME against the target's mean; relative error,
@@ -268,6 +273,8 @@ def _train_and_report(sampler, F, R, E, C, T, Tc, n_src_frames, n_cells, feats, 
     for f_frame, rg, eb in zip(feats, rings, ebins):
         pts = _points_from_feats(f_frame)
         keep = rng.rand(len(pts)) < sampler.keep_probability(pts, f_frame)  # features cached, xyz only for the rule's range
+        if sampler.obs_mask is not None:
+            keep &= sampler.obs_mask[cell_of(f_frame)]
         for k in range(len(RINGS)):
             m = (rg == k) & keep
             H[k] += np.bincount(eb[m], minlength=H.shape[1])
