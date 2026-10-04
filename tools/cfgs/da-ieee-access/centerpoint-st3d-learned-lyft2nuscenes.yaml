@@ -1,0 +1,52 @@
+# L2 of experiments_md/20261003_04 section 6: S1 pseudo-label self-training (frozen teacher, one pass)
+# with the LEARNED point sampler in place of the per-bin rule - centerpoint-st3d-global-lyft2nuscenes
+# (jobs 26696 / 26809: 29.57 / 29.61) with the step swapped and nothing else. Teacher + init iwg6l5v1
+# ep30, as in the parent. Same samplers as L1. HIST_DIST_ON_THE_FLY: False because the sampler carries
+# the rule's rate itself.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-st3d-global-lyft2nuscenes.yaml
+
+DATA_CONFIGS:
+    LYFT_40BEAM:
+        HIST_DIST_ON_THE_FLY: False
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+
+            - NAME: sample_points_learned
+              WEIGHTS: /home/koyama/data/samplers/s1_lyft40_nuscenes.npz
+
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }
+    LYFT_64BEAM:
+        HIST_DIST_ON_THE_FLY: False
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+
+            - NAME: sample_points_learned
+              WEIGHTS: /home/koyama/data/samplers/s1_lyft64_nuscenes.npz
+
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }

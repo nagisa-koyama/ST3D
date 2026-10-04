@@ -1,0 +1,56 @@
+# L4 of experiments_md/20261003_04 section 6: the S2 headline (centerpoint-accum-st3d-nuscenes2kitti,
+# jobs 27171 / 27248: plain pseudo-label self-training from the target-free base, 80.69 / 81.47 BEV,
+# 48.29 / 49.75 3D) with the LEARNED point sampler on the source, teacher + init = L3 (job 27262,
+# k4cp6313 ep20, 76.75 / 52.29). Two things differ from the parent, both forced: the sampler step
+# (the variable) and the Car pseudo-label cut, which is re-derived for THIS teacher by the same
+# label-free count balance that gave the parent's 0.30 (per-ring 2-GMM on (logit score, log points)
+# inside 30 m over the teacher's KITTI-train pseudo-labels at floor 0.0001). Ped / Cyc stay at the
+# pre-declared 0.6.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-st3d-nuscenes2kitti.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+
+            - NAME: sample_points_learned
+              WEIGHTS: /home/koyama/data/samplers/s2_n008_kitti.npz
+
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }
+    NUSCENES_N015:
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+
+            - NAME: sample_points_learned
+              WEIGHTS: /home/koyama/data/samplers/s2_n015_kitti.npz
+
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }
+
+SELF_TRAIN:
+    SCORE_THRESH: [0.293, 0.6, 0.6]   # Car 0.293: count balance for teacher k4cp6313 ep20 (job 27290 pseudo-labels; est. 6.53 real Car/frame inside 30 m; 26814 gave 0.301, 26536 0.275)

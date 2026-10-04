@@ -1,0 +1,50 @@
+# L0 of experiments_md/20261003_04 section 6, on S2: L3 (centerpoint-accum-rosext-learned-nuscenes2kitti,
+# job 27262) with the sampler's INITIAL weights - the MLP's last layer is zero, so the keep probability is
+# the per-bin rule exactly (tests/test_point_sampler.py, 1e-5 per point). Separates "thinning the
+# accumulated source to KITTI's radial profile" from "what the sampler learned on top of it": L3 gained
+# +7 3D over 26814 at one seed, and this row says how much of that the rule alone already gives.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-rosext-learned-nuscenes2kitti.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+
+            - NAME: sample_points_learned
+              WEIGHTS: /home/koyama/data/samplers/s2_n008_kitti_init.npz
+
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }
+    NUSCENES_N015:
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+
+            - NAME: sample_points_learned
+              WEIGHTS: /home/koyama/data/samplers/s2_n015_kitti_init.npz
+
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }

@@ -1,0 +1,57 @@
+# L1 of experiments_md/20261003_04 section 6: S1 Lyft -> nuScenes source-only with the LEARNED point
+# sampler in place of the per-bin rule (centerpoint-global-lyft2nuscenes, job 25781: 28.22 / 13.12).
+# One sampler per Lyft platform, trained by tools/analysis/train_point_sampler.py on nuScenes'
+# unlabelled TRAIN clouds with the same recipe as S2/S3 (120 frames, 400 steps, no per-pair setting).
+# The sampler stores the rule's rate as its initialisation, so the on-the-fly calibration is switched
+# off (HIST_DIST_ON_THE_FLY: False); the other HIST_DIST_* keys stay inherited and are inert.
+# Read against 25781 (per-bin rule) and the two-seed control 24.11 under the parity criterion (section 12).
+#
+# DATA_PROCESSOR is a list and lists do not merge, so each platform restates its parent's steps with
+# the rule's step swapped. tests/test_learned_sampler_configs.py pins the resolved blocks.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-global-lyft2nuscenes.yaml
+
+DATA_CONFIGS:
+    LYFT_40BEAM:
+        HIST_DIST_ON_THE_FLY: False
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+
+            - NAME: sample_points_learned
+              WEIGHTS: /home/koyama/data/samplers/s1_lyft40_nuscenes.npz
+
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }
+    LYFT_64BEAM:
+        HIST_DIST_ON_THE_FLY: False
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+
+            - NAME: sample_points_learned
+              WEIGHTS: /home/koyama/data/samplers/s1_lyft64_nuscenes.npz
+
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }
