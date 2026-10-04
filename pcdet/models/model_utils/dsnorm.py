@@ -215,8 +215,13 @@ class DSNorm(Module):
                 module_output.weight.requires_grad = module.weight.requires_grad
                 module_output.bias.requires_grad = module.bias.requires_grad
 
-            module_output.running_mean_target = module_output.running_mean_source = module.running_mean
-            module_output.running_var_target = module_output.running_var_source = module.running_var
+            # Separate COPIES: assigning the one tensor to both buffers aliased the two domains'
+            # statistics until something (e.g. .cuda(), which re-creates each buffer) happened to break
+            # the alias - on CPU every target update silently rewrote the source statistics too.
+            module_output.running_mean_source = module.running_mean.clone()
+            module_output.running_mean_target = module.running_mean.clone()
+            module_output.running_var_source = module.running_var.clone()
+            module_output.running_var_target = module.running_var.clone()
             module_output.num_batches_tracked = module.num_batches_tracked
         for name, child in module.named_children():
             module_output.add_module(name, cls.convert_dsnorm(child))

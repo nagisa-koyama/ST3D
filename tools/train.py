@@ -405,6 +405,18 @@ def main():
         model_teacher.load_params_from_file(filename=args.pretrained_model_teacher, to_cpu=dist_train, logger=logger)
         logger.info('pretrained_model_teacher %s is loaded to model_teacher %s', args.pretrained_model_teacher,
                     model_teacher.__class__.__name__)
+        if cfg.get('SELF_TRAIN', None) and cfg.SELF_TRAIN.get('TEACHER_ADABN', None):
+            # Re-estimate the frozen teacher's BatchNorm statistics on the target's TRAIN clouds (no
+            # labels, weights untouched) before it generates anything: pseudo-labels, and everything
+            # derived from them, come from the BN-adapted teacher (experiments_md/20261004_01).
+            # Function-local import: a module-level pcdet import here is re-run by spawned DDP
+            # workers against the job's frozen snapshot (memory gotcha, job 26696).
+            from pcdet.utils.adabn_utils import adapt_teacher
+            adapt_teacher(model_teacher, cfg, cfg.CLASS_NAMES, cfg.get('ONTOLOGY', None), logger,
+                          workers=args.workers)
+    elif cfg.get('SELF_TRAIN', None) and cfg.SELF_TRAIN.get('TEACHER_ADABN', None):
+        raise ValueError('SELF_TRAIN.TEACHER_ADABN needs a separate frozen teacher loaded with '
+                         '--pretrained_model_teacher; there is none to adapt.')
 
     # -----------------------load checkpoint if specified---------------------------
     start_epoch = it = 0

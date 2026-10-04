@@ -1,0 +1,19 @@
+# Pseudo-labelling with PER-DOMAIN BatchNorm on BOTH sides, Lyft -> nuScenes (experiments_md/20261004_01).
+#
+# centerpoint-st3d-dsbn-lyft2nuscenes (student keeps source / target BN statistics apart) plus
+# SELF_TRAIN.TEACHER_ADABN: before the frozen teacher generates anything, the TARGET set of its DSNorm
+# statistics is re-estimated on 1,000 strided nuScenes TRAIN frames (eval-mode view, no labels, weights
+# untouched); its source set is left as trained. So pseudo-labels, and anything derived from them,
+# come from a teacher normalised with target statistics. Test-time evidence for that teacher: 28.93 vs
+# 23.17 (seed 2: 28.22 vs 25.05). Cuts stay at the flat 0.1 of 26698, the label-free plateau edge, so
+# the row is two variables (student DSNorm, teacher AdaBN) from 26698 and one from the DSNORM row.
+# Read against 26698 (23.55), pseudo-labelling + global correction (29.57 / 29.61, two seeds) and the
+# source-only control with test-time AdaBN (28.93 / 28.22).
+# Launch as 26698: 2 GPUs, --pretrained_model and --pretrained_model_teacher = ldb35c2o ep30.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-st3d-dsbn-lyft2nuscenes.yaml
+
+SELF_TRAIN:
+    TEACHER_ADABN:
+        FRAMES: 1000
+        MIX: 1.0          # target statistics: the textbook AdaBN, pre-declared (never tuned on val)
+        BATCH_SIZE: 4

@@ -42,6 +42,11 @@ def main():
                     help='override the teacher head\'s MAX_OBJ_PER_SAMPLE (heatmap top-K) and both '
                          'NMS_POST_MAXSIZE caps. The default 500 floors the stored scores at ~0.04 '
                          'by RANK: the 500th heatmap peak, before SCORE_THRESH is applied.')
+    ap.add_argument('--teacher_adabn', type=float, default=None, metavar='MIX',
+                    help='re-estimate the teacher\'s BatchNorm statistics on the target train split '
+                         'before generating (as SELF_TRAIN.TEACHER_ADABN does in train.py), with this MIX '
+                         '(1.0 = target statistics). Overrides whatever the config says.')
+    ap.add_argument('--adabn_frames', type=int, default=1000)
     args = ap.parse_args()
 
     out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
@@ -70,6 +75,14 @@ def main():
     model = build_network(model_cfg=teacher_cfg, num_class=len(teacher_classes), dataset=target_set)
     model.load_params_from_file(filename=args.teacher_ckpt, to_cpu=False, logger=logger)
     model.cuda().eval()
+    if args.teacher_adabn is not None:
+        cfg.SELF_TRAIN.TEACHER_ADABN = {'FRAMES': args.adabn_frames, 'MIX': args.teacher_adabn}
+    if cfg.SELF_TRAIN.get('TEACHER_ADABN', None):
+        # The same BN-adapted teacher train.py would use (experiments_md/20261004_01), so cuts derived
+        # from these labels belong to the teacher that will actually generate them.
+        from pcdet.utils.adabn_utils import adapt_teacher
+        adapt_teacher(model, cfg, cfg.CLASS_NAMES, cfg.get('ONTOLOGY', None), logger, workers=args.workers)
+        model.eval()
 
     # Same order as train_st_utils: dataset into eval mode BEFORE the inference loader's workers
     # fork on first iteration, so they stay in eval mode (20260921_02).
