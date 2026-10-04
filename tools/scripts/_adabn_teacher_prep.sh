@@ -6,6 +6,7 @@
 #     (snapshot, torch.distributed, auto eval recovery): DSNorm student + teacher, the teacher's TARGET
 #     statistics re-estimated before the pseudo-label pass, both domains through DSNorm under DDP, the
 #     final checkpoint scored with the target set. 16-frame subset, 2 epochs: not a measurement.
+#  3. (on the first GPU, after its pass) AdaBN eval arms on the nuScenes -> Waymo checkpoints.
 #  2. Pseudo-label passes with the BN-ADAPTED teacher at score floor 0.0001 (no W&B), one per GPU in
 #     parallel, for the label-free count-balance cuts of the S2 rows and the S1 label-quality diagnosis:
 #       S1  ldb35c2o ep30 on nuScenes train
@@ -31,8 +32,18 @@ gen() {  # gpu cfg ckpt out
     python analysis/pseudo_label_threshold/generate_pseudo_labels.py \
       --cfg_file "$2" --teacher_ckpt "$3" --out_dir "$4" --thresh 0.0001 --teacher_adabn 1.0
 }
+N=$S/run-20260922_155434-wfdcq75s/files/ckpt/checkpoint_epoch_20.pth
+A=$S/run-20260928_050622-exbb9chu/files/ckpt/checkpoint_epoch_20.pth
 ( gen "${G[0]}" cfgs/da-ieee-access/centerpoint-st3d-lyft2nuscenes.yaml "$L" \
-    /storage/pseudo_labels/ldb35c2o_ep30_nuscenes_train_thr0.0001_adabn; echo "S1 gen exit $?" ) &
+    /storage/pseudo_labels/ldb35c2o_ep30_nuscenes_train_thr0.0001_adabn; echo "S1 gen exit $?"
+  # 3. AdaBN on the nuScenes -> Waymo checkpoints (the arms 27289 lost to Waymo's missing INFO_PATH)
+  for arm in "centerpoint-sourceonly-nuscenes2waymo $N target 1.0 adabn_NWctrl_target" \
+             "centerpoint-sourceonly-nuscenes2waymo $N target 0.5 adabn_NWctrl_mix05" \
+             "centerpoint-accum-nuscenes2waymo $A target 1.0 adabn_NWaccum_target"; do
+    set -- $arm
+    CUDA_VISIBLE_DEVICES=${G[0]} bash analysis/adabn_eval.sh cfgs/da-ieee-access/$1.yaml $2 $3 $4 $5
+    echo "Waymo arm $5 exit $?"
+  done ) &
 ( gen "${G[1]:-${G[0]}}" cfgs/da-ieee-access/centerpoint-accum-st3d-nuscenes2kitti.yaml \
     $S/run-20261001_022243-2da6oz6e/files/ckpt/checkpoint_epoch_20.pth \
     /storage/pseudo_labels/2da6oz6e_ep20_kitti_train_thr0.0001_adabn; echo "S2 26814 gen exit $?"

@@ -50,7 +50,8 @@ def train_split_stats_loader(dataset_cfg, class_names, model_ontology, frames, b
     from pcdet.datasets import __all__ as DATASETS  # local: pcdet.datasets imports this package
     block = copy.deepcopy(dataset_cfg)
     block.DATA_SPLIT['test'] = block.DATA_SPLIT['train']
-    block.INFO_PATH['test'] = block.INFO_PATH['train']
+    if 'INFO_PATH' in block:  # Waymo has none: its infos follow DATA_SPLIT (per-sequence pickles)
+        block.INFO_PATH['test'] = block.INFO_PATH['train']
     ds = DATASETS[block.DATASET](dataset_cfg=block, class_names=class_names, root_path=None,
                                  training=False, logger=logger, model_ontology=model_ontology)
     stride = max(1, len(ds) // frames)

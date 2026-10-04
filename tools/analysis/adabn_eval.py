@@ -26,7 +26,6 @@ input-space accumulation already removed).
         [--mix 1.0] [--extra_tag ...] [--eval_tag ...] [--run_name ...] [--set KEY VAL ...]
 """
 import argparse
-import copy
 import datetime
 import json
 import sys
@@ -37,15 +36,13 @@ sys.path.insert(0, str(TOOLS)); sys.path.insert(0, str(TOOLS.parent))
 import _init_path  # noqa: F401,E402  (also installs the allocator guard)
 
 import numpy as np  # noqa: E402
-import torch  # noqa: E402
 import wandb  # noqa: E402
-from torch.utils.data import DataLoader, Subset  # noqa: E402
 
 from eval_utils import eval_utils  # noqa: E402
 from pcdet.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_file  # noqa: E402
-from pcdet.datasets import __all__ as DATASETS, build_dataloader  # noqa: E402
-from pcdet.models import build_network, load_data_to_gpu  # noqa: E402
-from pcdet.utils import common_utils  # noqa: E402
+from pcdet.datasets import build_dataloader  # noqa: E402
+from pcdet.models import build_network  # noqa: E402
+from pcdet.utils import adabn_utils, common_utils  # noqa: E402
 
 
 def parse_args():
@@ -72,85 +69,15 @@ def eval_dataset_config():
     return cfg.DATA_CONFIG
 
 
-def stats_dataset_config(which):
-    """The dataset block whose TRAIN split is read, in eval mode (no augmentation)."""
+def stats_dataset_block(which):
+    """The dataset block whose TRAIN split is read (target, or the source as a procedure check)."""
     if which == 'target':
-        block = eval_dataset_config()
-    else:
-        if cfg.get('DATA_CONFIG', None) is not None:
-            block = cfg.DATA_CONFIG
-        else:  # DATA_CONFIGS (per-platform sources): use the first; the caller is told which
-            name, block = next(iter(cfg.DATA_CONFIGS.items()))
-            print(f'[adabn] source statistics from DATA_CONFIGS.{name} only')
-    block = copy.deepcopy(block)
-    block.DATA_SPLIT['test'] = block.DATA_SPLIT['train']
-    block.INFO_PATH['test'] = block.INFO_PATH['train']
+        return eval_dataset_config()
+    if cfg.get('DATA_CONFIG', None) is not None:
+        return cfg.DATA_CONFIG
+    name, block = next(iter(cfg.DATA_CONFIGS.items()))  # per-platform sources: the first
+    print(f'[adabn] source statistics from DATA_CONFIGS.{name} only')
     return block
-
-
-def bn_layers(model):
-    return [(n, m) for n, m in model.named_modules() if isinstance(m, torch.nn.modules.batchnorm._BatchNorm)]
-
-
-@torch.no_grad()
-def reestimate(model, loader, logger):
-    layers = bn_layers(model)
-    saved = {n: (m.running_mean.clone(), m.running_var.clone()) for n, m in layers}
-    momenta = {n: m.momentum for n, m in layers}
-    model.eval()
-    for _, m in layers:
-        m.reset_running_stats()
-        m.momentum = None  # cumulative average over every batch seen
-        m.train()
-    for i, batch in enumerate(loader):
-        load_data_to_gpu(batch)
-        model(batch)
-        if i % 50 == 0:
-            logger.info(f'[adabn] statistics pass {i + 1}/{len(loader)}')
-    for n, m in layers:
-        m.momentum = momenta[n]
-    model.eval()
-    return saved
-
-
-@torch.no_grad()
-def bn_gap(model, saved):
-    """Per layer: mean over channels of |mu_new - mu_old| / sigma_old and |log sigma_new / sigma_old|."""
-    out = {}
-    for n, m in bn_layers(model):
-        mu0, var0 = saved[n]
-        sd0 = (var0 + m.eps).sqrt()
-        log_sd = 0.5 * torch.log((m.running_var + m.eps) / (var0 + m.eps))
-        out[n] = dict(
-            mean_shift=float(((m.running_mean - mu0).abs() / sd0).mean()),
-            log_sd_ratio=float(log_sd.abs().mean()),
-            max_abs_log_sd_ratio=float(log_sd.abs().max()),
-            # channels whose new sd is under a tenth of the saved one: re-normalising them by the new
-            # statistics multiplies their deviations by more than 10x
-            frac_sd_collapse=float((log_sd < -np.log(10.0)).float().mean()),
-            channels=int(mu0.numel()))
-    return out
-
-
-def summarise(gap):
-    groups = {}
-    for n, g in gap.items():
-        if n.startswith('discriminator'):
-            continue
-        key = n.split('.')[0]
-        groups.setdefault(key, []).append(g)
-    return {k: dict(layers=len(v), mean_shift=float(np.mean([g['mean_shift'] for g in v])),
-                    log_sd_ratio=float(np.mean([g['log_sd_ratio'] for g in v])),
-                    max_abs_log_sd_ratio=float(np.max([g['max_abs_log_sd_ratio'] for g in v])),
-                    frac_sd_collapse=float(np.mean([g['frac_sd_collapse'] for g in v]))) for k, v in groups.items()}
-
-
-@torch.no_grad()
-def apply_mix(model, saved, alpha):
-    for n, m in bn_layers(model):
-        mu0, var0 = saved[n]
-        m.running_mean.mul_(alpha).add_((1 - alpha) * mu0)
-        m.running_var.mul_(alpha).add_((1 - alpha) * var0)
 
 
 def main():
@@ -184,32 +111,30 @@ def main():
 
     summary = {}
     if args.stats != 'none':
-        block = stats_dataset_config(args.stats)
-        ds = DATASETS[block.DATASET](dataset_cfg=block, class_names=cfg.CLASS_NAMES, root_path=None,
-                                     training=False, logger=logger, model_ontology=ontology)
-        stride = max(1, len(ds) // args.stats_frames)
-        idx = list(range(0, len(ds), stride))[:args.stats_frames]
-        logger.info(f'[adabn] {args.stats} statistics: {len(idx)} of {len(ds)} {block.DATA_SPLIT["test"]} frames '
-                    f'of {block.DATASET} (stride {stride}), eval-mode view, no labels used')
-        loader = DataLoader(Subset(ds, idx), batch_size=args.stats_batch, shuffle=False, num_workers=args.workers,
-                            collate_fn=ds.collate_batch, pin_memory=True)
-        saved = reestimate(model, loader, logger)
-        gap = bn_gap(model, saved)
-        summary = summarise(gap)
+        loader = adabn_utils.train_split_stats_loader(stats_dataset_block(args.stats), cfg.CLASS_NAMES, ontology,
+                                                      args.stats_frames, args.stats_batch, args.workers, logger)
+        saved = adabn_utils.reestimate_bn(model, loader, logger, mix=1.0)
+        gap = adabn_utils.bn_gap(model, saved)
+        summary = adabn_utils.summarise_gap(gap)
         for k, v in summary.items():
             logger.info(f'[adabn] BN gap {k:14s} layers={v["layers"]:3d} mean_shift={v["mean_shift"]:.3f} '
                         f'|log sd ratio|={v["log_sd_ratio"]:.3f} max={v["max_abs_log_sd_ratio"]:.2f} '
                         f'sd<0.1x={v["frac_sd_collapse"]:.4f}')
-        json.dump(dict(per_layer=gap, summary=summary, frames=len(idx)), open(out_dir / 'bn_gap.json', 'w'), indent=1)
+        json.dump(dict(per_layer=gap, summary=summary, frames=len(loader.dataset)),
+                  open(out_dir / 'bn_gap.json', 'w'), indent=1)
         if args.save_stats:
             arrays = {}
-            for n, m in bn_layers(model):
+            for n, m in adabn_utils.bn_layers(model):
                 arrays[n + '|saved_mean'], arrays[n + '|saved_var'] = (t.cpu().numpy() for t in saved[n])
-                arrays[n + '|new_mean'], arrays[n + '|new_var'] = m.running_mean.cpu().numpy(), m.running_var.cpu().numpy()
+                arrays[n + '|new_mean'], arrays[n + '|new_var'] = (t.cpu().numpy() for t in adabn_utils._stats(m))
             np.savez(out_dir / 'bn_stats.npz', **arrays)
         wandb.config.update({'adabn_gap': summary})
-        if args.mix != 1.0:
-            apply_mix(model, saved, args.mix)
+        if args.mix != 1.0:  # after the gap, so the gap always describes the pure re-estimate
+            for n, m in adabn_utils.bn_layers(model):
+                mu0, var0 = saved[n]
+                mean, var = adabn_utils._stats(m)
+                mean.mul_(args.mix).add_((1 - args.mix) * mu0)
+                var.mul_(args.mix).add_((1 - args.mix) * var0)
             logger.info(f'[adabn] statistics mixed: {args.mix} x new + {1 - args.mix} x saved')
 
     eval_utils.eval_one_epoch(cfg, model, test_loader, epoch_id, logger, dist_test=False,
