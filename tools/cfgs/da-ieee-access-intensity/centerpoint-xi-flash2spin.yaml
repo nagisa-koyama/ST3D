@@ -1,0 +1,26 @@
+# Cross-dataset intensity test, arm B (2026-10-04): flash2spin with RAW intensity (each loader's own scale to [0, 1])
+# on both sides, nothing else changed. Evaluated eval-only with the source's with-intensity oracle checkpoint;
+# read against the x,y,z twin scored with da-ieee-access-tier1/centerpoint-pandaset-flash2spin-15ep. Arms C / C' add the label-free test-time map below.
+_BASE_CONFIG_: cfgs/da-ieee-access-tier1/centerpoint-pandaset-flash2spin-15ep.yaml
+DATA_CONFIG:
+  POINT_FEATURE_ENCODING:
+    encoding_type: absolute_coordinates_encoding
+    used_feature_list:
+    - x
+    - y
+    - z
+    - intensity
+    src_feature_list: &id001
+    - x
+    - y
+    - z
+    - intensity
+DATA_CONFIG_TAR:
+  POINT_FEATURE_ENCODING:
+    encoding_type: absolute_coordinates_encoding
+    used_feature_list:
+    - x
+    - y
+    - z
+    - intensity
+    src_feature_list: *id001

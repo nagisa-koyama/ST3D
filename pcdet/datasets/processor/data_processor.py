@@ -348,6 +348,45 @@ class DataProcessor(object):
         data_dict['points'] = self.learned_sampler.sample(data_dict['points'])
         return data_dict
 
+    def map_intensity_to_reference(self, data_dict=None, config=None, tables=None):
+        """Test-time intensity calibration: map this dataset's intensity onto a reference sensor's.
+
+        Per range ring, a point's intensity x becomes the reference value at the same percentile,
+        F_ref^-1(F_this(x)) - so a model trained with intensity on the reference sensor sees target
+        intensity in the units it learned. The tables are measured once from UNLABELLED point clouds of
+        each dataset's train split (tools/analysis/intensity_testtime_tables.py), so this is label-free.
+        Config keys: TABLES (npz path: edges, from_q, to_q per ring, from_step), INTENSITY_INDEX (column
+        of intensity AFTER the point feature encoder, default 3). Integer-valued intensities (from_step
+        > 0) are dequantised over one step with a per-frame deterministic draw before mapping, or the
+        mapped values would form a comb (experiments_md/20261002_02 section 1).
+        """
+        if data_dict is None:
+            t = np.load(config.TABLES)
+            tables = {k: np.asarray(t[k], dtype=np.float64) for k in ('edges', 'from_q', 'to_q')}
+            tables['from_step'] = float(t['from_step'])
+            return partial(self.map_intensity_to_reference, config=config, tables=tables)
+
+        points = data_dict['points']
+        if len(points) == 0:
+            return data_dict
+        idx = config.get('INTENSITY_INDEX', 3)
+        edges, from_q, to_q = tables['edges'], tables['from_q'], tables['to_q']
+        levels = np.linspace(0.0, 1.0, from_q.shape[1])
+        ring = np.clip(np.searchsorted(edges, np.linalg.norm(points[:, 0:2], axis=1), side='right') - 1,
+                       0, len(edges) - 2)
+        v = points[:, idx].astype(np.float64)
+        if tables['from_step'] > 0:
+            rng = np.random.RandomState(len(points))
+            v = np.clip(v + rng.uniform(-tables['from_step'] / 2, tables['from_step'] / 2, len(v)), 0.0, 1.0)
+        out = np.empty_like(v)
+        for r in np.unique(ring):
+            m = ring == r
+            xs = np.maximum.accumulate(from_q[r]) + np.arange(len(levels)) * 1e-12
+            out[m] = np.interp(np.interp(v[m], xs, levels), levels, to_q[r])
+        points[:, idx] = out.astype(points.dtype)
+        data_dict['points'] = points
+        return data_dict
+
     def sample_points_hist_based(self, data_dict=None, config=None):
         if data_dict is None:
             return partial(self.sample_points_hist_based, config=config)

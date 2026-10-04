@@ -168,7 +168,13 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument('--protocols', nargs='+', default=PROTOCOLS, choices=PROTOCOLS)
     ap.add_argument('--only', nargs='*', default=None, help='score only rows whose label contains one of these')
     ap.add_argument('--cls', default='Car', choices=['Car', 'Pedestrian'])
+    ap.add_argument('--rows_json', default=None, help='score these rows INSTEAD of the built-in list: a JSON list of '
+                    '[label, result.pkl path, target device (0 spin / 1 flash), cone (true/false)]')
     args = ap.parse_args(); protocols = args.protocols
+    rows = ROWS
+    if args.rows_json:
+        import json
+        rows = [tuple(r) for r in json.load(open(args.rows_json))]
     os.chdir(TOOLS)
     official = load_official_eval()
     gts = {d: gt_with_counts(d) for d in (0, 1)}
@@ -176,7 +182,7 @@ def main():
         summarise_counts(gts[d], d)
     print(f'\n{args.cls} AP_R40 BEV / 3D (the three difficulty columns are identical on this target)')
     print(f"{'row':48s} " + ' '.join(f'{p:>17s}' for p in protocols))
-    for label, path, device, cone in ROWS:
+    for label, path, device, cone in rows:
         if args.only is not None and not any(t in label for t in args.only):
             continue
         if not os.path.exists(path):

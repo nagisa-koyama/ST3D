@@ -1,0 +1,24 @@
+# Cross-dataset intensity test, arm C' (2026-10-04): arm B (centerpoint-xi-flash2spin) plus the test-time map of TARGET
+# intensity onto the SOURCE's distribution, one map for all ranges, from unlabelled train-split point clouds
+# (analysis/intensity_testtime_tables.py). Inserted just before voxelisation; nothing else changed.
+_BASE_CONFIG_: cfgs/da-ieee-access-intensity/centerpoint-xi-flash2spin.yaml
+DATA_CONFIG_TAR:
+  DATA_PROCESSOR:
+  - NAME: mask_points_and_boxes_outside_range
+    REMOVE_OUTSIDE_BOXES: true
+  - NAME: shuffle_points
+    SHUFFLE_ENABLED:
+      train: true
+      test: false
+  - NAME: map_intensity_to_reference
+    TABLES: /storage/intensity_tables/flash2spin_global.npz
+    INTENSITY_INDEX: 3
+  - NAME: transform_points_to_voxels
+    VOXEL_SIZE:
+    - 0.1
+    - 0.1
+    - 0.15
+    MAX_POINTS_PER_VOXEL: 10
+    MAX_NUMBER_OF_VOXELS:
+      train: 150000
+      test: 150000

@@ -1,0 +1,32 @@
+# Cross-dataset intensity test, arm B (2026-10-04): nuscenes2kitti with RAW intensity (each loader's own scale to [0, 1])
+# on both sides, nothing else changed. Evaluated eval-only with the source's with-intensity oracle checkpoint;
+# read against the x,y,z twin scored with da-ieee-access/centerpoint-sourceonly-nuscenes2kitti. Arms C / C' add the label-free test-time map below.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-nuscenes2kitti.yaml
+DATA_CONFIG:
+  POINT_FEATURE_ENCODING:
+    encoding_type: absolute_coordinates_encoding
+    used_feature_list:
+    - x
+    - y
+    - z
+    - intensity
+    src_feature_list:
+    - x
+    - y
+    - z
+    - intensity
+    - timestamp
+  INTENSITY_SCALE: 255.0
+DATA_CONFIG_TAR:
+  POINT_FEATURE_ENCODING:
+    encoding_type: absolute_coordinates_encoding
+    used_feature_list:
+    - x
+    - y
+    - z
+    - intensity
+    src_feature_list:
+    - x
+    - y
+    - z
+    - intensity

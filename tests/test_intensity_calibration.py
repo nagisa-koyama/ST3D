@@ -98,3 +98,46 @@ class TestKeepRawPointsHook:
         out = ds.prepare_data({'points': pts.copy()})
         assert out['points'].shape[1] == 3 and out['points_raw'].shape[1] == 4
         assert np.allclose(out['points_raw'], pts)
+
+
+class TestTestTimeMapStage:
+    """DataProcessor.map_intensity_to_reference (the test-time calibration stage)."""
+
+    def _stage(self, tmp_path, from_q, to_q, edges=(0.0, 75.0), step=0.0):
+        from easydict import EasyDict
+        from pcdet.datasets.processor.data_processor import DataProcessor
+        path = tmp_path / 't.npz'
+        np.savez(path, edges=np.asarray(edges), from_q=np.asarray(from_q), to_q=np.asarray(to_q), from_step=step)
+        dp = DataProcessor.__new__(DataProcessor)
+        return dp.map_intensity_to_reference(config=EasyDict({'TABLES': str(path), 'INTENSITY_INDEX': 3}))
+
+    def test_identity_tables_leave_intensity_unchanged(self, tmp_path):
+        L = np.linspace(0, 1, 201)
+        stage = self._stage(tmp_path, [L], [L])
+        pts = np.random.RandomState(0).rand(1000, 4).astype(np.float32); pts[:, :2] *= 50
+        out = stage(data_dict={'points': pts.copy()})['points']
+        assert np.allclose(out[:, 3], pts[:, 3], atol=1e-5) and np.array_equal(out[:, :3], pts[:, :3])
+
+    def test_maps_onto_the_reference_distribution_per_ring(self, tmp_path):
+        L = np.linspace(0, 1, 201)
+        rs = np.random.RandomState(1)
+        # ring 0 (0-20 m): this sensor uniform on [0, 0.2] -> reference uniform on [0.5, 1.0]
+        # ring 1 (20-75 m): this sensor uniform on [0, 1] -> reference constant-ish low [0, 0.1]
+        stage = self._stage(tmp_path, [L * 0.2, L], [0.5 + 0.5 * L, 0.1 * L], edges=(0.0, 20.0, 75.0))
+        near = np.column_stack([rs.uniform(1, 19, 5000), np.zeros(5000), np.zeros(5000), rs.uniform(0, 0.2, 5000)])
+        far = np.column_stack([rs.uniform(21, 70, 5000), np.zeros(5000), np.zeros(5000), rs.uniform(0, 1, 5000)])
+        out = stage(data_dict={'points': np.vstack([near, far]).astype(np.float32)})['points']
+        assert abs(np.median(out[:5000, 3]) - 0.75) < 0.02 and out[:5000, 3].min() >= 0.499
+        assert out[5000:, 3].max() <= 0.1001 and abs(np.median(out[5000:, 3]) - 0.05) < 0.01
+
+    def test_deterministic_for_the_same_frame(self, tmp_path):
+        L = np.linspace(0, 1, 201)
+        stage = self._stage(tmp_path, [L], [L ** 2], step=1 / 255.0)
+        pts = (np.random.RandomState(2).rand(500, 4) * [40, 40, 1, 1]).astype(np.float32)
+        a = stage(data_dict={'points': pts.copy()})['points']; b = stage(data_dict={'points': pts.copy()})['points']
+        assert np.array_equal(a, b)
+
+    def test_empty_frame(self, tmp_path):
+        L = np.linspace(0, 1, 201)
+        stage = self._stage(tmp_path, [L], [L])
+        assert len(stage(data_dict={'points': np.zeros((0, 4), np.float32)})['points']) == 0

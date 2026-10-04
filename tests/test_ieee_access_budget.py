@@ -50,10 +50,25 @@ def test_budget_is_within_tolerance_of_the_anchor(path):
            100 * (got - ANCHOR) / ANCHOR, ANCHOR))
 
 
+def _resolved(path):
+    """The config as training sees it: `_BASE_CONFIG_` chains resolved, from tools/ (paths are tools-relative).
+    Reading the YAML text instead misses every inherited block - a child that copies SELF_TRAIN but inherits
+    OPTIMIZATION raised KeyError here although the config is complete."""
+    import os
+    from easydict import EasyDict
+    from pcdet.config import cfg_from_yaml_file
+    tools = Path(__file__).resolve().parents[1] / 'tools'
+    cwd = os.getcwd(); os.chdir(tools)
+    try:
+        return cfg_from_yaml_file(str(Path(path).resolve()), EasyDict())
+    finally:
+        os.chdir(cwd)
+
+
 @pytest.mark.parametrize('path', CONFIGS, ids=[Path(p).stem for p in CONFIGS])
 def test_epoch_keyed_schedules_fit_inside_the_run(path):
     """PROG_AUG.UPDATE_AUG holds epoch INDICES, so they must scale with NUM_EPOCHS."""
-    cfg = yaml.safe_load(open(path))
+    cfg = _resolved(path)
     st = cfg.get('SELF_TRAIN')
     if not st or not st.get('PROG_AUG', {}).get('ENABLED'):
         pytest.skip('no progressive augmentation')
