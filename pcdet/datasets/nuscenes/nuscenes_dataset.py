@@ -7,7 +7,7 @@ import numpy as np
 from tqdm import tqdm
 
 from ...ops.roiaware_pool3d import roiaware_pool3d_utils
-from ...utils import common_utils, box_utils, self_training_utils, conf_calib_utils
+from ...utils import common_utils, box_utils, level_utils, self_training_utils, conf_calib_utils
 from ..dataset import DatasetTemplate
 
 
@@ -39,6 +39,16 @@ def sweep_range_mask(points, sweep_age, schedule):
 
 
 class NuScenesDataset(DatasetTemplate):
+    SUPPORTS_LEVEL_COOR = True
+
+    def sensor_from_vehicle(self, frame_id):
+        """Rotation block of this frame's ref_from_car (vehicle -> sensor), keyed by lidar file stem."""
+        if getattr(self, '_sensor_from_vehicle', None) is None:
+            self._sensor_from_vehicle = {
+                Path(info['lidar_path']).stem: np.asarray(info['ref_from_car'], dtype=np.float64)[:3, :3]
+                for info in self.infos}
+        return self._sensor_from_vehicle[frame_id]
+
     def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None, model_ontology=None):
         root_path = (root_path if root_path is not None else Path(dataset_cfg.DATA_PATH)) / dataset_cfg.VERSION
         super().__init__(
@@ -236,6 +246,11 @@ class NuScenesDataset(DatasetTemplate):
         if intensity_scale:
             points[:, 3] /= np.float32(intensity_scale)
 
+        # LEVEL_COOR (pcdet/utils/level_utils.py): about the sensor origin, so before SHIFT_COOR.
+        level_R = self.level_rotation_for(Path(info['lidar_path']).stem)
+        if level_R is not None:
+            points = level_utils.rotate_points(points, level_R)
+
         if self.dataset_cfg.get('SHIFT_COOR', None):
             points[:, 0:3] += np.array(self.dataset_cfg.SHIFT_COOR, dtype=np.float32)
 
@@ -261,6 +276,8 @@ class NuScenesDataset(DatasetTemplate):
             if class_mapping:
                 gt_names = np.array([class_mapping.get(n, n) for n in gt_names])
 
+            if level_R is not None:
+                gt_boxes = level_utils.rotate_boxes(gt_boxes, level_R)
             if self.dataset_cfg.get('SHIFT_COOR', None):
                 gt_boxes[:, 0:3] += self.dataset_cfg.SHIFT_COOR
 

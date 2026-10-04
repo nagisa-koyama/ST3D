@@ -1,0 +1,17 @@
+# IN-DOMAIN check for GBlobs, second pair: nuScenes -> nuScenes, EVAL-ONLY.
+#
+# Scores the GBlobs nuScenes checkpoint trained by centerpoint-gblobs-sourceonly-nuscenes2kitti.yaml
+# (job 27263) on nuScenes val, against the MeanVFE nuScenes oracle (25743/25768, 44.98 BEV). That
+# training config is centerpoint-sourceonly-nuscenes2kitti.yaml + the GBlobs VFE, and
+# centerpoint-sourceonly-nuscenes2kitti.yaml differs from centerpoint-sourceonly-nuscenes.yaml only
+# in DATA_CONFIG_TAR - so this file (the nuScenes oracle + the same VFE swap) is the same model
+# scored on the source's own val split. Pairs with centerpoint-gblobs-sourceonly-lyft2lyft.yaml:
+# GBlobs' in-domain gain against its cross-domain gain, on two sources.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-nuscenes.yaml
+
+MODEL:
+    VFE:
+        NAME: GBlobsVFE
+        RELATIVE_DISTANCE: True
+        COVARIANCE_ONLY: False
+        COVARIANCE_SCALE: 1.0

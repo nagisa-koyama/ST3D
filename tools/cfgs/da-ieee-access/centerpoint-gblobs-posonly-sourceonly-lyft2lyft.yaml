@@ -1,0 +1,8 @@
+# IN-DOMAIN check for GBlobs position-only (covariance block zeroed): Lyft -> Lyft, EVAL-ONLY.
+# Scores job 26705's checkpoint (W&B wl73ig1t, 31.09 BEV on nuScenes) on Lyft val. See
+# centerpoint-gblobs-sourceonly-lyft2lyft.yaml for the question.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-gblobs-sourceonly-lyft2lyft.yaml
+
+MODEL:
+    VFE:
+        COVARIANCE_SCALE: 0.0

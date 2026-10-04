@@ -1,0 +1,19 @@
+# EVAL-ONLY, extrinsic exploration (2026-10-04): centerpoint-gblobs-sourceonly-lyft.yaml with the nuScenes TARGET re-levelled.
+#
+# nuScenes keeps points in the LIDAR_TOP frame, which is pitched relative to the vehicle (+1.4 deg
+# Singapore, +2.65 deg Boston per the extrinsic; the ground measures +1.35 / +2.29 deg forward with
+# tools/analysis/ground_tilt.py), while Lyft's is pitched the other way (-1.12 deg measured). So the
+# source model learned a ground that falls ahead and is scored on one that rises ahead. LEVEL_COOR
+# (pcdet/utils/level_utils.py) removes the target's roll/pitch using its own ref_from_car and then
+# tilts it by PITCH_DEG; vary that with
+#     --set DATA_CONFIG_TAR.LEVEL_COOR.PITCH_DEG <deg>
+# (-1.12 presents the target with the source's measured attitude; 0.0 is level). Label-free: it
+# uses the target's calibration and the source's own points, never target GT. Predictions are
+# rotated back before scoring, so the GT is untouched.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-gblobs-sourceonly-lyft.yaml
+
+DATA_CONFIG_TAR:
+    LEVEL_COOR:
+        FROM_EXTRINSIC: True
+        PITCH_DEG: 0.0
+        ROLL_DEG: 0.0

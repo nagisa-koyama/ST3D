@@ -7,16 +7,33 @@ import torch.utils.data as torch_data
 from .augmentor.data_augmentor import DataAugmentor
 from .processor.data_processor import DataProcessor
 from .processor.point_feature_encoder import PointFeatureEncoder
-from ..utils import beam_downsample_utils, common_utils, box_utils, self_training_utils
+from ..utils import beam_downsample_utils, common_utils, box_utils, level_utils, self_training_utils
 from ..ops.roiaware_pool3d import roiaware_pool3d_utils
 from ..utils.ontology_mapping import get_ontology_mapping
 
 
 class DatasetTemplate(torch_data.Dataset):
+    # LEVEL_COOR (pcdet/utils/level_utils.py) is applied inside each loader's __getitem__, so a
+    # loader that does not implement it would silently ignore the key. Loaders that do set this.
+    SUPPORTS_LEVEL_COOR = False
+
     def __init__(self, dataset_cfg=None, class_names=None, training=True, root_path=None, logger=None,
                  model_ontology=None):
         super().__init__()
         self.dataset_cfg = dataset_cfg
+        # LEVEL_COOR: remove the sensor's roll/pitch relative to the vehicle (from the extrinsic) and
+        # optionally re-tilt, about the sensor origin and before SHIFT_COOR. Absent => no change.
+        self.level_cfg = dataset_cfg.get('LEVEL_COOR', None)
+        if self.level_cfg:
+            assert self.SUPPORTS_LEVEL_COOR, (
+                f'LEVEL_COOR is set but {type(self).__name__} does not apply it; only the nuScenes and '
+                f'Lyft loaders do')
+            # Rings are cones about the SENSOR axis; levelling tilts them, so ring recovery would no
+            # longer see flat rings. Pseudo-labels round-trip through the levelled frame untested.
+            assert not dataset_cfg.get('BEAM_DISTILL', None) and not dataset_cfg.get('BEAM_DROP', None), \
+                'LEVEL_COOR with BEAM_DISTILL/BEAM_DROP is untested: ring recovery assumes an untilted sensor'
+            assert not dataset_cfg.get('USE_PSEUDO_LABEL', False), \
+                'LEVEL_COOR with USE_PSEUDO_LABEL is untested'
         self.training = training
         self.class_names = copy.deepcopy(class_names)
         self.dataset_ontology = dataset_cfg.get('ONTOLOGY', None)
@@ -222,6 +239,20 @@ class DatasetTemplate(torch_data.Dataset):
     def __setstate__(self, d):
         self.__dict__.update(d)
 
+    def sensor_from_vehicle(self, frame_id):
+        """3x3 rotation vehicle -> sensor for this frame, or None if the dataset has no extrinsic."""
+        return None
+
+    def level_rotation_for(self, frame_id):
+        """The LEVEL_COOR rotation for this frame (about the sensor origin), or None when unset."""
+        if not self.level_cfg:
+            return None
+        return level_utils.level_rotation(
+            self.sensor_from_vehicle(frame_id),
+            pitch_deg=self.level_cfg.get('PITCH_DEG', 0.0),
+            roll_deg=self.level_cfg.get('ROLL_DEG', 0.0),
+            from_extrinsic=self.level_cfg.get('FROM_EXTRINSIC', True))
+
     def generate_prediction_dicts(self, batch_dict, pred_dicts, class_names, output_path=None):
         """
         Args:
@@ -246,7 +277,7 @@ class DatasetTemplate(torch_data.Dataset):
             }
             return ret_dict
 
-        def generate_single_sample_dict(box_dict):
+        def generate_single_sample_dict(box_dict, frame_id):
             pred_scores = box_dict['pred_scores'].cpu().numpy()
             pred_boxes = box_dict['pred_boxes'].cpu().numpy()
             pred_labels = box_dict['pred_labels'].cpu().numpy()
@@ -255,6 +286,9 @@ class DatasetTemplate(torch_data.Dataset):
                 return pred_dict
             if self.dataset_cfg.get('SHIFT_COOR', None):
                 pred_boxes[:, 0:3] -= self.dataset_cfg.SHIFT_COOR
+            level_R = self.level_rotation_for(frame_id)
+            if level_R is not None:
+                pred_boxes = level_utils.rotate_boxes(pred_boxes, level_R.T)
 
             pred_dict['name'] = np.array(class_names)[pred_labels - 1]
             pred_dict['score'] = pred_scores
@@ -266,7 +300,7 @@ class DatasetTemplate(torch_data.Dataset):
 
         annos = []
         for index, box_dict in enumerate(pred_dicts):
-            single_pred_dict = generate_single_sample_dict(box_dict)
+            single_pred_dict = generate_single_sample_dict(box_dict, batch_dict['frame_id'][index])
             single_pred_dict['frame_id'] = batch_dict['frame_id'][index]
             if 'metadata' in batch_dict:
                 single_pred_dict['metadata'] = batch_dict['metadata'][index]

@@ -1,0 +1,20 @@
+# IN-DOMAIN check for GBlobs: Lyft -> Lyft, EVAL-ONLY.
+#
+# Question it answers: is GBlobs a better DETECTOR, or does it only generalise better? Score the
+# GBlobs Lyft checkpoint (job 25723, W&B qyerdcln, 31.43 BEV on nuScenes) on Lyft val and compare
+# with the MeanVFE Lyft checkpoints (25835 ldb35c2o / 27172 n6giwlc8) scored on the same val set by
+# centerpoint-sourceonly-lyft2lyft.yaml. If the in-domain gain matches the cross-domain +8.26, the
+# baseline is "a better model", not "better generalisation".
+#
+# Inherits centerpoint-sourceonly-lyft2lyft.yaml (Lyft train, Lyft val, everything identical) and
+# swaps only the VFE. The base VFE block holds NAME alone, so the merge cannot leave a MeanVFE key
+# behind. BATCH_SIZE_PER_GPU differs from the trained run (3 here, 6 there) but is irrelevant for
+# evaluation: eval_checkpoint.sh passes --batch_size explicitly.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-lyft2lyft.yaml
+
+MODEL:
+    VFE:
+        NAME: GBlobsVFE
+        RELATIVE_DISTANCE: True
+        COVARIANCE_ONLY: False
+        COVARIANCE_SCALE: 1.0

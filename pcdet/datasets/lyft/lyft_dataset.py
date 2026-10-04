@@ -6,11 +6,21 @@ import numpy as np
 from tqdm import tqdm
 
 from ...ops.roiaware_pool3d import roiaware_pool3d_utils
-from ...utils import common_utils, box_utils, conf_calib_utils
+from ...utils import common_utils, box_utils, conf_calib_utils, level_utils
 from ..dataset import DatasetTemplate
 
 
 class LyftDataset(DatasetTemplate):
+    SUPPORTS_LEVEL_COOR = True
+
+    def sensor_from_vehicle(self, frame_id):
+        """Rotation block of this frame's ref_from_car (vehicle -> sensor), keyed by lidar file stem."""
+        if getattr(self, '_sensor_from_vehicle', None) is None:
+            self._sensor_from_vehicle = {
+                Path(info['lidar_path']).stem: np.asarray(info['ref_from_car'], dtype=np.float64)[:3, :3]
+                for info in self.infos}
+        return self._sensor_from_vehicle[frame_id]
+
     def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None, model_ontology=None):
         self.root_path = (root_path if root_path is not None else Path(dataset_cfg.DATA_PATH)) / dataset_cfg.VERSION
         super().__init__(
@@ -139,6 +149,11 @@ class LyftDataset(DatasetTemplate):
         info = copy.deepcopy(self.infos[index])
         points = self.get_lidar_with_sweeps(index, max_sweeps=self.dataset_cfg.MAX_SWEEPS)
 
+        # LEVEL_COOR (pcdet/utils/level_utils.py): about the sensor origin, so before SHIFT_COOR.
+        level_R = self.level_rotation_for(Path(info['lidar_path']).stem)
+        if level_R is not None:
+            points = level_utils.rotate_points(points, level_R)
+
         if self.dataset_cfg.get('SHIFT_COOR', None):
             points[:, 0:3] += np.array(self.dataset_cfg.SHIFT_COOR, dtype=np.float32)
 
@@ -154,6 +169,8 @@ class LyftDataset(DatasetTemplate):
                 'gt_names': info['gt_names']
             })
 
+            if level_R is not None:
+                input_dict['gt_boxes'] = level_utils.rotate_boxes(input_dict['gt_boxes'], level_R)
             if self.dataset_cfg.get('SHIFT_COOR', None):
                 input_dict['gt_boxes'][:, 0:3] += self.dataset_cfg.SHIFT_COOR
 
