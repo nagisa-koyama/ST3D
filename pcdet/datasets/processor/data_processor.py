@@ -348,6 +348,30 @@ class DataProcessor(object):
         data_dict['points'] = self.learned_sampler.sample(data_dict['points'])
         return data_dict
 
+    def ablate_intensity(self, data_dict=None, config=None):
+        """DIAGNOSTIC: does a model trained with intensity use it? (experiments_md/20261003_03 s7)
+
+        MODE `shuffle` permutes the intensity column among the frame's points - the frame's intensity
+        distribution is unchanged, only which point carries which value is destroyed - so a drop in AP
+        measures the per-point information the model reads, free of any distribution shift. MODE
+        `constant` sets every point to VALUE (e.g. the dataset's median), which removes the information
+        AND the spread. Deterministic per frame (seeded by the point count). Never used in training.
+        """
+        if data_dict is None:
+            if config.MODE not in ('shuffle', 'constant'):
+                raise ValueError('ablate_intensity MODE must be shuffle or constant, got %r' % config.MODE)
+            return partial(self.ablate_intensity, config=config)
+        points = data_dict['points']
+        if len(points) == 0:
+            return data_dict
+        idx = config.get('INTENSITY_INDEX', 3)
+        if config.MODE == 'shuffle':
+            points[:, idx] = points[np.random.RandomState(len(points)).permutation(len(points)), idx]
+        else:
+            points[:, idx] = np.float32(config.VALUE)
+        data_dict['points'] = points
+        return data_dict
+
     def map_intensity_to_reference(self, data_dict=None, config=None, tables=None):
         """Test-time intensity calibration: map this dataset's intensity onto a reference sensor's.
 

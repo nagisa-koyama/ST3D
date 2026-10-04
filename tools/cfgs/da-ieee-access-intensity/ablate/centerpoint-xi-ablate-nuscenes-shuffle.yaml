@@ -1,0 +1,13 @@
+# DIAGNOSTIC, eval-only (2026-10-04, experiments_md/20261003_03 s7): does the nuscenes with-intensity oracle USE
+# intensity? Its own eval set with intensity SHUFFLED among each frame's points (distribution kept, per-point information destroyed), everything else as centerpoint-sourceonly-nuscenes-xyzi.yaml.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-nuscenes-xyzi.yaml
+DATA_CONFIG_TAR:
+  DATA_PROCESSOR:
+  - {NAME: mask_points_and_boxes_outside_range, REMOVE_OUTSIDE_BOXES: true}
+  - NAME: shuffle_points
+    SHUFFLE_ENABLED: {train: true, test: false}
+  - {NAME: ablate_intensity, MODE: shuffle, INTENSITY_INDEX: 3}
+  - NAME: transform_points_to_voxels
+    VOXEL_SIZE: [0.1, 0.1, 0.15]
+    MAX_POINTS_PER_VOXEL: 10
+    MAX_NUMBER_OF_VOXELS: {train: 150000, test: 150000}

@@ -141,3 +141,37 @@ class TestTestTimeMapStage:
         L = np.linspace(0, 1, 201)
         stage = self._stage(tmp_path, [L], [L])
         assert len(stage(data_dict={'points': np.zeros((0, 4), np.float32)})['points']) == 0
+
+
+class TestAblateIntensityStage:
+    """DataProcessor.ablate_intensity (eval-only diagnostic)."""
+
+    def _stage(self, **cfg):
+        from easydict import EasyDict
+        from pcdet.datasets.processor.data_processor import DataProcessor
+        dp = DataProcessor.__new__(DataProcessor)
+        return dp.ablate_intensity(config=EasyDict(cfg))
+
+    def test_shuffle_keeps_the_frame_distribution_and_geometry(self):
+        pts = np.random.RandomState(3).rand(2000, 4).astype(np.float32)
+        out = self._stage(MODE='shuffle')(data_dict={'points': pts.copy()})['points']
+        assert np.array_equal(np.sort(out[:, 3]), np.sort(pts[:, 3]))
+        assert np.array_equal(out[:, :3], pts[:, :3])
+        assert np.mean(out[:, 3] == pts[:, 3]) < 0.01
+
+    def test_shuffle_is_deterministic(self):
+        pts = np.random.RandomState(4).rand(500, 4).astype(np.float32)
+        st = self._stage(MODE='shuffle')
+        assert np.array_equal(st(data_dict={'points': pts.copy()})['points'], st(data_dict={'points': pts.copy()})['points'])
+
+    def test_constant(self):
+        pts = np.random.RandomState(5).rand(100, 5).astype(np.float32)
+        out = self._stage(MODE='constant', VALUE=0.25)(data_dict={'points': pts.copy()})['points']
+        assert np.all(out[:, 3] == np.float32(0.25)) and np.array_equal(out[:, [0, 1, 2, 4]], pts[:, [0, 1, 2, 4]])
+
+    def test_unknown_mode_refused(self):
+        with pytest.raises(ValueError):
+            self._stage(MODE='zero')
+
+    def test_empty_frame(self):
+        assert len(self._stage(MODE='shuffle')(data_dict={'points': np.zeros((0, 4), np.float32)})['points']) == 0
