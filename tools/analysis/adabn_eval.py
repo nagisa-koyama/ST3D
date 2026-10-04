@@ -58,6 +58,10 @@ def parse_args():
     p.add_argument('--extra_tag', default='adabn')
     p.add_argument('--eval_tag', default=None)
     p.add_argument('--run_name', default=None)
+    p.add_argument('--layers', default=None, metavar='REGEX',
+                   help='re-estimate only BN layers whose module name matches (re.search); the rest keep '
+                        "their saved statistics. First layer only: '^backbone_3d\\.conv_input\\.1$'")
+    p.add_argument('--layers_name', default='sel', help='short name for --layers, used in the output tag')
     p.add_argument('--save_stats', action='store_true', help='also write saved/new BN statistics to bn_stats.npz')
     p.add_argument('--set', dest='set_cfgs', default=None, nargs=argparse.REMAINDER)
     return p.parse_args()
@@ -90,13 +94,15 @@ def main():
         cfg_from_list(args.set_cfgs, cfg)
 
     epoch_id = ''.join(c for c in Path(args.ckpt).stem if c.isdigit()) or 'no_number'
-    tag = args.eval_tag or f'stats_{args.stats}_mix{args.mix:g}_n{args.stats_frames}'
+    tag = args.eval_tag or (f'stats_{args.stats}_mix{args.mix:g}_n{args.stats_frames}'
+                            + (f'_layers-{args.layers_name}' if args.layers else ''))
     out_dir = cfg.ROOT_DIR / 'output' / cfg.EXP_GROUP_PATH / cfg.TAG / args.extra_tag / 'eval' / f'epoch_{epoch_id}' / tag
     out_dir.mkdir(parents=True, exist_ok=True)
     logger = common_utils.create_logger(out_dir / f'log_adabn_{datetime.datetime.now():%Y%m%d-%H%M%S}.txt', rank=0)
     wandb.init(config=vars(cfg), project='st3d', name=args.run_name, notes=common_utils.wandb_notes_with_job_id(),
                tags=common_utils.wandb_tags(cfg, 'adabn_eval', cfg_file=args.cfg_file))
-    wandb.config.update({'adabn': dict(stats=args.stats, stats_frames=args.stats_frames, mix=args.mix, ckpt=args.ckpt)})
+    wandb.config.update({'adabn': dict(stats=args.stats, stats_frames=args.stats_frames, mix=args.mix, ckpt=args.ckpt,
+                                       layers=args.layers)})
     for k, v in vars(args).items():
         logger.info(f'{k:16} {v}')
     log_config_to_file(cfg, logger=logger)
@@ -113,7 +119,7 @@ def main():
     if args.stats != 'none':
         loader = adabn_utils.train_split_stats_loader(stats_dataset_block(args.stats), cfg.CLASS_NAMES, ontology,
                                                       args.stats_frames, args.stats_batch, args.workers, logger)
-        saved = adabn_utils.reestimate_bn(model, loader, logger, mix=1.0)
+        saved = adabn_utils.reestimate_bn(model, loader, logger, mix=1.0, layers=args.layers)
         gap = adabn_utils.bn_gap(model, saved)
         summary = adabn_utils.summarise_gap(gap)
         for k, v in summary.items():

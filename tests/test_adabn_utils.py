@@ -92,3 +92,29 @@ def test_per_domain_bn_only_the_target_statistics_are_reestimated():
     assert torch.equal(m.bn.num_batches_tracked, tracked)
     gap = adabn_utils.bn_gap(m, {'bn': (src_mean, torch.ones(3))})   # reports the TARGET set
     assert gap['bn']['mean_shift'] > 4.0
+
+
+class Two(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.bn_a = torch.nn.BatchNorm1d(3, momentum=0.01)
+        self.bn_b = torch.nn.BatchNorm1d(3, momentum=0.01)
+
+    def forward(self, batch):
+        return self.bn_b(self.bn_a(batch['x']) * 3.0 + 7.0)
+
+
+def test_layer_filter_adapts_only_matching_layers_and_others_normalise_as_saved():
+    m = Two().eval()
+    with torch.no_grad():
+        m.bn_b.running_mean.fill_(1.5)
+    adabn_utils.reestimate_bn(m, _loader(5.0), to_gpu=False, layers=r'^bn_a$')
+    assert torch.allclose(m.bn_a.running_mean, torch.full((3,), 5.0), atol=0.3)  # re-estimated
+    assert torch.equal(m.bn_b.running_mean, torch.full((3,), 1.5))                 # kept as saved
+    assert not m.bn_a.training and not m.bn_b.training
+
+
+def test_layer_filter_matching_nothing_is_an_error():
+    import pytest
+    with pytest.raises(ValueError):
+        adabn_utils.reestimate_bn(Two().eval(), _loader(1.0, n=1), to_gpu=False, layers=r'^nope$')

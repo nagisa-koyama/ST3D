@@ -21,6 +21,7 @@ with source statistics. Here only the TARGET set is re-estimated; the source set
 trained. Plain BatchNorm layers (DSNORM off) have one set, which is re-estimated.
 """
 import copy
+import re
 
 import numpy as np
 import torch
@@ -64,17 +65,26 @@ def train_split_stats_loader(dataset_cfg, class_names, model_ontology, frames, b
 
 
 @torch.no_grad()
-def reestimate_bn(model, loader, logger=None, mix=1.0, to_gpu=True):
+def reestimate_bn(model, loader, logger=None, mix=1.0, to_gpu=True, layers=None):
     """Reset every BN layer, re-estimate as a cumulative average over `loader`, optionally mix.
 
     The rest of the model stays in eval mode (no target assignment, no loss), so this works on any
     detector and on a teacher whose head has no GT to assign. Returns the saved statistics.
     `mix` < 1 keeps `mix * new + (1 - mix) * saved`.
+    `layers` (a regex on the module name, `re.search`) restricts the re-estimation to matching layers;
+    every other layer stays in eval mode and keeps its saved statistics, so it normalises the pass
+    exactly as the checkpoint would. E.g. '^backbone_3d[.]conv_input[.]1$' adapts only the first BN.
     """
     if to_gpu:
         from pcdet.models import load_data_to_gpu
-    layers = bn_layers(model)
-    saved = {n: tuple(t.clone() for t in _stats(m)) for n, m in layers}
+    all_layers = bn_layers(model)
+    saved = {n: tuple(t.clone() for t in _stats(m)) for n, m in all_layers}
+    layers = [(n, m) for n, m in all_layers if layers is None or re.search(layers, n)]
+    if not layers:
+        raise ValueError('no BatchNorm layer matches the layer filter')
+    if logger is not None and len(layers) != len(all_layers):
+        logger.info('[adabn] re-estimating %d of %d BN layers: %s%s' % (
+            len(layers), len(all_layers), ', '.join(n for n, _ in layers[:4]), ' ...' if len(layers) > 4 else ''))
     momenta = {n: m.momentum for n, m in layers}
     tracked = {n: m.num_batches_tracked.clone() for n, m in layers}
     domains = {n: m.domain_label for n, m in layers if _is_ds(m)}
@@ -147,8 +157,9 @@ def adapt_teacher(model_teacher, cfg, class_names, model_ontology, logger, worke
     """
     spec = cfg.SELF_TRAIN.TEACHER_ADABN
     frames, mix, bs = int(spec.get('FRAMES', 1000)), float(spec.get('MIX', 1.0)), int(spec.get('BATCH_SIZE', 4))
+    layer_filter = spec.get('LAYERS', None)
     loader = train_split_stats_loader(cfg.DATA_CONFIG_TAR, class_names, model_ontology, frames, bs, workers, logger)
-    saved = reestimate_bn(model_teacher, loader, logger, mix=mix)
+    saved = reestimate_bn(model_teacher, loader, logger, mix=mix, layers=layer_filter)
     summary = summarise_gap(bn_gap(model_teacher, saved))
     for k, v in summary.items():
         logger.info('[adabn] teacher BN gap %-12s layers=%3d mean_shift=%.3f |log sd ratio|=%.3f max=%.2f'
