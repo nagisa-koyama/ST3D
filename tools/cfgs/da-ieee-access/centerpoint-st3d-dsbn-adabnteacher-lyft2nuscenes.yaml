@@ -4,12 +4,12 @@
 # SELF_TRAIN.TEACHER_ADABN: before the frozen teacher generates anything, the TARGET set of its DSNorm
 # statistics is re-estimated on 1,000 strided nuScenes TRAIN frames (eval-mode view, no labels, weights
 # untouched); its source set is left as trained. So pseudo-labels, and anything derived from them,
-# come from a teacher normalised with target statistics. The teacher is adapted at its FIRST BN only
-# (LAYERS below). Test-time evidence for that teacher: 30.68 vs 23.17 (seed 2: 31.04 vs 25.05); full
-# AdaBN gave 28.93 / 28.22. Cuts: the adapted teacher's own count balance (below), as the settled rule requires for a
+# come from a teacher normalised with target statistics: FULL AdaBN, the pre-declared variant (user,
+# 2026-10-05). Test-time evidence for that teacher: 28.93 vs 23.17 (seed 2: 28.22 vs 25.05). The
+# first-BN-only teacher (30.68 / 31.04, chosen after inspecting val) is the -firstbn twin, an analysis row. Cuts: the adapted teacher's own count balance (below), as the settled rule requires for a
 # new teacher; read against centerpoint-st3d-cb (plain teacher at its own count balance) and the DSNORM row.
 # Read against 26698 (23.55), pseudo-labelling + global correction (29.57 / 29.61, two seeds) and the
-# source-only control with test-time first-BN AdaBN (30.68 / 31.04).
+# source-only control with test-time AdaBN (28.93 / 28.22; first BN only 30.68 / 31.04).
 # Launch as 26698: 2 GPUs, --pretrained_model and --pretrained_model_teacher = ldb35c2o ep30.
 _BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-st3d-dsbn-lyft2nuscenes.yaml
 
@@ -18,14 +18,11 @@ SELF_TRAIN:
         FRAMES: 1000
         MIX: 1.0          # target statistics: the textbook AdaBN, pre-declared (never tuned on val)
         BATCH_SIZE: 4
-        # First BN only (2026-10-05, experiments_md/20261004_01 §2.7): re-estimating backbone_3d.conv_input.1
-        # alone recovers the gain without full AdaBN's deep-layer box inflation (S1 30.9 vs 28.6; S2 69.74 / 46.78
-        # vs 65.26 / 26.22). Every other layer keeps the teacher's source statistics.
-        LAYERS: '^backbone_3d\.conv_input\.1$'
-    # Count-balance cuts of the FIRST-BN-adapted teacher (temporal persistence on nuScenes train, label-free,
-    # pseudo-labels from job 27443): [0.229, 0.205, 0.277]. At these cuts: 7.7 Car / frame at precision 0.66,
-    # 5.02 true / frame; pedestrians 2.2 / frame at 0.57. For comparison, the plain teacher at its own cuts
-    # gives 14.5 / 0.36 / 5.30, and the fully adapted teacher 12.1 / 0.49 / 5.88 with 8.9 pedestrians / frame
-    # at 0.26 (GT read for this diagnosis only).
-    SCORE_THRESH: [0.229, 0.205, 0.277]
+        # FULL AdaBN, the pre-declared textbook variant (user's decision 2026-10-05: the first-BN-only choice
+        # was made after inspecting target val, so it is an analysis row only - see the -firstbn twin).
+    # Count-balance cuts of the FULLY adapted teacher (temporal persistence on nuScenes train, label-free,
+    # pseudo-labels from job 27300): [0.394, 0.299, 0.291]. At these cuts: 12.1 Car / frame at precision 0.49,
+    # 5.88 true / frame; pedestrians 8.9 / frame at 0.26. The plain teacher at its own cuts gives
+    # 14.5 / 0.36 / 5.30 (GT read for this diagnosis only).
+    SCORE_THRESH: [0.394, 0.299, 0.291]
     NEG_THRESH: [0.1, 0.1, 0.1]
