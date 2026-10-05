@@ -1,0 +1,13 @@
+# EVAL-ONLY: the GBlobs nuScenes checkpoint (job 27263, centerpoint-gblobs-sourceonly-nuscenes2kitti)
+# scored on Waymo val, the pair where first-layer AdaBN on MeanVFE recovers only 26 of full AdaBN's
+# 45 (experiments_md/20261005_01, 20261004_01 §2.7). Does GBlobs, which removes the first-layer scale
+# error, also fall short there? Inherits the MeanVFE nuScenes -> Waymo config (training recipe = the
+# nuScenes oracle, Waymo target) and swaps only the VFE; the base's VFE block holds NAME alone.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-nuscenes2waymo.yaml
+
+MODEL:
+    VFE:
+        NAME: GBlobsVFE
+        RELATIVE_DISTANCE: True
+        COVARIANCE_ONLY: False
+        COVARIANCE_SCALE: 1.0
