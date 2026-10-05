@@ -1,0 +1,16 @@
+# UDA-LEGAL S2 HEADLINE: the 27171 recipe with label-free Pedestrian / Cyclist cuts (user's decision
+# 2026-10-05; experiments_md/20261004_01 §5c).
+#
+# Identical to centerpoint-accum-st3d-nuscenes2kitti (27171: 80.69 / 48.29; seed 2 27248: 81.47 / 49.75)
+# except the Pedestrian / Cyclist pseudo-label cuts. That recipe's 0.6 had been chosen against target
+# labels, so the headline was not UDA-legal. Here they come from the PRE-DECLARED source-val precision rule
+# (source_precision_cut.py, committed before its result): the teacher 26814 as trained on nuScenes val at
+# 15 sweeps holds precision >= 0.50 from 0.33 for both classes (job 27458). Car keeps its label-free count
+# balance 0.30. It is also the matched baseline for the per-domain-BN method row 27464, which differs
+# from this only in the DSNorm student and the full-AdaBN teacher.
+# Launch as 27171: 2 GPUs, 150G, --pretrained_model and --pretrained_model_teacher = 26814 ep20.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-st3d-nuscenes2kitti.yaml
+
+SELF_TRAIN:
+    SCORE_THRESH: [0.30, 0.33, 0.33]   # Car: count balance (unchanged); Ped / Cyc: pre-declared source-val precision rule
+    NEG_THRESH: [0.1, 0.1, 0.1]
