@@ -47,6 +47,9 @@ def main():
                          'before generating (as SELF_TRAIN.TEACHER_ADABN does in train.py), with this MIX '
                          '(1.0 = target statistics). Overrides whatever the config says.')
     ap.add_argument('--adabn_frames', type=int, default=1000)
+    ap.add_argument('--adabn_layers', default=None, metavar='REGEX',
+                    help='with --teacher_adabn: re-estimate only BN layers matching this regex (as '
+                         "TEACHER_ADABN.LAYERS), e.g. '^backbone_3d\\.conv_input\\.1$' for the first BN")
     args = ap.parse_args()
 
     out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
@@ -77,6 +80,8 @@ def main():
     model.cuda().eval()
     if args.teacher_adabn is not None:
         cfg.SELF_TRAIN.TEACHER_ADABN = {'FRAMES': args.adabn_frames, 'MIX': args.teacher_adabn}
+        if args.adabn_layers:
+            cfg.SELF_TRAIN.TEACHER_ADABN['LAYERS'] = args.adabn_layers
     if cfg.SELF_TRAIN.get('TEACHER_ADABN', None):
         # The same BN-adapted teacher train.py would use (experiments_md/20261004_01), so cuts derived
         # from these labels belong to the teacher that will actually generate them.
