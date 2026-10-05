@@ -2,7 +2,8 @@
 
 The rule was pre-declared in experiments_md/20261004_01 §5c (2026-10-05) before any target result was
 read. It replaces the S2 rows' Pedestrian / Cyclist cut 0.6, which had been chosen against target labels.
-Car keeps its label-free count-balance cut on the target.
+Since the user's decision B (2026-10-05, 20261004_01 §5e) the SAME rule applies to Car in new method rows;
+count balance is no longer the Car rule. `--classes` selects the classes (default: all three).
 
   1. Teacher predictions: the teacher AS TRAINED (source BatchNorm statistics), run on the labelled source
      val split with its training input (sweep count), eval-mode view, score floor 0.0001. The predictions
@@ -24,7 +25,7 @@ import pickle
 
 import numpy as np
 
-CLASSES = {2: ('Pedestrian', 'pedestrian'), 3: ('Cyclist', 'bicycle')}  # model class index, nuScenes name
+ALL_CLASSES = {1: ('Car', 'car'), 2: ('Pedestrian', 'pedestrian'), 3: ('Cyclist', 'bicycle')}  # model index, nuScenes name
 RANGE, MATCH_DIST, P_STAR, MIN_KEPT = 75.2, 1.0, 0.50, 50
 GRID = np.round(np.arange(0.10, 0.951, 0.01), 2)
 
@@ -53,8 +54,16 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('ps_label')
     ap.add_argument('--infos', default='../data/nuscenes/v1.0-trainval/nuscenes_infos_10sweeps_val.pkl')
+    ap.add_argument('--classes', nargs='+', default=['Car', 'Pedestrian', 'Cyclist'])
+    ap.add_argument('--extra_ps', nargs='*', default=[],
+                    help='further ps_label files merged in (e.g. per-platform passes at different sweep counts)')
     args = ap.parse_args()
+    CLASSES = {k: v for k, v in ALL_CLASSES.items() if v[0] in args.classes}
     ps = pickle.load(open(args.ps_label, 'rb'))
+    for extra in args.extra_ps:
+        more = pickle.load(open(extra, 'rb'))
+        assert not set(more) & set(ps), 'the merged passes overlap'
+        ps.update(more)
     infos = pickle.load(open(args.infos, 'rb'))
     rows = {c: [] for c in CLASSES}  # (score, matched)
     used_frames = 0
