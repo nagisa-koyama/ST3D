@@ -7,7 +7,8 @@
 # - the source is the plain single sweep (both platforms, 10-sweep infos, no compensation needed) with
 #   the teacher's own Car interval [0.85, 1.20], so nothing but the self-training differs from 25743.
 # Cuts: the adapted teacher's Car count balance on KITTI train (joint (score, points) mixture inside
-# 30 m, job 27300's pseudo-labels) = 0.419; Pedestrian / Cyclist pre-declared 0.6 as in the S2 rows.
+# 30 m, job 27300's pseudo-labels) = 0.419; Pedestrian / Cyclist 0.33 / 0.41 by the pre-declared source-val
+# precision rule (20261004_01 §5c).
 # Read against 26814 -> 27171 (input level + pseudo-labels: 80.69 / 48.29) and the AdaBN teacher.
 # Launch: 2 GPUs, --pretrained_model and --pretrained_model_teacher = 25743 ep20
 # (/storage/wandb/run-20260922_155434-wfdcq75s/files/ckpt/checkpoint_epoch_20.pth).
@@ -71,5 +72,7 @@ SELF_TRAIN:
         FRAMES: 1000
         MIX: 1.0
         BATCH_SIZE: 4
-    SCORE_THRESH: [0.419, 0.6, 0.6]   # Car: count balance of the ADAPTED 25743 teacher on KITTI train; Ped / Cyc: pre-declared 0.6
+        # FULL AdaBN, the pre-declared textbook variant (user's decision 2026-10-05: the first-BN-only choice
+        # was made after inspecting target val, so it is an analysis row only - see the -firstbn twin).
+    SCORE_THRESH: [0.419, 0.33, 0.41]   # Car: count balance of the full-AdaBN 25743 teacher on KITTI train; Ped / Cyc: pre-declared source-val precision rule (20261004_01 §5c), 25743 on nuScenes val at 1 sweep (job 27458)
     NEG_THRESH: [0.1, 0.1, 0.1]

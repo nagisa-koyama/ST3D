@@ -7,7 +7,16 @@
 _BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-st3d-nuscenes2kitti.yaml
 
 SELF_TRAIN:
+    # Cuts. Car: the full-AdaBN 26814 teacher's label-free count balance on KITTI train (per-ring joint
+    # mixture inside 30 m) = 0.301, the same as the unadapted teacher's. Pedestrian / Cyclist: the
+    # PRE-DECLARED source-val precision rule (experiments_md/20261004_01 §5c, source_precision_cut.py),
+    # 26814 as trained on nuScenes val at 15 sweeps (job 27458) -> 0.33 / 0.33. This replaces the
+    # headline recipe's 0.6, which had been chosen against target labels (user 2026-10-05).
+    SCORE_THRESH: [0.30, 0.33, 0.33]
+    NEG_THRESH: [0.1, 0.1, 0.1]
     TEACHER_ADABN:
         FRAMES: 1000
         MIX: 1.0
         BATCH_SIZE: 4
+        # FULL AdaBN, the pre-declared textbook variant (user's decision 2026-10-05: the first-BN-only choice
+        # was made after inspecting target val, so it is an analysis row only - see the -firstbn twin).
