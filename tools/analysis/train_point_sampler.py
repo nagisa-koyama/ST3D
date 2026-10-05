@@ -66,6 +66,43 @@ def ring_of(feats):
     return np.clip(np.floor(r / 10).astype(np.int64), 0, len(RINGS))  # index len(RINGS) = beyond 50 m
 
 
+# The detector's voxel grid (da-ieee-access): what MeanVFE's first sparse convolution sees. Its response scales
+# with the number of OCCUPIED NEIGHBOURS per voxel (experiments_md/20261005_01), and points inside a voxel are
+# averaged away - so matching point counts (the count term) can leave occupancy unmatched (20261003_04 §25).
+VOXEL = np.array([0.1, 0.1, 0.15]); PCR = np.array([-75.2, -75.2, -2.0, 75.2, 75.2, 4.0])
+OCC_EDGES = [10, 20, 30, 40, 50]  # rings 0-10, ..., 40-50, 50+ m (voxel-centre planar range)
+_NB = np.array([(i, j, k) for i in (-1, 0, 1) for j in (-1, 0, 1) for k in (-1, 0, 1) if (i, j, k) != (0, 0, 0)])
+
+
+def voxel_structure(xyz):
+    """Per point: its voxel (-1 outside the grid). Per voxel: ring and planar centre (r, az). And every ordered
+    pair (v, u) of occupied voxels that are 3x3x3 neighbours. xyz in the detector frame (SHIFT_COOR applied)."""
+    inside = np.all((xyz >= PCR[:3]) & (xyz < PCR[3:]), 1)
+    ijk = np.floor((xyz[inside] - PCR[:3]) / VOXEL).astype(np.int64)
+    key = (ijk[:, 0] * 2000 + ijk[:, 1]) * 100 + ijk[:, 2]  # x, y < 1505 and z < 41 voxels: no collisions
+    uk, inv = np.unique(key, return_inverse=True)
+    vox = np.full(len(xyz), -1, np.int64); vox[inside] = inv
+    vijk = np.stack([uk // 100 // 2000, (uk // 100) % 2000, uk % 100], 1)
+    centre = PCR[:3] + (vijk + 0.5) * VOXEL
+    r = np.hypot(centre[:, 0], centre[:, 1]); az = np.arctan2(centre[:, 1], centre[:, 0])
+    pv, pu = [], []
+    for o in _NB:
+        q = ((vijk[:, 0] + o[0]) * 2000 + (vijk[:, 1] + o[1])) * 100 + (vijk[:, 2] + o[2])
+        pos = np.clip(np.searchsorted(uk, q), 0, len(uk) - 1); hit = uk[pos] == q
+        pv.append(np.nonzero(hit)[0]); pu.append(pos[hit])
+    return vox, np.digitize(r, OCC_EDGES), r, az, np.concatenate(pv), np.concatenate(pu)
+
+
+def target_occupancy(target, n_frames):
+    """Occupied voxels per frame and mean occupied neighbours per voxel, per ring, on unlabelled target clouds."""
+    n_r = len(OCC_EDGES) + 1; occ = np.zeros(n_r); nbr = np.zeros(n_r); n = 0
+    for pts in strided(target, n_frames):
+        _, ring, _, _, pv, _ = voxel_structure(pts[:, :3].astype(np.float64)); n += 1
+        cnt = np.bincount(pv, minlength=len(ring))
+        occ += np.bincount(ring, minlength=n_r); nbr += np.bincount(ring, weights=cnt, minlength=n_r)
+    return occ / max(n, 1), nbr / np.maximum(occ, 1e-9)
+
+
 def cell_of(feats):
     """(azimuth sector, range bin) cell index per point, from the cos/sin azimuth features."""
     return cell_index(feats[:, 0], np.arctan2(feats[:, 7], feats[:, 6]))
@@ -116,6 +153,9 @@ def main():
     ap.add_argument('--rule_fov', default='auto', choices=['auto', 'none'],
                     help="'auto' (default since 2026-10-04): if the target covers only an azimuth arc (read off its own "
                          "cell counts), measure the rule inside that arc; 360 deg targets are unchanged")
+    ap.add_argument('--occ_weight', type=float, default=0.0,
+                    help='weight of the voxel-occupancy term (expected occupied voxels and occupied neighbours per voxel, '
+                         'per ring, at the detector grid, against the target). 0 = off, as every sampler before 2026-10-05')
     ap.add_argument('--gate', default='observed', choices=['observed', 'none'],
                     help="'observed' (default since 2026-10-04): the learned correction acts only in cells the target "
                          "returned points in, the rule alone elsewhere")
@@ -167,7 +207,12 @@ def main():
     sampler = LearnedPointSampler.from_rule(rate, max_dist, sz, F.mean(0), F.std(0) + 1e-6)
     if args.gate == 'observed':
         sampler.obs_mask = Tc > 0  # the learned correction acts only where the target returned points
-    _train_and_report(sampler, F, R, E, C, T, Tc, n_src_frames, n_cells, feats, rings, ebins, args)
+    occ_target = None
+    if args.occ_weight > 0:
+        occ_target = target_occupancy(target, args.frames)
+        print('target occupancy per ring (0-10 ... 40-50, 50+ m): voxels/frame ' + ' '.join(f'{v:.0f}' for v in occ_target[0])
+              + ' | occupied neighbours per voxel ' + ' '.join(f'{v:.2f}' for v in occ_target[1]), flush=True)
+    _train_and_report(sampler, F, R, E, C, T, Tc, n_src_frames, n_cells, feats, rings, ebins, args, occ_target)
 
 
 def _measure(source, target, dc, sz, tz, args, logger):
@@ -201,7 +246,7 @@ def _measure(source, target, dc, sz, tz, args, logger):
     return rate, max_dist, F, R, E, C, T, Tc, feats, rings, ebins, n_src_frames, n_tgt
 
 
-def _train_and_report(sampler, F, R, E, C, T, Tc, n_src_frames, n_cells, feats, rings, ebins, args):
+def _train_and_report(sampler, F, R, E, C, T, Tc, n_src_frames, n_cells, feats, rings, ebins, args, occ_target=None):
     rate, max_dist = sampler.rate, sampler.max_dist
     # 4. train the MLP on cached features
     x = torch.tensor((F - sampler.feat_mean) / sampler.feat_std)
@@ -224,6 +269,48 @@ def _train_and_report(sampler, F, R, E, C, T, Tc, n_src_frames, n_cells, feats, 
     def forward():
         h = torch.relu(x @ w1 + b1); h = torch.relu(h @ w2 + b2)
         return torch.sigmoid(base + gate * (h @ w3 + b3)[:, 0])
+
+    occ_loss = None
+    if occ_target is not None:
+        # Voxel structure of every cached source frame at the detector grid (z back in the detector frame: the
+        # cached height feature is z - SHIFT_COOR). Global voxel ids across frames; voxels in cells the target never
+        # observes are left out, as for the other two terms.
+        vox_all, vring, vseen, PV, PU, off, start = [], [], [], [], [], 0, 0
+        for f in feats:
+            xyz = _points_from_feats(f).astype(np.float64); xyz[:, 2] += sampler.shift_z
+            vox, ring, vr, vaz, pv, pu = voxel_structure(xyz)
+            nv = int(vox.max()) + 1 if (vox >= 0).any() else 0
+            vox_all.append(np.where(vox >= 0, vox + off, -1)); vring.append(ring); PV.append(pv + off); PU.append(pu + off)
+            vseen.append(np.ones(nv, bool) if sampler.obs_mask is None else sampler.obs_mask[cell_index(vr, vaz)])
+            off += nv
+        vox_t = torch.tensor(np.concatenate(vox_all)); inside = vox_t >= 0; vox_in = vox_t[inside]
+        vring_t = torch.tensor(np.concatenate(vring)); vseen_t = torch.tensor(np.concatenate(vseen))
+        pv_t = torch.tensor(np.concatenate(PV)); pu_t = torch.tensor(np.concatenate(PU))
+        n_r = len(OCC_EDGES) + 1
+        T_occ = torch.tensor(occ_target[0], dtype=torch.float32); T_nbr = torch.tensor(occ_target[1], dtype=torch.float32)
+        ring_ok = T_occ > 0  # rings where the target has voxels at all
+        print(f'occupancy term: {off} source voxels, {len(pv_t)} neighbour pairs over {n_src_frames} frames', flush=True)
+
+        def occ_stats(p):
+            # P(voxel occupied) = 1 - prod(1 - p_i); expected occupied neighbours of an occupied voxel = sum of its
+            # neighbours' occupancy probabilities (voxels independent), weighted by its own.
+            lq = torch.zeros(off).index_add_(0, vox_in, torch.log1p(-p[inside].clamp(max=1 - 1e-6)))
+            P = (1 - torch.exp(lq)) * vseen_t
+            nb = torch.zeros(off).index_add_(0, pv_t, P[pu_t])
+            occ = torch.zeros(n_r).index_add_(0, vring_t, P)
+            nbr = torch.zeros(n_r).index_add_(0, vring_t, P * nb) / occ.clamp(min=1e-6)
+            return occ / n_src_frames, nbr
+
+        def occ_loss(p):
+            occ, nbr = occ_stats(p)
+            e_occ = (torch.log1p(occ) - torch.log1p(T_occ))[ring_ok]
+            e_nbr = ((nbr - T_nbr) / (T_nbr + 1.0))[ring_ok]
+            return (e_occ ** 2).mean() + (e_nbr ** 2).mean(), occ, nbr
+
+        def occ_line(tag, p):
+            _, occ, nbr = occ_loss(p)
+            return (f'{tag} occupancy: voxels/frame ' + ' '.join(f'{v:.0f}' for v in occ.tolist())
+                    + ' | neighbours/voxel ' + ' '.join(f'{v:.2f}' for v in nbr.tolist()))
 
     def losses(p):
         js_total = 0.0; per_ring = []
@@ -251,19 +338,27 @@ def _train_and_report(sampler, F, R, E, C, T, Tc, n_src_frames, n_cells, feats, 
     with torch.no_grad():
         j0, c0, ring0 = losses(p0)
         _, c_raw, _ = losses(torch.ones_like(p0))
+        if occ_loss is not None:
+            print(occ_line('raw source   ', torch.ones_like(p0)), flush=True)
+            print(occ_line('rule (= L0)  ', p0), flush=True)
     print('before training (= the rule): elevation JS per ring ' + ' '.join(f'{v:.4f}' for v in ring0)
           + f'  (sum {float(j0):.4f}); (sector, range) count error {float(c0):.4f} (raw source {float(c_raw):.4f})', flush=True)
     for step in range(args.steps):
         opt.zero_grad()
         p = forward(); j, c, _ = losses(p)
         loss = j + args.count_weight * c
+        o = torch.zeros(()) if occ_loss is None else occ_loss(p)[0]
+        loss = loss + args.occ_weight * o
         loss.backward(); opt.step()
         if (step + 1) % 50 == 0:
-            print(f'  step {step + 1}: elev JS sum {float(j):.4f}  count error {float(c):.4f}  mean keep {float(p.mean()):.3f} (rule {float(p0.mean()):.3f})', flush=True)
+            print(f'  step {step + 1}: elev JS sum {float(j):.4f}  count error {float(c):.4f}  occupancy error {float(o):.4f}  mean keep {float(p.mean()):.3f} (rule {float(p0.mean()):.3f})', flush=True)
     with torch.no_grad():
         p = forward(); j1, c1, ring1 = losses(p)
     print('after training:  elevation JS per ring ' + ' '.join(f'{v:.4f}' for v in ring1)
           + f'  (sum {float(j1):.4f}); count error {float(c1):.4f}; mean keep {float(p.mean()):.3f}', flush=True)
+    if occ_loss is not None:
+        with torch.no_grad():
+            print(occ_line('trained      ', p), flush=True)
 
     sampler.w1, sampler.b1, sampler.w2, sampler.b2, sampler.w3, sampler.b3 = [t.detach().numpy().astype(np.float32) for t in (w1, b1, w2, b2, w3, b3)]
     sampler.save(args.out)

@@ -1,0 +1,52 @@
+# L1-occ of experiments_md/20261003_04 section 29 (user request 2026-10-05 ~22:05): L1
+# (centerpoint-learned-lyft2nuscenes, job 27315: 28.10 / 12.91) with the samplers retrained WITH the
+# voxel-occupancy term (train_point_sampler.py --occ_weight 1.0: expected occupied voxels and occupied
+# neighbours per voxel, per ring, at the detector grid, matched to nuScenes' unlabelled TRAIN clouds). One
+# variable from L1: the weights files. Success criterion pre-declared in section 29.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-global-lyft2nuscenes.yaml
+
+DATA_CONFIGS:
+    LYFT_40BEAM:
+        HIST_DIST_ON_THE_FLY: False
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+
+            - NAME: sample_points_learned
+              WEIGHTS: /home/koyama/data/samplers/s1_lyft40_nuscenes_occ.npz
+
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }
+    LYFT_64BEAM:
+        HIST_DIST_ON_THE_FLY: False
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+
+            - NAME: sample_points_learned
+              WEIGHTS: /home/koyama/data/samplers/s1_lyft64_nuscenes_occ.npz
+
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }

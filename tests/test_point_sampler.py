@@ -128,3 +128,20 @@ def test_target_cone_is_measured_from_cell_counts():
     wrap = np.zeros((N_SECTORS, n_rb)); wrap[[22, 23, 0, 1]] = 1.0  # an arc across +-180 deg
     fov, heading = target_cone(wrap.ravel())
     assert fov == 60.0 and abs(abs(heading) - 180.0) < 1e-9
+
+
+def test_voxel_structure_neighbours_and_rings():
+    """The occupancy term's voxel graph: a 2 x 2 x 1 block of voxels has 3 occupied neighbours each (12 ordered
+    pairs); points outside the detector grid get voxel -1; rings follow the voxel-centre planar range."""
+    sys.path.insert(0, str(ROOT / 'tools'))
+    from analysis.train_point_sampler import voxel_structure, VOXEL, PCR
+    base = np.array([5.0, 0.0, 0.0])
+    block = [base + (np.array([i, j, 0]) + 0.5) * VOXEL for i in (0, 1) for j in (0, 1)]
+    far = np.array([60.05, 0.05, 0.0]); outside = np.array([100.0, 0.0, 0.0])
+    xyz = np.array(block + [block[0] + 0.01, far, outside])
+    vox, ring, r, az, pv, pu = voxel_structure(xyz)
+    assert vox[-1] == -1 and vox[0] == vox[4] and len(set(vox[:4])) == 4
+    occupied = np.bincount(pv, minlength=len(ring))
+    assert occupied[vox[:4]].tolist() == [3, 3, 3, 3] and occupied[vox[5]] == 0 and len(pv) == 12
+    assert set(zip(pv.tolist(), pu.tolist())) == set(zip(pu.tolist(), pv.tolist()))   # symmetric
+    assert ring[vox[0]] == 0 and ring[vox[5]] == 5                                      # 0-10 m and 50+ m

@@ -68,6 +68,7 @@ def test_l0_only_swaps_in_the_initial_weights():
     # S1: the rule's step is SWAPPED for the sampler, and the on-the-fly calibration switched off.
     ('cfgs/da-ieee-access/centerpoint-learned-lyft2nuscenes.yaml', 'cfgs/da-ieee-access/centerpoint-global-lyft2nuscenes.yaml'),
     ('cfgs/da-ieee-access/centerpoint-st3d-learned-lyft2nuscenes.yaml', 'cfgs/da-ieee-access/centerpoint-st3d-global-lyft2nuscenes.yaml'),
+    ('cfgs/da-ieee-access/centerpoint-learnedocc-lyft2nuscenes.yaml', 'cfgs/da-ieee-access/centerpoint-global-lyft2nuscenes.yaml'),
 ])
 def test_s1_only_the_rule_step_is_swapped(child, parent):
     c, p = _load(child), _load(parent)
