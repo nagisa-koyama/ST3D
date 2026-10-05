@@ -1,0 +1,20 @@
+# FULLY UDA-LEGAL S2 ACCUMULATION TEACHER (user's go 2026-10-06; experiments_md/20261004_01 §5d).
+#
+# The 26388 recipe (centerpoint-accum-nuscenes2kitti: 15 sweeps + per-object motion compensation, family
+# DEFAULT Car interval [0.85, 1.20], no density correction) with ONE change: the Singapore platform (n015)
+# accumulates to 10 sweeps instead of 15.
+# - Boston (n008) 15 and Singapore (n015) 10 are each platform's label-free global-parity depth: the
+#   smallest N at which the accumulated source radial histogram meets KITTI TRAIN's (point clouds only)
+#   in every 5 m bin from 5 to 70 m (20260922_05).
+# - 26388 used 15 for Singapore too, justified by a foreground-density figure measured against KITTI's
+#   real annotations (20260922_08), which made it not UDA-legal.
+# - Singapore measured 9 in one sample and 10 in another. The pre-declared tie rule takes the larger (10),
+#   so parity holds in both samples.
+# - Band: 5 m excludes ego / near-field returns, 70 m is nuScenes' published LIDAR_TOP range (a sensor
+#   spec, legal by the user's convention). It replaces the band's earlier rationale (KITTI label coverage).
+# Launch as 26388: 2 GPUs, 150G, seed 666, train.py (no pretrained model).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-nuscenes2kitti.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N015:
+        MAX_SWEEPS: 10
