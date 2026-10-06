@@ -1,0 +1,37 @@
+# Waymo -> nuScenes + the per-bin GLOBAL density correction (sample_points_hist_based): the Waymo source-only row
+# centerpoint-sourceonly-waymo (26398, 27.67 / 12.28) with the source THINNED to nuScenes' radial point density,
+# nothing else changed. User's question, 2026-10-07: "with this large a density gap, does sampling become
+# effective?"
+#
+# Pre-declared reading: on dense -> sparse, thinning is the mirror of accumulation (it gives the source the
+# target's density, which removes the deep-layer content term). On S1 (Lyft -> nuScenes, moderate gap) the gap was
+# mostly the first-layer term and thinning gave +5 against GBlobs' +8. Waymo -> nuScenes has a much larger gap, so
+# thinning is expected to gain MORE than on S1 and to match or beat GBlobs here (centerpoint-gblobs-sourceonly-
+# waymo). Read one variable against 26398. Legal: target histogram from nuScenes TRAIN point clouds
+# (HIST_DIST_TARGET_SPLIT default 'train'), no labels.
+#
+# Single source, so DATA_CONFIG (not DATA_CONFIGS): train.py takes DATA_CONFIG first, and the calibration runs
+# per source over whichever is set. Waymo is one merged 5-lidar cloud, one platform.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-waymo.yaml
+DATA_CONFIG:
+    HIST_DIST_ON_THE_FLY: True
+    HIST_DIST_FRAMES: 1000
+    HIST_DIST_BINS: 50          # 1.5 m bins
+    HIST_DIST_MAX_DIST: 75.0    # covers POINT_CLOUD_RANGE
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+        - NAME: sample_points_hist_based
+          MIN_HIST_BIN_FRACTION: 0.01
+        - NAME: transform_points_to_voxels
+          VOXEL_SIZE: [0.1, 0.1, 0.15]
+          MAX_POINTS_PER_VOXEL: 10
+          MAX_NUMBER_OF_VOXELS: {
+            'train': 150000,
+            'test': 150000
+          }

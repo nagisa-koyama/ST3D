@@ -1,0 +1,18 @@
+# GBlobs Waymo -> nuScenes (dense -> sparse with the LARGEST density gap in the study): the Waymo source-only
+# row centerpoint-sourceonly-waymo (26398, MeanVFE, 27.67 / 12.28 on nuScenes val) with the GBlobs voxel
+# encoder and NOTHING else changed. User's question, 2026-10-07: "does GBlobs work when the gap is this large?"
+#
+# Pre-declared reading (experiments_md 20261005_01; the GBlobs paper itself names a nuScenes target as its weak
+# case, sec. 4.2-4.3): GBlobs removes the first-layer encoding term only. On S1 (Lyft -> nuScenes, moderate gap)
+# that term was most of the gap (+8.3). Here the deep-layer content term is expected to be larger, so the GBlobs
+# gain is expected to be SMALLER than on S1 relative to the control, and smaller than the thinning row
+# centerpoint-global-waymo2nuscenes. Read one variable against 26398 (the encoder). Eval-only AdaBN on 26398
+# (first BN / full) tells beforehand which term dominates. Legal: published encoder (decision F), source labels
+# only, default size augmentation.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-waymo.yaml
+MODEL:
+    VFE:
+        NAME: GBlobsVFE
+        RELATIVE_DISTANCE: True
+        COVARIANCE_ONLY: False
+        COVARIANCE_SCALE: 1.0
