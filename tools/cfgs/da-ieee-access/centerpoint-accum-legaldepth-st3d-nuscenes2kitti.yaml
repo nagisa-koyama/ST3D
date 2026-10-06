@@ -32,8 +32,8 @@ SELF_TRAIN:
     # so it is insensitive to how many boxes the teacher finds - destroying 80% of its detections
     # cost 12% of object density in the offline sweep - but a bin the teacher empties entirely
     # falls back to no correction, so recall still buys robustness.
-    SCORE_THRESH: [STEP2, STEP2, STEP2]   # rule B (20261004_01 §5e): teacher 27468 ep20 on nuScenes val, n008 at 15 sweeps + n015 at 10, source-val precision >= 0.50 from the cut up; raised to NEG_THRESH where below it
-    NEG_THRESH: [STEP2, STEP2, STEP2]     # rule A (20261004_01 §5e): upper half-maximum of the background plateau, teacher 27468 ep20 on KITTI train
+    SCORE_THRESH: [0.17, 0.33, 0.37]   # job 27480: rule B (20261004_01 §5e): teacher 27468 ep20 on nuScenes val, n008 at 15 sweeps + n015 at 10, source-val precision >= 0.50 from the cut up; raised to NEG_THRESH where below it
+    NEG_THRESH: [0.139, 0.156, 0.179]  # job 27480: rule A (20261004_01 §5e): upper half-maximum of the background plateau, teacher 27468 ep20 on KITTI train
     UPDATE_PSEUDO_LABEL: [0]
     UPDATE_PSEUDO_LABEL_INTERVAL: 2
 
