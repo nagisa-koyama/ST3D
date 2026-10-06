@@ -348,3 +348,90 @@ class RegLossCenterNet(nn.Module):
             pred = _transpose_and_gather_feat(output, ind)
         loss = _reg_loss(pred, target, mask)
         return loss
+
+# --- IA-SSD (ported from UADA3D 5de3c16, experiments_md/20261006_01) ---
+
+class WeightedClassificationLoss(nn.Module):
+    def __init__(self):
+        super(WeightedClassificationLoss, self).__init__()
+        
+    @staticmethod
+    def sigmoid_cross_entropy_with_logits(input: torch.Tensor, target: torch.Tensor):
+        """ PyTorch Implementation for tf.nn.sigmoid_cross_entropy_with_logits:
+            max(x, 0) - x * z + log(1 + exp(-abs(x))) in
+            https://www.tensorflow.org/api_docs/python/tf/nn/sigmoid_cross_entropy_with_logits
+
+        Args:
+            input: (B, #anchors, #classes) float tensor.
+                Predicted logits for each class
+            target: (B, #anchors, #classes) float tensor.
+                One-hot encoded classification targets
+
+        Returns:
+            loss: (B, #anchors, #classes) float tensor.
+                Sigmoid cross entropy loss without reduction
+        """
+        loss = torch.clamp(input, min=0) - input * target + \
+               torch.log1p(torch.exp(-torch.abs(input)))
+        return loss
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor, weights=None,  reduction='none'):
+        """
+        Args:
+            input: (B, #anchors, #classes) float tensor.
+                Predited logits for each class.
+            target: (B, #anchors, #classes) float tensor.
+                One-hot classification targets.
+            weights: (B, #anchors) float tensor.
+                Anchor-wise weights.
+
+        Returns:
+            loss: (B, #anchors) float tensor.
+                Weighted cross entropy loss without reduction
+        """
+        bce_loss = self.sigmoid_cross_entropy_with_logits(input, target)
+        
+        if weights is not None:                
+            if weights.shape.__len__() == 2 or \
+                    (weights.shape.__len__() == 1 and target.shape.__len__() == 2):
+                weights = weights.unsqueeze(-1)
+
+            assert weights.shape.__len__() == bce_loss.shape.__len__()
+            
+            loss = weights * bce_loss
+        else:
+            loss = bce_loss
+
+        if reduction == 'none':
+            return loss
+        elif reduction == 'sum':
+            loss = loss.sum(dim=-1)
+        elif reduction == 'mean':
+            loss = loss.mean(dim=-1)
+        return loss
+
+
+class WeightedBinaryCrossEntropyLoss(nn.Module):
+    """
+    Transform input to fit the fomation of PyTorch offical cross entropy loss
+    with anchor-wise weighting.
+    """
+    def __init__(self):
+        super(WeightedBinaryCrossEntropyLoss, self).__init__()
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor, weights: torch.Tensor):
+        """
+        Args:
+            input: (B, #anchors, #classes) float tensor.
+                Predited logits for each class.
+            target: (B, #anchors, #classes) float tensor.
+                One-hot classification targets.
+            weights: (B, #anchors) float tensor.
+                Anchor-wise weights.
+
+        Returns:
+            loss: (B, #anchors) float tensor.
+                Weighted cross entropy loss without reduction
+        """
+        loss = F.binary_cross_entropy_with_logits(input, target, reduction='none').mean(dim=-1) * weights
+        return loss

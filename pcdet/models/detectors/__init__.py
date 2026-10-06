@@ -8,6 +8,7 @@ from .second_net_iou import SECONDNetIoU
 from .centerpoint import CenterPoint
 from .da_second_net import DASECONDNet
 from .da_centerpoint import DACenterPoint
+from .IASSD import IASSD
 
 __all__ = {
     'Detector3DTemplate': Detector3DTemplate,
@@ -20,6 +21,7 @@ __all__ = {
     'CenterPoint': CenterPoint,
     'DASECONDNet': DASECONDNet,
     'DACenterPoint': DACenterPoint,
+    'IASSD': IASSD,
 }
 
 

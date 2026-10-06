@@ -106,5 +106,25 @@ if __name__ == '__main__':
 
                 ],
             ),
+            # IA-SSD's ops (ported from UADA3D, experiments_md/20261006_01): adds ball_query_dilated and
+            # furthest_point_sampling_with_dist, renames FPS to farthest_point_sampling. A SIBLING package so the
+            # plain pointnet2_batch (PointRCNN, PV-RCNN) is untouched. The extension keeps the basename
+            # pointnet2_batch_cuda: the shipped UADA3D build exports PyInit_pointnet2_batch_cuda, and two
+            # same-named extensions in different packages coexist (Python loads them RTLD_LOCAL).
+            make_cuda_ext(
+                name='pointnet2_batch_cuda',
+                module='pcdet.ops.pointnet2.pointnet2_batch_iassd',
+                sources=[
+                    'src/pointnet2_api.cpp',
+                    'src/ball_query.cpp',
+                    'src/ball_query_gpu.cu',
+                    'src/group_points.cpp',
+                    'src/group_points_gpu.cu',
+                    'src/interpolate.cpp',
+                    'src/interpolate_gpu.cu',
+                    'src/sampling.cpp',
+                    'src/sampling_gpu.cu',
+                ],
+            ),
         ],
     )
