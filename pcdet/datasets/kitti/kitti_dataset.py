@@ -388,7 +388,12 @@ class KittiDataset(DatasetTemplate):
 
         img_shape = info['image']['image_shape']
         if self.dataset_cfg.FOV_POINTS_ONLY:
-            assert(0)
+            # 1d20716 (2024-12-23) put an unconditional assert(0) here so that FOV cropping could not be switched on by
+            # accident in the 360-degree cross-dataset configs; it guarded a policy, not a bug. A config that wants the
+            # camera-FOV crop on purpose must now ALSO set ALLOW_FOV_POINTS_ONLY: True (first user: the published IA-SSD
+            # KITTI recipe used as a port check, experiments_md/20261006_01). Every other config keeps the lock.
+            assert self.dataset_cfg.get('ALLOW_FOV_POINTS_ONLY', False), \
+                'FOV_POINTS_ONLY is locked (commit 1d20716); set ALLOW_FOV_POINTS_ONLY: True to crop KITTI to the camera FOV on purpose'
             pts_rect = calib.lidar_to_rect(points[:, 0:3])
             fov_flag = self.get_fov_flag(pts_rect, img_shape, calib)
             points = points[fov_flag]
