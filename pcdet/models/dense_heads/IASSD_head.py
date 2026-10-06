@@ -205,6 +205,17 @@ class IASSD_Head(PointHeadTemplate):
 
             gt_box_of_fg_points = gt_boxes[k][box_idxs_of_pts[fg_flag]]
             point_cls_labels_single[fg_flag] = 1 if self.num_class == 1 or binary_label else gt_box_of_fg_points[:, -1].long()
+            # ST3D port: a NEGATIVE class label is an IGNORE region in this pipeline - the pseudo-label ignore band
+            # (-1..-3) and IGNORE_CLASS_LABEL (-99); memory/repo/bug_prevention_checklist.md. Upstream counted their
+            # points as foreground: box targets were encoded with mean_size[label - 1] (wrapped, or out of range
+            # for -99), and gt_box_of_fg_points grew longer than the positives that the corner, centre-ness and
+            # vote losses pair it with. Mark those points -1 (weight 0 in the classification losses) and drop them
+            # from fg_flag. A no-op when every label is positive, as in every source-only row.
+            fg_box_cls = gt_boxes[k][box_idxs_of_pts.clamp(min=0)][:, -1]
+            ign_box_flag = fg_flag & (fg_box_cls < 0)
+            if ign_box_flag.any():
+                point_cls_labels_single[ign_box_flag] = -1
+                fg_flag = fg_flag & ~ign_box_flag
             point_cls_labels[bs_mask] = point_cls_labels_single
             bg_flag = (point_cls_labels_single == 0) # except ignore_id
             # box_bg_flag
