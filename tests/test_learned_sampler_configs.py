@@ -28,6 +28,7 @@ def _sources(cfg):
     ('cfgs/da-ieee-access/centerpoint-accum-rosext-learned-nuscenes2kitti.yaml', 'cfgs/da-ieee-access/centerpoint-accum-rosext-nuscenes2kitti.yaml'),
     ('cfgs/da-ieee-access/centerpoint-accum-learned-pandaset-spin2flash.yaml', 'cfgs/da-ieee-access/centerpoint-accum-pandaset-spin2flash.yaml'),
     ('cfgs/da-ieee-access/centerpoint-accum-learnedobs-pandaset-spin2flash.yaml', 'cfgs/da-ieee-access/centerpoint-accum-pandaset-spin2flash.yaml'),
+    ('cfgs/da-ieee-access/centerpoint-accum-legaldepth-learned-nuscenes2kitti.yaml', 'cfgs/da-ieee-access/centerpoint-accum-legaldepth-nuscenes2kitti.yaml'),
 ])
 def test_only_the_sampler_step_is_added(child, parent):
     c, p = _load(child), _load(parent)
@@ -38,7 +39,8 @@ def test_only_the_sampler_step_is_added(child, parent):
         assert names == ['mask_points_and_boxes_outside_range', 'shuffle_points', 'sample_points_learned', 'transform_points_to_voxels']
         assert 'sample_points_hist_based' not in names
         assert [dict(s) for s in dc.DATA_PROCESSOR if s.NAME != 'sample_points_learned'] == [dict(s) for s in dp.DATA_PROCESSOR]
-        assert {k: v for k, v in dc.items() if k != 'DATA_PROCESSOR'} == {k: v for k, v in dp.items() if k != 'DATA_PROCESSOR'}
+        skip = ('DATA_PROCESSOR', '_BASE_CONFIG_')  # a parent may keep its resolved base path as a key
+        assert {k: v for k, v in dc.items() if k not in skip} == {k: v for k, v in dp.items() if k not in skip}
         assert 'HIST_DIST_FOV_DEGREE' not in dc and not dc.get('HIST_DIST_ON_THE_FLY', False), 'no per-pair density key may remain'
         step = [s for s in dc.DATA_PROCESSOR if s.NAME == 'sample_points_learned'][0]
         assert step.WEIGHTS.endswith('.npz')

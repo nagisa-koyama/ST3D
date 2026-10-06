@@ -1,0 +1,64 @@
+# L3-legal of experiments_md/20261003_04 section 34 (user decision 2026-10-06: P1, reduced form, one seed).
+# UNSEEN-PAIR TEST of the learned sampler's final recipe: the observed-cell recipe (train_point_sampler.py defaults
+# --count_cells observed / --gate observed / --rule_fov auto, occupancy term off) was CHANGED ON S3 after L5's
+# validation miss and has NEVER been applied to S2 before this row. Nothing in it is set or tuned for this pair.
+#
+# One variable from the fully UDA-legal S2 accumulation row 27468 (centerpoint-accum-legaldepth-nuscenes2kitti:
+# Boston 15 / Singapore 10 sweeps at their label-free global-parity depths, per-object motion compensation, family
+# DEFAULT Car interval [0.85, 1.20], no density correction; 73.70 / 46.82 Car BEV / 3D moderate): the learned point
+# sampler before voxelisation, one per nuScenes platform, trained on KITTI's unlabelled TRAIN clouds from THIS
+# base's accumulation (s2legal_n008 / s2legal_n015).
+#
+# PRE-DECLARED RULE (before any result): parity = Car BEV moderate within +-1.5 of 27468's 73.70, with no per-pair
+# setting -> the sampler replaces nothing a human set and holds accuracy on an unseen pair (the supporting-section
+# claim). Outside +-1.5 -> the user's rule adds L0-legal (the rule-only control, init weights) and a second seed.
+# The per-box size check (tools/analysis/kitti_target_box_errors.py) is reported alongside, because the sampler's
+# earlier S2 3D gain (analysis lineage) was box size.
+#
+# DATA_PROCESSOR is a list and lists do not merge, so each platform restates its parent's steps plus the sampler;
+# tests/test_learned_sampler_configs.py pins the resolved blocks against the parent.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-legaldepth-nuscenes2kitti.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+
+            - NAME: sample_points_learned
+              WEIGHTS: /home/koyama/data/samplers/s2legal_n008_kitti.npz
+
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }
+    NUSCENES_N015:
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+
+            - NAME: sample_points_learned
+              WEIGHTS: /home/koyama/data/samplers/s2legal_n015_kitti.npz
+
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }
