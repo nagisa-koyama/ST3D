@@ -1,0 +1,22 @@
+# EVAL-ONLY variant of the S3 control (centerpoint-pandaset-spin2flash-15ep): the flash TARGET is
+# randomly thinned to 25% of its points at test time (RATIO on sample_points), i.e. roughly the spin
+# source's in-cone density (spin 14.6k vs flash 58.9k pts/frame in the cone, 20260928_02). The GBlobs
+# paper's Fig. 4 manipulation, used here to separate DENSITY from POINT PATTERN in the S3 gap: if the
+# MeanVFE control (rule A 70.32) recovers toward the ceiling (~76) on the thinned target, the gap is
+# density; if not, the flash pattern (no rings, uniform) reaches the deeper layers. Analysis only
+# (test-time manipulation of the eval target, never a method). Score under rule A with the
+# target-sensor point counts taken from the FULL cloud, as for every S3 row.
+_BASE_CONFIG_: cfgs/da-ieee-access-tier1/centerpoint-gblobs-pandaset-spin2flash-15ep.yaml
+DATA_CONFIG_TAR:
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+        - NAME: sample_points
+          NUM_POINTS: {'train': -1, 'test': -1}
+          RATIO: {'train': 1.0, 'test': 0.25}
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {'train': True, 'test': False}
+        - NAME: transform_points_to_voxels
+          VOXEL_SIZE: [0.1, 0.1, 0.15]
+          MAX_POINTS_PER_VOXEL: 10
+          MAX_NUMBER_OF_VOXELS: {'train': 150000, 'test': 150000}

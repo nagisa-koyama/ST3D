@@ -1,0 +1,14 @@
+# GBlobs + accumulation on S2 at the LABEL-FREE per-platform depths: the fully UDA-legal version of
+# centerpoint-gblobs-accum-nuscenes2kitti (27264, 74.84 / 47.06), whose Singapore depth 15 was chosen on
+# KITTI real-annotation foreground density. Only difference: NUSCENES_N015 MAX_SWEEPS 10 (Boston stays
+# at 15), the global-radial-parity depths of experiments_md/20261004_01 §5d.
+#
+# Role (paper structure proposed 2026-10-06): the method row for "remove the encoding term with offset
+# features, the content term with parity-depth accumulation". Pre-declared comparisons, one variable
+# each: the MeanVFE twin 27468 (centerpoint-accum-legaldepth-nuscenes2kitti; the encoder) and GBlobs
+# single sweep 27263 (72.29 / 49.49; accumulation). Legality: GBlobs encoder as published (decision F),
+# family default size augmentation (ruled legal), depths from target TRAIN clouds, no pseudo-labels.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-gblobs-accum-nuscenes2kitti.yaml
+DATA_CONFIGS:
+    NUSCENES_N015:
+        MAX_SWEEPS: 10

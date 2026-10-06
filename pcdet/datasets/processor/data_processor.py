@@ -250,11 +250,19 @@ class DataProcessor(object):
         if data_dict is None:
             return partial(self.sample_points, config=config)
 
-        num_points = config.NUM_POINTS[self.mode]
+        points = data_dict['points']
+        # RATIO: keep a fixed FRACTION of the frame's points instead of a fixed count (a per-mode dict
+        # like NUM_POINTS; absent or 1.0 = unchanged). Added 2026-10-06 for the GBlobs Fig. 4-style
+        # test-time density control on S3 (thin the flash target to the spin source's in-cone
+        # density, experiments_md/20261005_01): NUM_POINTS may then be -1.
+        ratio = config.get('RATIO', None)
+        if ratio is not None and ratio.get(self.mode, 1.0) < 1.0:
+            num_points = int(round(len(points) * ratio[self.mode]))
+        else:
+            num_points = config.NUM_POINTS[self.mode]
         if num_points == -1:
             return data_dict
 
-        points = data_dict['points']
         if num_points < len(points):
             # TODO(nagisa): revisit this if the performance is not good enough.
             # pts_depth = np.linalg.norm(points[:, 0:3], axis=1)

@@ -1,0 +1,17 @@
+# GBlobs on S3 (PandaSet spin -> flash): centerpoint-accum-pandaset-spin2flash with the GBlobs voxel
+# encoder and NOTHING else changed (full-schedule row; the 15-epoch proxy in da-ieee-access-tier1 inherits
+# this file and changes only NUM_EPOCHS, per the tier-1 convention).
+#
+# Pre-declared prediction (paper structure proposed 2026-10-06, experiments_md/20261005_01 §9): on a
+# limited-FOV target the first-layer encoding term is irrelevant (first-BN AdaBN: rule A 70.32 -> 70.42),
+# so GBlobs should NOT lift the single-sweep control beyond seed noise (two-seed spread <= 0.6), while
+# in-cone accumulation keeps its gain with either encoder. Read under rule A against the MeanVFE twin
+# (one variable: the encoder). Legality: source labels only, published encoder (decision F), default
+# size augmentation; S3 source-only / accumulation rows are legal UDA (decision E).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-pandaset-spin2flash.yaml
+MODEL:
+    VFE:
+        NAME: GBlobsVFE
+        RELATIVE_DISTANCE: True
+        COVARIANCE_ONLY: False
+        COVARIANCE_SCALE: 1.0

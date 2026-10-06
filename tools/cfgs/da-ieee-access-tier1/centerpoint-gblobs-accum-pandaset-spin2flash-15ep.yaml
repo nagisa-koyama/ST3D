@@ -1,0 +1,7 @@
+# TIER-1 PROXY of da-ieee-access/centerpoint-gblobs-accum-pandaset-spin2flash.yaml: only the schedule changes
+# (15 epochs = 12,210 steps at global batch 6, matching the other S3 proxies 26510 / 26692 / 27003 / 27004).
+# Jobs 27472 (single frame) / 27475 (accumulation N=4), 2026-10-06. Rationale and the pre-declared
+# prediction are in the parent's header.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-gblobs-accum-pandaset-spin2flash.yaml
+OPTIMIZATION:
+    NUM_EPOCHS: 15
