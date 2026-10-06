@@ -515,6 +515,15 @@ class DatasetTemplate(torch_data.Dataset):
         if ring_cfg is not None and self.training:
             data_dict = self._attach_ring_labels(data_dict, ring_cfg)
 
+        # IGNORE_OTHER_CLASSES (training only, off unless set): a labelled box whose class is outside
+        # CLASS_NAMES (nuScenes truck / bus / trailer / barrier ... under the KITTI ontology) is kept as a
+        # class-less IGNORE region instead of being dropped, so its points are not learned as background.
+        # Generic by construction - every class outside CLASS_NAMES, none chosen - and it reads only the
+        # labels of the domain it is set on, i.e. the SOURCE. Only CenterHead understands the label;
+        # an anchor head indexes classes with abs() and fails loudly on it.
+        ignore_other_classes = (self.training and not self.unsupervised
+                                and bool(self.dataset_cfg.get('IGNORE_OTHER_CLASSES', False)))
+
         # `and not self.unsupervised`: everything in this block reads or rewrites ground truth -
         # the zero-point filter, the assert, the class mask and the augmentor - so a DA target
         # must skip all of it. See the note at self.unsupervised in __init__.
@@ -534,23 +543,28 @@ class DatasetTemplate(torch_data.Dataset):
 
             assert 'gt_boxes' in data_dict, 'gt_boxes should be provided for training'
             gt_boxes_mask = np.array([n in self.class_names for n in data_dict['gt_names']], dtype=np.bool_)
+            aug_input = {**data_dict, 'gt_boxes_mask': gt_boxes_mask}
+            if ignore_other_classes:
+                aug_input['gt_boxes_ignore_mask'] = ~gt_boxes_mask
 
-            data_dict = self.data_augmentor.forward(
-                data_dict={
-                    **data_dict,
-                    'gt_boxes_mask': gt_boxes_mask
-                }
-            )
+            data_dict = self.data_augmentor.forward(data_dict=aug_input)
 
         if data_dict.get('gt_boxes', None) is not None:
-            selected = common_utils.keep_arrays_by_name(data_dict['gt_names'], self.class_names)
+            if ignore_other_classes:
+                # Every box is kept; those outside CLASS_NAMES carry IGNORE_CLASS_LABEL, which CenterHead
+                # turns into a zero-weight region of the heatmap loss instead of background.
+                selected = np.ones(len(data_dict['gt_names']), dtype=np.bool_)
+            else:
+                selected = common_utils.keep_arrays_by_name(data_dict['gt_names'], self.class_names)
             # print("self.class_names", self.class_names)
             # print("selected:", selected)
             data_dict['gt_boxes'] = data_dict['gt_boxes'][selected]
             data_dict['gt_names'] = data_dict['gt_names'][selected]
             # for pseudo label has ignore labels.
             if 'gt_classes' not in data_dict:
-                gt_classes = np.array([self.class_names.index(n) + 1 for n in data_dict['gt_names']], dtype=np.int32)
+                gt_classes = np.array([self.class_names.index(n) + 1 if n in self.class_names
+                                       else common_utils.IGNORE_CLASS_LABEL
+                                       for n in data_dict['gt_names']], dtype=np.int32)
             else:
                 gt_classes = data_dict['gt_classes'][selected]
                 data_dict['gt_scores'] = data_dict['gt_scores'][selected]

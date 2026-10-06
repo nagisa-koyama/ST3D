@@ -1,0 +1,18 @@
+# IGNORE_OTHER_CLASSES on the legal S2 accumulation teacher (paper-strategy session, user's request
+# 2026-10-06; experiments_md/20261004_01 §5f). ONE variable from 27468 (centerpoint-accum-legaldepth-nuscenes2kitti:
+# Boston 15 / Singapore 10 sweeps + box compensation, default Car interval, MeanVFE, no correction).
+# - Source boxes whose class is outside CLASS_NAMES (under the KITTI ontology: Truck, and Misc = bus,
+#   construction_vehicle, trailer, motorcycle, traffic_cone, barrier, nuScenes 'ignore') are kept as
+#   class-less IGNORE regions in CenterHead's heatmap loss instead of being dropped and learned as background.
+# - Generic: every class outside CLASS_NAMES, none chosen. Source labels only, so UDA-legal.
+# - Hypothesis: the model stops learning that large vehicles are background, which matters most where
+#   the target scores them as Car (Waymo 'Vehicle'); on KITTI (Van is ignored) little is expected.
+# Launch as 27468: 2 GPUs, 150G, seed 666, train.py, no pretrained model. Eval in-run on KITTI val; on Waymo
+# val with centerpoint-accum-legaldepth-ignoreother-nuscenes2waymo.yaml (eval-only).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-legaldepth-nuscenes2kitti.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        IGNORE_OTHER_CLASSES: True
+    NUSCENES_N015:
+        IGNORE_OTHER_CLASSES: True

@@ -1,0 +1,9 @@
+# EVAL-ONLY: the legal S2 accumulation teacher 27468 (centerpoint-accum-legaldepth-nuscenes2kitti) scored on
+# Waymo val. centerpoint-accum-nuscenes2waymo is the full Waymo-target copy of the 26388 recipe; this adds the
+# one difference 27468 has (Singapore at 10 sweeps), so the resolved source block matches the run.
+# Matched control for the IGNORE_OTHER_CLASSES row on Waymo (experiments_md/20261004_01 §5f).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-nuscenes2waymo.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N015:
+        MAX_SWEEPS: 10

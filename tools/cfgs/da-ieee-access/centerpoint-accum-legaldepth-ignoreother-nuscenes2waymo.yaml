@@ -1,0 +1,10 @@
+# EVAL-ONLY: the IGNORE_OTHER_CLASSES row (centerpoint-accum-legaldepth-ignoreother-nuscenes2kitti) scored on
+# Waymo val. Same as centerpoint-accum-legaldepth-nuscenes2waymo plus the training-only key, so the resolved
+# config matches the trained row except for the eval target (experiments_md/20261004_01 §5f).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-legaldepth-nuscenes2waymo.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        IGNORE_OTHER_CLASSES: True
+    NUSCENES_N015:
+        IGNORE_OTHER_CLASSES: True

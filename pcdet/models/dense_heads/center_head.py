@@ -192,9 +192,17 @@ class CenterHead(nn.Module):
         all_names = np.array(['bg', *self.class_names])
         for idx, cur_class_names in enumerate(self.class_names_each_head):
             heatmap_list, target_boxes_list, inds_list, masks_list = [], [], [], []
+            ignore_mask_list, any_ignored = [], False
             for bs_idx in range(batch_size):
                 cur_gt_boxes = gt_boxes[bs_idx]
-                gt_class_names = all_names[cur_gt_boxes[:, -1].cpu().long().numpy()]
+                # A NEGATIVE label is an ignore region, never a positive: the pseudo-label ignore band
+                # (-1..-C, self_training_utils) and IGNORE_CLASS_LABEL (source classes outside CLASS_NAMES).
+                # Indexing all_names with it directly wrapped around - -1 Car became 'Cyclist', -3 Cyc
+                # became 'Car' - so until 2026-10-06 every ignore-band pseudo-label trained as a positive of
+                # a permuted class. Clipping sends it to 'bg', which no head claims; label 0 is padding.
+                cur_labels = cur_gt_boxes[:, -1].cpu().long().numpy()
+                gt_class_names = all_names[np.clip(cur_labels, 0, None)]
+                ignore_boxes = cur_gt_boxes[cur_gt_boxes[:, -1] < 0]
 
                 gt_boxes_single_head = []
 
@@ -217,6 +225,13 @@ class CenterHead(nn.Module):
                     gaussian_overlap=target_assigner_cfg.GAUSSIAN_OVERLAP,
                     min_radius=target_assigner_cfg.MIN_RADIUS,
                 )
+                ignore_mask = self.ignore_region_mask(
+                    ignore_boxes, heatmap, feature_map_stride=target_assigner_cfg.FEATURE_MAP_STRIDE,
+                    gaussian_overlap=target_assigner_cfg.GAUSSIAN_OVERLAP,
+                    min_radius=target_assigner_cfg.MIN_RADIUS,
+                )
+                any_ignored = any_ignored or bool((ignore_mask == 0).any())
+                ignore_mask_list.append(ignore_mask.to(gt_boxes_single_head.device))
                 heatmap_list.append(heatmap.to(gt_boxes_single_head.device))
                 target_boxes_list.append(ret_boxes.to(gt_boxes_single_head.device))
                 inds_list.append(inds.to(gt_boxes_single_head.device))
@@ -226,7 +241,63 @@ class CenterHead(nn.Module):
             ret_dict['target_boxes'].append(torch.stack(target_boxes_list, dim=0))
             ret_dict['inds'].append(torch.stack(inds_list, dim=0))
             ret_dict['masks'].append(torch.stack(masks_list, dim=0))
+            # None when nothing is ignored, so a batch without ignore regions computes exactly the loss
+            # it always did (the focal loss takes mask=None).
+            ret_dict['heatmap_masks'].append(torch.stack(ignore_mask_list, dim=0) if any_ignored else None)
         return ret_dict
+
+    def ignore_region_mask(self, ignore_boxes, heatmap, feature_map_stride, gaussian_overlap=0.1, min_radius=2):
+        """Per-pixel heatmap-loss weight for one sample: 0 inside an ignore region, 1 elsewhere.
+
+        KITTI-DontCare-style ignore. An ignore box's footprint is the union of
+          - every BEV pixel whose centre lies inside the rotated box, and
+          - the square a positive of that size would draw its gaussian over (same radius rule as
+            assign_target_of_single_head), so a small box still covers what a positive would have.
+        The weight is zero in EVERY class channel there, so the box is neither a positive nor a negative
+        of any class. A pixel holding a positive's peak (heatmap == 1 in any channel) is never ignored, so
+        an ignore box overlapping a real object cannot delete that object.
+
+        Vectorised over boxes on the boxes' device (the GPU in training): a pseudo-labelled frame can carry
+        ~100 ignore boxes, and a per-box Python loop would cost a large share of an iteration.
+
+        Args:
+            ignore_boxes: (K, 8) [x, y, z, dx, dy, dz, heading, label<0], any device
+            heatmap: (C, H, W) the sample's positive heatmap for this head
+        Returns:
+            (H, W) float tensor on ignore_boxes' device
+        """
+        num_classes, height, width = heatmap.shape
+        device = ignore_boxes.device
+        keep = torch.ones((height, width), dtype=torch.float32, device=device)
+        boxes = ignore_boxes[(ignore_boxes[:, 3] > 0) & (ignore_boxes[:, 4] > 0)].float()
+        if boxes.shape[0] == 0:
+            return keep
+        cell_x = float(self.voxel_size[0] * feature_map_stride)
+        cell_y = float(self.voxel_size[1] * feature_map_stride)
+        x0, y0 = float(self.point_cloud_range[0]), float(self.point_cloud_range[1])
+        ix = torch.arange(width, device=device, dtype=torch.float32)
+        iy = torch.arange(height, device=device, dtype=torch.float32)
+        px, py = x0 + (ix + 0.5) * cell_x, y0 + (iy + 0.5) * cell_y   # pixel centres in metres
+        radius = centernet_utils.gaussian_radius(boxes[:, 3] / cell_x, boxes[:, 4] / cell_y,
+                                                 min_overlap=gaussian_overlap)
+        radius = torch.clamp_min(radius.int(), min=min_radius).float()
+        gx = torch.clamp((boxes[:, 0] - x0) / cell_x, min=0, max=width - 0.5).int().float()
+        gy = torch.clamp((boxes[:, 1] - y0) / cell_y, min=0, max=height - 0.5).int().float()
+        ignored = torch.zeros((height, width), dtype=torch.bool, device=device)
+        for s in range(0, boxes.shape[0], 32):   # bounds the (k, H, W) temporaries
+            b = boxes[s:s + 32]
+            ox = px[None, None, :] - b[:, 0, None, None]
+            oy = py[None, :, None] - b[:, 1, None, None]
+            cos_h, sin_h = torch.cos(b[:, 6])[:, None, None], torch.sin(b[:, 6])[:, None, None]
+            inside = (((ox * cos_h + oy * sin_h).abs() <= b[:, 3, None, None] / 2)
+                      & ((-ox * sin_h + oy * cos_h).abs() <= b[:, 4, None, None] / 2))
+            r = radius[s:s + 32, None, None]
+            square = (((ix[None, None, :] - gx[s:s + 32, None, None]).abs() <= r)
+                      & ((iy[None, :, None] - gy[s:s + 32, None, None]).abs() <= r))
+            ignored |= (inside | square).any(dim=0)
+        keep[ignored] = 0
+        keep[heatmap.eq(1).any(dim=0).to(device)] = 1
+        return keep
 
     def sigmoid(self, x):
         y = torch.clamp(x.sigmoid(), min=1e-4, max=1 - 1e-4)
@@ -241,7 +312,8 @@ class CenterHead(nn.Module):
 
         for idx, pred_dict in enumerate(pred_dicts):
             pred_dict['hm'] = self.sigmoid(pred_dict['hm'])
-            hm_loss = self.hm_loss_func(pred_dict['hm'], target_dicts['heatmaps'][idx])
+            hm_loss = self.hm_loss_func(
+                pred_dict['hm'], target_dicts['heatmaps'][idx], mask=target_dicts['heatmap_masks'][idx])
             hm_loss *= self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['cls_weight']
 
             target_boxes = target_dicts['target_boxes'][idx]

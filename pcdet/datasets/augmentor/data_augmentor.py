@@ -178,6 +178,12 @@ class DataAugmentor(object):
             data_dict.pop('road_plane')
         if 'gt_boxes_mask' in data_dict:
             gt_boxes_mask = data_dict['gt_boxes_mask']
+            # Boxes outside the trained classes that the dataset keeps as ignore regions
+            # (DATA_CONFIG.IGNORE_OTHER_CLASSES): object-level ops skip them through gt_boxes_mask, world
+            # ops move them with the points, and here they survive the class filter.
+            keep_as_ignore = data_dict.pop('gt_boxes_ignore_mask', None)
+            if keep_as_ignore is not None:
+                gt_boxes_mask = gt_boxes_mask | keep_as_ignore
             data_dict['gt_boxes'] = data_dict['gt_boxes'][gt_boxes_mask]
             data_dict['gt_names'] = data_dict['gt_names'][gt_boxes_mask]
             data_dict.pop('gt_boxes_mask')

@@ -162,6 +162,13 @@ def set_random_seed(seed):
     torch.backends.cudnn.benchmark = False
 
 
+# Class-less ignore region in gt_boxes[:, 7]: a SOURCE box of a class outside CLASS_NAMES, kept by
+# DATA_CONFIG.IGNORE_OTHER_CLASSES so its points are not learned as background. Any negative label is
+# an ignore region to CenterHead; -1..-C are the pseudo-label ignore band (self_training_utils), whose
+# class abs() recovers, so this value must stay outside that range.
+IGNORE_CLASS_LABEL = -99
+
+
 def keep_arrays_by_name(gt_names, used_classes):
     inds = [i for i, x in enumerate(gt_names) if x in used_classes]
     inds = np.array(inds, dtype=np.int64)
