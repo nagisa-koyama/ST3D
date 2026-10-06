@@ -1,0 +1,49 @@
+# L0-legal of experiments_md/20261003_04 section 36: L3-legal (centerpoint-accum-legaldepth-learned-nuscenes2kitti, jobs
+# 27506 -> 27570: 72.17 / 45.68) with the sampler's INITIAL weights (*_init.npz: last layer zero = the per-bin rule exactly).
+# Launched because L3-legal landed outside the pre-declared parity band (+-1.5 of 27468's 73.70; it is 72.17), which by the
+# user's decision of 2026-10-06 triggers the rule-only control and a second seed of L3-legal before anything is claimed.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-legaldepth-learned-nuscenes2kitti.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+
+            - NAME: sample_points_learned
+              WEIGHTS: /home/koyama/data/samplers/s2legal_n008_kitti_init.npz
+
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }
+    NUSCENES_N015:
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+
+            - NAME: sample_points_learned
+              WEIGHTS: /home/koyama/data/samplers/s2legal_n015_kitti_init.npz
+
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {
+                'train': 150000,
+                'test': 150000
+              }

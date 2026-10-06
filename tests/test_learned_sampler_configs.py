@@ -53,8 +53,11 @@ L0_S2 = ('cfgs/da-ieee-access/centerpoint-accum-rosext-learnedinit-nuscenes2kitt
          'cfgs/da-ieee-access/centerpoint-accum-rosext-learned-nuscenes2kitti.yaml')
 
 
-def test_l0_only_swaps_in_the_initial_weights():
-    c, p = _load(L0_S2[0]), _load(L0_S2[1])
+@pytest.mark.parametrize('child, parent', [L0_S2, (
+    'cfgs/da-ieee-access/centerpoint-accum-legaldepth-learnedinit-nuscenes2kitti.yaml',
+    'cfgs/da-ieee-access/centerpoint-accum-legaldepth-learned-nuscenes2kitti.yaml')])
+def test_l0_only_swaps_in_the_initial_weights(child, parent):
+    c, p = _load(child), _load(parent)
     assert c.MODEL == p.MODEL and c.OPTIMIZATION == p.OPTIMIZATION and c.DATA_CONFIG_TAR == p.DATA_CONFIG_TAR
     for key, dc in _sources(c).items():
         dp = _sources(p)[key]
