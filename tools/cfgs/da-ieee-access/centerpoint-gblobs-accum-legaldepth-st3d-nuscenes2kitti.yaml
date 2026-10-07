@@ -9,7 +9,8 @@
 # VFE MUST be GBlobs too: a MeanVFE teacher loading a GBlobs checkpoint "not strict" would skip the mismatched
 # first-layer weights and label with a random input layer.
 #
-# Cuts: the pre-declared rules applied to THIS teacher (20261004_01 §5e; scripts/_legal_chain_step2_teacher.sh):
+# Cuts: the pre-declared rules applied to THIS teacher (20261004_01 §5e; scripts/_legal_chain_step2_teacher.sh, job 27608;
+# for comparison, 27468's were 0.17 / 0.33 / 0.37 and 0.139 / 0.156 / 0.179):
 # - SCORE_THRESH, all classes: rule B - the smallest t from which the teacher's precision on the labelled SOURCE
 #   val (n008 at 15 sweeps + n015 at 10) stays >= 0.50 (1.0 m centre match, >= 50 kept), else gated off at 1.01.
 # - NEG_THRESH, per class: rule A - the background plateau's upper half-maximum on the teacher's KITTI-train
@@ -36,10 +37,8 @@ MODEL:
         COVARIANCE_SCALE: 1.0
 
 SELF_TRAIN:
-    # NOT YET DERIVED: filled from the step-2 job's output before any launch. 1.01 gates every class off, so a
-    # launch with these values trains on the source alone and cannot pass as a pseudo-labelling row.
-    SCORE_THRESH: [1.01, 1.01, 1.01]
-    NEG_THRESH: [1.01, 1.01, 1.01]
+    SCORE_THRESH: [0.17, 0.32, 0.38]   # job 27608: rule B (20261004_01 §5e): teacher 27471 ep20 on nuScenes val, n008 at 15 sweeps + n015 at 10, source-val precision >= 0.50 from the cut up (Car 0.20: 0.60, Ped 0.30: 0.47 / 0.40: 0.64, Cyc 0.40: 0.57); every cut is above its NEG_THRESH
+    NEG_THRESH: [0.142, 0.163, 0.180]  # job 27608: rule A (20261004_01 §5e): upper half-maximum of the background plateau, teacher 27471 ep20 on KITTI train (modes 0.085 / 0.107 / 0.107)
 
     MODEL_TEACHER:
         VFE:
