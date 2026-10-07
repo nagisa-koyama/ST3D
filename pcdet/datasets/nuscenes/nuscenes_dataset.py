@@ -11,6 +11,31 @@ from ...utils import common_utils, box_utils, level_utils, self_training_utils, 
 from ..dataset import DatasetTemplate
 
 
+def select_sweep_indices(sweeps, max_sweeps, selection=None):
+    """Indices into `sweeps` (most recent first, as stored) for one anchor.
+
+    selection None or MODE 'consecutive': the max_sweeps-1 most recent (the original loader).
+    MODE 'displacement', SPAN_M D: the sweeps nearest to max_sweeps-1 displacement targets spread uniformly over
+    (0, min(D, farthest available)], each sweep used once; displacement = norm of the sweep->anchor translation.
+    """
+    n = min(max_sweeps - 1, len(sweeps))
+    if n <= 0:
+        return []
+    if not selection or selection.get('MODE', 'consecutive') == 'consecutive':
+        return list(range(n))
+    assert selection['MODE'] == 'displacement', selection
+    disp = np.array([np.linalg.norm(s['transform_matrix'][:3, 3]) if s.get('transform_matrix') is not None else 0.0
+                     for s in sweeps])
+    reach = min(float(selection['SPAN_M']), float(disp.max()))
+    targets = np.linspace(0.0, reach, max_sweeps)[1:]
+    chosen = []
+    for tgt in targets:
+        for k in np.argsort(np.abs(disp - tgt), kind='stable'):
+            if int(k) not in chosen:
+                chosen.append(int(k)); break
+    return sorted(chosen)
+
+
 def sweep_min_range(schedule, sweep_age):
     """Smallest range (m) at which the schedule asks for more than `sweep_age` frames.
 
@@ -205,8 +230,14 @@ class NuScenesDataset(DatasetTemplate):
         # oracle sits at 30-50 m. ACCUMULATION_DEPTH_BY_RANGE keeps sweep k's points only beyond the
         # range at which the schedule asks for more than k sweeps. The anchor frame is always whole.
         schedule = self.dataset_cfg.get('ACCUMULATION_DEPTH_BY_RANGE', None)
-        # for k in np.random.choice(len(info['sweeps']), max_sweeps - 1, replace=False):
-        for k in range(max_sweeps - 1):
+        # SWEEP_SELECTION {MODE: displacement, SPAN_M: D}: the same number of sweeps, but chosen so their ego
+        # displacements from the anchor spread uniformly over [0, min(D, available)] instead of being the
+        # MAX_SWEEPS-1 most recent. Consecutive sweeps move a ring's hit on a distant body by dr * tan(theta)
+        # (~1.7 cm per 0.5 m sweep at 40 m), so they stack returns into clumps; spreading them over D lets the
+        # rings land on new stripes (experiments_md/20261007_03 §9-10; user's idea 2026-10-07). Label-free:
+        # it reads the source's own sweep transforms. Default (absent) = consecutive, unchanged.
+        for j, k in enumerate(select_sweep_indices(info['sweeps'], max_sweeps,
+                                                   self.dataset_cfg.get('SWEEP_SELECTION', None))):
             points_sweep, times_sweep = self.get_sweep(info['sweeps'][k])
             if self._sweep_compensator is not None:
                 # get_sweep has ego-transformed these into the anchor frame; this additionally
@@ -214,7 +245,7 @@ class NuScenesDataset(DatasetTemplate):
                 points_sweep = self._sweep_compensator.compensate_sweep(
                     info, info['sweeps'][k], points_sweep)
             if schedule is not None:
-                keep = sweep_range_mask(points_sweep, k + 1, schedule)
+                keep = sweep_range_mask(points_sweep, j + 1, schedule)
                 points_sweep, times_sweep = points_sweep[keep], times_sweep[keep]
             sweep_points_list.append(points_sweep)
             sweep_times_list.append(times_sweep)

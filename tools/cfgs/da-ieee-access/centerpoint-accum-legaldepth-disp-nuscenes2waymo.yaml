@@ -1,0 +1,34 @@
+# EVAL-ONLY twin of centerpoint-accum-legaldepth-disp-nuscenes2kitti scored on Waymo val (the pair whose residual
+# motivated displacement-spread accumulation, experiments_md/20261007_03 §10). Source blocks identical to the training
+# config; target block = centerpoint-accum-legaldepth-nuscenes2waymo's (27590). Read against 27590: 48.30 / 23.47.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-legaldepth-nuscenes2waymo.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        SWEEP_SELECTION: {'MODE': 'displacement', 'SPAN_M': 27.0}
+        # The spread puts the same points into ~2.3x more voxels (one Singapore frame: 44k -> 102k); Boston reached the
+        # 150k training cap in 2 of 25 audited frames (p90 147k), which would drop voxels at random. Raised to 250k for
+        # the SOURCE loaders only (the PandaSet rows run at 250k too); the target block keeps 150k, so scoring is unchanged.
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {'train': True, 'test': False}
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {'train': 250000, 'test': 150000}
+    NUSCENES_N015:
+        SWEEP_SELECTION: {'MODE': 'displacement', 'SPAN_M': 27.0}
+        # The spread puts the same points into ~2.3x more voxels (one Singapore frame: 44k -> 102k); Boston reached the
+        # 150k training cap in 2 of 25 audited frames (p90 147k), which would drop voxels at random. Raised to 250k for
+        # the SOURCE loaders only (the PandaSet rows run at 250k too); the target block keeps 150k, so scoring is unchanged.
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {'train': True, 'test': False}
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {'train': 250000, 'test': 150000}

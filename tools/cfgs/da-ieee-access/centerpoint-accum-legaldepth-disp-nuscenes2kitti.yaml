@@ -1,0 +1,55 @@
+# DISPLACEMENT-SPREAD ACCUMULATION on S2: the legal teacher recipe 27468 (centerpoint-accum-legaldepth-nuscenes2kitti,
+# Boston 15 / Singapore 10 sweeps, default Car interval) with ONE change: the sweeps are chosen so their ego
+# displacements spread uniformly over up to 27 m instead of being the most recent ones (SWEEP_SELECTION, nuScenes loader).
+# Same sweep COUNT, same compensation, same everything else; resolved it must differ from 27468's config only in the
+# two SWEEP_SELECTION blocks (check with the repo's loader before launch).
+#
+# Why (experiments_md/20261007_03 §9-10, user's idea 2026-10-07): consecutive sweeps move a ring's hit on a distant body by
+# dr * tan(theta), ~1.7 cm per sweep at 40 m, so 15 of them stack returns into clumps (NN 4-5 cm, 2-5 z-layers per far
+# car) while Waymo's far cars are an even one-point-per-voxel sprinkle over 5-10 z-layers. The CPU gate (§10) shows the
+# displacement spread brings every per-box arrangement statistic of the source to Waymo's values at the same sweep count.
+# SPAN 27 m = r^2 * dtheta / |z| at r = 40 m (the centre of the 30-50 m residual on S2 and Waymo), nuScenes ring spacing
+# 1.33 deg, sensor-to-body-centre height 1.4 m: a geometric constant of the SOURCE sensor, no target label involved.
+# Scored on KITTI val (this config) and on Waymo val (the -nuscenes2waymo twin) from the same checkpoint.
+#
+# PRE-DECLARED READING (written 2026-10-07 23:20 before any result; one seed, ~2 AP single-run noise):
+# - Waymo val (the pair the mechanism was measured on): Car BEV >= +2 over 27468's 48.30 / 23.47 (27590) counts as a
+#   gain; the gain should sit in the 10-199-point GT bins and beyond 30 m (analysis/waymo_target_residual.py), dense near
+#   cars unchanged.
+# - KITTI val: read against 27468's 73.70 / 46.82 at the same tolerance; the S2 residual at 30-50 m is the prediction.
+# - If neither moves, clump vs sprinkle is not what the detector keys on, and the pattern term needs the target's own
+#   labels-free pattern (pseudo-labelling on Waymo, 27612-style) rather than a source-side change.
+# Launch (2 GPUs, 150G, seed 666; keep off node03 / node13 / node61):
+#   EST_H=18 scripts/submit.sh --gres=gpu:2 --mem=150G --cpus-per-task=12 --time=24:00:00 --exclude=node03,node13,node61 \
+#       scripts/run_sourceonly_2gpu.sh cfgs/da-ieee-access/centerpoint-accum-legaldepth-disp-nuscenes2kitti.yaml <tag> <run>
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-legaldepth-nuscenes2kitti.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        SWEEP_SELECTION: {'MODE': 'displacement', 'SPAN_M': 27.0}
+        # The spread puts the same points into ~2.3x more voxels (one Singapore frame: 44k -> 102k); Boston reached the
+        # 150k training cap in 2 of 25 audited frames (p90 147k), which would drop voxels at random. Raised to 250k for
+        # the SOURCE loaders only (the PandaSet rows run at 250k too); the target block keeps 150k, so scoring is unchanged.
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {'train': True, 'test': False}
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {'train': 250000, 'test': 150000}
+    NUSCENES_N015:
+        SWEEP_SELECTION: {'MODE': 'displacement', 'SPAN_M': 27.0}
+        # The spread puts the same points into ~2.3x more voxels (one Singapore frame: 44k -> 102k); Boston reached the
+        # 150k training cap in 2 of 25 audited frames (p90 147k), which would drop voxels at random. Raised to 250k for
+        # the SOURCE loaders only (the PandaSet rows run at 250k too); the target block keeps 150k, so scoring is unchanged.
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {'train': True, 'test': False}
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {'train': 250000, 'test': 150000}
