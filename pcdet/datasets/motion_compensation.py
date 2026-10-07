@@ -192,6 +192,13 @@ def should_compensate(dataset_cfg, training, logger=None):
                 'SOURCE only.')
         return False
 
+    # COMPENSATE_AT_EVAL (analysis, 2026-10-07): compensate a LABELLED dataset in eval mode too. Legitimate only
+    # for the labelled SOURCE's own split (e.g. the teacher scored on nuScenes val, experiments_md 20261007_03 test A);
+    # refused above on a pseudo-labelled target. Reads that split's GT boxes, as training does.
+    if not training and sweeps > 1 and dataset_cfg.get('COMPENSATE_AT_EVAL', False):
+        if logger is not None:
+            logger.info('motion compensation ON at EVAL (COMPENSATE_AT_EVAL, MAX_SWEEPS=%d, labelled split)' % sweeps)
+        return True
     if not training or sweeps <= 1:
         # Say so only when someone asked and is not getting it, so the reason is on the record
         # rather than inferred from a missing log line.

@@ -419,6 +419,26 @@ class DataProcessor(object):
         data_dict['points'] = points
         return data_dict
 
+    def sample_points_by_range_rate(self, data_dict=None, config=None):
+        """Keep each point with a FIXED per-planar-range-bin probability read from RATE_FILE (npz: `edges`, `rate`).
+
+        Analysis tool (2026-10-07, experiments_md 20261007_03 test A'): thins one accumulation variant to another's
+        radial point count so two evals differ in arrangement only. Applied in the modes listed in MODES (default
+        ['test']). Rates above 1 are clipped (a keep probability cannot add points)."""
+        if data_dict is None:
+            d = np.load(config.RATE_FILE)
+            self._range_rate = (d['edges'].astype(np.float64), np.clip(d['rate'].astype(np.float64), 0.0, 1.0))
+            return partial(self.sample_points_by_range_rate, config=config)
+        if self.mode not in config.get('MODES', ['test']):
+            return data_dict
+        edges, rate = self._range_rate
+        pts = data_dict['points']
+        r = np.hypot(pts[:, 0], pts[:, 1])
+        k = np.clip(np.searchsorted(edges, r, side='right') - 1, 0, len(rate) - 1)
+        keep = np.random.rand(len(pts)) < rate[k]
+        data_dict['points'] = pts[keep]
+        return data_dict
+
     def sample_points_hist_based(self, data_dict=None, config=None):
         if data_dict is None:
             return partial(self.sample_points_hist_based, config=config)
