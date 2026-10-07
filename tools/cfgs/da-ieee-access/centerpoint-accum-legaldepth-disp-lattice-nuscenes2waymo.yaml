@@ -1,0 +1,34 @@
+# lattice sampler on nuScenes -> Waymo (experiments_md/20261008_01). One variable from
+# centerpoint-accum-legaldepth-disp-nuscenes2waymo (displacement-spread accumulation, Boston 15 / Singapore 10 at SPAN 27 m,
+# default Car interval): the LATTICE point sampler before voxelisation, one per nuScenes platform - a virtual Waymo TOP
+# range image (64 published inclinations, 2,650 columns, sensor 2.184 m above ground) whose z-buffer is the rule, plus a
+# learned correction trained on Waymo TRAIN clouds (per-voxel single / multi-point counts per ring) and Waymo's NATIVE
+# range-image statistics (per-row / per-ring valid pixels). THIS FILE: the trained sampler.
+# UDA-legal: target statistics from Waymo TRAIN clouds / training range images and the published sensor spec; no labels.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-legaldepth-disp-nuscenes2waymo.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {'train': True, 'test': False}
+            - NAME: sample_points_learned
+              WEIGHTS: /home/koyama/data/samplers/lattice_n008_waymo.npz
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {'train': 250000, 'test': 150000}
+    NUSCENES_N015:
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {'train': True, 'test': False}
+            - NAME: sample_points_learned
+              WEIGHTS: /home/koyama/data/samplers/lattice_n015_waymo.npz
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {'train': 250000, 'test': 150000}

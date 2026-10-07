@@ -29,6 +29,7 @@ def _sources(cfg):
     ('cfgs/da-ieee-access/centerpoint-accum-learned-pandaset-spin2flash.yaml', 'cfgs/da-ieee-access/centerpoint-accum-pandaset-spin2flash.yaml'),
     ('cfgs/da-ieee-access/centerpoint-accum-learnedobs-pandaset-spin2flash.yaml', 'cfgs/da-ieee-access/centerpoint-accum-pandaset-spin2flash.yaml'),
     ('cfgs/da-ieee-access/centerpoint-accum-legaldepth-learned-nuscenes2kitti.yaml', 'cfgs/da-ieee-access/centerpoint-accum-legaldepth-nuscenes2kitti.yaml'),
+    ('cfgs/da-ieee-access/centerpoint-accum-legaldepth-disp-lattice-nuscenes2waymo.yaml', 'cfgs/da-ieee-access/centerpoint-accum-legaldepth-disp-nuscenes2waymo.yaml'),
 ])
 def test_only_the_sampler_step_is_added(child, parent):
     c, p = _load(child), _load(parent)
@@ -55,7 +56,9 @@ L0_S2 = ('cfgs/da-ieee-access/centerpoint-accum-rosext-learnedinit-nuscenes2kitt
 
 @pytest.mark.parametrize('child, parent', [L0_S2, (
     'cfgs/da-ieee-access/centerpoint-accum-legaldepth-learnedinit-nuscenes2kitti.yaml',
-    'cfgs/da-ieee-access/centerpoint-accum-legaldepth-learned-nuscenes2kitti.yaml')])
+    'cfgs/da-ieee-access/centerpoint-accum-legaldepth-learned-nuscenes2kitti.yaml'), (
+    'cfgs/da-ieee-access/centerpoint-accum-legaldepth-disp-latticeinit-nuscenes2waymo.yaml',
+    'cfgs/da-ieee-access/centerpoint-accum-legaldepth-disp-lattice-nuscenes2waymo.yaml')])
 def test_l0_only_swaps_in_the_initial_weights(child, parent):
     c, p = _load(child), _load(parent)
     assert c.MODEL == p.MODEL and c.OPTIMIZATION == p.OPTIMIZATION and c.DATA_CONFIG_TAR == p.DATA_CONFIG_TAR
