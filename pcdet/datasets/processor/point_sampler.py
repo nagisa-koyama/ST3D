@@ -60,10 +60,61 @@ def point_features(points, shift_z=0.0):
                     axis=1).astype(np.float32)
 
 
+# ---- a virtual target range image (experiments_md/20261007_03 §12, 20261003_04 §38) --------------------------------------
+LATTICE_FEATURE_NAMES = ('log_pix_cands', 'pix_rank', 'log_vox_pts')
+DET_VOXEL = np.array([0.1, 0.1, 0.15]); DET_PCR = np.array([-75.2, -75.2, -2.0, 75.2, 75.2, 4.0])
+
+
+def lattice_pixels(xyz, inclinations, n_cols, sensor_z):
+    """Pixel of every point in a virtual spinning lidar at (0, 0, sensor_z): row = nearest of `inclinations` (radians,
+    any order), column = azimuth bin of n_cols. Points outside the vertical field of view get pixel -1 (the sentinel).
+    Returns (pixel, row, 3D range from the virtual sensor)."""
+    d = xyz[:, :3].astype(np.float64) - np.array([0.0, 0.0, sensor_z])
+    r = np.hypot(d[:, 0], d[:, 1]); rng = np.hypot(r, d[:, 2])
+    el = np.arctan2(d[:, 2], np.maximum(r, 1e-6)); az = np.arctan2(d[:, 1], d[:, 0])
+    inc = np.sort(np.asarray(inclinations, np.float64))                      # ascending
+    k = np.clip(np.searchsorted(inc, el), 1, len(inc) - 1)
+    k = np.where(np.abs(el - inc[k - 1]) <= np.abs(el - inc[k]), k - 1, k)  # nearest ascending index
+    lo = inc[0] - (inc[1] - inc[0]) / 2; hi = inc[-1] + (inc[-1] - inc[-2]) / 2
+    row = len(inc) - 1 - k                                                   # rows top -> bottom (row 0 = highest beam)
+    col = np.clip(np.floor((az + np.pi) / (2 * np.pi) * n_cols).astype(np.int64), 0, n_cols - 1)
+    valid = (el >= lo) & (el <= hi)
+    pix = np.where(valid, row * n_cols + col, -1)
+    return pix, np.where(valid, row, -1), rng
+
+
+def zbuffer_keep(pix, rng):
+    """True for the NEAREST point of every pixel (pixel -1 never kept): one return per pixel, as a range image holds."""
+    keep = np.zeros(len(pix), bool); idx = np.nonzero(pix >= 0)[0]
+    if len(idx):
+        o = idx[np.lexsort((rng[idx], pix[idx]))]
+        first = np.ones(len(o), bool); first[1:] = pix[o][1:] != pix[o][:-1]
+        keep[o[first]] = True
+    return keep
+
+
+def lattice_features(xyz, pix, rng):
+    """Per point: log candidates in its pixel, its range rank inside the pixel (0 = nearest, capped at 7), log points in
+    its detector voxel. Points with pixel -1 get 0 candidates / rank 7."""
+    n = len(pix); cand = np.zeros(n, np.float32); rank = np.full(n, 7.0, np.float32)
+    idx = np.nonzero(pix >= 0)[0]
+    if len(idx):
+        _, inv, cnt = np.unique(pix[idx], return_inverse=True, return_counts=True); cand[idx] = cnt[inv]
+        o = idx[np.lexsort((rng[idx], pix[idx]))]; grp = pix[o]
+        start = np.r_[0, np.nonzero(grp[1:] != grp[:-1])[0] + 1]
+        pos = np.arange(len(o)) - np.repeat(start, np.diff(np.r_[start, len(o)]))
+        rank[o] = np.minimum(pos, 7)
+    vk = np.floor((xyz[:, :3] - DET_PCR[:3]) / DET_VOXEL).astype(np.int64)
+    key = (vk[:, 0] * 2000 + vk[:, 1]) * 100 + vk[:, 2]
+    _, vinv, vcnt = np.unique(key, return_inverse=True, return_counts=True)
+    return np.stack([np.log1p(cand), rank, np.log(vcnt[vinv].astype(np.float32))], 1).astype(np.float32)
+
+
 class LearnedPointSampler:
     """Holds the rate table, feature normalisation and MLP weights; pure numpy at inference."""
 
-    def __init__(self, rate, max_dist, shift_z, feat_mean, feat_std, w1, b1, w2, b2, w3, b3, obs_mask=None):
+    def __init__(self, rate, max_dist, shift_z, feat_mean, feat_std, w1, b1, w2, b2, w3, b3, obs_mask=None,
+                 rule_kind='rate', lattice_inc=None, lattice_cols=0, lattice_sensor_z=0.0, rule_margin=4.0):
         self.rate = np.asarray(rate, np.float32)
         self.max_dist = float(max_dist)
         self.shift_z = float(shift_z)
@@ -74,16 +125,28 @@ class LearnedPointSampler:
         # probability is the rule's (measured where the target observes). None = every cell (samplers
         # trained before 2026-10-04 carry no mask and behave exactly as before). 20261003_04 section 17.
         self.obs_mask = None if obs_mask is None else np.asarray(obs_mask, bool)
+        # rule_kind 'rate' = the per-bin density rule (every sampler before 2026-10-08). 'zbuffer' = a virtual target range
+        # image: the rule keeps the nearest point of every pixel (logit +rule_margin) and drops the rest (-rule_margin),
+        # and the MLP also sees LATTICE_FEATURE_NAMES (20261003_04 §38).
+        self.rule_kind = str(rule_kind); self.rule_margin = float(rule_margin)
+        self.lattice_inc = None if lattice_inc is None else np.asarray(lattice_inc, np.float64)
+        self.lattice_cols = int(lattice_cols); self.lattice_sensor_z = float(lattice_sensor_z)
 
     # ---- persistence
     @classmethod
     def load(cls, path):
         d = np.load(path)
         kw = {k: d[k] for k in ('rate', 'max_dist', 'shift_z', 'feat_mean', 'feat_std', 'w1', 'b1', 'w2', 'b2', 'w3', 'b3')}
+        if 'rule_kind' in d.files and str(d['rule_kind']) == 'zbuffer':
+            kw.update(rule_kind='zbuffer', lattice_inc=d['lattice_inc'], lattice_cols=int(d['lattice_cols']),
+                      lattice_sensor_z=float(d['lattice_sensor_z']), rule_margin=float(d['rule_margin']))
         return cls(**kw, obs_mask=d['obs_mask'] if 'obs_mask' in d.files else None)
 
     def save(self, path):
         extra = {} if self.obs_mask is None else {'obs_mask': self.obs_mask}
+        if self.rule_kind == 'zbuffer':
+            extra.update(rule_kind='zbuffer', lattice_inc=self.lattice_inc, lattice_cols=self.lattice_cols,
+                         lattice_sensor_z=self.lattice_sensor_z, rule_margin=self.rule_margin)
         np.savez(path, rate=self.rate, max_dist=self.max_dist, shift_z=self.shift_z, feat_mean=self.feat_mean,
                  feat_std=self.feat_std, w1=self.w1, b1=self.b1, w2=self.w2, b2=self.b2, w3=self.w3, b3=self.b3, **extra)
 
@@ -110,7 +173,20 @@ class LearnedPointSampler:
         h = np.maximum(h @ self.w2 + self.b2, 0)
         return (h @ self.w3 + self.b3)[:, 0]
 
+    def lattice_parts(self, points):
+        """(rule logit, extra features) of the z-buffer rule for one cloud."""
+        pix, _, rng = lattice_pixels(points, self.lattice_inc, self.lattice_cols, self.lattice_sensor_z)
+        rule = np.where(zbuffer_keep(pix, rng), self.rule_margin, -self.rule_margin).astype(np.float32)
+        return rule, lattice_features(points, pix, rng)
+
     def keep_probability(self, points, feats=None):
+        if self.rule_kind == 'zbuffer':
+            rule, fx = self.lattice_parts(points)
+            base = point_features(points, self.shift_z) if feats is None else feats[:, :len(FEATURE_NAMES)]
+            corr = self.mlp(np.concatenate([base, fx], 1))
+            if self.obs_mask is not None:
+                corr = corr * self.obs_mask[cell_index(base[:, 0], np.arctan2(base[:, 7], base[:, 6]))]
+            return 1.0 / (1.0 + np.exp(-np.clip(rule + corr, -30, 30)))
         if feats is None:
             feats = point_features(points, self.shift_z)
         corr = self.mlp(feats)

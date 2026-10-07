@@ -145,3 +145,65 @@ def test_voxel_structure_neighbours_and_rings():
     assert occupied[vox[:4]].tolist() == [3, 3, 3, 3] and occupied[vox[5]] == 0 and len(pv) == 12
     assert set(zip(pv.tolist(), pu.tolist())) == set(zip(pu.tolist(), pv.tolist()))   # symmetric
     assert ring[vox[0]] == 0 and ring[vox[5]] == 5                                      # 0-10 m and 50+ m
+
+
+# ---- the lattice (virtual range image) sampler, 20261003_04 §38 ------------------------------------------------------
+INC = np.radians(np.linspace(2.0, -18.0, 64))  # top -> bottom, like Waymo TOP's published inclinations
+SENSOR_Z = 2.184
+
+
+def _at(el_deg, az_deg, r):
+    e, a = np.radians(el_deg), np.radians(az_deg)
+    return np.array([r * np.cos(a), r * np.sin(a), SENSOR_Z + r * np.tan(e)])
+
+
+def test_lattice_pixels_rows_columns_and_the_fov_sentinel():
+    from pcdet.datasets.processor.point_sampler import lattice_pixels
+    pts = np.array([_at(2.0, 0.0, 20), _at(-18.0, 90.0, 20), _at(np.degrees(INC[10]), -90.0, 30), _at(10.0, 0.0, 20),
+                    _at(-30.0, 0.0, 5)])
+    pix, row, rng = lattice_pixels(pts, INC, 2650, SENSOR_Z)
+    assert row[0] == 0 and row[1] == 63 and row[2] == 10                     # top beam, bottom beam, a middle beam
+    assert pix[3] == -1 and pix[4] == -1 and row[3] == -1                    # above / below the vertical FOV: sentinel
+    assert pix[0] // 2650 == 0 and abs(pix[0] % 2650 - 1325) <= 1           # azimuth 0 -> the middle column
+    np.testing.assert_allclose(rng[0], 20 / np.cos(np.radians(2.0)), rtol=1e-6)
+
+
+def test_zbuffer_keeps_only_the_nearest_point_of_each_pixel():
+    from pcdet.datasets.processor.point_sampler import lattice_pixels, zbuffer_keep
+    pts = np.array([_at(-5.0, 10.0, 30), _at(-5.0, 10.0, 20), _at(-5.0, 10.0, 25), _at(-5.0, 40.0, 50), _at(40.0, 0, 9)])
+    pix, _, rng = lattice_pixels(pts, INC, 2650, SENSOR_Z)
+    keep = zbuffer_keep(pix, rng)
+    assert keep.tolist() == [False, True, False, True, False]                # nearest of the three; alone; outside FOV
+
+
+def test_voxel_pixel_expectations_match_monte_carlo():
+    import torch
+    sys.path.insert(0, str(ROOT / 'tools'))
+    from analysis.train_point_sampler import voxel_pixel_expectations
+    rng = np.random.default_rng(0)
+    p = rng.uniform(0.05, 0.95, 12); vox = np.array([0, 0, 0, 1, 1, 2, -1, 3, 3, 3, 3, 2]); pix = np.array([0, 0, 1, 1, -1, 2, 2, 2, 3, 3, 3, -1])
+    P_occ, P_one, P_pix = voxel_pixel_expectations(torch.tensor(p, dtype=torch.float64), torch.tensor(vox), 4, torch.tensor(pix), 4)
+    draws = rng.random((200000, len(p))) < p
+    for v in range(4):
+        k = draws[:, vox == v].sum(1)
+        assert abs(float(P_occ[v]) - (k >= 1).mean()) < 0.005 and abs(float(P_one[v]) - (k == 1).mean()) < 0.005
+    for q in range(4):
+        assert abs(float(P_pix[q]) - (draws[:, pix == q].sum(1) >= 1).mean()) < 0.005
+
+
+def test_zbuffer_sampler_init_is_the_rule_and_roundtrips(tmp_path):
+    from pcdet.datasets.processor.point_sampler import (LearnedPointSampler, lattice_pixels, zbuffer_keep, FEATURE_NAMES,
+                                                        LATTICE_FEATURE_NAMES)
+    n_in = len(FEATURE_NAMES) + len(LATTICE_FEATURE_NAMES); h = 8; r = np.random.default_rng(1)
+    s = LearnedPointSampler(np.ones(1), 75.0, 1.75, np.zeros(n_in), np.ones(n_in), r.normal(size=(n_in, h)), np.zeros(h),
+                            r.normal(size=(h, h)), np.zeros(h), np.zeros((h, 1)), np.zeros(1), rule_kind='zbuffer',
+                            lattice_inc=INC, lattice_cols=2650, lattice_sensor_z=SENSOR_Z, rule_margin=4.0)
+    pts = np.array([_at(-5.0, 10.0, 30), _at(-5.0, 10.0, 20), _at(-5.0, 40.0, 50), _at(40.0, 0, 9)]).astype(np.float32)
+    pts[:, 2] -= 0.0
+    pix, _, rng = lattice_pixels(pts, INC, 2650, SENSOR_Z); zb = zbuffer_keep(pix, rng)
+    np.testing.assert_allclose(s.keep_probability(pts), np.where(zb, 1 / (1 + np.exp(-4.0)), 1 / (1 + np.exp(4.0))), atol=1e-6)
+    s.save(tmp_path / 'z.npz'); s2 = LearnedPointSampler.load(tmp_path / 'z.npz')
+    assert s2.rule_kind == 'zbuffer' and s2.lattice_cols == 2650 and abs(s2.lattice_sensor_z - SENSOR_Z) < 1e-9
+    np.testing.assert_allclose(s2.keep_probability(pts), s.keep_probability(pts), atol=1e-6)
+    old = _rule_sampler(np.full(50, 0.3, np.float32)); old.save(tmp_path / 'old.npz')
+    assert LearnedPointSampler.load(tmp_path / 'old.npz').rule_kind == 'rate'          # earlier weights unchanged

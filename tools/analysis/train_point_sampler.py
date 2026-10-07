@@ -93,6 +93,144 @@ def voxel_structure(xyz):
     return vox, np.digitize(r, OCC_EDGES), r, az, np.concatenate(pv), np.concatenate(pu)
 
 
+LAT_RINGS = [0, 10, 20, 30, 40, 50, 75]  # the native lattice statistics' rings (planar range)
+
+
+def voxel_pixel_expectations(p, vox, n_vox, pix, n_pix):
+    """Differentiable expectations under independent Bernoulli keeps p: per voxel P(occupied) = 1 - prod(1 - p_i) and
+    P(exactly one point) = prod(1 - p_i) * sum p_i / (1 - p_i); per pixel P(occupied). Index -1 = no voxel / no pixel."""
+    p = p.clamp(1e-6, 1 - 1e-6); l1 = torch.log1p(-p); odds = p / (1 - p)
+    mv = vox >= 0; mp = pix >= 0
+    z = lambda n: torch.zeros(n, dtype=p.dtype)
+    q = torch.exp(z(n_vox).index_add_(0, vox[mv], l1[mv]))
+    s = z(n_vox).index_add_(0, vox[mv], odds[mv])
+    qp = torch.exp(z(n_pix).index_add_(0, pix[mp], l1[mp]))
+    return 1 - q, q * s, 1 - qp
+
+
+def lattice_structure(clouds, lattice_inc, n_cols, sensor_z):
+    """For frames given as detector-frame xyz (the SAME coordinates the rule was computed from): global voxel id per point (detector grid; -1 outside), voxel ring, global pixel id per point
+    (-1 = outside the virtual FOV), pixel row and pixel ring (planar range of the pixel's NEAREST candidate)."""
+    from pcdet.datasets.processor.point_sampler import lattice_pixels, DET_VOXEL, DET_PCR
+    V, VR, P, PR, PG = [], [], [], [], []; voff = poff = 0
+    for xyz in clouds:
+        xyz = np.asarray(xyz, np.float64)
+        inside = np.all((xyz >= DET_PCR[:3]) & (xyz < DET_PCR[3:]), 1)
+        ijk = np.floor((xyz - DET_PCR[:3]) / DET_VOXEL).astype(np.int64)
+        key = np.where(inside, (ijk[:, 0] * 2000 + ijk[:, 1]) * 100 + ijk[:, 2], -1)
+        uk, inv = np.unique(key[inside], return_inverse=True)
+        vox = np.full(len(xyz), -1, np.int64); vox[inside] = inv + voff
+        cen = DET_PCR[:3] + (np.stack([uk // 100 // 2000, (uk // 100) % 2000, uk % 100], 1) + 0.5) * DET_VOXEL
+        VR.append(np.digitize(np.hypot(cen[:, 0], cen[:, 1]), LAT_RINGS) - 1); voff += len(uk)
+        pix, row, rng = lattice_pixels(xyz, lattice_inc, n_cols, sensor_z)
+        up, pinv = np.unique(pix[pix >= 0], return_inverse=True)
+        gp = np.full(len(xyz), -1, np.int64); gp[pix >= 0] = pinv + poff
+        r_pl = np.hypot(xyz[:, 0], xyz[:, 1])
+        nearest_rpl = np.full(len(up), np.inf); np.minimum.at(nearest_rpl, pinv, r_pl[pix >= 0])
+        PR.append(np.digitize(nearest_rpl, LAT_RINGS) - 1); PG.append(up // n_cols); poff += len(up)
+        V.append(vox); P.append(gp)
+    return (np.concatenate(V), np.concatenate(VR), voff, np.concatenate(P), np.concatenate(PR), np.concatenate(PG), poff)
+
+
+def target_voxel_counts(target, n_frames):
+    """Per lattice ring, per frame: occupied detector voxels holding exactly one point and holding >= 2 (Waymo TRAIN)."""
+    from pcdet.datasets.processor.point_sampler import DET_VOXEL, DET_PCR
+    n_r = len(LAT_RINGS) - 1; one = np.zeros(n_r); multi = np.zeros(n_r); n = 0
+    for pts in strided(target, n_frames):
+        xyz = pts[:, :3].astype(np.float64); inside = np.all((xyz >= DET_PCR[:3]) & (xyz < DET_PCR[3:]), 1)
+        ijk = np.floor((xyz[inside] - DET_PCR[:3]) / DET_VOXEL).astype(np.int64)
+        _, idx, cnt = np.unique((ijk[:, 0] * 2000 + ijk[:, 1]) * 100 + ijk[:, 2], return_index=True, return_counts=True)
+        cen = DET_PCR[:3] + (ijk[idx] + 0.5) * DET_VOXEL; ring = np.digitize(np.hypot(cen[:, 0], cen[:, 1]), LAT_RINGS) - 1
+        ok = (ring >= 0) & (ring < n_r); n += 1
+        one += np.bincount(ring[ok & (cnt == 1)], minlength=n_r)[:n_r]
+        multi += np.bincount(ring[ok & (cnt >= 2)], minlength=n_r)[:n_r]
+    return one / max(n, 1), multi / max(n, 1)
+
+
+def _train_lattice(source, target, dc, sz, args, logger):
+    """The lattice-matching sampler (20261003_04 §38): rule = a virtual target range-image z-buffer; objective T1 = per
+    ring, single- and multi-point voxels per frame at the detector grid vs target TRAIN clouds; T2 = per beam row and per
+    ring, occupied virtual pixels per frame vs the target's NATIVE range-image statistics."""
+    from pcdet.datasets.processor.point_sampler import (LearnedPointSampler, lattice_pixels, zbuffer_keep, lattice_features,
+                                                        FEATURE_NAMES, LATTICE_FEATURE_NAMES)
+    st = np.load(args.lattice_stats); inc = st['inclinations']; n_cols = args.lattice_cols
+    T_row = st['valid_row'] * n_cols; T_ring = st['ring_valid']
+    feats, extras, rules, clouds = [], [], [], []
+    with _augmentation_off(source):
+        for i, pts in enumerate(strided(source, args.frames)):
+            f = point_features(pts, sz); pix, _, rng = lattice_pixels(pts, inc, n_cols, args.sensor_height)
+            feats.append(f); extras.append(lattice_features(pts, pix, rng)); rules.append(zbuffer_keep(pix, rng))
+            clouds.append(pts[:, :3].astype(np.float32))
+            if (i + 1) % 20 == 0:
+                print(f'  source frames: {i + 1}', flush=True)
+    F = np.concatenate([np.concatenate(feats), np.concatenate(extras)], 1); ZB = np.concatenate(rules)
+    vox, vring, n_vox, pix, pring, prow, n_pix = lattice_structure(clouds, inc, n_cols, args.sensor_height)
+    T_one, T_multi = target_voxel_counts(target, args.frames)
+    n_src = len(feats); n_r = len(LAT_RINGS) - 1
+    print(f'lattice: {len(F)} source points, {n_vox} voxels, {n_pix} occupied virtual pixels over {n_src} frames; '
+          f'zbuffer keeps {ZB.mean():.3f}', flush=True)
+    sampler = LearnedPointSampler(np.ones(1, np.float32), 75.0, sz, F.mean(0), F.std(0) + 1e-6,
+                                  *[None] * 6, rule_kind='zbuffer', lattice_inc=inc, lattice_cols=n_cols,
+                                  lattice_sensor_z=args.sensor_height, rule_margin=args.rule_margin)
+    rng0 = np.random.default_rng(0); n_in = F.shape[1]; h = 32
+    w1 = torch.tensor(rng0.normal(0, 1 / np.sqrt(n_in), (n_in, h)), dtype=torch.float32, requires_grad=True)
+    b1 = torch.zeros(h, requires_grad=True)
+    w2 = torch.tensor(rng0.normal(0, 1 / np.sqrt(h), (h, h)), dtype=torch.float32, requires_grad=True)
+    b2 = torch.zeros(h, requires_grad=True); w3 = torch.zeros(h, 1, requires_grad=True); b3 = torch.zeros(1, requires_grad=True)
+    x = torch.tensor((F - sampler.feat_mean) / sampler.feat_std, dtype=torch.float32)
+    base = torch.tensor(np.where(ZB, args.rule_margin, -args.rule_margin), dtype=torch.float32)
+    vox_t, pix_t = torch.tensor(vox), torch.tensor(pix)
+    vr_t = torch.tensor(np.clip(vring, 0, n_r - 1)); vok = torch.tensor((vring >= 0) & (vring < n_r), dtype=torch.float32)
+    pr_t = torch.tensor(np.clip(pring, 0, n_r - 1)); pok = torch.tensor((pring >= 0) & (pring < n_r), dtype=torch.float32)
+    pg_t = torch.tensor(prow)
+    Tone, Tmul = torch.tensor(T_one, dtype=torch.float32), torch.tensor(T_multi, dtype=torch.float32)
+    Trow, Tring = torch.tensor(T_row, dtype=torch.float32), torch.tensor(T_ring, dtype=torch.float32)
+    ring_ok = (Tone + Tmul) > 0
+
+    def stats(p):
+        P_occ, P_one, P_pix = voxel_pixel_expectations(p, vox_t, n_vox, pix_t, n_pix)
+        one = torch.zeros(n_r).index_add_(0, vr_t, P_one * vok) / n_src
+        mul = torch.zeros(n_r).index_add_(0, vr_t, (P_occ - P_one) * vok) / n_src
+        row = torch.zeros(len(T_row)).index_add_(0, pg_t, P_pix) / n_src
+        ring = torch.zeros(n_r).index_add_(0, pr_t, P_pix * pok) / n_src
+        return one, mul, row, ring
+
+    def loss(p):
+        one, mul, row, ring = stats(p)
+        t1 = ((torch.log1p(one) - torch.log1p(Tone)) ** 2 + (torch.log1p(mul) - torch.log1p(Tmul)) ** 2)[ring_ok].mean()
+        t2 = ((torch.log1p(row) - torch.log1p(Trow)) ** 2).mean() + ((torch.log1p(ring) - torch.log1p(Tring)) ** 2).mean()
+        return t1 + args.t2_weight * t2, t1, t2
+
+    def line(tag, p):
+        with torch.no_grad():
+            one, mul, row, ring = stats(p); _, t1, t2 = loss(p)
+        g = lambda v: ' '.join(f'{float(a):.0f}' for a in v)
+        return (f'{tag}: T1 {float(t1):.4f} T2 {float(t2):.4f} | 1-pt voxels/frame {g(one)} | multi-pt {g(mul)} | '
+                f'pixels/frame by ring {g(ring)} | row valid rate (8-row groups) '
+                + ' '.join(f'{float(row[k:k + 8].mean()) / n_cols:.2f}' for k in range(0, len(T_row), 8)))
+
+    print('target: 1-pt voxels/frame ' + ' '.join(f'{a:.0f}' for a in T_one) + ' | multi-pt ' + ' '.join(f'{a:.0f}' for a in T_multi)
+          + ' | native pixels/frame by ring ' + ' '.join(f'{a:.0f}' for a in T_ring) + ' | native row valid rate '
+          + ' '.join(f'{st["valid_row"][k:k + 8].mean():.2f}' for k in range(0, 64, 8)), flush=True)
+    print(line('raw source (p=1)       ', torch.full((len(F),), 1 - 1e-6)), flush=True)
+    print(line('z-buffer rule (init)   ', torch.sigmoid(base)), flush=True)
+    opt = torch.optim.Adam([w1, b1, w2, b2, w3, b3], lr=args.lr)
+    for step in range(args.steps):
+        opt.zero_grad()
+        hh = torch.relu(torch.relu(x @ w1 + b1) @ w2 + b2); p = torch.sigmoid(base + (hh @ w3 + b3)[:, 0])
+        L, t1, t2 = loss(p); L.backward(); opt.step()
+        if (step + 1) % 50 == 0:
+            print(f'  step {step + 1}: T1 {float(t1):.4f}  T2 {float(t2):.4f}  mean keep {float(p.mean()):.3f}', flush=True)
+    with torch.no_grad():
+        hh = torch.relu(torch.relu(x @ w1 + b1) @ w2 + b2); p = torch.sigmoid(base + (hh @ w3 + b3)[:, 0])
+    print(line('trained                ', p) + f' | mean keep {float(p.mean()):.3f}', flush=True)
+    sampler.w1, sampler.b1, sampler.w2, sampler.b2, sampler.w3, sampler.b3 = [
+        t.detach().numpy().astype(np.float32) for t in (w1, b1, w2, b2, w3, b3)]
+    sampler.save(args.out); print(f'saved {args.out}', flush=True)
+    init = LearnedPointSampler.load(args.out); init.w3 = np.zeros_like(init.w3); init.b3 = np.zeros_like(init.b3)
+    init.save(args.out.replace('.npz', '_init.npz')); print(f'saved {args.out.replace(".npz", "_init.npz")} (the z-buffer rule)', flush=True)
+
+
 def target_occupancy(target, n_frames):
     """Occupied voxels per frame and mean occupied neighbours per voxel, per ring, on unlabelled target clouds."""
     n_r = len(OCC_EDGES) + 1; occ = np.zeros(n_r); nbr = np.zeros(n_r); n = 0
@@ -156,6 +294,13 @@ def main():
     ap.add_argument('--occ_weight', type=float, default=0.0,
                     help='weight of the voxel-occupancy term (expected occupied voxels and occupied neighbours per voxel, '
                          'per ring, at the detector grid, against the target). 0 = off, as every sampler before 2026-10-05')
+    ap.add_argument('--objective', default='density', choices=['density', 'lattice'],
+                    help="'lattice': the virtual-range-image z-buffer rule + per-voxel / per-pixel lattice terms (§38)")
+    ap.add_argument('--lattice_stats', default='/home/koyama/data/samplers/waymo_top_native_lattice_stats.npz')
+    ap.add_argument('--lattice_cols', type=int, default=2650)
+    ap.add_argument('--sensor_height', type=float, default=2.184, help='virtual sensor z in the detector (ground-origin) frame')
+    ap.add_argument('--rule_margin', type=float, default=4.0)
+    ap.add_argument('--t2_weight', type=float, default=1.0)
     ap.add_argument('--gate', default='observed', choices=['observed', 'none'],
                     help="'observed' (default since 2026-10-04): the learned correction acts only in cells the target "
                          "returned points in, the rule alone elsewhere")
@@ -173,6 +318,8 @@ def main():
                                     workers=0, logger=logger, training=True, model_ontology=cfg.get('ONTOLOGY'))
     tz = float(calib_cfg.get('SHIFT_COOR', [0, 0, 0])[2]); sz = float(dc.get('SHIFT_COOR', [0, 0, 0])[2])
     print(f'source {key} ({type(source).__name__}, augmentation off), target {type(target).__name__} {split} split', flush=True)
+    if args.objective == 'lattice':
+        return _train_lattice(source, target, dc, sz, args, logger)
 
     cache = Path(args.cache) if args.cache else Path(args.out).with_suffix('.cache.npz')
     if cache.exists():
