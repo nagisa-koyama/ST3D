@@ -1,0 +1,49 @@
+# FULLY UDA-LEGAL S2 PSEUDO-LABELLING FROM THE GBlobs + ACCUMULATION TEACHER (user's go 2026-10-07: "GBlobs teacher").
+#
+# The legal chain of centerpoint-accum-legaldepth-st3d-nuscenes2kitti (27566, MeanVFE teacher 27468: 76.66 / 48.25
+# against its teacher's 73.70 / 46.82) with ONE change: the encoder of teacher, init and student is GBlobsVFE.
+# Teacher and init: job 27471 (centerpoint-gblobs-accum-legaldepth-nuscenes2kitti, W&B jguwly5u, epoch 20:
+# 75.67 / 47.93), Boston (n008) 15 / Singapore (n015) 10 sweeps, family default Car interval [0.85, 1.20].
+# Resolved, this config must differ from the 27566 config only in MODEL.VFE, SELF_TRAIN.MODEL_TEACHER.VFE and the
+# two cut lines (checked with the repo's loader before launch). The teacher is built from MODEL_TEACHER, so its
+# VFE MUST be GBlobs too: a MeanVFE teacher loading a GBlobs checkpoint "not strict" would skip the mismatched
+# first-layer weights and label with a random input layer.
+#
+# Cuts: the pre-declared rules applied to THIS teacher (20261004_01 §5e; scripts/_legal_chain_step2_teacher.sh):
+# - SCORE_THRESH, all classes: rule B - the smallest t from which the teacher's precision on the labelled SOURCE
+#   val (n008 at 15 sweeps + n015 at 10) stays >= 0.50 (1.0 m centre match, >= 50 kept), else gated off at 1.01.
+# - NEG_THRESH, per class: rule A - the background plateau's upper half-maximum on the teacher's KITTI-train
+#   pseudo-labels (score floor 0.0001). A SCORE_THRESH below its NEG_THRESH is raised to it.
+# No target label reaches any value here. PROG_AUG on (decision F). GBlobs as published (decision F).
+#
+# Pre-declared reading (written 2026-10-07 before any result; one seed, ~2 AP single-run noise):
+# - against its own teacher 27471 (75.67 / 47.93): pseudo-labelling adds on GBlobs if BEV >= +2;
+# - against 27566 (76.66 / 48.25): the encoder and pseudo-labelling STACK if this row is >= +2 BEV above 27566;
+#   level (within 2) means the two remove the same residual (both gains are far-range recall?), read with
+#   kitti_target_box_errors.py per range as for 27566.
+#
+# Launch (2 GPUs, 150G, seed 666; keep off node13 / node61 / node03):
+#   EST_H=45 scripts/submit.sh --mem=150G --exclude=node03,node13,node61 scripts/run_sourceonly_2gpu.sh \
+#       cfgs/da-ieee-access/centerpoint-gblobs-accum-legaldepth-st3d-nuscenes2kitti.yaml <tag> <run> \
+#       --pretrained_model <27471 ep20> --pretrained_model_teacher <27471 ep20>
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-legaldepth-st3d-nuscenes2kitti.yaml
+
+MODEL:
+    VFE:
+        NAME: GBlobsVFE
+        RELATIVE_DISTANCE: True
+        COVARIANCE_ONLY: False
+        COVARIANCE_SCALE: 1.0
+
+SELF_TRAIN:
+    # NOT YET DERIVED: filled from the step-2 job's output before any launch. 1.01 gates every class off, so a
+    # launch with these values trains on the source alone and cannot pass as a pseudo-labelling row.
+    SCORE_THRESH: [1.01, 1.01, 1.01]
+    NEG_THRESH: [1.01, 1.01, 1.01]
+
+    MODEL_TEACHER:
+        VFE:
+            NAME: GBlobsVFE
+            RELATIVE_DISTANCE: True
+            COVARIANCE_ONLY: False
+            COVARIANCE_SCALE: 1.0
