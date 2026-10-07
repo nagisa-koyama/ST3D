@@ -1,0 +1,11 @@
+# EVAL-ONLY diagnosis (a0) for A2 (27546), experiments_md/20261006_01 §8: the same checkpoint scored on KITTI val with the
+# TARGET cropped to the camera FOV before the 16,384-point sampling (ALLOW_FOV_POINTS_ONLY, kitti_dataset.py). Nothing else
+# changes. Legal as a diagnosis: the crop uses only the camera's published FOV, which is also the evaluated region; no
+# labels. If it ever becomes a method row, its input differs from the CenterPoint rows, which see 360 deg and drop
+# predictions outside the FOV - state that beside every cross-detector comparison.
+# Pre-declared reading: if the crop lifts A1 (two-seed mean 43.58 Car BEV moderate) by >= +3 BEV, the eval-side dilution
+# is real and A1's "MeanVFE level" was partly a protocol artefact; otherwise the dilution sits on the training side.
+_BASE_CONFIG_: cfgs/da-ieee-access-pointrcnn/iassd-accum-legaldepth-nuscenes2kitti.yaml
+DATA_CONFIG_TAR:
+    FOV_POINTS_ONLY: True
+    ALLOW_FOV_POINTS_ONLY: True
