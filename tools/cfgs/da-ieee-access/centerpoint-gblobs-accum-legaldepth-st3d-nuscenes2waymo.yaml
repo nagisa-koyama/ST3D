@@ -46,8 +46,8 @@ DATA_CONFIG_TAR:
     SAMPLED_INTERVAL: {'train': 10, 'test': 5}
 
 SELF_TRAIN:
-  SCORE_THRESH: [0.17, 0.32, 0.38]   # rule B for teacher 27471 (job 27608, labelled SOURCE val); target-independent, so reused unchanged
-  NEG_THRESH: [-1.0, -1.0, -1.0]   # PLACEHOLDER until step 2 on WAYMO TRAIN (rule A); a negative value cannot be launched by pqueue (gate file)
+  SCORE_THRESH: [0.18, 0.32, 0.38]   # rule B for teacher 27471 (job 27608, labelled SOURCE val: 0.17 / 0.32 / 0.38), Car raised to its NEG_THRESH by rule A step 6
+  NEG_THRESH: [0.180, 0.207, 0.153]   # job 27699: rule A on teacher 27471's Waymo TRAIN pseudo-labels (SAMPLED_INTERVAL 10, floor 0.0001; plateau modes 0.107 / 0.107 / 0.085)
   MODEL_TEACHER:
     VFE: {NAME: GBlobsVFE, RELATIVE_DISTANCE: true, COVARIANCE_ONLY: false, COVARIANCE_SCALE: 1.0}
     CLASS_NAMES: [Car, Pedestrian, Cyclist]
