@@ -11,14 +11,31 @@ from ...utils import common_utils, box_utils, level_utils, self_training_utils, 
 from ..dataset import DatasetTemplate
 
 
-def select_sweep_indices(sweeps, max_sweeps, selection=None):
-    """Indices into `sweeps` (most recent first, as stored) for one anchor.
+def distinct_real_sweeps(sweeps, anchor_lidar_path):
+    """Drop padded entries: the anchor itself (transform None or the anchor's file) and any file seen before."""
+    seen, out = {anchor_lidar_path}, []
+    for s in sweeps:
+        if s.get('transform_matrix') is None or s['lidar_path'] in seen:
+            continue
+        seen.add(s['lidar_path']); out.append(s)
+    return out
 
-    selection None or MODE 'consecutive': the max_sweeps-1 most recent (the original loader).
+
+def select_sweep_indices(sweeps, max_sweeps, selection=None):
+    """Indices into `sweeps` for one anchor (past sweeps most recent first, as stored; future sweeps, if any, appended
+    after them with NEGATIVE time_lag).
+
+    selection None or MODE 'consecutive': the max_sweeps-1 most recent past sweeps (the original loader).
     MODE 'displacement', SPAN_M D: the sweeps nearest to max_sweeps-1 displacement targets spread uniformly over
     (0, min(D, farthest available)], each sweep used once; displacement = norm of the sweep->anchor translation.
+    With FUTURE true the targets are split between the past and the future side in proportion to the span each side
+    can reach (each up to D), and a target is served from its own side first.
     """
-    n = min(max_sweeps - 1, len(sweeps))
+    lags = np.array([float(s.get('time_lag', 0.0)) for s in sweeps])
+    is_future = lags < 0
+    n_past = int((~is_future).sum())
+    future = bool(selection and selection.get('FUTURE', False))
+    n = min(max_sweeps - 1, len(sweeps) if future else n_past)
     if n <= 0:
         return []
     if not selection or selection.get('MODE', 'consecutive') == 'consecutive':
@@ -26,13 +43,29 @@ def select_sweep_indices(sweeps, max_sweeps, selection=None):
     assert selection['MODE'] == 'displacement', selection
     disp = np.array([np.linalg.norm(s['transform_matrix'][:3, 3]) if s.get('transform_matrix') is not None else 0.0
                      for s in sweeps])
-    reach = min(float(selection['SPAN_M']), float(disp.max()))
-    targets = np.linspace(0.0, reach, max_sweeps)[1:]
+    span = float(selection['SPAN_M'])
+    if not future:
+        cand = np.nonzero(~is_future)[0]
+        reach = min(span, float(disp[cand].max()))
+        targets = [(t, False) for t in np.linspace(0.0, reach, max_sweeps)[1:]]
+    else:
+        reach_p = min(span, float(disp[~is_future].max())) if (~is_future).any() else 0.0
+        reach_f = min(span, float(disp[is_future].max())) if is_future.any() else 0.0
+        tot = reach_p + reach_f
+        m_f = int(round(n * reach_f / tot)) if tot > 0 else 0
+        m_p = n - m_f
+        targets = [(t, False) for t in np.linspace(0.0, reach_p, m_p + 1)[1:]] + \
+                  [(t, True) for t in np.linspace(0.0, reach_f, m_f + 1)[1:]]
     chosen = []
-    for tgt in targets:
-        for k in np.argsort(np.abs(disp - tgt), kind='stable'):
-            if int(k) not in chosen:
-                chosen.append(int(k)); break
+    for tgt, side in targets:
+        order = np.argsort(np.abs(disp - tgt), kind='stable')
+        same = [int(k) for k in order if bool(is_future[k]) == side and int(k) not in chosen]
+        other = [int(k) for k in order if int(k) not in chosen and (future or not is_future[k])]
+        pick = same[0] if same else (other[0] if other else None)
+        if pick is not None:
+            chosen.append(pick)
+        if len(chosen) >= n:
+            break
     return sorted(chosen)
 
 
@@ -217,6 +250,47 @@ class NuScenesDataset(DatasetTemplate):
         cur_times = sweep_info['time_lag'] * np.ones((1, points_sweep.shape[1]))
         return points_sweep.T, cur_times.T
 
+    def future_sweeps(self, info, max_disp_m):
+        """Sweeps AFTER this keyframe in its scene, as sweep dicts in this keyframe's sensor frame, oldest first.
+
+        SWEEP_SELECTION.FUTURE (experiments_md 20261007_03 §15, user 2026-10-08): stored sweeps reach only into the
+        past, and for an ego driving forward a far car AHEAD was even farther in every past sweep, so its elevation can
+        only shrink and a ring can never sweep across its body. Approaching sweeps can. Each later keyframe f of the
+        scene contributes the sweeps recorded between the previous keyframe and f (from f's own `sweeps`, time_lag
+        < t_f - t_prev) and f itself, mapped by S_anchor . inv(S_f) . tm_sweep with S = ref_from_car . car_from_global
+        - the same chain the past sweeps use. time_lag is negative (the sweep is later than the anchor), so the motion
+        compensator interpolates boxes at anchor_t - time_lag, i.e. in the future, within the same scene. Stops past
+        max_disp_m of ego displacement or at the scene end. Offline SOURCE data only; no label is read here.
+        """
+        comp = self._sweep_compensator
+        assert comp is not None, 'SWEEP_SELECTION.FUTURE needs the motion compensator (it holds the scene order)'
+        if getattr(self, '_frame_to_info', None) is None:
+            tok2info = {inf['token']: inf for inf in self.infos}
+            self._frame_to_info = {i: tok2info.get(tok) for tok, i in comp.tok2frame.items()}
+        i = comp.tok2frame.get(info['token'])
+        if i is None:
+            return []
+        order = comp.scene_order[comp.frames[i]['scene']]
+        S_a = comp.frames[i]['S']; t_a = comp.frames[i]['t']
+        out = []
+        prev_t = t_a
+        for j in order[order.index(i) + 1:]:
+            f_info = self._frame_to_info.get(j)
+            if f_info is None:
+                break
+            t_f = comp.frames[j]['t']
+            A = S_a @ np.linalg.inv(comp.frames[j]['S'])
+            mids = [s for s in f_info['sweeps'] if float(s['time_lag']) < (t_f - prev_t) - 1e-3]
+            for s in sorted(mids, key=lambda s: -float(s['time_lag'])):
+                tm = A @ s['transform_matrix'] if s.get('transform_matrix') is not None else A
+                out.append({'lidar_path': s['lidar_path'], 'transform_matrix': tm,
+                            'time_lag': t_a - (t_f - float(s['time_lag']))})
+            out.append({'lidar_path': f_info['lidar_path'], 'transform_matrix': A, 'time_lag': t_a - t_f})
+            prev_t = t_f
+            if np.linalg.norm(A[:3, 3]) > max_disp_m:
+                break
+        return out
+
     def get_lidar_with_sweeps(self, index, max_sweeps=1):
         info = self.infos[index]
         lidar_path = self.root_path / info['lidar_path']
@@ -236,14 +310,25 @@ class NuScenesDataset(DatasetTemplate):
         # (~1.7 cm per 0.5 m sweep at 40 m), so they stack returns into clumps; spreading them over D lets the
         # rings land on new stripes (experiments_md/20261007_03 §9-10; user's idea 2026-10-07). Label-free:
         # it reads the source's own sweep transforms. Default (absent) = consecutive, unchanged.
-        for j, k in enumerate(select_sweep_indices(info['sweeps'], max_sweeps,
-                                                   self.dataset_cfg.get('SWEEP_SELECTION', None))):
-            points_sweep, times_sweep = self.get_sweep(info['sweeps'][k])
+        selection = self.dataset_cfg.get('SWEEP_SELECTION', None)
+        sweeps = info['sweeps']
+        if selection and selection.get('FUTURE', False):
+            sweeps = list(sweeps) + self.future_sweeps(info, float(selection['SPAN_M']))
+        # The info builder PADS a scene's first keyframes: with no earlier sweep it stores the anchor itself
+        # (transform None, time_lag 0), then repeats the oldest sweep, up to the stored count. 700 of 28,130 train
+        # anchors (every scene's first keyframe) hold 199 copies of themselves, so 15 "sweeps" there are the anchor
+        # 15 times; 5.0% of anchors repeat a file within their first 14 (experiments_md 20261007_03 §15). Displacement
+        # selection always uses distinct real sweeps; DEDUP_SWEEPS opts the consecutive mode in. Default consecutive
+        # behaviour is unchanged so that earlier rows reproduce.
+        if (selection and selection.get('MODE', 'consecutive') == 'displacement') or self.dataset_cfg.get('DEDUP_SWEEPS', False):
+            sweeps = distinct_real_sweeps(sweeps, info['lidar_path'])
+        for j, k in enumerate(select_sweep_indices(sweeps, max_sweeps, selection)):
+            points_sweep, times_sweep = self.get_sweep(sweeps[k])
             if self._sweep_compensator is not None:
                 # get_sweep has ego-transformed these into the anchor frame; this additionally
                 # moves each tracked object's points onto that object's box in the anchor frame.
                 points_sweep = self._sweep_compensator.compensate_sweep(
-                    info, info['sweeps'][k], points_sweep)
+                    info, sweeps[k], points_sweep)
             if schedule is not None:
                 keep = sweep_range_mask(points_sweep, j + 1, schedule)
                 points_sweep, times_sweep = points_sweep[keep], times_sweep[keep]
