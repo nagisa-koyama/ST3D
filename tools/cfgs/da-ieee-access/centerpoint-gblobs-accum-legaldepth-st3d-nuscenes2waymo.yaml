@@ -1,0 +1,114 @@
+# UDA-LEGAL PSEUDO-LABELLING ON WAYMO (nuScenes -> Waymo), the legal S2 chain with WAYMO as the target.
+# User's go 2026-10-07 22:30 ("1と2") after the Waymo-residual analysis (experiments_md/20261007_03).
+#
+# Teacher and init: job 27471 (centerpoint-gblobs-accum-legaldepth-nuscenes2kitti, W&B jguwly5u, epoch 20), GBlobs +
+# accumulation Boston (n008) 15 / Singapore (n015) 10, family default Car interval. Scored on Waymo val it is
+# 51.58 / 28.35 (27596), the best legal nuScenes -> Waymo row. Its source training is target-independent, so the
+# same checkpoint is the teacher here.
+# Built as: centerpoint-accum-legaldepth-nuscenes2waymo (the Waymo-target copy of 27468's recipe, 27590) + the GBlobs
+# VFE of 27471 + the SELF_TRAIN block of centerpoint-gblobs-accum-legaldepth-st3d-nuscenes2kitti (27612) copied
+# verbatim from its RESOLVED config, except NEG_THRESH. Resolved, it must differ from 27612's config only in
+# DATA_CONFIG_TAR (Waymo instead of KITTI, USE_PSEUDO_LABEL kept) and NEG_THRESH (checked before launch).
+#
+# Cuts (pre-declared rules, 20261004_01 §5e):
+# - SCORE_THRESH, rule B: the teacher's precision on the labelled SOURCE val. It does not depend on the target, so the
+#   values from 27608 (teacher 27471) are reused: 0.17 / 0.32 / 0.38.
+# - NEG_THRESH, rule A: the background plateau's upper half-maximum on the teacher's pseudo-labels on WAYMO TRAIN
+#   (score floor 0.0001), computed by step 2 before launch. A SCORE_THRESH below its NEG_THRESH is raised to it.
+# Target train frames: SAMPLED_INTERVAL train 10 (15.8k frames instead of 39.5k at 2) - chosen for cost before any
+#   result, label-free; step 2 and the run use the same frames. Target SHIFT_COOR stays 0 (as 27596 was scored; rule
+#   G gives -0.044 m, which moved 27471 by -0.03 BEV, 27608).
+# Legality: teacher trained on nuScenes only; target = unlabelled Waymo TRAIN clouds (segments disjoint from val);
+#   cuts by pre-declared label-free rules; GBlobs and PROG_AUG as published (decision F); default size augmentation.
+#
+# PRE-DECLARED READING (written 2026-10-07 before step 2 or any result; one seed, ~2 AP single-run noise), Car BEV
+# AP_R40 IoU 0.7 on Waymo val, epoch 20:
+# 1. Pseudo-labelling helps on Waymo if BEV >= +2 over its teacher 27471 (51.58).
+# 2. Pattern hypothesis (20261007_03 §7): the gain, if any, comes from the 10-199-point GT bins (AP 13.2 / 60.1 for the
+#    teacher at 10-49 / 50-199 points) and from range >= 30 m; dense near cars (>= 200 points, < 6 m: 87.4) move by
+#    less than the sparse bins. Read with analysis/waymo_target_residual.py on the run's result.pkl.
+# 3. If BEV moves < 2, Waymo's own confident detections do not carry enough of its scan pattern to teach the student;
+#    the pattern term then needs a source-side change (re-rendering / learned pattern sampler).
+#
+# Launch (2 GPUs, 150G, seed 666; keep off node03 / node13 / node61):
+#   EST_H=50 scripts/submit.sh --mem=150G --exclude=node03,node13,node61 scripts/run_sourceonly_2gpu.sh #       cfgs/da-ieee-access/centerpoint-gblobs-accum-legaldepth-st3d-nuscenes2waymo.yaml <tag> <run> #       --pretrained_model <27471 ep20> --pretrained_model_teacher <27471 ep20>
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-legaldepth-nuscenes2waymo.yaml
+
+MODEL:
+    VFE:
+        NAME: GBlobsVFE
+        RELATIVE_DISTANCE: True
+        COVARIANCE_ONLY: False
+        COVARIANCE_SCALE: 1.0
+
+DATA_CONFIG_TAR:
+    USE_PSEUDO_LABEL: True
+    SAMPLED_INTERVAL: {'train': 10, 'test': 5}
+
+SELF_TRAIN:
+  SCORE_THRESH: [0.17, 0.32, 0.38]   # rule B for teacher 27471 (job 27608, labelled SOURCE val); target-independent, so reused unchanged
+  NEG_THRESH: [-1.0, -1.0, -1.0]   # PLACEHOLDER until step 2 on WAYMO TRAIN (rule A); a negative value cannot be launched by pqueue (gate file)
+  MODEL_TEACHER:
+    VFE: {NAME: GBlobsVFE, RELATIVE_DISTANCE: true, COVARIANCE_ONLY: false, COVARIANCE_SCALE: 1.0}
+    CLASS_NAMES: [Car, Pedestrian, Cyclist]
+    ONTOLOGY: kitti
+    NAME: CenterPoint
+    BACKBONE_3D: {NAME: VoxelResBackBone8x}
+    MAP_TO_BEV: {NAME: HeightCompression, NUM_BEV_FEATURES: 256}
+    BACKBONE_2D:
+      NAME: BaseBEVBackbone
+      LAYER_NUMS: [5]
+      LAYER_STRIDES: [1]
+      NUM_FILTERS: [128]
+      UPSAMPLE_STRIDES: [2]
+      NUM_UPSAMPLE_FILTERS: [256]
+    DENSE_HEAD:
+      NAME: CenterHead
+      CLASS_AGNOSTIC: false
+      CLASS_NAMES_EACH_HEAD:
+      - [Car, Pedestrian, Cyclist]
+      SHARED_CONV_CHANNEL: 64
+      USE_BIAS_BEFORE_NORM: true
+      NUM_HM_CONV: 2
+      SEPARATE_HEAD_CFG:
+        HEAD_ORDER: [center, center_z, dim, rot]
+        HEAD_DICT:
+          center: {out_channels: 2, num_conv: 2}
+          center_z: {out_channels: 1, num_conv: 2}
+          dim: {out_channels: 3, num_conv: 2}
+          rot: {out_channels: 2, num_conv: 2}
+      TARGET_ASSIGNER_CONFIG: {FEATURE_MAP_STRIDE: 4, NUM_MAX_OBJS: 500, GAUSSIAN_OVERLAP: 0.1, MIN_RADIUS: 2}
+      LOSS_CONFIG:
+        LOSS_WEIGHTS:
+          cls_weight: 1.0
+          loc_weight: 2.0
+          code_weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      POST_PROCESSING:
+        SCORE_THRESH: 0.0001
+        POST_CENTER_LIMIT_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+        MAX_OBJ_PER_SAMPLE: 500
+        NMS_CONFIG: {NMS_TYPE: nms_gpu, NMS_THRESH: 0.5, NMS_PRE_MAXSIZE: 4096, NMS_POST_MAXSIZE: 500}
+    POST_PROCESSING:
+      RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+      SCORE_THRESH: 0.0001
+      OUTPUT_RAW_SCORE: false
+      EVAL_METRIC: kitti
+      NMS_CONFIG: {MULTI_CLASSES_NMS: false, NMS_TYPE: nms_gpu, NMS_THRESH: 0.5, NMS_PRE_MAXSIZE: 4096, NMS_POST_MAXSIZE: 500}
+  EPOCH_FOLLOWS: source
+  UPDATE_PSEUDO_LABEL: [0]
+  UPDATE_PSEUDO_LABEL_INTERVAL: 2
+  FROZEN_TEACHER_SINGLE_PASS: true
+  INIT_PS: None
+  SRC: {USE_DATA: true, USE_GRAD: true, LOSS_WEIGHT: 1.0, BACKWARD_TOGETHER: true}
+  TAR: {USE_DATA: true, LOSS_WEIGHT: 1.0, BACKWARD_TOGETHER: true}
+  PROG_AUG:
+    ENABLED: true
+    UPDATE_AUG: [5, 10, 15]
+    SCALE: 1.1
+  MEMORY_ENSEMBLE:
+    ENABLED: true
+    NAME: nms_ensemble
+    IOU_THRESH: 0.1
+    NMS_CONFIG: {NMS_TYPE: nms_gpu, MULTI_CLASSES_NMS: false, NMS_PRE_MAXSIZE: 512, NMS_POST_MAXSIZE: 100, NMS_THRESH: 0.1}
+    MEMORY_VOTING: {ENABLED: true, IGNORE_THRESH: 2, RM_THRESH: 3}
+

@@ -210,11 +210,17 @@ def init_dist_pytorch(tcp_port, local_rank, backend='nccl'):
 
     num_gpus = torch.cuda.device_count()
     torch.cuda.set_device(local_rank % num_gpus)
+    # The default 10-minute collective timeout kills Waymo-target evaluation: the KITTI-metric AP runs on rank 0
+    # alone for 11-13 min over 7,998 frames while rank 1 waits at a broadcast (job 27185, 2026-10-04). 60 min,
+    # overridable through ST3D_DIST_TIMEOUT_MIN.
+    import datetime
+    timeout = datetime.timedelta(minutes=int(os.environ.get('ST3D_DIST_TIMEOUT_MIN', '60')))
     dist.init_process_group(
         backend=backend,
         init_method='tcp://127.0.0.1:%d' % tcp_port,
         rank=local_rank,
-        world_size=num_gpus
+        world_size=num_gpus,
+        timeout=timeout
     )
     rank = dist.get_rank()
     return num_gpus, rank

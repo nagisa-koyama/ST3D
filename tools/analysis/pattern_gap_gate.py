@@ -21,6 +21,10 @@ S4 calibration bug, 20261001_03 section 5c). The rule's histograms are linked ex
 (link_point_calibration, target train split), with --hist_frames frames per side.
 
     python pattern_gap_gate.py <cfg> [--frames 300] [--hist_frames 300] [--out table.md]
+
+Opt-in options (2026-10-07, experiments_md 20261007_03): --no_rule for a config without the correction ((b) = (a));
+--target_sensor_z / --source_sensor_z for frames whose origin is not the sensor (Waymo: TOP lidar at +2.184 m,
+SHIFT_COOR 0); --inside_boxes to restrict every descriptor to points inside Car GT boxes (ANALYSIS: reads labels).
 """
 import argparse
 import os
@@ -93,6 +97,20 @@ def js(p, q):
     return 0.5 * kl(p, m) + 0.5 * kl(q, m)
 
 
+def inside_car_boxes(d):
+    from pcdet.ops.roiaware_pool3d import roiaware_pool3d_utils
+    b = d.get('gt_boxes')
+    if b is None or not len(b):
+        return np.zeros(len(d['points']), dtype=bool)
+    b = b[b[:, 7] == 1]
+    if not len(b):
+        return np.zeros(len(d['points']), dtype=bool)
+    return roiaware_pool3d_utils.points_in_boxes_cpu(d['points'][:, :3], b[:, :7]).any(0)
+
+
+INSIDE_BOXES = False
+
+
 def sample(dataset, n_frames, shift_z, label, keep_frames=False):
     """Pooled descriptors over n_frames strided frames; with keep_frames also every frame's own."""
     n = len(dataset); step = max(1, n // n_frames)
@@ -101,7 +119,10 @@ def sample(dataset, n_frames, shift_z, label, keep_frames=False):
     for idx in range(0, n, step):
         if used >= n_frames:
             break
-        pts = dataset[idx]['points'][:, :3]
+        dd = dataset[idx]
+        pts = dd['points'][:, :3]
+        if INSIDE_BOXES:
+            pts = pts[inside_car_boxes(dd)]
         if len(pts) == 0:
             continue
         d = descriptors(pts, shift_z)
@@ -127,7 +148,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('cfg'); ap.add_argument('--frames', type=int, default=300)
     ap.add_argument('--hist_frames', type=int, default=300); ap.add_argument('--out', default=None)
+    ap.add_argument('--no_rule', action='store_true'); ap.add_argument('--inside_boxes', action='store_true')
+    ap.add_argument('--target_sensor_z', type=float, default=None); ap.add_argument('--source_sensor_z', type=float, default=None)
     args = ap.parse_args()
+    global INSIDE_BOXES
+    INSIDE_BOXES = args.inside_boxes
     os.chdir(TOOLS)
     import logging
     logger = logging.getLogger('gate'); logger.addHandler(logging.StreamHandler()); logger.setLevel(logging.INFO)
@@ -136,7 +161,7 @@ def main():
     calib_cfg, split = calibration_target_config(cfg.DATA_CONFIG_TAR)
     target, _, _ = build_dataloader(dataset_cfg=calib_cfg, class_names=cfg.CLASS_NAMES, batch_size=1, dist=False,
                                     workers=0, logger=logger, training=False, model_ontology=cfg.get('ONTOLOGY'))
-    tz = float(calib_cfg.get('SHIFT_COOR', [0, 0, 0])[2])
+    tz = float(calib_cfg.get('SHIFT_COOR', [0, 0, 0])[2]) if args.target_sensor_z is None else args.target_sensor_z
     print(f'target: {type(target).__name__}, {split} split, {len(target)} frames', flush=True)
     tgt, tgt_frames = sample(target, args.frames, tz, 'target', keep_frames=True)
 
@@ -145,7 +170,12 @@ def main():
     for name, dc in data_configs.items():
         ds, _, _ = build_dataloader(dataset_cfg=dc, class_names=cfg.CLASS_NAMES, batch_size=1, dist=False,
                                     workers=0, logger=logger, training=True, model_ontology=cfg.get('ONTOLOGY'))
-        sz = float(dc.get('SHIFT_COOR', [0, 0, 0])[2])
+        sz = float(dc.get('SHIFT_COOR', [0, 0, 0])[2]) if args.source_sensor_z is None else args.source_sensor_z
+        if args.no_rule:
+            with _augmentation_off(ds):
+                a, _ = sample(ds, per_source, sz, f'{name} (no rule)')
+            src_a = accumulate(src_a, a); src_b = accumulate(src_b, {k: ({kk: vv.copy() for kk, vv in v.items()} if isinstance(v, dict) else v.copy()) for k, v in a.items()})
+            continue
         with _augmentation_off(ds):
             link_point_calibration(ds, target, num_frames=args.hist_frames, num_bins=dc.get('HIST_DIST_BINS', 50),
                                    max_dist=dc.get('HIST_DIST_MAX_DIST', 75.0), logger=logger,
