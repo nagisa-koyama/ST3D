@@ -1,0 +1,37 @@
+# LiDAR Distillation (Wei et al., ECCV 2022) on Waymo -> nuScenes, the reference's own headline setting: the Waymo
+# source-only control centerpoint-sourceonly-waymo (26398, 27.67 / 12.28) with a BEAM_DISTILL block on the source and
+# the DISTILL loss, nothing else changed - the way centerpoint-distill-kitti2nuscenes relates to 25817. User,
+# 2026-10-08 ~20:50: 「Jobが空いてるならlidar distillation は試しておくと良さそう」. experiments_md 20261005_01 and
+# 20260927_02 (the port, its four departures).
+#
+#   - Student: the TOP lidar's rows decimated 64 -> 32 (BEAM_RATIO 2, as published for a 32-beam target; decision F:
+#     the recipe as published, disclosed), full azimuth (BIN_RATIO 1; the reference's Waymo -> nuScenes horizontal
+#     setting is not documented in the release, disclosed). Side lidars are not in the student (no ring label), the
+#     reference's Waymo beams being TOP range-image rows; disclosed.
+#   - Rings come from the stored row ORDER (pcdet/datasets/waymo/waymo_rings.py), not from elevation clustering, which
+#     cannot separate Waymo's TOP rows. This is what made the setting runnable here (it was excluded in 20260927_02 §4).
+#   - Teacher: 26398's epoch-7 checkpoint (W&B y6p61n0x), frozen, on the untouched cloud (all five lidars). Student
+#     trained from scratch, as in the KITTI port (26970). ONE stage; the paper's progressive curriculum is a disclosed
+#     departure.
+#   - DISTILL as in the KITTI port: the released loss normalisation, weight 1.0 (= --mimic_weight 1), mode 'gt' (the
+#     reference default 'roi' needs proposals a one-stage detector does not make).
+#
+# PRE-DECLARED READING (2026-10-08, before launch; Car BEV AP_R40, nuScenes val, epoch 7, one seed):
+#   >= +2 over 26398 (27.67) -> LiDAR Distillation helps on its own setting in this pipeline; otherwise it does not.
+#   Also read against the ring-pattern row (centerpoint-ringpattern-waymo2nuscenes), per-bin thinning 27599 (30.63)
+#   and GBlobs 27598 (28.86).
+#
+# Legal: source labels / calibration and a source-trained teacher only; the target enters through nuScenes' published
+# beam count (32).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-waymo.yaml
+DATA_CONFIG:
+    BEAM_DISTILL:
+        NUM_BEAMS: 64
+        BEAM_RATIO: 2
+        BIN_RATIO: 1
+        TOP_CALIB: /home/koyama/data/waymo_top_calib/top_calib.pkl   # per-segment TOP inclinations + extrinsic (source)
+
+DISTILL:
+    WEIGHT: 1.0
+    NORMALIZATION: 'reference'
+    MODE: 'gt'

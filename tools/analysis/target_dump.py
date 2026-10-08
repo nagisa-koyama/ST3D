@@ -1,6 +1,6 @@
 """Bug-prevention checklist item 4 (experiments_md memory/repo/bug_prevention_checklist.md): dump assigned targets of real batches and compare them with the input labels.
 
-    python analysis/target_dump.py <cfg> <DATA_CONFIGS key | TAR> <n_frames> [ps_label_e0.pkl]
+    python analysis/target_dump.py <cfg> <DATA_CONFIGS key | DATA_CONFIG | TAR> <n_frames> [ps_label_e0.pkl]
 
 For each frame, after prepare_data + collate + CenterHead.assign_targets (the row's real head geometry):
 - input labels: positives per class, pseudo ignore band (-1..-3) per class, IGNORE_CLASS_LABEL;
@@ -21,7 +21,7 @@ from pcdet.utils import common_utils
 
 cfg_file, key, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
 cfg = EasyDict(); cfg_from_yaml_file(cfg_file, cfg)
-dcfg = cfg.DATA_CONFIG_TAR if key == 'TAR' else cfg.DATA_CONFIGS[key]
+dcfg = cfg.DATA_CONFIG_TAR if key == 'TAR' else (cfg.DATA_CONFIG if key == 'DATA_CONFIG' else cfg.DATA_CONFIGS[key])
 ds, _, _ = build_dataloader(dataset_cfg=dcfg, class_names=cfg.CLASS_NAMES, batch_size=1, dist=False, workers=0,
                             logger=common_utils.create_logger(), training=True, model_ontology=cfg.get('ONTOLOGY'))
 if len(sys.argv) > 4:
@@ -45,6 +45,8 @@ fails = []
 step = max(1, len(frames) // n)
 for fi in frames[::step][:n]:
     d = ds[fi]
+    if isinstance(d, tuple):   # BEAM_DISTILL yields (student, teacher); the student's targets are what is trained
+        d = d[0]
     gt = d['gt_boxes']
     lab = gt[:, 7].astype(int)
     for c in range(C):

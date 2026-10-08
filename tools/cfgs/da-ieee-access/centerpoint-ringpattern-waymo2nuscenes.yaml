@@ -1,0 +1,38 @@
+# Waymo -> nuScenes + the source thinned to nuScenes' published scan PATTERN (RING_PATTERN), nothing else changed:
+# the source-only control centerpoint-sourceonly-waymo (26398, 27.67 / 12.28) with one opt-in key on the Waymo
+# DATA_CONFIG. User's decision 2026-10-08 ~20:40 (「1, 2」), experiments_md 20261005_01 (scan-pattern section).
+#
+# What it does, training only (evaluation on nuScenes val is untouched):
+#   - recovers each TOP point's laser row from the stored row-major ORDER (pcdet/datasets/waymo/waymo_rings.py;
+#     validated 64 rows on 120 / 120 frames over 24 segments of both splits);
+#   - keeps the TOP rows nearest a vertical lattice of 1.33 deg (nuScenes HDL-32E, published) with a random phase per
+#     sample, ~15 rows inside Waymo's -17.6 .. +2.4 deg field of view;
+#   - keeps one point per kept row per 0.332 deg azimuth bin (HDL-32E at 20 Hz; 0.332 measured on nuScenes TRAIN
+#     clouds, label-free), random phase per sample;
+#   - drops the four side lidars (nuScenes carries one roof lidar).
+# So it matches nuScenes' LINE SPACING on objects, not its beam count: keeping every 2nd Waymo row (LiDAR
+# Distillation's 64 -> 32) leaves 0.34-0.61 deg between lines in the car band against nuScenes' 1.33.
+#
+# It is the pattern-matched twin of per-bin density thinning (centerpoint-global-waymo2nuscenes, 27599, 30.63 / 13.52).
+# Differences from 27599 besides the rule: (1) the side lidars are dropped; (2) the zero-point GT filter counts points
+# on the THINNED cloud (RECOUNT_GT_POINTS). With Waymo's stored per-box count, 17.4% of Car training boxes would hold no
+# point and still be trained as positives (control 3.1%; 27599 kept its 11.9% emptied boxes as labels, disclosed
+# there). A sensor with nuScenes' pattern yields only labels with points, so the filter recounts here.
+#
+# PRE-DECLARED READING (2026-10-08, before launch; Car BEV AP_R40, nuScenes val, epoch 7, one seed):
+#   >= +2 over 27599 (30.63)  -> the scan-line pattern matters on the dense -> sparse pair;
+#   within +-2 of 27599       -> it adds nothing beyond density;
+#   <= -2 below 27599         -> the selection costs (field of view / near field / side lidars).
+#   Also read against 26398 (27.67) and the nuScenes oracle 44.98; per-range / points-in-box breakdown afterwards
+#   (analysis).
+#
+# Legal: Waymo is the SOURCE (its calibration and labels are legal); the target enters only through nuScenes'
+# published sensor spec and its TRAIN point clouds (the azimuth step), no target label.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-waymo.yaml
+DATA_CONFIG:
+    RING_PATTERN:
+        TOP_CALIB: /home/koyama/data/waymo_top_calib/top_calib.pkl   # per-segment TOP inclinations + extrinsic (source)
+        SPACING_DEG: 1.33     # nuScenes HDL-32E vertical spacing (32 beams over -30.67 .. +10.67 deg)
+        AZ_RES_DEG: 0.332     # HDL-32E azimuth step at 20 Hz; nuScenes TRAIN clouds: median 0.332 (p10-p90 0.330-0.335)
+        TOP_ONLY: True
+        RECOUNT_GT_POINTS: True   # zero-point GT filter on the THINNED cloud (stored count: 17.4% of Car boxes empty)

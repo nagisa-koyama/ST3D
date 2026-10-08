@@ -33,6 +33,28 @@ class WaymoDataset(DatasetTemplate):
         self.draw_conf_calib_curve = self.dataset_cfg.get('DRAW_CONF_CALIB_CURVE', False)
         self.run_conf_calib = self.dataset_cfg.get('RUN_CONF_CALIB', False)
 
+        # RING_PATTERN (opt-in, training only): thin the TOP scan to a target sensor's published scan PATTERN -
+        # rows at its vertical spacing with a random phase, one point per row per its azimuth step - instead of to a
+        # density. Laser rows are recovered from the stored point ORDER (waymo_rings.py), before any shuffle or
+        # augmentation, so no ring column has to survive the augmentor. Evaluation clouds are untouched.
+        # experiments_md 20261005_01 (Waymo -> nuScenes scan-pattern row).
+        self.ring_pattern_cfg = self.dataset_cfg.get('RING_PATTERN', None)
+        self._top_calib = None
+        if self.ring_pattern_cfg is not None:
+            assert (self.dataset_cfg.get('MAX_SWEEPS', 1) or 1) <= 1, \
+                'RING_PATTERN thins one TOP scan by its row order; accumulated sweeps have no single order'
+        # BEAM_DISTILL / BEAM_DROP on Waymo: the ring labels come from the same stored row order, NOT from
+        # `beam_downsample_utils.ring_labels`' elevation clustering, which cannot separate Waymo's TOP rows (per-pixel
+        # compensation moves a point's apparent inclination by more than the 0.14 deg row spacing). They are computed
+        # in __getitem__ and attached by the `_attach_ring_labels` override below.
+        ring_cfg = self.beam_distill_cfg if self.beam_distill_cfg is not None else self.beam_drop_cfg
+        self._ring_labels_from_order = ring_cfg is not None
+        if self._ring_labels_from_order:
+            assert self.ring_pattern_cfg is None, 'RING_PATTERN and BEAM_DISTILL / BEAM_DROP both thin the TOP rows'
+            assert ring_cfg.NUM_BEAMS == 64, 'Waymo TOP has 64 rows'
+            assert (self.dataset_cfg.get('MAX_SWEEPS', 1) or 1) <= 1, 'ring labels are per stored scan'
+            assert ring_cfg.get('TOP_CALIB', None), 'set TOP_CALIB (per-segment TOP inclinations + extrinsic)'
+
     def set_split(self, split):
         super().__init__(
             dataset_cfg=self.dataset_cfg, class_names=self.class_names, training=self.training,
@@ -131,6 +153,39 @@ class WaymoDataset(DatasetTemplate):
         points_all[:, 3] = np.tanh(points_all[:, 3])
         return points_all
 
+    def _top_calibration(self, path):
+        if self._top_calib is None:
+            with open(path, 'rb') as f:
+                self._top_calib = pickle.load(f)
+        return self._top_calib
+
+    def _raw_frame(self, info):
+        pc_info = info['point_cloud']
+        return np.load(self.data_path / pc_info['lidar_sequence'] / ('%04d.npy' % pc_info['sample_idx']))
+
+    def get_lidar_ring_pattern(self, info):
+        """One training frame thinned to RING_PATTERN's scan pattern (see __init__ and waymo_rings.py)."""
+        from .waymo_rings import ring_pattern_points
+        calib = self._top_calibration(self.ring_pattern_cfg.TOP_CALIB)[info['point_cloud']['lidar_sequence']]
+        return ring_pattern_points(self._raw_frame(info), info['num_points_of_each_lidar'], calib, self.ring_pattern_cfg)
+
+    def get_lidar_with_ring_labels(self, info):
+        """(points, ring label per point) for BEAM_DISTILL / BEAM_DROP: TOP rows from the stored order, side lidars -1."""
+        from .waymo_rings import ring_labelled_points
+        ring_cfg = self.beam_distill_cfg if self.beam_distill_cfg is not None else self.beam_drop_cfg
+        calib = self._top_calibration(ring_cfg.TOP_CALIB)[info['point_cloud']['lidar_sequence']]
+        return ring_labelled_points(self._raw_frame(info), info['num_points_of_each_lidar'], calib)
+
+    def _attach_ring_labels(self, data_dict, ring_cfg):
+        """Append the order-recovered ring labels __getitem__ computed (the base class would cluster elevations)."""
+        label = data_dict.pop('waymo_ring_label', None)
+        assert label is not None and len(label) == len(data_dict['points']), \
+            'Waymo ring labels must come from get_lidar_with_ring_labels (stored row order); elevation clustering ' \
+            'does not recover Waymo TOP rows'
+        points = data_dict['points']
+        data_dict['points'] = np.concatenate([points, label.reshape(-1, 1).astype(points.dtype)], axis=1)
+        return data_dict
+
     def _tracked_boxes(self, info, S_anchor):
         """That frame's boxes in the anchor's vehicle frame, keyed by Waymo's `obj_ids` track id."""
         from ..motion_compensation import boxes_to_frame
@@ -160,6 +215,8 @@ class WaymoDataset(DatasetTemplate):
         at MAX_SWEEPS 5, moving/static goes 0.61 -> 1.03 with static untouched.
         """
         pc_info = info['point_cloud']
+        if self.ring_pattern_cfg is not None and self.training:
+            return self.get_lidar_ring_pattern(info)
         points = self.get_lidar(pc_info['lidar_sequence'], pc_info['sample_idx'])
         max_sweeps = self.dataset_cfg.get('MAX_SWEEPS', 1) or 1
         if max_sweeps <= 1:
@@ -198,7 +255,11 @@ class WaymoDataset(DatasetTemplate):
         pc_info = info['point_cloud']
         sequence_name = pc_info['lidar_sequence']
         sample_idx = pc_info['sample_idx']
-        points = self.get_lidar_with_sweeps(info)
+        ring_label = None
+        if self._ring_labels_from_order and self.training:
+            points, ring_label = self.get_lidar_with_ring_labels(info)
+        else:
+            points = self.get_lidar_with_sweeps(info)
         if self.dataset_cfg.get('SHIFT_COOR', None):
             points[:, 0:3] += np.array(self.dataset_cfg.SHIFT_COOR, dtype=np.float32)
 
@@ -207,6 +268,8 @@ class WaymoDataset(DatasetTemplate):
             'frame_id': info['frame_id'],
             'sample_idx': sample_idx
         }
+        if ring_label is not None:
+            input_dict['waymo_ring_label'] = ring_label
 
         if 'annos' in info:
             annos = info['annos']
@@ -233,6 +296,13 @@ class WaymoDataset(DatasetTemplate):
 
             if self.dataset_cfg.get('USE_PSEUDO_LABEL', None) and self.training:
                 input_dict['gt_boxes'] = None
+
+            # RING_PATTERN keeps ~10% of the cloud, so Waymo's stored per-box count (all returns, all lidars) no longer
+            # says whether a box holds a point: 17.4% of Car training boxes would be empty and still trained as
+            # positives (control 3.1%). A sensor with the target's pattern only yields labels with >= 1 point, so the
+            # zero-point filter recounts on the thinned cloud (prepare_data does when the count is None).
+            if self.ring_pattern_cfg is not None and self.training and self.ring_pattern_cfg.get('RECOUNT_GT_POINTS', True):
+                input_dict['num_points_in_gt'] = None
 
             # for debug only
             # gt_boxes_mask = np.array([n in self.class_names for n in input_dict['gt_names']], dtype=np.bool_)
@@ -275,8 +345,10 @@ class WaymoDataset(DatasetTemplate):
             self.fill_pseudo_labels(input_dict)
 
         data_dict = self.prepare_data(data_dict=input_dict)
-        data_dict['metadata'] = info.get('metadata', info['frame_id'])
-        data_dict.pop('num_points_in_gt', None)
+        # BEAM_DISTILL makes prepare_data return a (student, teacher) pair; both streams get the same bookkeeping
+        for d in (data_dict if isinstance(data_dict, tuple) else (data_dict,)):
+            d['metadata'] = info.get('metadata', info['frame_id'])
+            d.pop('num_points_in_gt', None)
         return data_dict
 
     # @staticmethod
