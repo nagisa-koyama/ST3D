@@ -144,9 +144,23 @@ class WaymoDataset(DatasetTemplate):
         all_sequences_infos = [item for infos in sequence_infos for item in infos]
         return all_sequences_infos
 
-    def get_lidar(self, sequence_name, sample_idx):
+    def get_lidar(self, sequence_name, sample_idx, num_points_of_each_lidar=None):
         lidar_file = self.data_path / sequence_name / ('%04d.npy' % sample_idx)
         point_features = np.load(lidar_file)  # (N, 7): [x, y, z, intensity, elongation, NLZ_flag]
+
+        # LIDAR_INDICES (opt-in; absent = all five lidars, unchanged): keep only the listed lidars,
+        # 0 = TOP, in the stored order (lidars sorted by name, each block row-major), sliced by the
+        # info's per-lidar counts BEFORE the NLZ filter, which is what those counts describe.
+        # Analysis key (experiments_md 20261008_05): a nuScenes-trained model on a TOP-only Waymo.
+        lidar_indices = self.dataset_cfg.get('LIDAR_INDICES', None)
+        if lidar_indices is not None:
+            counts = np.asarray(num_points_of_each_lidar, dtype=np.int64)
+            assert counts.sum() == len(point_features), 'per-lidar counts do not match the file'
+            ends = np.cumsum(counts); starts = ends - counts
+            keep = np.zeros(len(point_features), dtype=bool)
+            for i in lidar_indices:
+                keep[starts[i]:ends[i]] = True
+            point_features = point_features[keep]
 
         points_all, NLZ_flag = point_features[:, 0:5], point_features[:, 5]
         points_all = points_all[NLZ_flag == -1]
@@ -217,7 +231,8 @@ class WaymoDataset(DatasetTemplate):
         pc_info = info['point_cloud']
         if self.ring_pattern_cfg is not None and self.training:
             return self.get_lidar_ring_pattern(info)
-        points = self.get_lidar(pc_info['lidar_sequence'], pc_info['sample_idx'])
+        points = self.get_lidar(pc_info['lidar_sequence'], pc_info['sample_idx'],
+                                info.get('num_points_of_each_lidar', None))
         max_sweeps = self.dataset_cfg.get('MAX_SWEEPS', 1) or 1
         if max_sweeps <= 1:
             return points
@@ -230,7 +245,8 @@ class WaymoDataset(DatasetTemplate):
                                   pc_info['sample_idx'], max_sweeps):
             sweep_info = self._sweep_infos[j]
             pts = self.get_lidar(sweep_info['point_cloud']['lidar_sequence'],
-                                 sweep_info['point_cloud']['sample_idx'])
+                                 sweep_info['point_cloud']['sample_idx'],
+                                 sweep_info.get('num_points_of_each_lidar', None))
             T = S_anchor @ np.asarray(sweep_info['pose'])
             pts[:, :3] = pts[:, :3] @ T[:3, :3].T + T[:3, 3]
             if boxes_now:

@@ -176,6 +176,36 @@ class DataProcessor(object):
 
         return data_dict
 
+    def mask_points_by_spec(self, data_dict=None, config=None):
+        """Drop points outside a sensor SPEC window about SENSOR_ORIGIN: elevation in
+        [ELEVATION_MIN_DEG, ELEVATION_MAX_DEG] and horizontal radius >= MIN_RADIUS_M.
+
+        Analysis step (experiments_md 20261008_05): applies a target sensor's published vertical
+        field of view or ego-removal radius to another sensor's cloud at EVALUATION time, to ask
+        whether a model never exposed to that part of the sensor's view is hurt by it. Every key
+        is from a published spec, so it is label-free. NOT gated on self.training: it runs in
+        whichever mode the config lists it, and the configs that use it are eval-only twins.
+        SENSOR_ORIGIN is the sensor position in the frame the processor sees, i.e. SHIFT_COOR
+        already applied (nuScenes: [0, 0, 1.75]; Waymo TOP: [1.43, 0, 2.184] in the vehicle frame).
+        Boxes are untouched - a cut GT box stays a GT box, as the scoring protocol requires.
+        """
+        if data_dict is None:
+            return partial(self.mask_points_by_spec, config=config)
+        points = data_dict['points']
+        origin = np.asarray(config.SENSOR_ORIGIN, dtype=np.float64)
+        d = points[:, :3].astype(np.float64) - origin
+        r = np.hypot(d[:, 0], d[:, 1])
+        el = np.degrees(np.arctan2(d[:, 2], np.maximum(r, 1e-6)))
+        keep = np.ones(len(points), dtype=bool)
+        if config.get('ELEVATION_MIN_DEG', None) is not None:
+            keep &= el >= float(config.ELEVATION_MIN_DEG)
+        if config.get('ELEVATION_MAX_DEG', None) is not None:
+            keep &= el <= float(config.ELEVATION_MAX_DEG)
+        if config.get('MIN_RADIUS_M', None) is not None:
+            keep &= r >= float(config.MIN_RADIUS_M)
+        data_dict['points'] = points[keep]
+        return data_dict
+
     def mask_points_and_boxes_outside_range(self, data_dict=None, config=None):
         if data_dict is None:
             return partial(self.mask_points_and_boxes_outside_range, config=config)
