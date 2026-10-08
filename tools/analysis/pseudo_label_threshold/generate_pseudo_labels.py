@@ -50,6 +50,12 @@ def main():
     ap.add_argument('--adabn_layers', default=None, metavar='REGEX',
                     help='with --teacher_adabn: re-estimate only BN layers matching this regex (as '
                          "TEACHER_ADABN.LAYERS), e.g. '^backbone_3d\\.conv_input\\.1$' for the first BN")
+    ap.add_argument('--calib_from_cfg', default=None, metavar='TRAINING_CFG',
+                    help='install the global density correction of TRAINING_CFG on the generated set: '
+                         'measured exactly as train.py does for that config (its source DATA_CONFIG in '
+                         'training mode against its DATA_CONFIG_TAR train split, HIST_DIST_* keys), then '
+                         'applied to the clouds generated here. For a thinned-source teacher run over '
+                         'its labelled SOURCE val (rule B), so the teacher sees its training input.')
     args = ap.parse_args()
 
     out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
@@ -66,6 +72,33 @@ def main():
     target_set, target_loader, _ = build_dataloader(
         cfg.DATA_CONFIG_TAR, cfg.CLASS_NAMES, args.batch_size, dist=False, workers=args.workers,
         logger=logger, training=True, model_ontology=cfg.get('ONTOLOGY', None))
+    if args.calib_from_cfg:
+        # Before any loader is iterated: workers fork a copy of the dataset (20260921_02).
+        from easydict import EasyDict
+        from pcdet.datasets import link_point_calibration
+        from pcdet.datasets.point_calibration import calibration_target_config
+        tcfg = cfg_from_yaml_file(args.calib_from_cfg, EasyDict())
+        dc = tcfg.DATA_CONFIG
+        assert dc.get('HIST_DIST_ON_THE_FLY', False), '--calib_from_cfg: that config has no on-the-fly correction'
+        assert any(p.get('NAME') == 'sample_points_hist_based' for p in cfg.DATA_CONFIG_TAR.DATA_PROCESSOR), \
+            'the generated set has no sample_points_hist_based step to install the correction on'
+        meas_set, _, _ = build_dataloader(dc, tcfg.CLASS_NAMES, 1, dist=False, workers=0, logger=logger,
+                                          training=True, model_ontology=tcfg.get('ONTOLOGY', None))
+        calib_cfg, calib_split = calibration_target_config(tcfg.DATA_CONFIG_TAR)
+        calib_tgt, _, _ = build_dataloader(calib_cfg, tcfg.CLASS_NAMES, 1, dist=False, workers=0, logger=logger,
+                                           training=False, model_ontology=tcfg.get('ONTOLOGY', None))
+        logger.info('calibration as in %s: source %s train, target measured on its %s split'
+                    % (args.calib_from_cfg, dc.DATASET, calib_split))
+        max_dist = dc.get('HIST_DIST_MAX_DIST', 75.0)
+        src, tgt = link_point_calibration(
+            meas_set, calib_tgt, num_frames=dc.get('HIST_DIST_FRAMES', 1000), num_bins=dc.get('HIST_DIST_BINS', 50),
+            max_dist=max_dist, logger=logger, fov_degree=dc.get('HIST_DIST_FOV_DEGREE', None),
+            fov_heading=dc.get('HIST_DIST_FOV_HEADING', 0.0))
+        target_set.data_processor.set_hist_dist(src, tgt, max_dist=max_dist)
+        rate = target_set.data_processor.per_bin_sample_rate()
+        logger.info('installed on the generated set: sample rate %.2f..%.2f, below 1 in %d of %d bins'
+                    % (rate.min(), rate.max(), int((rate < 1).sum()), len(rate)))
+        del meas_set, calib_tgt
     teacher_cfg = cfg.SELF_TRAIN.MODEL_TEACHER
     if args.max_obj is not None:
         teacher_cfg.DENSE_HEAD.POST_PROCESSING.MAX_OBJ_PER_SAMPLE = args.max_obj

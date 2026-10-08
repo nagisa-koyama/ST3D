@@ -19,6 +19,11 @@ count balance is no longer the Car rule. `--classes` selects the classes (defaul
      NEG_THRESH and the cut fall into the ignore band).
 
     python source_precision_cut.py <ps_label_e0.pkl on source val> [--infos <nuScenes val infos pkl>]
+    python source_precision_cut.py <ps_label_e0.pkl on Waymo val> --dataset waymo   (a Waymo-source teacher)
+
+With `--dataset waymo` the ground truth is Waymo val (`annos`: Vehicle -> Car, Pedestrian, Cyclist; >= 1 point by
+`num_points_in_gt`; boxes `gt_boxes_lidar`, vehicle frame, the frame the Waymo loader serves) and frames are keyed by
+`frame_id`. Everything else - range, matching, grid, the cut rule - is the same code.
 """
 import argparse
 import pickle
@@ -26,12 +31,25 @@ import pickle
 import numpy as np
 
 ALL_CLASSES = {1: ('Car', 'car'), 2: ('Pedestrian', 'pedestrian'), 3: ('Cyclist', 'bicycle')}  # model index, nuScenes name
+WAYMO_NAMES = {'Car': 'Vehicle', 'Pedestrian': 'Pedestrian', 'Cyclist': 'Cyclist'}
+WAYMO_VAL_INFOS = '../data/waymo/waymo_infos_val.pkl'
 RANGE, MATCH_DIST, P_STAR, MIN_KEPT = 75.2, 1.0, 0.50, 50
 GRID = np.round(np.arange(0.10, 0.951, 0.01), 2)
 
 
 def frame_id(info):
     return info['lidar_path'].split('/')[-1][:-4]
+
+
+def gt_of(info, dataset):
+    """(frame key, names, boxes, points per box) in the source's own vocabulary."""
+    if dataset == 'waymo':
+        a = info['annos']
+        return (info['frame_id'], np.asarray(a['name']), np.asarray(a['gt_boxes_lidar']).reshape(-1, 7),
+                np.asarray(a['num_points_in_gt']))
+    names = np.asarray(info['gt_names'])
+    return (frame_id(info), names, np.asarray(info['gt_boxes']),
+            np.asarray(info.get('num_lidar_pts', np.ones(len(names)))))
 
 
 def match(pred_xy, scores, gt_xy):
@@ -53,12 +71,19 @@ def match(pred_xy, scores, gt_xy):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('ps_label')
-    ap.add_argument('--infos', default='../data/nuscenes/v1.0-trainval/nuscenes_infos_10sweeps_val.pkl')
+    ap.add_argument('--infos', default=None,
+                    help='source val infos (default: nuScenes 10-sweep val, or Waymo val with --dataset waymo)')
+    ap.add_argument('--dataset', choices=['nuscenes', 'waymo'], default='nuscenes')
     ap.add_argument('--classes', nargs='+', default=['Car', 'Pedestrian', 'Cyclist'])
     ap.add_argument('--extra_ps', nargs='*', default=[],
                     help='further ps_label files merged in (e.g. per-platform passes at different sweep counts)')
     args = ap.parse_args()
     CLASSES = {k: v for k, v in ALL_CLASSES.items() if v[0] in args.classes}
+    if args.dataset == 'waymo':
+        CLASSES = {k: (v[0], WAYMO_NAMES[v[0]]) for k, v in CLASSES.items()}
+    if args.infos is None:
+        args.infos = WAYMO_VAL_INFOS if args.dataset == 'waymo' else \
+            '../data/nuscenes/v1.0-trainval/nuscenes_infos_10sweeps_val.pkl'
     ps = pickle.load(open(args.ps_label, 'rb'))
     for extra in args.extra_ps:
         more = pickle.load(open(extra, 'rb'))
@@ -68,14 +93,11 @@ def main():
     rows = {c: [] for c in CLASSES}  # (score, matched)
     used_frames = 0
     for info in infos:
-        fid = frame_id(info)
+        fid, names, gtb, npts = gt_of(info, args.dataset)
         if fid not in ps:
             continue
         used_frames += 1
         boxes = np.asarray(ps[fid]['gt_boxes']).reshape(-1, 9)
-        names = np.asarray(info['gt_names'])
-        gtb = np.asarray(info['gt_boxes'])
-        npts = np.asarray(info.get('num_lidar_pts', np.ones(len(names))))
         for c, (_, nus) in CLASSES.items():
             g = gtb[(names == nus) & (npts >= 1)]
             g = g[(np.abs(g[:, 0]) <= RANGE) & (np.abs(g[:, 1]) <= RANGE)] if len(g) else g
@@ -83,7 +105,7 @@ def main():
             p = p[(np.abs(p[:, 0]) <= RANGE) & (np.abs(p[:, 1]) <= RANGE)]
             hit = match(p[:, :2], p[:, 8], g[:, :2] if len(g) else np.zeros((0, 2)))
             rows[c] += list(zip(p[:, 8], hit))
-    print(f'source val frames read: {used_frames} of {len(infos)}')
+    print(f'source val frames read: {used_frames} of {len(infos)} ({args.dataset})')
     cuts = {}
     for c, (name, _) in CLASSES.items():
         a = np.array(rows[c], dtype=float).reshape(-1, 2)

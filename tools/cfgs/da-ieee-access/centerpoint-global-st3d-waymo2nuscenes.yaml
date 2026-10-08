@@ -1,0 +1,107 @@
+# UDA-LEGAL PSEUDO-LABELLING ON THE DENSE -> SPARSE PAIR Waymo -> nuScenes (user's go 2026-10-08 ~20:40, 「1, w」 then
+# 「2」: options 1 and 2 of the paper-strategy summary; this is option 2). experiments_md/20261005_01 §14.
+#
+# Teacher and init: job 27599 (centerpoint-global-waymo2nuscenes, W&B puo3m3qt, epoch 7): Waymo source-only + the per-bin
+# global density correction thinning Waymo to nuScenes TRAIN-cloud radial density. Teacher rule, pre-declared and
+# label-free: the pair's input-level method row, as on S1 (teacher 25781 global -> 26696) and S2 (27468 -> 27566). The
+# teacher was NOT chosen by comparing nuScenes val AP of 26398 / 27598 / 27599. The student keeps the same thinning
+# (as S1's 26696 did): this file is centerpoint-global-waymo2nuscenes + USE_PSEUDO_LABEL on the target + SELF_TRAIN.
+#
+# SELF_TRAIN: the block of the legal chain (27566, centerpoint-accum-legaldepth-st3d-nuscenes2kitti; 27612 / 27704 carry
+# the same block with a GBlobs teacher) copied from its RESOLVED config, with three changes:
+# - MODEL_TEACHER is the MeanVFE CenterPoint of 27599 (it must match the teacher checkpoint);
+# - PROG_AUG.UPDATE_AUG scaled to this row's 7 epochs: [5, 10, 15] of 20 -> 1.75 / 3.5 / 5.25 -> [2, 4, 5] (round half
+#   up, the rule S1's [8, 15, 23] used);
+# - SCORE_THRESH / NEG_THRESH from the pre-declared rules below (step 2, scripts/_legal_chain_step2_w2n.sh).
+# Cuts (20261004_01 §5e):
+# - SCORE_THRESH, rule B: the teacher's precision on the labelled SOURCE val (Waymo val; Vehicle -> Car), the teacher as
+#   trained and on its training input (the val clouds thinned by the same calibration procedure as 27599), smallest t
+#   from which precision stays >= 0.50 (1.0 m centre match, >= 50 kept), else gated off at 1.01.
+# - NEG_THRESH, rule A: the background plateau's upper half-maximum on the teacher's pseudo-labels on nuScenes TRAIN
+#   (score floor 0.0001). A SCORE_THRESH below its NEG_THRESH is raised to it.
+# Legality: teacher trained on Waymo labels + nuScenes TRAIN clouds (thinning histogram, no labels); target = unlabelled
+# nuScenes TRAIN; cuts by pre-declared label-free rules (rule B reads SOURCE labels only); PROG_AUG as published
+# (decision F); family default size augmentation. Disclose: the thinning empties 11.9% of Car training boxes, which
+# stay as labels (20261005_01 §13 CPU pre-check).
+#
+# PRE-DECLARED READING (written 2026-10-08 before step 2 or any result; one seed, ~2 AP single-run noise), Car BEV
+# AP_R40 IoU 0.7 on nuScenes val ("all objects"), epoch 7:
+# 1. Pseudo-labelling helps on the dense -> sparse pair if BEV >= +2 over its teacher 27599 (30.63); < +2 = it does not.
+# 2. Also read against GBlobs 27598 (28.86) and the nuScenes oracle 25743 (44.98).
+# 3. Analysis after the result (CPU): per-range / points-in-box breakdown of the gain on nuScenes val.
+#
+# Launch (2 GPUs, 150G as 27599, 12 CPUs, seed 666; keep off node03):
+#   EST_H=40 scripts/submit.sh --gres=gpu:2 --mem=150G --cpus-per-task=12 --exclude=node03 scripts/run_sourceonly_2gpu.sh \
+#       cfgs/da-ieee-access/centerpoint-global-st3d-waymo2nuscenes.yaml <tag> <run> \
+#       --pretrained_model <27599 ep7> --pretrained_model_teacher <27599 ep7>
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-global-waymo2nuscenes.yaml
+
+DATA_CONFIG_TAR:
+    USE_PSEUDO_LABEL: True
+
+SELF_TRAIN:
+  SCORE_THRESH: [1.01, 1.01, 1.01]   # STEP 2 PENDING - do not launch with these values
+  NEG_THRESH: [1.01, 1.01, 1.01]     # STEP 2 PENDING
+  MODEL_TEACHER:
+    CLASS_NAMES: [Car, Pedestrian, Cyclist]
+    ONTOLOGY: kitti
+    NAME: CenterPoint
+    VFE: {NAME: MeanVFE}
+    BACKBONE_3D: {NAME: VoxelResBackBone8x}
+    MAP_TO_BEV: {NAME: HeightCompression, NUM_BEV_FEATURES: 256}
+    BACKBONE_2D:
+      NAME: BaseBEVBackbone
+      LAYER_NUMS: [5]
+      LAYER_STRIDES: [1]
+      NUM_FILTERS: [128]
+      UPSAMPLE_STRIDES: [2]
+      NUM_UPSAMPLE_FILTERS: [256]
+    DENSE_HEAD:
+      NAME: CenterHead
+      CLASS_AGNOSTIC: false
+      CLASS_NAMES_EACH_HEAD:
+      - [Car, Pedestrian, Cyclist]
+      SHARED_CONV_CHANNEL: 64
+      USE_BIAS_BEFORE_NORM: true
+      NUM_HM_CONV: 2
+      SEPARATE_HEAD_CFG:
+        HEAD_ORDER: [center, center_z, dim, rot]
+        HEAD_DICT:
+          center: {out_channels: 2, num_conv: 2}
+          center_z: {out_channels: 1, num_conv: 2}
+          dim: {out_channels: 3, num_conv: 2}
+          rot: {out_channels: 2, num_conv: 2}
+      TARGET_ASSIGNER_CONFIG: {FEATURE_MAP_STRIDE: 4, NUM_MAX_OBJS: 500, GAUSSIAN_OVERLAP: 0.1, MIN_RADIUS: 2}
+      LOSS_CONFIG:
+        LOSS_WEIGHTS:
+          cls_weight: 1.0
+          loc_weight: 2.0
+          code_weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      POST_PROCESSING:
+        SCORE_THRESH: 0.0001
+        POST_CENTER_LIMIT_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+        MAX_OBJ_PER_SAMPLE: 500
+        NMS_CONFIG: {NMS_TYPE: nms_gpu, NMS_THRESH: 0.5, NMS_PRE_MAXSIZE: 4096, NMS_POST_MAXSIZE: 500}
+    POST_PROCESSING:
+      RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+      SCORE_THRESH: 0.0001
+      OUTPUT_RAW_SCORE: false
+      EVAL_METRIC: kitti
+      NMS_CONFIG: {MULTI_CLASSES_NMS: false, NMS_TYPE: nms_gpu, NMS_THRESH: 0.5, NMS_PRE_MAXSIZE: 4096, NMS_POST_MAXSIZE: 500}
+  EPOCH_FOLLOWS: source
+  UPDATE_PSEUDO_LABEL: [0]
+  UPDATE_PSEUDO_LABEL_INTERVAL: 2
+  FROZEN_TEACHER_SINGLE_PASS: true
+  INIT_PS: None
+  SRC: {USE_DATA: true, USE_GRAD: true, LOSS_WEIGHT: 1.0, BACKWARD_TOGETHER: true}
+  TAR: {USE_DATA: true, LOSS_WEIGHT: 1.0, BACKWARD_TOGETHER: true}
+  PROG_AUG:
+    ENABLED: true
+    UPDATE_AUG: [2, 4, 5]
+    SCALE: 1.1
+  MEMORY_ENSEMBLE:
+    ENABLED: true
+    NAME: nms_ensemble
+    IOU_THRESH: 0.1
+    NMS_CONFIG: {NMS_TYPE: nms_gpu, MULTI_CLASSES_NMS: false, NMS_PRE_MAXSIZE: 512, NMS_POST_MAXSIZE: 100, NMS_THRESH: 0.1}
+    MEMORY_VOTING: {ENABLED: true, IGNORE_THRESH: 2, RM_THRESH: 3}
