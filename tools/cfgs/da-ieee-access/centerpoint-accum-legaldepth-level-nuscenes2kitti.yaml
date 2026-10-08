@@ -1,0 +1,18 @@
+# Hypothesis row (experiments_md/20261008_07; user 2026-10-08 ~21:45 「学習がいるものもキューに入れて」). ONE variable from the
+# legal S2 / Waymo base 27468 (centerpoint-accum-legaldepth-nuscenes2kitti: Boston 15 / Singapore 10 consecutive sweeps +
+# motion compensation, Car [0.85, 1.20]). KITTI val in-run; Waymo val through the -nuscenes2waymo twin (same checkpoint).
+# PRE-DECLARED READING (written before launch; one seed, ~2 AP single-run noise): Waymo val Car BEV >= +2 over 27590
+# (27468 on Waymo, 48.30 / 23.47) = the hypothesis holds; <= -2 = the change costs; KITTI read against 73.70 / 46.82.
+# H7 - SOURCE PITCH: nuScenes LIDAR_TOP is pitched +2.65 deg (Boston) / +1.39 (Singapore) relative to the vehicle, so the
+# ground the detector learns rises ahead by ~2.4 m at 60 m; the x/y flips symmetrise it into +-2 deg of range-dependent
+# height noise. Waymo's frame is level. LEVEL_COOR removes the pitch/roll from each frame's own ref_from_car (published
+# extrinsic, label-free) AFTER accumulation in the anchor frame and BEFORE SHIFT_COOR (nuscenes_dataset.__getitem__).
+# Evidence for: 27704's box-bottom error grows with range (+0.03 at 0-10 m, +0.14 at 50-75 m). Against: on Lyft -> nuScenes
+# a 3.6 deg re-levelling of the TARGET moved AP <= 0.7 (20261004_02) - the SOURCE side was never tested.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-legaldepth-nuscenes2kitti.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        LEVEL_COOR: {'FROM_EXTRINSIC': True, 'PITCH_DEG': 0.0, 'ROLL_DEG': 0.0}
+    NUSCENES_N015:
+        LEVEL_COOR: {'FROM_EXTRINSIC': True, 'PITCH_DEG': 0.0, 'ROLL_DEG': 0.0}

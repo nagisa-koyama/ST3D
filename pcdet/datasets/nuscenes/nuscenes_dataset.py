@@ -352,7 +352,15 @@ class NuScenesDataset(DatasetTemplate):
             index = index % len(self.infos)
 
         info = copy.deepcopy(self.infos[index])
-        points = self.get_lidar_with_sweeps(index, max_sweeps=self.dataset_cfg.MAX_SWEEPS)
+        # SWEEP_COUNT_MIX: 'uniform' draws this sample's sweep count from {1, ..., MAX_SWEEPS} in TRAINING, so the
+        # accumulated source still shows the detector sparse (single-sweep-like) positives beside dense ones
+        # (hypothesis H8, experiments_md/20261008_07). Evaluation and an absent key use MAX_SWEEPS, unchanged.
+        max_sweeps = self.dataset_cfg.MAX_SWEEPS
+        mix = self.dataset_cfg.get('SWEEP_COUNT_MIX', None)
+        if mix and self.training:
+            assert mix == 'uniform', f'SWEEP_COUNT_MIX: unknown mode {mix!r}'
+            max_sweeps = int(np.random.randint(1, int(max_sweeps) + 1))
+        points = self.get_lidar_with_sweeps(index, max_sweeps=max_sweeps)
 
         # nuScenes stores intensity as raw 0-255 returns, while KITTI (as stored), Waymo (tanh in its
         # loader) and PandaSet (/255 in its loader) all arrive in [0, 1]. INTENSITY_SCALE: 255.0 puts

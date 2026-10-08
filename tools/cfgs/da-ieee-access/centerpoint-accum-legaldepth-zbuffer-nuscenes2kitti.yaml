@@ -1,0 +1,41 @@
+# Hypothesis row (experiments_md/20261008_07; user 2026-10-08 ~21:45 「学習がいるものもキューに入れて」). ONE variable from the
+# legal S2 / Waymo base 27468 (centerpoint-accum-legaldepth-nuscenes2kitti: Boston 15 / Singapore 10 consecutive sweeps +
+# motion compensation, Car [0.85, 1.20]). KITTI val in-run; Waymo val through the -nuscenes2waymo twin (same checkpoint).
+# PRE-DECLARED READING (written before launch; one seed, ~2 AP single-run noise): Waymo val Car BEV >= +2 over 27590
+# (27468 on Waymo, 48.30 / 23.47) = the hypothesis holds; <= -2 = the change costs; KITTI read against 73.70 / 46.82.
+# H1 - DE-OCCLUSION BY ACCUMULATION: 15 / 10 sweeps add faces of a car that the anchor viewpoint cannot see, so training
+# cars are more complete than any single-frame target car; the lattice z-buffer rule (point_sampler, ST3D dcb444b) keeps,
+# per pixel of a virtual Waymo TOP range image cast from the anchor (64 published inclinations, 2,650 columns, sensor
+# 2.184 m above ground), only the NEAREST point - i.e. it removes points invisible from the anchor. The init weights
+# (w3 = 0) are the pure rule, logit +-4 (keep 0.98 / 0.02), training mode only. Same step as -latticeinit- (20261008_01),
+# but on the 27468 base (consecutive sweeps) rather than 27705's displacement spread; the base's 150k source voxel cap is
+# kept (the rule only removes points, so it binds less than in the base). Label-free (spec + source clouds).
+# The learned-sampling session measured that this rule thins sparse far cars 29-90% (20261008_01 §4.2): a gain on Waymo
+# supports H1 (invisible points hurt more than they help); a loss means they help more than they hurt.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-legaldepth-nuscenes2kitti.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {'train': True, 'test': False}
+            - NAME: sample_points_learned
+              WEIGHTS: /home/koyama/data/samplers/lattice_n008_waymo_init.npz
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {'train': 150000, 'test': 150000}
+    NUSCENES_N015:
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {'train': True, 'test': False}
+            - NAME: sample_points_learned
+              WEIGHTS: /home/koyama/data/samplers/lattice_n015_waymo_init.npz
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.15]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {'train': 150000, 'test': 150000}

@@ -112,3 +112,59 @@ def test_distinct_real_sweeps_drops_padding():
            [{'lidar_path': 's2.bin', 'transform_matrix': m, 'time_lag': 0.10}]
     out = distinct_real_sweeps(pad + real, 'a.bin')
     assert [s['lidar_path'] for s in out] == ['s1.bin', 's2.bin']
+
+
+def _mix_dataset(mix, training, max_sweeps=15):
+    """A NuScenesDataset shell: only the fields __getitem__ reads up to get_lidar_with_sweeps (hypothesis H8 row)."""
+    from pcdet.datasets.nuscenes.nuscenes_dataset import NuScenesDataset
+    ds = NuScenesDataset.__new__(NuScenesDataset)
+    ds._merge_all_iters_to_one_epoch = False
+    ds.infos = [{'lidar_path': 'x/none.bin', 'token': 't'}]
+    ds.training = training
+    cfg = {'MAX_SWEEPS': max_sweeps}
+    if mix is not None:
+        cfg['SWEEP_COUNT_MIX'] = mix
+    from easydict import EasyDict
+    ds.dataset_cfg = EasyDict(cfg)
+    seen = []
+
+    class _Stop(Exception):
+        pass
+
+    def fake(index, max_sweeps=1):
+        seen.append(max_sweeps)
+        raise _Stop()
+    ds.get_lidar_with_sweeps = fake
+    return ds, seen, _Stop
+
+
+def test_sweep_count_mix_uniform_in_training_only():
+    np.random.seed(0)
+    ds, seen, stop = _mix_dataset('uniform', training=True)
+    for _ in range(300):
+        try:
+            ds[0]
+        except stop:
+            pass
+    assert min(seen) == 1 and max(seen) == 15 and len(set(seen)) == 15   # every count in {1..15} drawn
+    ds, seen, stop = _mix_dataset('uniform', training=False)             # evaluation: unchanged
+    try:
+        ds[0]
+    except stop:
+        pass
+    assert seen == [15]
+    ds, seen, stop = _mix_dataset(None, training=True)                   # absent key: unchanged
+    try:
+        ds[0]
+    except stop:
+        pass
+    assert seen == [15]
+
+
+def test_sweep_count_mix_rejects_unknown_mode():
+    ds, seen, stop = _mix_dataset('gaussian', training=True)
+    try:
+        ds[0]
+        assert False, 'unknown mode accepted'
+    except AssertionError as e:
+        assert 'SWEEP_COUNT_MIX' in str(e)

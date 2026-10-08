@@ -1,0 +1,9 @@
+# EVAL-ONLY Waymo twin of centerpoint-accum-legaldepth-level-nuscenes2kitti (H7, source levelled). Source blocks identical
+# to the training config; target block = centerpoint-accum-legaldepth-nuscenes2waymo's (27590). Reading in the training config.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-legaldepth-nuscenes2waymo.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        LEVEL_COOR: {'FROM_EXTRINSIC': True, 'PITCH_DEG': 0.0, 'ROLL_DEG': 0.0}
+    NUSCENES_N015:
+        LEVEL_COOR: {'FROM_EXTRINSIC': True, 'PITCH_DEG': 0.0, 'ROLL_DEG': 0.0}

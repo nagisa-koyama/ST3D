@@ -1,0 +1,18 @@
+# Hypothesis row (experiments_md/20261008_07; user 2026-10-08 ~21:45 「学習がいるものもキューに入れて」). ONE variable from the
+# legal S2 / Waymo base 27468 (centerpoint-accum-legaldepth-nuscenes2kitti: Boston 15 / Singapore 10 consecutive sweeps +
+# motion compensation, Car [0.85, 1.20]). KITTI val in-run; Waymo val through the -nuscenes2waymo twin (same checkpoint).
+# PRE-DECLARED READING (written before launch; one seed, ~2 AP single-run noise): Waymo val Car BEV >= +2 over 27590
+# (27468 on Waymo, 48.30 / 23.47) = the hypothesis holds; <= -2 = the change costs; KITTI read against 73.70 / 46.82.
+# H8 - SPARSE POSITIVES: the accumulated source shows the detector mostly dense cars, so a 10-point car may be learned as
+# background; Waymo's 10-49-point cars are where the residual is (recall 0.35 vs oracle). SWEEP_COUNT_MIX: uniform draws
+# each TRAINING sample's sweep count from {1, ..., MAX_SWEEPS} (compensation unchanged), so single-sweep-like positives
+# appear beside accumulated ones. Label-free (source only). Evaluation and the twin use MAX_SWEEPS as before.
+# Against: per ring the accumulated source's cars are already as sparse as Waymo's or sparser (20261007_03 stage 2) - the
+# row tests whether the DISTRIBUTION (not the median) of positives matters.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-legaldepth-nuscenes2kitti.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        SWEEP_COUNT_MIX: uniform
+    NUSCENES_N015:
+        SWEEP_COUNT_MIX: uniform

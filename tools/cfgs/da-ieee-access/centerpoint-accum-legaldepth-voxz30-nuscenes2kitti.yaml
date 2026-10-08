@@ -1,0 +1,55 @@
+# Hypothesis row (experiments_md/20261008_07; user 2026-10-08 ~21:45 「学習がいるものもキューに入れて」). ONE variable from the
+# legal S2 / Waymo base 27468 (centerpoint-accum-legaldepth-nuscenes2kitti: Boston 15 / Singapore 10 consecutive sweeps +
+# motion compensation, Car [0.85, 1.20]). KITTI val in-run; Waymo val through the -nuscenes2waymo twin (same checkpoint).
+# PRE-DECLARED READING (written before launch; one seed, ~2 AP single-run noise): Waymo val Car BEV >= +2 over 27590
+# (27468 on Waymo, 48.30 / 23.47) = the hypothesis holds; <= -2 = the change costs; KITTI read against 73.70 / 46.82.
+# VOXEL HEIGHT (hypothesis (a), scan-line spacing vs voxel height): the 3D backbone sums features over 3x3x3 sparse-conv
+# neighbourhoods; whether adjacent scan lines land in vertically adjacent voxels depends on line spacing / voxel height.
+# In the car band at 40 m: Waymo 0.14 m, nuScenes 0.93 m, KITTI 0.2-0.35 m per line; the z-voxel is 0.15 m. Doubling it to
+# 0.30 m makes more of the source's (and KITTI's) lines vertical neighbours, moving the source's neighbourhood statistics
+# toward Waymo's without changing the points. Label-free (a model hyper-parameter from the published specs).
+# CONFOUND, stated before any result: with 0.30 m the 3D backbone's final depth is 1 instead of 2 (sparse z 21 -> 11 -> 6
+# -> 2 -> conv_out 1 with last_pad 1), so HeightCompression gives 128 BEV channels instead of 256; the 2D backbone's first
+# conv therefore reads 128 channels. That is a capacity change bundled with the voxel change; nothing else moves.
+# Applies to SOURCE and TARGET alike (model structure), so both the KITTI and the Waymo twin carry it.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-legaldepth-nuscenes2kitti.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {'train': True, 'test': False}
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.30]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {'train': 150000, 'test': 150000}
+    NUSCENES_N015:
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {'train': True, 'test': False}
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.30]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {'train': 150000, 'test': 150000}
+DATA_CONFIG_TAR:
+        DATA_PROCESSOR:
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {'train': True, 'test': False}
+            - NAME: transform_points_to_voxels
+              VOXEL_SIZE: [0.1, 0.1, 0.30]
+              MAX_POINTS_PER_VOXEL: 10
+              MAX_NUMBER_OF_VOXELS: {'train': 150000, 'test': 150000}
+
+MODEL:
+    BACKBONE_3D:
+        NAME: VoxelResBackBone8x
+        last_pad: 1
+    MAP_TO_BEV:
+        NAME: HeightCompression
+        NUM_BEV_FEATURES: 128
