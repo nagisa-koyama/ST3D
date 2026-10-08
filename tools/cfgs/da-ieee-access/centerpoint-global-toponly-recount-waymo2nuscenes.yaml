@@ -1,0 +1,45 @@
+# C1, the ATTRIBUTION CONTROL of 27807 (Waymo -> nuScenes scan-pattern thinning, 36.12 / 16.73 against per-bin
+# thinning 27599 at 30.63 / 13.52). User's go, 2026-10-09 ~06:50: 「素晴らしい。両方そのように進めましょう」.
+#
+# 27807 differs from 27599 in three ways: (1) the line-selection rule (rows at nuScenes' 1.33 deg spacing, one point
+# per row per 0.332 deg - the hypothesis); (2) TOP lidar only (side lidars dropped); (3) RECOUNT_GT_POINTS (Car boxes
+# the thinning empties are dropped instead of trained as positives on empty space). This row keeps (2) and (3) and
+# replaces (1) with 27599's per-bin global thinning, so 27807 - C1 isolates the scan pattern.
+#
+# What changes against 27807's resolved config (and nothing else):
+#   - RING_PATTERN removed (the selection rule);
+#   - LIDAR_INDICES [0]: TOP only, sliced before the NLZ filter (27807's RING_PATTERN.TOP_ONLY);
+#   - 27599's per-bin global thinning (HIST_DIST_* + sample_points_hist_based), calibrated on THIS source, i.e. the
+#     TOP-only Waymo train cloud, against nuScenes TRAIN clouds (label-free, HIST_DIST_TARGET_SPLIT default 'train');
+#   - drop_empty_gt_boxes right after the thinning: the processor-stage recount. 27807 recounts its loader-thinned cloud
+#     through prepare_data's zero-point filter; here the thinning runs in the processor, AFTER that filter, so the
+#     recount has to run there too (positive boxes with < 1 point dropped, ignore labels kept; ST3D 0157f9f).
+#
+# PRE-DECLARED READING (written 2026-10-09 before launch; Car BEV AP_R40, nuScenes val, KITTI metric, epoch 7, one seed):
+#   - 27807 - C1 >= +2: the scan pattern is the cause of 27807's gain;
+#   - |27807 - C1| < 2: the gain came from TOP-only and / or the label recount, not the pattern;
+#   - C1 - 27599 (30.63): the effect of TOP-only + recount on per-bin thinning.
+# Legal: source labels (recount), the target's TRAIN clouds (histogram), the Waymo spec (lidar index). experiments_md
+# 20261005_01 §15.6.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-global-waymo2nuscenes.yaml
+DATA_CONFIG:
+    LIDAR_INDICES: [0]
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+        - NAME: sample_points_hist_based
+          MIN_HIST_BIN_FRACTION: 0.01
+        - NAME: drop_empty_gt_boxes
+          MIN_POINTS: 1     # = MIN_POINTS_OF_GT (default 1), the threshold 27807's recount uses
+        - NAME: transform_points_to_voxels
+          VOXEL_SIZE: [0.1, 0.1, 0.15]
+          MAX_POINTS_PER_VOXEL: 10
+          MAX_NUMBER_OF_VOXELS: {
+            'train': 150000,
+            'test': 150000
+          }

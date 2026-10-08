@@ -24,6 +24,17 @@ cfg = EasyDict(); cfg_from_yaml_file(cfg_file, cfg)
 dcfg = cfg.DATA_CONFIG_TAR if key == 'TAR' else (cfg.DATA_CONFIG if key == 'DATA_CONFIG' else cfg.DATA_CONFIGS[key])
 ds, _, _ = build_dataloader(dataset_cfg=dcfg, class_names=cfg.CLASS_NAMES, batch_size=1, dist=False, workers=0,
                             logger=common_utils.create_logger(), training=True, model_ontology=cfg.get('ONTOLOGY'))
+# TARGET_DUMP_CALIB_FRAMES=<n> (env, opt-in): install the global density calibration first, as train.py does for a
+# HIST_DIST_ON_THE_FLY source, so a sample_points_hist_based step is live (otherwise it is a no-op here).
+import os
+if os.environ.get('TARGET_DUMP_CALIB_FRAMES') and dcfg.get('HIST_DIST_ON_THE_FLY', False):
+    from pcdet.datasets.point_calibration import calibration_target_config, link_point_calibration
+    tcfg, _ = calibration_target_config(cfg.DATA_CONFIG_TAR)
+    tds, _, _ = build_dataloader(dataset_cfg=tcfg, class_names=cfg.CLASS_NAMES, batch_size=1, dist=False, workers=0,
+                                 logger=common_utils.create_logger(), training=False, model_ontology=cfg.get('ONTOLOGY'))
+    link_point_calibration(ds, tds, num_frames=int(os.environ['TARGET_DUMP_CALIB_FRAMES']),
+                           num_bins=dcfg.get('HIST_DIST_BINS', 50), max_dist=dcfg.get('HIST_DIST_MAX_DIST', 75.0),
+                           logger=common_utils.create_logger())
 if len(sys.argv) > 4:
     ps = pickle.load(open(sys.argv[4], 'rb'))
     ds.set_pseudo_labels(ps)
