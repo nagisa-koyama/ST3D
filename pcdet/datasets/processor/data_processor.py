@@ -499,6 +499,38 @@ class DataProcessor(object):
         data_dict['points'] = points[points_mask]
         return data_dict
 
+    def drop_empty_gt_boxes(self, data_dict=None, config=None):
+        """Training only: drop POSITIVE gt boxes holding fewer than MIN_POINTS (default 1) of the current points.
+
+        `prepare_data`'s zero-point filter runs BEFORE the processor, so a box emptied by a point-dropping
+        processor step (sample_points_hist_based, sample_points_learned) stays a positive label on empty space
+        (index gotcha, 2026-10-04). List this step right after such a step to recount on the thinned cloud - the
+        processor-stage equivalent of RING_PATTERN.RECOUNT_GT_POINTS, which recounts a loader-thinned cloud
+        through the zero-point filter (experiments_md 20261005_01 §15.6, the attribution control of 27807).
+        Only `gt_boxes` is filtered: after the processor `gt_names` is already misaligned with it
+        (mask_points_and_boxes_outside_range trims boxes only), so classes come from column 7. Boxes with a
+        non-positive label (pseudo-label ignore band, IGNORE_CLASS_LABEL -99) are ignore regions, not
+        positives, and are kept whatever they hold. Evaluation is untouched.
+        """
+        if data_dict is None:
+            return partial(self.drop_empty_gt_boxes, config=config)
+        boxes = data_dict.get('gt_boxes', None)
+        if not self.training or boxes is None or len(boxes) == 0:
+            return data_dict
+        boxes = np.asarray(boxes)
+        min_points = int(config.get('MIN_POINTS', 1)) if config is not None else 1
+        positive = boxes[:, 7] > 0 if boxes.shape[1] > 7 else np.ones(len(boxes), dtype=bool)
+        valid = (boxes[:, 3:6] > 1e-3).all(axis=1)
+        counts = np.zeros(len(boxes), dtype=np.int64)
+        if valid.any() and len(data_dict['points']):
+            from ...ops.roiaware_pool3d import roiaware_pool3d_utils
+            counts[valid] = roiaware_pool3d_utils.points_in_boxes_cpu(
+                np.ascontiguousarray(data_dict['points'][:, 0:3], dtype=np.float32),
+                np.ascontiguousarray(boxes[valid, :7], dtype=np.float32)).sum(axis=1)
+        keep = ~positive | (counts >= min_points)
+        data_dict['gt_boxes'] = data_dict['gt_boxes'][keep]
+        return data_dict
+
     @staticmethod
     def box_occupancy(points, boxes):
         """(point-in-any-box mask, points per box, the boxes those counts refer to).
