@@ -40,8 +40,8 @@ DATA_CONFIG_TAR:
     USE_PSEUDO_LABEL: True
 
 SELF_TRAIN:
-  SCORE_THRESH: [1.01, 1.01, 1.01]   # STEP 2 PENDING - do not launch with these values
-  NEG_THRESH: [1.01, 1.01, 1.01]     # STEP 2 PENDING
+  SCORE_THRESH: [0.19, 0.29, 0.467]   # job 27805: rule B, teacher 27599 ep7 on thinned Waymo val (7,998 frames): 0.19 / 0.29 / 0.32; Cyclist raised to its NEG_THRESH (rule A step 6, no Cyclist ignore band)
+  NEG_THRESH: [0.174, 0.182, 0.467]   # job 27805: rule A on teacher 27599's nuScenes TRAIN pseudo-labels (floor 0.0001; plateau modes 0.133 / 0.133 / 0.202)
   MODEL_TEACHER:
     CLASS_NAMES: [Car, Pedestrian, Cyclist]
     ONTOLOGY: kitti
