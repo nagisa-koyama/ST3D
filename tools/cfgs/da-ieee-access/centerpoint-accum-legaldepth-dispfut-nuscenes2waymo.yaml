@@ -1,0 +1,10 @@
+# EVAL-ONLY twin of centerpoint-accum-legaldepth-dispfut-nuscenes2kitti (F1) scored on Waymo val. Source blocks identical
+# to the training config; target block = centerpoint-accum-legaldepth-nuscenes2waymo's (27590). Read against 27705's
+# Waymo score (the past-only control) and 27590's 48.30 / 23.47, per the reading pre-declared in the training config.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-legaldepth-disp-nuscenes2waymo.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        SWEEP_SELECTION: {'MODE': 'displacement', 'SPAN_M': 27.0, 'FUTURE': True}
+    NUSCENES_N015:
+        SWEEP_SELECTION: {'MODE': 'displacement', 'SPAN_M': 27.0, 'FUTURE': True}

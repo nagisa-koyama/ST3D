@@ -1,0 +1,32 @@
+# F1, THE ONE-VARIABLE DIRECTION ROW: displacement-spread accumulation 27705 (centerpoint-accum-legaldepth-disp-nuscenes2kitti,
+# Boston 15 / Singapore 10 sweeps spread over <= 27 m) with ONE change: SWEEP_SELECTION.FUTURE, so the spread draws from
+# LATER keyframes and their sweeps as well as earlier ones (ST3D 0c046ab, two-sided by reach). Same counts, same span,
+# same compensation, same voxel caps, no sampler. Resolved it must differ from 27705's config only in the two FUTURE keys.
+#
+# Why (experiments_md/20261007_03 §15, 20261008_01 §7-8): a ring's hit on a far car AHEAD can only climb the body as the
+# ego approaches it, so past sweeps leave sparse far cars ahead at 4-6 z-layers whatever the depth or span (Waymo val: 8),
+# while approaching (future) sweeps lift them to 7 (Boston 15@27F) / 6 (Singapore 10@27F) at these counts. Cars behind
+# lose a little (8 -> 7, 7 -> 6), sides barely move. CONFOUND, stated before any result: with future sweeps the cars
+# ahead at 20-40 m become far denser than Waymo's (Boston 434 points / 11 z-layers against Waymo's 95 / 9), because the
+# ego later passes them closely - near-field sampling, not a lattice.
+# Legal: future frames of the labelled SOURCE only, selected by ego displacement; no target label, no target statistic.
+#
+# PRE-DECLARED READING (written 2026-10-08 04:40 JST, before any F1 or 27705 result; one seed, ~2 AP single-run noise):
+# - Waymo val (the -nuscenes2waymo twin, same checkpoint): Car BEV >= +2 over 27705 (the past-only control at the same
+#   count and span) counts as a gain from direction; read also against 27590 (27468, consecutive sweeps): 48.30 / 23.47.
+#   The gain should sit beyond 30 m and in the 10-199-point GT bins (analysis/waymo_target_residual.py); dense near
+#   cars unchanged.
+# - If F1 < 27705 - 2 on Waymo, the near-field-dense-ahead confound outweighs the coverage gain, and the future source
+#   needs thinning (the v2 sampler row) before direction can be judged.
+# - KITTI val: read against 27705 and 27468's 73.70 / 46.82 at the same tolerance; no direction-specific prediction
+#   there (KITTI scores the camera FOV, i.e. cars ahead only - a gain there would be consistent, not decisive).
+# Launch (2 GPUs, 150G, seed 666; keep off node03 / node13 / node61; loader ~1.1x 27705's, 0% of frames over 250k voxels):
+#   EST_H=20 scripts/submit.sh --gres=gpu:2 --mem=150G --cpus-per-task=12 --time=26:00:00 --exclude=node03,node13,node61 \
+#       scripts/run_sourceonly_2gpu.sh cfgs/da-ieee-access/centerpoint-accum-legaldepth-dispfut-nuscenes2kitti.yaml <tag> <run>
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-legaldepth-disp-nuscenes2kitti.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        SWEEP_SELECTION: {'MODE': 'displacement', 'SPAN_M': 27.0, 'FUTURE': True}
+    NUSCENES_N015:
+        SWEEP_SELECTION: {'MODE': 'displacement', 'SPAN_M': 27.0, 'FUTURE': True}
