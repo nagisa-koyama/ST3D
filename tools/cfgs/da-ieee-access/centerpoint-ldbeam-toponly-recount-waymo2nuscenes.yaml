@@ -1,0 +1,51 @@
+# LD-data: LiDAR Distillation's pseudo-low-beam DATA STEP alone, on Waymo -> nuScenes - the control that separates the
+# scan-pattern row 27807 (and its seed 2, 27840) from LiDAR Distillation. User's go 2026-10-09 (「LS-data」, the reply
+# to the LD-overlap question); experiments_md 20261005_01 §15.9.
+#
+# The student cloud of the LiDAR Distillation row 27811 (centerpoint-distill-waymo2nuscenes), exactly: TOP rows
+# decimated 64 -> 32 by row index (BEAM_RATIO 2, fixed phase, as published for a 32-beam target), full azimuth
+# (BIN_RATIO 1), side lidars excluded (no ring label), split after augmentation by the same code path - but with
+# BEAM_DISTILL.STUDENT_ONLY, so no teacher stream and no DISTILL loss. Plus the recount 27807 has: positive boxes
+# holding no point of the student cloud are dropped (drop_empty_gt_boxes in the processor; 27807 recounts its
+# loader-thinned cloud through the zero-point filter, same rule MIN_POINTS 1).
+#
+# So against 27807 the ONE variable is the line-selection rule: LD's beam-COUNT decimation (32 of 64 rows, every
+# 2nd; 0.34-0.61 deg between lines in the car band, Waymo's ~0.14 deg azimuth step) against the spec's line SPACING
+# (rows nearest a 1.33 deg lattice, ~15 of 64; one point per 0.332 deg). Both TOP-only, both recounted. Against 27811
+# the variable is the distillation.
+#
+# PRE-DECLARED READING (written 2026-10-09 before launch; Car BEV AP_R40, nuScenes val, KITTI metric, epoch 7, one seed):
+#   R1  27807 (two-seed mean 36.21) - LD-data >= +2: matching the spec's line spacing, not the beam count, is what helps;
+#       the scan-pattern row is distinct from LiDAR Distillation's data step.
+#       |.| < 2: the gain is LD's data step (structured row decimation); what remains ours is the spacing rule's reach
+#       (non-integer ratios, any spec) and the mechanism, not the AP.
+#       <= -2: LD's decimation does better than the spacing rule.
+#   R2  (analysis) 27811 (LD with distillation) - LD-data: what the distillation adds in this pipeline.
+#   R3  (analysis) LD-data - C1 27850 (31.14): structured row decimation against random density thinning.
+#
+# Legal: source labels / calibration only; the target enters through nuScenes' published beam count (32).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-waymo.yaml
+DATA_CONFIG:
+    BEAM_DISTILL:
+        NUM_BEAMS: 64
+        BEAM_RATIO: 2
+        BIN_RATIO: 1
+        TOP_CALIB: /home/koyama/data/waymo_top_calib/top_calib.pkl   # per-segment TOP inclinations + extrinsic (source)
+        STUDENT_ONLY: True
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+        - NAME: drop_empty_gt_boxes
+          MIN_POINTS: 1     # = MIN_POINTS_OF_GT, the threshold of 27807's recount
+        - NAME: transform_points_to_voxels
+          VOXEL_SIZE: [0.1, 0.1, 0.15]
+          MAX_POINTS_PER_VOXEL: 10
+          MAX_NUMBER_OF_VOXELS: {
+            'train': 150000,
+            'test': 150000
+          }

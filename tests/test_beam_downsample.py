@@ -354,6 +354,20 @@ class TestPairedSplit:
         with pytest.raises(AssertionError, match='identically zero'):
             ds.run({'points': points})
 
+    def test_student_only_is_the_paired_student_alone(self):
+        """STUDENT_ONLY: LD's data step as a single sample - the very cloud the paired run's student gets, and no
+        teacher stream (experiments_md 20261005_01 §15.9)."""
+        points, _ = make_rings(ELEVATIONS, n_azimuth=32)
+        boxes = np.arange(24, dtype=np.float32).reshape(3, 8)
+        data = lambda: {'points': points.copy(), 'gt_boxes': boxes.copy(), 'gt_names': np.array(['Car'] * 3)}
+        student, _ = self._FakeDataset(self._cfg()).run(data())
+        ds = self._FakeDataset(self._cfg(STUDENT_ONLY=True))
+        alone = ds.run(data())
+        assert isinstance(alone, dict)
+        assert np.array_equal(alone['points'], student['points'])
+        assert np.array_equal(alone['gt_boxes'], boxes)
+        assert len(ds.processed) == 2                    # one stream: encoder + processor (a pair would be 4)
+
     def test_centroids_are_fitted_once_and_cached(self):
         points, _ = make_rings(ELEVATIONS, n_azimuth=32)
         ds = self._FakeDataset(self._cfg())

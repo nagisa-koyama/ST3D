@@ -673,6 +673,12 @@ class DatasetTemplate(torch_data.Dataset):
             stream = self.point_feature_encoder.forward(stream)
             return self.data_processor.forward(data_dict=stream)
 
+        # STUDENT_ONLY (opt-in): LiDAR Distillation's pseudo-low-beam DATA STEP alone - the student's cloud, exactly
+        # as a distillation run's student sees it, as a single sample with no teacher stream (and so no DISTILL).
+        # The data-only control that separates LD's beam-count decimation from its distillation, and from a
+        # spacing-matched selection (RING_PATTERN; experiments_md 20261005_01 §15.9).
+        if self.beam_distill_cfg.get('STUDENT_ONLY', False):
+            return _stream(student_points)
         # Student first, so that if the pair is ever logged the order matches the loss's argument
         # order. The teacher runs the UNTOUCHED cloud - it is the high-beam model.
         return _stream(student_points), _stream(data_dict['points'])

@@ -502,6 +502,9 @@ def main():
             'DISTILL needs --pretrained_model_teacher: the higher-beam checkpoint this student '
             'imitates. Without it the teacher would be randomly initialised and the imitation loss '
             'would pull the student towards noise.')
+        assert not any((dc.get('BEAM_DISTILL', None) or {}).get('STUDENT_ONLY', False) for dc in data_configs.values()), (
+            'BEAM_DISTILL.STUDENT_ONLY yields the student cloud alone (the data-only control); DISTILL needs the '
+            '(student, teacher) pairs. Drop one of them.')
         train_func_kwargs['distill_cfg'] = cfg.DISTILL
 
     # -----------------------start training---------------------------
