@@ -47,12 +47,25 @@ def main():
     ap.add_argument('--cfg_file', required=True)
     ap.add_argument('--frames', type=int, nargs='+', default=[0, 1])
     ap.add_argument('--no_aug', action='store_true', help='training view with augmentation off (e.g. no gt_sampling)')
+    ap.add_argument('--calib_frames', type=int, default=0,
+                    help='install the global density calibration first, as train.py does for a HIST_DIST_ON_THE_FLY '
+                         'source (HIST_DIST_BEFORE_POINT_BUDGET honoured), so sample_points_hist_based is live')
     a = ap.parse_args()
     log = logging.getLogger('dump'); log.addHandler(logging.StreamHandler()); log.setLevel(logging.WARNING)
     cfg = cfg_from_yaml_file(a.cfg_file, EasyDict())
     dcfg = cfg.DATA_CONFIG if cfg.get('DATA_CONFIG', None) else list(cfg.DATA_CONFIGS.values())[0]
     ds, _, _ = build_dataloader(dataset_cfg=dcfg, class_names=cfg.CLASS_NAMES, batch_size=1, dist=False, workers=0,
                                 logger=log, training=True, model_ontology=cfg.get('ONTOLOGY', None))
+    if a.calib_frames and dcfg.get('HIST_DIST_ON_THE_FLY', False):
+        from pcdet.datasets.point_calibration import calibration_target_config, link_point_calibration
+        tcfg_cal, _ = calibration_target_config(cfg.DATA_CONFIG_TAR)
+        tds, _, _ = build_dataloader(dataset_cfg=tcfg_cal, class_names=cfg.CLASS_NAMES, batch_size=1, dist=False,
+                                     workers=0, logger=log, training=False, model_ontology=cfg.get('ONTOLOGY', None))
+        link_point_calibration(ds, tds, num_frames=a.calib_frames, num_bins=dcfg.get('HIST_DIST_BINS', 50),
+                               max_dist=dcfg.get('HIST_DIST_MAX_DIST', 75.0),
+                               skip_point_budget=dcfg.get('HIST_DIST_BEFORE_POINT_BUDGET', False))
+        print('calibration installed: rate %.2f..%.2f' % (ds.data_processor.per_bin_sample_rate().min(),
+                                                          ds.data_processor.per_bin_sample_rate().max()))
     if a.no_aug:
         from pcdet.datasets.point_calibration import _augmentation_off
         with _augmentation_off(ds):
@@ -83,6 +96,8 @@ def main():
     print('points per frame:', [int((pts[:, 0] == k).sum()) for k in range(B)], '| augmentation', 'OFF' if a.no_aug else 'on')
     print('points per GT box, median (n boxes):', {cfg.CLASS_NAMES[c - 1]: (float(np.median(v)) if v else None, len(v))
                                                     for c, v in per_box.items()})
+    print('positive GT boxes holding 0 points (must be 0 when the config recounts):',
+          {cfg.CLASS_NAMES[c - 1]: int(sum(n == 0 for n in v)) for c, v in per_box.items()})
 
     for name, kw, ext_w in (('centre targets', dict(), tcfg.GT_EXTRA_WIDTH),
                             ('vote targets (extend_gt)', dict(use_ex_gt_assign=True, fg_pc_ignore=False),

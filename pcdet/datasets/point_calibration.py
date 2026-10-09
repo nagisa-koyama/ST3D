@@ -20,6 +20,8 @@ anyway (see 20260921_02).
 
 See experiments_md/20260922_02_dataset_and_platform_domain_gap_analysis.md, defect 3.
 """
+from contextlib import ExitStack
+
 import numpy as np
 
 from .processor.data_processor import DataProcessor
@@ -149,9 +151,51 @@ class _augmentation_off:
         return False
 
 
+class _point_budget_off:
+    """Measure a dataset with its fixed point budget (`sample_points`) switched off, restoring it afterwards.
+
+    A point-based detector (IA-SSD) samples every frame to a FIXED count (16,384) in its processor, and
+    `compute_range_histogram` measures through `dataset[i]`, i.e. after that step. With the budget on, both sides
+    read 16,384 points per frame: the correction would compare two clouds the budget has already equalised, reshape
+    only the radial profile, and leave the source BELOW the budget, so the budget would then pad it with duplicates.
+    The correction runs BEFORE the budget in the processor list, so the cloud it has to match is the target as its
+    sensor delivers it: measure both sides with the budget removed (DATA_CONFIG.HIST_DIST_BEFORE_POINT_BUDGET; the
+    IA-SSD replication of the Waymo -> nuScenes attribution control, experiments_md 20261005_01 §15.8). Only
+    `sample_points` entries leave the queue; every other step, the correction's own no-op included, stays.
+    """
+
+    def __init__(self, dataset):
+        base = dataset if hasattr(dataset, 'data_processor') else getattr(dataset, 'dataset', dataset)
+        self.processor = getattr(base, 'data_processor', None)
+
+    def __enter__(self):
+        if self.processor is not None:
+            self.saved = self.processor.data_processor_queue
+            self.processor.data_processor_queue = [
+                p for p in self.saved if getattr(getattr(p, 'func', None), '__name__', '') != 'sample_points']
+        return self
+
+    def __exit__(self, *exc):
+        if self.processor is not None:
+            self.processor.data_processor_queue = self.saved
+        return False
+
+
+def point_budget_after_correction(processor_cfgs):
+    """True when a fixed point budget (`sample_points`) is listed AFTER `sample_points_hist_based`.
+
+    Such a config must measure its histograms with the budget removed (HIST_DIST_BEFORE_POINT_BUDGET); train.py
+    refuses it otherwise, because the measurement would then read the budget, not the sensors (_point_budget_off).
+    """
+    names = [p.get('NAME') for p in (processor_cfgs or [])]
+    if 'sample_points_hist_based' not in names:
+        return False
+    return 'sample_points' in names[names.index('sample_points_hist_based') + 1:]
+
+
 def link_point_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
                            num_bins=DEFAULT_BINS, max_dist=MAX_DIST, logger=None,
-                           fov_degree=None, fov_heading=0.0):
+                           fov_degree=None, fov_heading=0.0, skip_point_budget=False):
     """Measure both domains and install the pair into the SOURCE dataset's processor.
 
     Only the source is corrected: the target's own calibration target is itself, which makes its
@@ -164,17 +208,23 @@ def link_point_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
     `fov_degree`/`fov_heading` (DATA_CONFIG.HIST_DIST_FOV_DEGREE / _HEADING) measure BOTH sides
     inside one azimuth cone - see compute_range_histogram. None keeps the pooled 360-degree
     measurement every existing config uses.
+
+    `skip_point_budget` (DATA_CONFIG.HIST_DIST_BEFORE_POINT_BUDGET) measures BOTH sides with their fixed
+    `sample_points` budget removed - see _point_budget_off. False keeps every existing config's measurement.
     """
     # With a cone, measure the source unrotated (see _augmentation_off); without one, exactly as before.
-    if fov_degree is not None:
-        with _augmentation_off(source_set):
-            src = compute_range_histogram(source_set, num_frames, num_bins, max_dist, logger=logger,
-                                          fov_degree=fov_degree, fov_heading=fov_heading)
-    else:
+    with ExitStack() as stack:
+        if fov_degree is not None:
+            stack.enter_context(_augmentation_off(source_set))
+        if skip_point_budget:
+            stack.enter_context(_point_budget_off(source_set))
         src = compute_range_histogram(source_set, num_frames, num_bins, max_dist, logger=logger,
                                       fov_degree=fov_degree, fov_heading=fov_heading)
-    tgt = compute_range_histogram(target_set, num_frames, num_bins, max_dist, logger=logger,
-                                  fov_degree=fov_degree, fov_heading=fov_heading)
+    with ExitStack() as stack:
+        if skip_point_budget:
+            stack.enter_context(_point_budget_off(target_set))
+        tgt = compute_range_histogram(target_set, num_frames, num_bins, max_dist, logger=logger,
+                                      fov_degree=fov_degree, fov_heading=fov_heading)
     source_set.data_processor.set_hist_dist(src, tgt, max_dist=max_dist)
     if logger is not None:
         rate = source_set.data_processor.per_bin_sample_rate()

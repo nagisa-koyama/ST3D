@@ -311,7 +311,11 @@ class DataProcessor(object):
         else:
             choice = np.arange(0, len(points), dtype=np.int32)
             if num_points > len(points):
-                extra_choice = np.random.choice(choice, num_points - len(points), replace=False)
+                # Pad with duplicates drawn WITHOUT replacement, as upstream - which raises once a frame holds fewer
+                # than half the budget. Draw with replacement only there, so every frame that used to load is
+                # unchanged and a sparse one (a thinned source, experiments_md 20261005_01 §15.8) no longer crashes.
+                n_extra = num_points - len(points)
+                extra_choice = np.random.choice(choice, n_extra, replace=n_extra > len(points))
                 choice = np.concatenate((choice, extra_choice), axis=0)
             np.random.shuffle(choice)
         data_dict['points'] = points[choice]

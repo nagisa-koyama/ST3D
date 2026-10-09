@@ -309,6 +309,13 @@ def main():
         for dc, source in zip(data_configs.values(), source_datasets):
             if wants_foreground or not dc.get('HIST_DIST_ON_THE_FLY', False):
                 continue
+            # A fixed point budget (sample_points) listed after the correction would be what the histograms
+            # measure - both sides at the budget - unless the measurement removes it (point_calibration._point_budget_off).
+            from pcdet.datasets.point_calibration import point_budget_after_correction
+            assert not point_budget_after_correction(dc.get('DATA_PROCESSOR', [])) \
+                or dc.get('HIST_DIST_BEFORE_POINT_BUDGET', False), \
+                ('sample_points is listed after sample_points_hist_based: set DATA_CONFIG.HIST_DIST_BEFORE_POINT_BUDGET: '
+                 'True so the histograms measure the sensors, not the fixed point budget.')
             link_point_calibration(
                 source['dataset_class'], calib_target,
                 num_frames=dc.get('HIST_DIST_FRAMES', 1000),
@@ -316,7 +323,8 @@ def main():
                 max_dist=dc.get('HIST_DIST_MAX_DIST', 75.0),
                 logger=logger,
                 fov_degree=dc.get('HIST_DIST_FOV_DEGREE', None),
-                fov_heading=dc.get('HIST_DIST_FOV_HEADING', 0.0))
+                fov_heading=dc.get('HIST_DIST_FOV_HEADING', 0.0),
+                skip_point_budget=dc.get('HIST_DIST_BEFORE_POINT_BUDGET', False))
 
     # A correction listed in the pipeline but never given histograms is a no-op that looks like a
     # run. Say so rather than letting the result be quietly identical to the uncorrected arm.

@@ -34,7 +34,8 @@ if os.environ.get('TARGET_DUMP_CALIB_FRAMES') and dcfg.get('HIST_DIST_ON_THE_FLY
                                  logger=common_utils.create_logger(), training=False, model_ontology=cfg.get('ONTOLOGY'))
     link_point_calibration(ds, tds, num_frames=int(os.environ['TARGET_DUMP_CALIB_FRAMES']),
                            num_bins=dcfg.get('HIST_DIST_BINS', 50), max_dist=dcfg.get('HIST_DIST_MAX_DIST', 75.0),
-                           logger=common_utils.create_logger())
+                           logger=common_utils.create_logger(),
+                           skip_point_budget=dcfg.get('HIST_DIST_BEFORE_POINT_BUDGET', False))
 if len(sys.argv) > 4:
     ps = pickle.load(open(sys.argv[4], 'rb'))
     ds.set_pseudo_labels(ps)
