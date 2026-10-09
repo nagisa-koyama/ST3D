@@ -13,7 +13,7 @@ accumulated cloud exactly as the loader hook runs it; every 10th frame the hook'
 - variants: the declared rule (K = 4 rows), A (angular span 1.5 deg), H (+ horizontal single-gap), none (z-buffer only).
 Waymo mode (G5, ANALYSIS - reads Waymo val labels): z-layers and line spacing of Waymo val cars at matched counts.
 
-    python analysis/rerender_gate.py source <cfg> <key> <frames> <out.npz>
+    python analysis/rerender_gate.py source <cfg> <key> <frames> <out.npz> [count@span[F], e.g. 30@50F]
     python analysis/rerender_gate.py waymo <cfg> <val frames> <out.npz>
     python analysis/rerender_gate.py report <waymo.npz> <source.npz> [<source.npz> ...]
 """
@@ -105,14 +105,17 @@ def car_shape(p, hs, n_cols, rng3d):
     return len(p), len(np.unique(v[:, 2])), line_spacing(p, hs, n_cols, rng3d)
 
 
-def source_mode(cfg, key, n, out):
+def source_mode(cfg, key, n, out, source=None):
     dc = cfg.DATA_CONFIGS[key]; rcfg = dc.RERENDER
+    if source:   # e.g. 30@50F: displacement-selected past + future sweeps (lattice_depth_ceiling.parse_config)
+        from lattice_depth_ceiling import parse_config
+        dc.MAX_SWEEPS, dc.SWEEP_SELECTION = parse_config(source)
     spec = RR.lattice_spec(rcfg.TARGET_LATTICE, rcfg.get('MOUNT_HEIGHT', None))
     th, nc, hs = spec['thetas'], spec['n_cols'], spec['height']; inc_desc = th[::-1]
     shift = np.array(dc.get('SHIFT_COOR', [0, 0, 0]), np.float32)
     ds, _, _ = build_dataloader(dataset_cfg=dc, class_names=cfg.CLASS_NAMES, batch_size=1, dist=False, workers=0,
                                 logger=common_utils.create_logger(), training=True, model_ontology=cfg.get('ONTOLOGY'))
-    rows, g3, g3h, g4, hook = [], [], [], [], []
+    rows, g3, g3h, g3z, g4, hook = [], [], [], [], [], []
     with _augmentation_off(ds):
         step = max(1, len(ds) // n); frames = list(range(0, len(ds), step))[:n]
         dirs = [travel_direction(ds.infos[i]) for i in frames]
@@ -153,6 +156,11 @@ def source_mode(cfg, key, n, out):
             for vi, vname in enumerate(HOLDOUT):
                 Hq, hf = RR.rerender(P[keep], spec, **dict(VARIANTS)[vname])
                 Hf = Hq[hf]
+                if vname == DECIDE:   # POST-HOC DIAGNOSTIC (not deciding): the same comparison on kept, unfilled cells
+                    Hz = Hq[~hf]; zr_, zc_, zrg_, _ = RR.to_lattice(Hz[:, :3], hs, th, nc); zref = himg[zr_, zc_]
+                    zok = np.nonzero(np.isfinite(zref))[0]; zrp = np.hypot(Hz[zok, 0], Hz[zok, 1])
+                    sub = zok[(zrp >= 20) & (zrp < 75)]
+                    g3z.extend(zip([fi] * len(sub), np.hypot(Hz[sub, 0], Hz[sub, 1]), np.abs(zrg_[sub] - zref[sub])))
                 if not len(Hf):
                     continue
                 r_, c_, rg_, v_ = RR.to_lattice(Hf[:, :3], hs, th, nc)
@@ -207,7 +215,7 @@ def source_mode(cfg, key, n, out):
             if (fi + 1) % 20 == 0:
                 print(f'  {key}: {fi + 1} / {len(frames)} frames', flush=True)
     np.savez(out, key=key, variants=np.array([v[0] for v in VARIANTS]), n_frames=len(frames), rows=np.array(rows, float),
-             g3=np.array(g3, float), g3h=np.array(g3h, float), g4=np.array(g4, float), hook=np.array(hook, float))
+             g3=np.array(g3, float), g3h=np.array(g3h, float), g3z=np.array(g3z, float), g4=np.array(g4, float), hook=np.array(hook, float))
     print(f'saved {out}: {len(rows)} sparse-car records, {len(g3h)} hold-out cells')
 
 
@@ -289,6 +297,12 @@ def report_mode(wpath, paths):
                 ok = None; print('  UNRESOLVED (fewer than 200 comparable cells in some ring)')
             if vname == DECIDE:
                 all_pass['G3h'] = ok if all_pass['G3h'] is not None and ok is not None else None
+                Z = G['g3z'] if 'g3z' in G.files else np.zeros((0, 3))
+                if len(Z):
+                    print('  POST-HOC floor (not deciding): held-out returns vs KEPT unfilled cells: ' + '; '.join(
+                        f'{RINGS[g]}-{RINGS[g + 1]} m median {np.median(Z[ring_bin(Z[:, 1]) == g, 2]):.3f}, >0.5 m '
+                        f'{np.mean(Z[ring_bin(Z[:, 1]) == g, 2] > 0.5):.3f} ({(ring_bin(Z[:, 1]) == g).sum()})' for g in range(len(RINGS) - 1))
+                          + f'; pooled >0.5 m {np.mean(Z[:, 2] > 0.5):.3f}')
         t = G['g4']
         ok4 = np.median(t[:, 0]) < 0.5 and np.mean(t[:, 2] > CAP) <= 0.01
         print(f'\nG4: render s per anchor median {np.median(t[:, 0]):.3f} / p90 {np.percentile(t[:, 0], 90):.3f} '
@@ -320,6 +334,6 @@ if __name__ == '__main__':
         report_mode(sys.argv[2], sys.argv[3:]); sys.exit(0)
     cfg = EasyDict(); cfg_from_yaml_file(sys.argv[2], cfg)
     if sys.argv[1] == 'source':
-        source_mode(cfg, sys.argv[3], int(sys.argv[4]), sys.argv[5])
+        source_mode(cfg, sys.argv[3], int(sys.argv[4]), sys.argv[5], sys.argv[6] if len(sys.argv) > 6 else None)
     else:
         waymo_mode(cfg, int(sys.argv[3]), sys.argv[4])
