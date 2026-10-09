@@ -40,6 +40,14 @@ class WaymoDataset(DatasetTemplate):
         # experiments_md 20261005_01 (Waymo -> nuScenes scan-pattern row).
         self.ring_pattern_cfg = self.dataset_cfg.get('RING_PATTERN', None)
         self._top_calib = None
+        # EVAL_TOP_THIN (ANALYSIS, evaluation only; absent = unchanged): thin the TOP block of the EVALUATION cloud by
+        # whole scan lines (MODE rows, every STRIDE-th beam) or by a count-matched random draw (MODE random), to ask
+        # whether lattice-row coverage is what costs a source-trained model (experiments_md 20261009_02).
+        self.eval_top_thin_cfg = self.dataset_cfg.get('EVAL_TOP_THIN', None)
+        if self.eval_top_thin_cfg is not None:
+            assert (self.dataset_cfg.get('MAX_SWEEPS', 1) or 1) <= 1, 'EVAL_TOP_THIN thins one stored scan'
+            assert self.dataset_cfg.get('LIDAR_INDICES', None) is None, 'EVAL_TOP_THIN keeps every lidar; drop LIDAR_INDICES'
+            assert self.eval_top_thin_cfg.get('TOP_CALIB', None), 'set EVAL_TOP_THIN.TOP_CALIB'
         if self.ring_pattern_cfg is not None:
             assert (self.dataset_cfg.get('MAX_SWEEPS', 1) or 1) <= 1, \
                 'RING_PATTERN thins one TOP scan by its row order; accumulated sweeps have no single order'
@@ -183,6 +191,17 @@ class WaymoDataset(DatasetTemplate):
         calib = self._top_calibration(self.ring_pattern_cfg.TOP_CALIB)[info['point_cloud']['lidar_sequence']]
         return ring_pattern_points(self._raw_frame(info), info['num_points_of_each_lidar'], calib, self.ring_pattern_cfg)
 
+    def get_lidar_eval_top_thin(self, info):
+        """ANALYSIS: the evaluation frame with its TOP block thinned (EVAL_TOP_THIN; waymo_rings.eval_top_thin_points).
+        The random arm is seeded by the frame id, so two scorings of one checkpoint see the same points."""
+        import zlib
+        from .waymo_rings import eval_top_thin_points
+        cfg = self.eval_top_thin_cfg
+        calib = self._top_calibration(cfg.TOP_CALIB)[info['point_cloud']['lidar_sequence']]
+        rng = np.random.default_rng(zlib.crc32(str(info['frame_id']).encode()))
+        return eval_top_thin_points(self._raw_frame(info), info['num_points_of_each_lidar'], calib, cfg.MODE,
+                                    stride=cfg.get('STRIDE', 2), rng=rng)
+
     def get_lidar_with_ring_labels(self, info):
         """(points, ring label per point) for BEAM_DISTILL / BEAM_DROP: TOP rows from the stored order, side lidars -1."""
         from .waymo_rings import ring_labelled_points
@@ -231,6 +250,8 @@ class WaymoDataset(DatasetTemplate):
         pc_info = info['point_cloud']
         if self.ring_pattern_cfg is not None and self.training:
             return self.get_lidar_ring_pattern(info)
+        if self.eval_top_thin_cfg is not None and not self.training:
+            return self.get_lidar_eval_top_thin(info)
         points = self.get_lidar(pc_info['lidar_sequence'], pc_info['sample_idx'],
                                 info.get('num_points_of_each_lidar', None))
         max_sweeps = self.dataset_cfg.get('MAX_SWEEPS', 1) or 1

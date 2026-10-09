@@ -1,0 +1,9 @@
+# ANALYSIS, eval-only twin (experiments_md 20261009_02): centerpoint-accum-legaldepth-nuscenes2waymo scored on Waymo val with the TOP block thinned
+# at evaluation - MODE rows = every 2nd TOP beam (whole scan lines removed), MODE random = the same number of TOP
+# points drawn uniformly (count-matched control). Side lidars untouched. One key added to DATA_CONFIG_TAR; nothing else.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-legaldepth-nuscenes2waymo.yaml
+DATA_CONFIG_TAR:
+    EVAL_TOP_THIN:
+        TOP_CALIB: /home/koyama/data/waymo_top_calib/top_calib.pkl
+        MODE: random
+        STRIDE: 2

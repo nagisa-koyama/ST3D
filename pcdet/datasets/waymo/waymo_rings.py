@@ -192,3 +192,36 @@ def ring_labelled_points(raw, num_points_of_each_lidar, calib):
     out = np.array(raw[keep, 0:5], dtype=raw.dtype)
     out[:, 3] = np.tanh(out[:, 3])
     return out, label[keep]
+
+
+def eval_top_thin_points(raw, num_points_of_each_lidar, calib, mode, stride=2, rng=None):
+    """ANALYSIS, evaluation only: one stored frame with its TOP block thinned, returned as `get_lidar` returns it.
+
+    `mode` 'rows' keeps the TOP beams whose index (0 = highest declared beam) is a multiple of `stride`, so every
+    object loses whole scan lines (lattice-row coverage falls by about 1 / stride). `mode` 'random' is its
+    count-matched control: the SAME NUMBER of TOP points, drawn uniformly over the TOP block, so density falls
+    as much while every row keeps some points. Side lidars are untouched in both. Rows are recovered on the full
+    TOP block in stored order, before the no-label-zone filter (as `ring_pattern_points`); the filter and
+    tanh(intensity) follow `get_lidar`. experiments_md 20261009_02 (go / no-go for a learned re-renderer).
+    """
+    counts = np.asarray(num_points_of_each_lidar).astype(np.int64)
+    assert counts.sum() == len(raw), 'per-lidar counts %s do not add up to the %d stored points' % (counts, len(raw))
+    n_top = int(counts[0])
+    keep = np.ones(len(raw), dtype=bool)
+    if n_top:
+        beam, _, _, _, _ = top_beam_ids(raw[:n_top, :3], calib['extrinsic'], calib['inclinations'])
+        rows = (beam % stride) == 0
+        if mode == 'rows':
+            keep[:n_top] = rows
+        elif mode == 'random':
+            rng = np.random.default_rng(0) if rng is None else rng
+            sel = np.zeros(n_top, dtype=bool)
+            sel[rng.choice(n_top, int(rows.sum()), replace=False)] = True
+            keep[:n_top] = sel
+        else:
+            raise ValueError("EVAL_TOP_THIN.MODE must be 'rows' or 'random', got %r" % (mode,))
+    pts = raw[keep]
+    pts = pts[pts[:, 5] == -1]
+    out = np.array(pts[:, 0:5], dtype=raw.dtype)
+    out[:, 3] = np.tanh(out[:, 3])
+    return out
