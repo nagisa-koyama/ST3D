@@ -1,0 +1,39 @@
+# IA-SSD C1: the DENSITY-matched arm of the point-based replication of 27807 (experiments_md 20261005_01 §15.8; user's
+# go 2026-10-09 「3」). CenterPoint's C1 (27850, 31.14 / 14.36) on IA-SSD: TOP lidar only + per-bin global thinning
+# (27599's rule, calibrated on THIS source against nuScenes TRAIN clouds, label-free) + the recount. Against the
+# pattern arm (iassd-ringpattern-waymo2nuscenes) it differs ONLY in the line-selection rule; against the control
+# (iassd-sourceonly-waymo2nuscenes) in TOP-only + thinning.
+#
+# The fixed budget: the thinning runs BEFORE sample_points (16,384), and its histograms are measured with that budget
+# REMOVED on both sides (HIST_DIST_BEFORE_POINT_BUDGET, ST3D point_calibration._point_budget_off). Measured through
+# the full processor, both sides would read 16,384 points and the rate would only reshape the radial profile. So the
+# thinning matches the target's density as its sensor delivers it (CenterPoint C1: 22,995 vs 24,282 pts/frame), and
+# the budget then samples the thinned source and the target at the same ~0.7 ratio. drop_empty_gt_boxes after the
+# budget recounts on what the detector sees (it also covers boxes the thinning empties).
+#
+# Legal: source labels (recount), the target's TRAIN clouds (histogram), the Waymo spec (lidar index).
+_BASE_CONFIG_: cfgs/da-ieee-access-pointrcnn/iassd-sourceonly-waymo2nuscenes.yaml
+DATA_CONFIG:
+    LIDAR_INDICES: [0]
+    HIST_DIST_ON_THE_FLY: True
+    HIST_DIST_FRAMES: 1000
+    HIST_DIST_BINS: 50          # 1.5 m bins
+    HIST_DIST_MAX_DIST: 75.0    # covers POINT_CLOUD_RANGE
+    HIST_DIST_BEFORE_POINT_BUDGET: True
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+        - NAME: sample_points_hist_based
+          MIN_HIST_BIN_FRACTION: 0.01
+        - NAME: sample_points
+          NUM_POINTS: {
+            'train': 16384,
+            'test': 16384
+          }
+        - NAME: drop_empty_gt_boxes
+          MIN_POINTS: 1
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }

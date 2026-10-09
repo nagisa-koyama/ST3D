@@ -1,0 +1,33 @@
+# IA-SSD P: the SCAN-PATTERN arm of the point-based replication of 27807 (experiments_md 20261005_01 §15.8; user's go
+# 2026-10-09 「3」). 27807's RING_PATTERN block, unchanged, on the IA-SSD control (iassd-sourceonly-waymo2nuscenes):
+# TOP rows nearest nuScenes' published 1.33 deg vertical lattice, one point per row per 0.332 deg azimuth (both random
+# phase per sample), side lidars dropped, zero-point filter on the thinned cloud. ~14.6k points per frame (0.58x the
+# nuScenes TRAIN cloud), so the 16,384-point budget PADS this arm with duplicates (~11%) where it samples the other two;
+# duplicates add no new positions, so the line structure reaches the detector intact.
+#
+# PRE-DECLARED READINGS (written 2026-10-09 before any of the three IA-SSD rows is launched). Car BEV AP_R40, nuScenes
+# val, KITTI metric, epoch 7, one seed. Each arm's number = the mean of TWO scorings of its epoch-7 checkpoint (the
+# in-run eval and one eval-only rescoring), because IA-SSD samples its 16,384 test points at random (two scorings of
+# one checkpoint differed by ~0.9 BEV, 20261006_01).
+#   R1 (the question), P - C1:
+#     >= +2      the scan pattern helps a point-based detector too: 27807's gain lives in the data's line structure,
+#                not in the voxel grid;
+#     |.| < 2    no pattern effect without a voxel grid (at this budget): (a)'s mechanism is voxel-specific, or the
+#                budget masks it;
+#     <= -2      the pattern costs IA-SSD.
+#     A difference within 1 of +2 or -2 (1..3 or -3..-1) is reported as UNRESOLVED at one seed, not read.
+#   R2 (analysis), C1 - control: what density-matched thinning does for IA-SSD (CenterPoint, all lidars: 27599 +3.0).
+#   R3 (descriptive), P - control.
+#   Read alongside: CenterPoint P - C1 = +5.0 (36.12 vs 31.14), the nuScenes oracle 44.98 (CenterPoint; no IA-SSD
+#   nuScenes oracle exists).
+#
+# Legal: Waymo is the SOURCE (its calibration and labels are legal); the target enters only through nuScenes' published
+# sensor spec and its TRAIN point clouds (the azimuth step), no target label.
+_BASE_CONFIG_: cfgs/da-ieee-access-pointrcnn/iassd-sourceonly-waymo2nuscenes.yaml
+DATA_CONFIG:
+    RING_PATTERN:
+        TOP_CALIB: /home/koyama/data/waymo_top_calib/top_calib.pkl   # per-segment TOP inclinations + extrinsic (source)
+        SPACING_DEG: 1.33     # nuScenes HDL-32E vertical spacing (32 beams over -30.67 .. +10.67 deg)
+        AZ_RES_DEG: 0.332     # HDL-32E azimuth step at 20 Hz; nuScenes TRAIN clouds: median 0.332 (p10-p90 0.330-0.335)
+        TOP_ONLY: True
+        RECOUNT_GT_POINTS: True   # zero-point GT filter on the THINNED cloud

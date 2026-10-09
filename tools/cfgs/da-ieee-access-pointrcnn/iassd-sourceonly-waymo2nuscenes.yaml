@@ -1,0 +1,155 @@
+# IA-SSD source-only, Waymo -> nuScenes: the CONTROL of the point-based replication of 27807 (Waymo -> nuScenes
+# scan-pattern thinning; user's go 2026-10-09 「3」, experiments_md 20261005_01 §15.8). The question the three IA-SSD rows
+# answer: does matching the target's SCAN PATTERN help a detector with no voxel grid as it helps CenterPoint (27807
+# 36.21 two-seed mean against the density-matched C1 31.14)? If yes, the gain is the data's line structure; if not, it
+# lives in the voxel grid.
+#
+# A1's recipe (iassd-sourceonly-lyft2nuscenes / -nuscenes2kitti: model, optimiser LR 0.01 as published, x,y,z only,
+# family size augmentation, SCORE_THRESH 0.0001) on the Waymo source of centerpoint-sourceonly-waymo (26398): all five
+# lidars, SHIFT_COOR 0, SAMPLED_INTERVAL 2, 7 epochs (the family's sample budget), global batch 6, NUM_WORKERS 8.
+# mean_size = Waymo's own SOURCE train means over all boxes (Vehicle 4.80 / 2.10 / 1.78, Pedestrian 0.91 / 0.86 / 1.74,
+# Cyclist 1.81 / 0.84 / 1.77; computed 2026-10-09 from waymo_infos_train.pkl). No target label anywhere.
+#
+# ONE deliberate difference from every earlier IA-SSD row, identical in all three arms: drop_empty_gt_boxes right
+# after the 16,384-point budget. The budget keeps ~10% of a Waymo frame, and prepare_data's zero-point filter runs
+# BEFORE the processor, so without the recount the boxes the budget empties would train as positives on empty space
+# (index gotcha 2026-10-04). Positives with < 1 point of what the detector sees are dropped; ignore labels are kept.
+#
+# PRE-DECLARED READINGS: see iassd-ringpattern-waymo2nuscenes.yaml (written before any of the three is launched).
+DATA_CONFIG:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_waymo_dataset.yaml
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+        - NAME: sample_points
+          NUM_POINTS: {
+            'train': 16384,
+            'test': 16384
+          }
+        - NAME: drop_empty_gt_boxes
+          MIN_POINTS: 1     # = MIN_POINTS_OF_GT, the threshold of the zero-point filter and of 27807's recount
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+
+DATA_CONFIG_TAR:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_nuscenes_dataset.yaml
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+        - NAME: sample_points
+          NUM_POINTS: {
+            'train': 16384,
+            'test': 16384
+          }
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+
+CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
+ONTOLOGY: 'kitti'
+
+MODEL:
+    NAME: IASSD
+
+    BACKBONE_3D:
+        NAME: IASSD_Backbone
+        SA_CONFIG:
+            NPOINT_LIST: [[4096], [1024], [512], [256], [-1], [256]]
+            SAMPLE_RANGE_LIST: [[-1], [-1], [-1], [-1], [-1], [-1]]
+            SAMPLE_METHOD_LIST: &sample_method_list [['D-FPS'], ['D-FPS'], ['ctr_aware'], ['ctr_aware'], [], []]
+            RADIUS_LIST: [[0.2,0.8], [0.8,1.6], [1.6,4.8], [], [], [4.8, 6.4]]
+            NSAMPLE_LIST: [[16,32], [16,32], [16,32], [], [], [16, 32]]
+            MLPS: [[[16,16,32],  [32,32,64]],
+                   [[64,64,128],  [64,96,128]],
+                   [[128,128,256],  [128,256,256]],
+                   [],
+                   [128],
+                   [[256,256,512], [256,512,1024]]]
+            LAYER_TYPE: ['SA_Layer', 'SA_Layer', 'SA_Layer', 'SA_Layer', 'Vote_Layer', 'SA_Layer']
+            DILATED_GROUP: [False, False, False, False, False, False]
+            AGGREGATION_MLPS: [[64], [128], [256], [256], [], [512]]
+            CONFIDENCE_MLPS: [[], [128], [256], [], [], []]
+            LAYER_INPUT: [0, 1, 2, 3, 4, 3]
+            CTR_INDEX: [-1, -1, -1, -1, -1, 5]
+            MAX_TRANSLATE_RANGE: [3.0, 3.0, 2.0]
+
+    POINT_HEAD:
+        NAME: IASSD_Head
+        CLS_FC: [256, 256]
+        REG_FC: [256, 256]
+        CLASS_AGNOSTIC: False
+        USE_POINT_FEATURES_BEFORE_FUSION: False
+        TARGET_CONFIG:
+            INS_AWARE_ASSIGN: True
+            GT_EXTRA_WIDTH: [0.2, 0.2, 0.2]
+            ASSIGN_METHOD:
+                NAME: 'extend_gt'
+                ASSIGN_TYPE: 'centers_origin'
+                EXTRA_WIDTH: [1.0, 1.0, 1.0]
+                FG_PC_IGNORE: False
+            BOX_CODER: PointResidual_BinOri_Coder
+            BOX_CODER_CONFIG: {
+                'angle_bin_num': 12,
+                'use_mean_size': True,
+                'mean_size': [
+                    [4.80, 2.10, 1.78],
+                    [0.91, 0.86, 1.74],
+                    [1.81, 0.84, 1.77]
+                ]
+            }
+        LOSS_CONFIG:
+            LOSS_CLS: WeightedCrossEntropy
+            LOSS_REG: WeightedSmoothL1Loss
+            LOSS_INS: WeightedCrossEntropy
+            SAMPLE_METHOD_LIST: *sample_method_list
+            LOSS_VOTE_TYPE: 'none'
+            CORNER_LOSS_REGULARIZATION: True
+            CENTERNESS_REGULARIZATION: True
+            CENTERNESS_REGULARIZATION_SA: True
+            LOSS_WEIGHTS: {
+                'ins_aware_weight': [0, 1.0, 1.0],
+                'vote_weight': 1.0,
+                'point_cls_weight': 1.0,
+                'point_box_weight': 1.0,
+                'corner_weight': 1.0,
+                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+                'dir_weight': 0.2
+            }
+
+    POST_PROCESSING:
+        RECALL_MODE: 'normal'
+        RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+        SCORE_THRESH: 0.0001
+        OUTPUT_RAW_SCORE: False
+        EVAL_METRIC: kitti
+        NMS_CONFIG:
+            MULTI_CLASSES_NMS: False
+            NMS_TYPE: nms_gpu
+            NMS_THRESH: 0.01
+            NMS_PRE_MAXSIZE: 4096
+            NMS_POST_MAXSIZE: 500
+
+# Global batch 6 as in the family (--batch_size 6 on one GPU); optimiser as published; the Waymo budget of 7 epochs.
+OPTIMIZATION:
+    BATCH_SIZE_PER_GPU: 3
+    NUM_EPOCHS_TO_EVAL: 1
+    NUM_WORKERS: 8
+    NUM_EPOCHS: 7
+    OPTIMIZER: adam_onecycle
+    LR: 0.01
+    WEIGHT_DECAY: 0.01
+    MOMENTUM: 0.9
+    MOMS: [0.95, 0.85]
+    PCT_START: 0.4
+    DIV_FACTOR: 10
+    DECAY_STEP_LIST: [35, 45]
+    LR_DECAY: 0.1
+    LR_CLIP: 0.0000001
+    LR_WARMUP: False
+    WARMUP_EPOCH: 1
+    GRAD_NORM_CLIP: 10
