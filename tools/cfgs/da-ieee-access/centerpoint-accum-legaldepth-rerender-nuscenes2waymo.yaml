@@ -1,0 +1,17 @@
+# Spec-conditioned RE-RENDERING of the accumulated nuScenes source onto the Waymo TOP lattice (experiments_md
+# 20261009_01). One variable from 27468's recipe (centerpoint-accum-legaldepth-nuscenes2kitti, consecutive Boston 15 /
+# Singapore 10, scored on Waymo val by this file's base, 27590 = 48.30): DATA_CONFIGS.*.RERENDER - a virtual sensor
+# with Waymo TOP's published lattice (the element-wise median of the 64 inclinations over all 1,000 segments of
+# top_calib.pkl, 2,650 columns, 2.184 m) at the source ego pose; per cell the nearest return (z-buffer); empty cells
+# filled when the nearest filled cells below and above in the same column lie within 1.5 deg of each other (one source
+# ring gap plus a Waymo row; amended 20261009_01 §7 18:36) and agree in range within 0.3 m (linear in row index);
+# training only, after accumulation and SHIFT_COOR, before augmentation.
+# UDA-legal: the target's published spec only; no target cloud or label. NOT TO BE LAUNCHED before the CPU gate of
+# 20261009_01 §4 / §7 passes and the user approves. Source depth: control (Boston 15 / Singapore 10) until 27834 is read.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-legaldepth-nuscenes2waymo.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        RERENDER: {'TARGET_LATTICE': 'waymo_top', 'FILL': 'rule', 'SPAN_MAX_DEG': 1.5, 'DR_MAX': 0.3}
+    NUSCENES_N015:
+        RERENDER: {'TARGET_LATTICE': 'waymo_top', 'FILL': 'rule', 'SPAN_MAX_DEG': 1.5, 'DR_MAX': 0.3}

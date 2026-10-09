@@ -291,6 +291,18 @@ class NuScenesDataset(DatasetTemplate):
                 break
         return out
 
+    def rerender_points(self, points):
+        """DATA_CONFIG.RERENDER = {TARGET_LATTICE: waymo_top | hdl32e, MOUNT_HEIGHT (optional, else the spec's),
+        FILL: rule | none, K (4), DR_MAX (0.3), SPAN_MAX_DEG (optional angular variant), H_FILL (False)}."""
+        from ..rerender_utils import lattice_spec, rerender
+        cfg = self.dataset_cfg.RERENDER
+        if getattr(self, '_rerender_spec', None) is None:
+            self._rerender_spec = lattice_spec(cfg.TARGET_LATTICE, cfg.get('MOUNT_HEIGHT', None))
+        out, _ = rerender(points, self._rerender_spec, fill=cfg.get('FILL', 'rule'), k_rows=int(cfg.get('K', 4)),
+                          dr_max=float(cfg.get('DR_MAX', 0.3)), span_max_deg=cfg.get('SPAN_MAX_DEG', None),
+                          h_fill=bool(cfg.get('H_FILL', False)))
+        return out
+
     def get_lidar_with_sweeps(self, index, max_sweeps=1):
         info = self.infos[index]
         lidar_path = self.root_path / info['lidar_path']
@@ -377,6 +389,13 @@ class NuScenesDataset(DatasetTemplate):
 
         if self.dataset_cfg.get('SHIFT_COOR', None):
             points[:, 0:3] += np.array(self.dataset_cfg.SHIFT_COOR, dtype=np.float32)
+
+        # RERENDER (experiments_md 20261009_01): render the accumulated source onto the TARGET sensor's published
+        # lattice at this ego pose (z-buffer + surface-continuous fill). Training only, after accumulation and
+        # SHIFT_COOR (ground at z ~ 0), before augmentation; the zero-point filter in prepare_data recounts boxes on
+        # the rendered cloud. Absent = unchanged.
+        if self.training and self.dataset_cfg.get('RERENDER', None) is not None:
+            points = self.rerender_points(points)
 
         input_dict = {
             'points': points,
