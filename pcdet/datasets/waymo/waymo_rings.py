@@ -195,7 +195,7 @@ def ring_labelled_points(raw, num_points_of_each_lidar, calib):
 
 
 def eval_top_thin_points(raw, num_points_of_each_lidar, calib, mode, stride=2, rng=None):
-    """ANALYSIS, evaluation only: one stored frame with its TOP block thinned, returned as `get_lidar` returns it.
+    """ANALYSIS: one stored frame with its TOP block thinned (EVAL_TOP_THIN at evaluation, TRAIN_TOP_THIN in training), returned as `get_lidar` returns it.
 
     `mode` 'rows' keeps the TOP beams whose index (0 = highest declared beam) is a multiple of `stride`, so every
     object loses whole scan lines (lattice-row coverage falls by about 1 / stride). `mode` 'random' is its

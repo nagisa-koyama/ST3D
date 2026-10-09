@@ -48,6 +48,16 @@ class WaymoDataset(DatasetTemplate):
             assert (self.dataset_cfg.get('MAX_SWEEPS', 1) or 1) <= 1, 'EVAL_TOP_THIN thins one stored scan'
             assert self.dataset_cfg.get('LIDAR_INDICES', None) is None, 'EVAL_TOP_THIN keeps every lidar; drop LIDAR_INDICES'
             assert self.eval_top_thin_cfg.get('TOP_CALIB', None), 'set EVAL_TOP_THIN.TOP_CALIB'
+        # TRAIN_TOP_THIN (ANALYSIS, training only; absent = unchanged): the same cut on the TRAINING cloud, with the
+        # zero-point filter recounting on the cut cloud. Waymo -> Waymo at half the scan lines vs a count-matched random
+        # cut asks whether TRAINING on full line structure is worth AP on a full-line target (20261009_02 §6).
+        self.train_top_thin_cfg = self.dataset_cfg.get('TRAIN_TOP_THIN', None)
+        if self.train_top_thin_cfg is not None:
+            assert (self.dataset_cfg.get('MAX_SWEEPS', 1) or 1) <= 1, 'TRAIN_TOP_THIN thins one stored scan'
+            assert self.dataset_cfg.get('LIDAR_INDICES', None) is None, 'TRAIN_TOP_THIN keeps every lidar; drop LIDAR_INDICES'
+            assert self.ring_pattern_cfg is None and self.dataset_cfg.get('BEAM_DISTILL', None) is None \
+                and self.dataset_cfg.get('BEAM_DROP', None) is None, 'TRAIN_TOP_THIN and another TOP-row thinning both set'
+            assert self.train_top_thin_cfg.get('TOP_CALIB', None), 'set TRAIN_TOP_THIN.TOP_CALIB'
         if self.ring_pattern_cfg is not None:
             assert (self.dataset_cfg.get('MAX_SWEEPS', 1) or 1) <= 1, \
                 'RING_PATTERN thins one TOP scan by its row order; accumulated sweeps have no single order'
@@ -195,10 +205,13 @@ class WaymoDataset(DatasetTemplate):
         """ANALYSIS: the evaluation frame with its TOP block thinned (EVAL_TOP_THIN; waymo_rings.eval_top_thin_points).
         The random arm is seeded by the frame id, so two scorings of one checkpoint see the same points."""
         import zlib
-        from .waymo_rings import eval_top_thin_points
-        cfg = self.eval_top_thin_cfg
-        calib = self._top_calibration(cfg.TOP_CALIB)[info['point_cloud']['lidar_sequence']]
         rng = np.random.default_rng(zlib.crc32(str(info['frame_id']).encode()))
+        return self.get_lidar_top_thin(info, self.eval_top_thin_cfg, rng)
+
+    def get_lidar_top_thin(self, info, cfg, rng):
+        """One stored frame with its TOP block thinned by `cfg` (EVAL_TOP_THIN or TRAIN_TOP_THIN)."""
+        from .waymo_rings import eval_top_thin_points
+        calib = self._top_calibration(cfg.TOP_CALIB)[info['point_cloud']['lidar_sequence']]
         return eval_top_thin_points(self._raw_frame(info), info['num_points_of_each_lidar'], calib, cfg.MODE,
                                     stride=cfg.get('STRIDE', 2), rng=rng)
 
@@ -252,6 +265,8 @@ class WaymoDataset(DatasetTemplate):
             return self.get_lidar_ring_pattern(info)
         if self.eval_top_thin_cfg is not None and not self.training:
             return self.get_lidar_eval_top_thin(info)
+        if self.train_top_thin_cfg is not None and self.training:
+            return self.get_lidar_top_thin(info, self.train_top_thin_cfg, np.random.default_rng())
         points = self.get_lidar(pc_info['lidar_sequence'], pc_info['sample_idx'],
                                 info.get('num_points_of_each_lidar', None))
         max_sweeps = self.dataset_cfg.get('MAX_SWEEPS', 1) or 1
@@ -339,6 +354,9 @@ class WaymoDataset(DatasetTemplate):
             # positives (control 3.1%). A sensor with the target's pattern only yields labels with >= 1 point, so the
             # zero-point filter recounts on the thinned cloud (prepare_data does when the count is None).
             if self.ring_pattern_cfg is not None and self.training and self.ring_pattern_cfg.get('RECOUNT_GT_POINTS', True):
+                input_dict['num_points_in_gt'] = None
+            # TRAIN_TOP_THIN removes TOP points, so the stored count no longer says whether a box holds a point either.
+            if self.train_top_thin_cfg is not None and self.training:
                 input_dict['num_points_in_gt'] = None
 
             # for debug only

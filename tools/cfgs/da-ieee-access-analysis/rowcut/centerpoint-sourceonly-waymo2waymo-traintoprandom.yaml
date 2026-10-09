@@ -1,0 +1,23 @@
+# ANALYSIS training row (experiments_md 20261009_02 §6; user's go 2026-10-10 「確かめましょう」): Waymo -> Waymo, the
+# oracle recipe (26398 / 27179) with ONE change - the TRAINING cloud's TOP block thinned at load time:
+#   MODE rows   = every 2nd TOP beam (even beam index, fixed, like a 32-line sensor): half the scan lines per object;
+#   MODE random = the same number of TOP points drawn uniformly per frame: every line kept, each line half as dense.
+# Side lidars untouched; the zero-point filter recounts on the thinned cloud. Evaluated on FULL Waymo val (in-run).
+# This arm: MODE random.
+#
+# PRE-DECLARED READING (2026-10-10, before either row starts; Car BEV AP_R40 at IoU 0.7, Waymo val, epoch 7, one seed;
+# subset AP by STORED point count with analysis/waymo_subset_ap.py):
+#   D_train = AP(rows-trained) - AP(random-trained), at equal training point count, on a full-line target.
+#   D_train <= -2 pooled, or <= -3 in the 10-49 or 50-199 bin: training on FULL line structure is worth AP on a
+#     full-line target -> a source-side method that restores lines could help; the re-render line may be reopened
+#     (as a design question, with its own gate).
+#   D_train within those bars: training-time line structure is not worth AP -> the direction is closed; the
+#     nuScenes -> Waymo residual is left to target-side pseudo-labelling.
+#   Reported: each arm against the full oracle 65.92 (the cost of halving the training points).
+# Legal as analysis: Waymo labels train a Waymo model (an oracle variant); nothing here is a method.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-waymo2waymo.yaml
+DATA_CONFIG:
+    TRAIN_TOP_THIN:
+        TOP_CALIB: /home/koyama/data/waymo_top_calib/top_calib.pkl
+        MODE: random
+        STRIDE: 2
