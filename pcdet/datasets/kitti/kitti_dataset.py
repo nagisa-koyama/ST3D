@@ -384,6 +384,15 @@ class KittiDataset(DatasetTemplate):
         sample_idx = info['point_cloud']['lidar_idx']
 
         points = self.get_lidar(sample_idx)
+        # EVAL_RING_THIN (ANALYSIS, evaluation only; absent = unchanged): cut the evaluation scan's pattern by its laser
+        # rings, recovered from the stored order before any crop or shift (kitti_rings.py): lines, columns, azimuth bins,
+        # their count-matched random controls, or a render to another sensor's pattern. The KITTI arm of the
+        # target-oracle degradation table (experiments_md 20261011_02). Seeded by the frame, so rescoring sees the same cut.
+        thin = self.dataset_cfg.get('EVAL_RING_THIN', None)
+        if thin is not None and not self.training:
+            import zlib
+            from .kitti_rings import eval_ring_thin_points
+            points = eval_ring_thin_points(points, thin, np.random.default_rng(zlib.crc32(str(sample_idx).encode())))
         calib = self.get_calib(sample_idx)
 
         img_shape = info['image']['image_shape']
