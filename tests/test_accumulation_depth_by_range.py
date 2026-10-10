@@ -44,5 +44,7 @@ def test_schedule_must_be_non_decreasing():
 def test_loader_applies_the_mask_after_compensation():
     src = (ROOT / 'pcdet/datasets/nuscenes/nuscenes_dataset.py').read_text(encoding='utf-8')
     body = src[src.index('def get_lidar_with_sweeps'):src.index('def __len__')]
-    assert body.index('compensate_sweep(') < body.index('sweep_range_mask(points_sweep, k + 1, schedule)')
+    # j is the rank among the SELECTED sweeps (83a64fe, SWEEP_SELECTION); in the default consecutive mode it equals
+    # the old stored-sweep index k, so the schedule still reads sweep age.
+    assert body.index('compensate_sweep(') < body.index('sweep_range_mask(points_sweep, j + 1, schedule)')
     assert "get('ACCUMULATION_DEPTH_BY_RANGE', None)" in body
