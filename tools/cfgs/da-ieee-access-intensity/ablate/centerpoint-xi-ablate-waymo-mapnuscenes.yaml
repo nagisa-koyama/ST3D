@@ -1,0 +1,13 @@
+# ANALYSIS, eval-only (experiments_md 20261010_01 §3, intensity row): the Waymo with-intensity oracle on its OWN val set with
+# its intensities mapped onto nuScenes's per-range distribution (the per-ring table nuscenes2waymo_rings.npz, label-free, built for 20261003_03 §6).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-waymo2waymo-xyzi.yaml
+DATA_CONFIG_TAR:
+  DATA_PROCESSOR:
+  - {NAME: mask_points_and_boxes_outside_range, REMOVE_OUTSIDE_BOXES: true}
+  - NAME: shuffle_points
+    SHUFFLE_ENABLED: {train: true, test: false}
+  - {NAME: map_intensity_to_reference, TABLES: /storage/intensity_tables/nuscenes2waymo_rings.npz, INTENSITY_INDEX: 3}
+  - NAME: transform_points_to_voxels
+    VOXEL_SIZE: [0.1, 0.1, 0.15]
+    MAX_POINTS_PER_VOXEL: 10
+    MAX_NUMBER_OF_VOXELS: {train: 150000, test: 150000}
