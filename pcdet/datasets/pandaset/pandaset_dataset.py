@@ -124,6 +124,22 @@ class PandasetDataset(DatasetTemplate):
         self.draw_conf_calib_curve = self.dataset_cfg.get('DRAW_CONF_CALIB_CURVE', False)
         self.run_conf_calib = self.dataset_cfg.get('RUN_CONF_CALIB', False)
 
+        # RING_PATTERN / RING_FOV_CUT (opt-in, training only; experiments_md 20261010_05): thin the Pandar64 scan by
+        # its laser channels, read from a per-frame label cache (pandaset_rings.py). RING_PATTERN renders a target
+        # sensor's published scan pattern; RING_FOV_CUT only drops the channels outside the target's vertical field
+        # of view - the per-bin control's half of the same cut. Labels index ONE raw frame in stored order, so both
+        # need the device-0 cloud of a single frame.
+        self.ring_pattern_cfg = self.dataset_cfg.get('RING_PATTERN', None)
+        self.ring_fov_cut_cfg = self.dataset_cfg.get('RING_FOV_CUT', None)
+        ring_cfg = self.ring_pattern_cfg or self.ring_fov_cut_cfg
+        if ring_cfg is not None:
+            assert self.ring_pattern_cfg is None or self.ring_fov_cut_cfg is None, \
+                'RING_PATTERN applies its own field-of-view limit; RING_FOV_CUT is for a row without it'
+            assert self.dataset_cfg.get('LIDAR_DEVICE', 0) == 0, 'channel labels exist for the Pandar64 (device 0) only'
+            assert (self.dataset_cfg.get('MAX_SWEEPS', 1) or 1) <= 1, \
+                'channel labels index one frame in its own pose; accumulated sweeps have no single stored order'
+            assert os.path.isdir(ring_cfg['LABEL_CACHE']), 'no ring label cache at %s' % ring_cfg['LABEL_CACHE']
+
     def include_pandaset_infos(self, mode):
         if self.logger is not None:
             self.logger.info('Loading PandaSet dataset')
@@ -280,6 +296,11 @@ class PandasetDataset(DatasetTemplate):
         points_int = points_int / 255
 
         ego_points = ps.geometry.lidar_points_to_ego(points_loc, pose)
+        if self.training and (self.ring_pattern_cfg is not None or self.ring_fov_cut_cfg is not None):
+            # In PandaSet ego axes, before the axis swap, SHIFT_COOR and any augmentation; keyed by the frame's
+            # (sequence, frame_idx), never by dataset index.
+            keep = self._ring_keep_mask(info, ego_points)
+            ego_points, points_int = ego_points[keep], points_int[keep]
         # Pandaset ego coordinates are:
         # - x pointing to the right
         # - y pointing to the front
@@ -294,6 +315,15 @@ class PandasetDataset(DatasetTemplate):
 
         return np.append(ego_points, np.expand_dims(points_int, axis=1), axis=1).astype(np.float32)
 
+
+    def _ring_keep_mask(self, info, ego_points):
+        """RING_PATTERN / RING_FOV_CUT keep mask over one frame's device-0 points (stored order, PandaSet ego axes)."""
+        from .pandaset_rings import load_cached_labels, ring_pattern_points, channels_in_fov
+        cfg = self.ring_pattern_cfg if self.ring_pattern_cfg is not None else self.ring_fov_cut_cfg
+        labels = load_cached_labels(cfg['LABEL_CACHE'], info['sequence'], info['frame_idx'], len(ego_points))
+        if self.ring_pattern_cfg is not None:
+            return ring_pattern_points(ego_points, labels, cfg)
+        return np.isin(labels, channels_in_fov(cfg['TARGET_FOV_DEG'], cfg['SPACING_DEG']))
 
     def _get_annotations(self, info, pose, return_uuids=False):
         """

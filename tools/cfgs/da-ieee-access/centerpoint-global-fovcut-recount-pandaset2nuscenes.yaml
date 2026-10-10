@@ -1,0 +1,45 @@
+# PandaSet Pandar64 -> nuScenes, the attribution control (C1-analog) for centerpoint-ringpattern-pandaset2nuscenes:
+# per-bin GLOBAL density thinning in place of the scan-pattern selection, everything else as the pattern row.
+# The analogue of 27850 (Waymo C1, 31.14) on this pair; experiments_md 20261010_05.
+#
+# One variable from the pattern row - the selection rule:
+#   - kept from the pattern row: Pandar64 only, one frame (as 26533); the same vertical field-of-view cut
+#     (RING_FOV_CUT drops the channels no HDL-32E lattice point can reach - the 14.7 deg channel alone - from the same
+#     label cache), so the two rows differ in pattern versus density and not in field of view; and the label recount
+#     (drop_empty_gt_boxes right after the thinning, because the per-bin thinning runs in the data processor, after
+#     prepare_data's zero-point filter);
+#   - replaced: the scan-pattern selection, by per-bin global thinning (sample_points_hist_based), calibrated on this
+#     source (PandaSet TRAIN, Pandar64, after the FOV cut) against nuScenes TRAIN clouds, label-free.
+#
+# PRE-DECLARED READING: experiments_md 20261010_05 §4.
+#
+# Legal: source clouds and labels, target TRAIN clouds and the target's published spec only.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-pandaset.yaml
+DATA_CONFIG:
+    RING_FOV_CUT:
+        LABEL_CACHE: /home/koyama/data/pandaset_rings/v1
+        SPACING_DEG: 1.33                 # the pattern row's lattice spacing: the cut keeps channels within half of it
+        TARGET_FOV_DEG: [-30.67, 10.67]   # HDL-32E published vertical field of view
+    HIST_DIST_ON_THE_FLY: True
+    HIST_DIST_FRAMES: 1000
+    HIST_DIST_BINS: 50          # 1.5 m bins
+    HIST_DIST_MAX_DIST: 75.0    # covers POINT_CLOUD_RANGE
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+        - NAME: sample_points_hist_based
+          MIN_HIST_BIN_FRACTION: 0.01
+        - NAME: drop_empty_gt_boxes
+          MIN_POINTS: 1     # = MIN_POINTS_OF_GT (default 1)
+        - NAME: transform_points_to_voxels
+          VOXEL_SIZE: [0.1, 0.1, 0.15]
+          MAX_POINTS_PER_VOXEL: 10
+          MAX_NUMBER_OF_VOXELS: {
+            'train': 150000,
+            'test': 150000
+          }

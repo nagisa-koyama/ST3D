@@ -1,0 +1,30 @@
+# PandaSet Pandar64 -> nuScenes + the source thinned to nuScenes' published scan PATTERN (RING_PATTERN), nothing else
+# changed: the source-only control centerpoint-sourceonly-pandaset (26533, 27.32 / 13.08) with one opt-in key on the
+# PandaSet DATA_CONFIG. An independent replication of 27807 (Waymo -> nuScenes, 36.21 at two seeds) on a second
+# dense -> sparse pair, the user's decision 1 of 2026-10-10; experiments_md 20261010_05.
+#
+# What it does, training only (evaluation on nuScenes val is untouched):
+#   - reads each Pandar64 point's laser channel from a per-frame cache (pcdet/datasets/pandaset/pandaset_rings.py:
+#     firing ORDER + firing TIME + azimuth column, a monotone Viterbi; 64 / 64 channels, two independent cues agree
+#     on 96.8-99.5% of points; built by tools/analysis/pandaset_ring_cache.py from PandaSet TRAIN clouds);
+#   - keeps the channels nearest a vertical lattice of 1.33 deg (nuScenes HDL-32E, published) with a random phase per
+#     sample, the lattice limited to both sensors' fields of view (HDL-32E -30.67 .. +10.67 deg: drops Pandar64's
+#     14.7 deg channel, the one channel no lattice point can reach; on Waymo this limit was a no-op);
+#   - keeps one point per kept channel per 0.332 deg azimuth bin (HDL-32E at 20 Hz; nuScenes TRAIN median 0.332),
+#     random phase per sample.
+# Pandar64 only and one frame, as 26533 (LIDAR_DEVICE 0, MAX_SWEEPS 1). PandaSet's zero-point GT filter counts the
+# cloud it is given, so boxes the thinning empties are dropped as labels with no extra key (27807's recount).
+#
+# PRE-DECLARED READING: experiments_md 20261010_05 §4, against the per-bin control
+# centerpoint-global-fovcut-recount-pandaset2nuscenes (C1-analog) and 26533.
+#
+# Legal: PandaSet is the SOURCE (its raw firing order and timestamps, no labels, build the channel template); the
+# target enters only through nuScenes' published sensor spec (spacing, field of view) and its TRAIN clouds (the
+# azimuth step), no target label.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-pandaset.yaml
+DATA_CONFIG:
+    RING_PATTERN:
+        LABEL_CACHE: /home/koyama/data/pandaset_rings/v1   # pandaset_ring_cache.py --split train (source, label-free)
+        SPACING_DEG: 1.33                 # nuScenes HDL-32E vertical spacing (32 beams over -30.67 .. +10.67 deg)
+        AZ_RES_DEG: 0.332                 # HDL-32E azimuth step at 20 Hz; nuScenes TRAIN clouds median 0.332
+        TARGET_FOV_DEG: [-30.67, 10.67]   # HDL-32E published vertical field of view
