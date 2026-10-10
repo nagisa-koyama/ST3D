@@ -139,6 +139,15 @@ class PandasetDataset(DatasetTemplate):
             assert (self.dataset_cfg.get('MAX_SWEEPS', 1) or 1) <= 1, \
                 'channel labels index one frame in its own pose; accumulated sweeps have no single stored order'
             assert os.path.isdir(ring_cfg['LABEL_CACHE']), 'no ring label cache at %s' % ring_cfg['LABEL_CACHE']
+        # EVAL_RING_THIN (ANALYSIS, evaluation only; absent = unchanged): cut the EVALUATION scan's pattern by its laser
+        # channels (pandaset_rings.eval_thin_mask: lines / columns / azimuth bins, their count-matched random controls,
+        # the HDL-32E render, channel-elevation cuts); experiments_md 20261011_02, the PandaSet oracle-degradation table.
+        self.eval_ring_thin_cfg = self.dataset_cfg.get('EVAL_RING_THIN', None)
+        if self.eval_ring_thin_cfg is not None:
+            assert self.dataset_cfg.get('LIDAR_DEVICE', 0) == 0, 'channel labels exist for the Pandar64 (device 0) only'
+            assert (self.dataset_cfg.get('MAX_SWEEPS', 1) or 1) <= 1, 'EVAL_RING_THIN cuts one stored scan'
+            assert os.path.isdir(self.eval_ring_thin_cfg['LABEL_CACHE']), \
+                'no ring label cache at %s' % self.eval_ring_thin_cfg['LABEL_CACHE']
 
     def include_pandaset_infos(self, mode):
         if self.logger is not None:
@@ -301,6 +310,9 @@ class PandasetDataset(DatasetTemplate):
             # (sequence, frame_idx), never by dataset index.
             keep = self._ring_keep_mask(info, ego_points)
             ego_points, points_int = ego_points[keep], points_int[keep]
+        if not self.training and self.eval_ring_thin_cfg is not None:
+            keep = self._eval_ring_thin_mask(info, ego_points)
+            ego_points, points_int = ego_points[keep], points_int[keep]
         # Pandaset ego coordinates are:
         # - x pointing to the right
         # - y pointing to the front
@@ -324,6 +336,16 @@ class PandasetDataset(DatasetTemplate):
         if self.ring_pattern_cfg is not None:
             return ring_pattern_points(ego_points, labels, cfg)
         return np.isin(labels, channels_in_fov(cfg['TARGET_FOV_DEG'], cfg['SPACING_DEG']))
+
+    def _eval_ring_thin_mask(self, info, ego_points):
+        """EVAL_RING_THIN keep mask over one evaluation frame's device-0 points; random draws are seeded by the frame
+        (sequence, frame_idx), so every arm and every rerun cuts a frame the same way."""
+        import zlib
+        from .pandaset_rings import load_cached_labels, eval_thin_mask
+        cfg = self.eval_ring_thin_cfg
+        labels = load_cached_labels(cfg['LABEL_CACHE'], info['sequence'], info['frame_idx'], len(ego_points))
+        rng = np.random.default_rng(zlib.crc32(('%s/%02d' % (info['sequence'], int(info['frame_idx']))).encode()))
+        return eval_thin_mask(ego_points, labels, cfg, rng)
 
     def _get_annotations(self, info, pose, return_uuids=False):
         """

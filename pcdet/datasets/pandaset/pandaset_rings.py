@@ -233,6 +233,59 @@ def load_cached_labels(cache_dir, sequence, frame_idx, n_points):
     return lab.astype(np.int64)
 
 
+EVAL_THIN_MODES = ('rows', 'random', 'cols', 'random_cols', 'azbin', 'random_azbin', 'pattern', 'elmax', 'elmin')
+
+
+def eval_thin_mask(xyz_ego, labels, cfg, rng):
+    """ANALYSIS, evaluation only (EVAL_RING_THIN; experiments_md 20261011_02): which points of ONE Pandar64 scan (stored
+    order, PandaSet ego axes) to keep under one scan-pattern manipulation, from the scan's channel labels.
+
+    'rows' keeps every STRIDE-th channel (0 = top laser), so whole lines go. 'cols' keeps every STRIDE-th return of each
+    channel in firing order (the azimuth step x STRIDE). 'azbin' keeps one point per channel per AZ_RES_DEG azimuth bin,
+    the first in firing order. 'random' / 'random_cols' / 'random_azbin' keep the SAME NUMBER of points as their
+    structured twin, drawn uniformly over the scan (the count-matched controls; counts match on the raw device-0 scan).
+    'pattern' is RING_PATTERN's render (SPACING_DEG, AZ_RES_DEG, TARGET_FOV_DEG) with phases drawn from `rng`.
+    'elmax' / 'elmin' drop the channels whose elevation in the sensor's own frame (EL) lies above / below EL_DEG - a
+    vertical field-of-view cut by lines, so the sensor's pitch against the pose frame does not tilt it.
+    """
+    labels = np.asarray(labels).astype(np.int64)
+    n = len(labels)
+    mode = cfg['MODE']
+    assert mode in EVAL_THIN_MODES, 'EVAL_RING_THIN.MODE must be one of %s, got %r' % (EVAL_THIN_MODES, mode)
+    if n == 0:
+        return np.zeros(0, dtype=bool)
+    stride = int(cfg.get('STRIDE', 2))
+    base_mode = mode[len('random_'):] if mode.startswith('random_') else ('rows' if mode == 'random' else mode)
+    if base_mode == 'rows':
+        base = (labels % stride) == 0
+    elif base_mode == 'cols':
+        order = np.argsort(labels, kind='stable')                       # stored (firing) order within each channel
+        rank = np.empty(n, dtype=np.int64)
+        starts = np.searchsorted(labels[order], labels[order], side='left')
+        rank[order] = np.arange(n) - starts
+        base = (rank % stride) == 0
+    elif base_mode == 'azbin':
+        _, _, az = sensor_angles(xyz_ego)
+        n_bins = int(round(360.0 / float(cfg['AZ_RES_DEG'])))
+        b = np.floor((az + 180.0) / 360.0 * n_bins).astype(np.int64) % n_bins
+        _, first = np.unique(labels * n_bins + b, return_index=True)
+        base = np.zeros(n, dtype=bool)
+        base[first] = True
+    elif base_mode == 'pattern':
+        _, _, az = sensor_angles(xyz_ego)
+        base, _ = ring_pattern_mask(labels, az, float(cfg['SPACING_DEG']), float(cfg['AZ_RES_DEG']), rng.random(),
+                                    rng.random(), cfg.get('TARGET_FOV_DEG', None))
+    elif base_mode == 'elmax':
+        base = EL[labels] <= float(cfg['EL_DEG'])
+    else:  # elmin
+        base = EL[labels] >= float(cfg['EL_DEG'])
+    if not (mode == 'random' or mode.startswith('random_')):
+        return base
+    keep = np.zeros(n, dtype=bool)
+    keep[rng.choice(n, int(base.sum()), replace=False)] = True
+    return keep
+
+
 def ring_pattern_points(xyz_ego, labels, cfg, rng=None):
     """Keep mask of RING_PATTERN over one frame's device-0 points (stored order, PandaSet ego axes)."""
     rng = np.random if rng is None else rng

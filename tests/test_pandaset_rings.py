@@ -136,6 +136,7 @@ def test_loader_cuts_before_axis_swap_and_shift_keyed_by_frame(tmp_path, monkeyp
         dataset_cfg = EasyDict(LIDAR_DEVICE=0)
         ring_pattern_cfg = None
         ring_fov_cut_cfg = EasyDict(LABEL_CACHE=str(tmp_path), TARGET_FOV_DEG=[-30.67, 10.67], SPACING_DEG=1.33)
+        eval_ring_thin_cfg = None
         _ring_keep_mask = D.PandasetDataset._ring_keep_mask
 
     info = {'sequence': '021', 'frame_idx': 33, 'lidar_path': 'unused'}
@@ -156,3 +157,120 @@ def test_loader_cuts_before_axis_swap_and_shift_keyed_by_frame(tmp_path, monkeyp
 
     Fake.training = False                       # evaluation: untouched (device 0 only, as LIDAR_DEVICE says)
     assert len(D.PandasetDataset._get_lidar_points(Fake(), info, pose=None)) == len(t)
+
+
+# ---- EVAL_RING_THIN (evaluation-only cuts for the oracle-degradation table, experiments_md 20261011_02) ----
+
+def _scan(seed=4, n_blocks=300):
+    xyz, t, ch = synthetic_scan(n_blocks=n_blocks, drop=0.1, seed=seed)
+    return xyz, ch
+
+
+@pytest.mark.parametrize('mode', R.EVAL_THIN_MODES)
+def test_eval_thin_empty_scan(mode):
+    cfg = dict(MODE=mode, STRIDE=2, AZ_RES_DEG=0.332, EL_DEG=0.0, SPACING_DEG=1.33, TARGET_FOV_DEG=[-30.67, 10.67])
+    keep = R.eval_thin_mask(np.zeros((0, 3)), np.zeros(0, dtype=np.int64), cfg, np.random.default_rng(0))
+    assert keep.shape == (0,)
+
+
+def test_eval_thin_unknown_mode_refused():
+    xyz, ch = _scan(n_blocks=5)
+    with pytest.raises(AssertionError):
+        R.eval_thin_mask(xyz, ch, dict(MODE='lines'), np.random.default_rng(0))
+
+
+@pytest.mark.parametrize('structured,par', [('rows', {}), ('cols', {}), ('cols', {'STRIDE': 4}),
+                                            ('azbin', {'AZ_RES_DEG': 0.332})])
+def test_eval_thin_random_twin_matches_the_count(structured, par):
+    xyz, ch = _scan()
+    s = R.eval_thin_mask(xyz, ch, dict(MODE=structured, **par), np.random.default_rng(1))
+    rmode = 'random' if structured == 'rows' else 'random_' + structured
+    r = R.eval_thin_mask(xyz, ch, dict(MODE=rmode, **par), np.random.default_rng(1))
+    assert r.sum() == s.sum() and 0 < s.sum() < len(ch)
+    if structured == 'rows':                          # the random control keeps (almost) every line
+        assert len(np.unique(ch[r])) > len(np.unique(ch[s])) * 1.8
+
+
+def test_eval_thin_rows_drop_whole_lines():
+    xyz, ch = _scan()
+    keep = R.eval_thin_mask(xyz, ch, dict(MODE='rows', STRIDE=2), np.random.default_rng(0))
+    assert set(np.unique(ch[keep]).tolist()) == {c for c in np.unique(ch).tolist() if c % 2 == 0}
+    assert np.all(keep == (ch % 2 == 0))
+
+
+def test_eval_thin_cols_keep_every_kth_return_per_line_in_firing_order():
+    xyz, ch = _scan()
+    for stride in (2, 4):
+        keep = R.eval_thin_mask(xyz, ch, dict(MODE='cols', STRIDE=stride), np.random.default_rng(0))
+        for c in np.unique(ch):
+            idx = np.nonzero(ch == c)[0]
+            assert keep[idx].sum() == int(np.ceil(len(idx) / stride))
+            assert keep[idx[0]] and np.all(keep[idx[::stride]])     # the 1st, (k+1)th, ... return of the line
+
+
+def test_eval_thin_azbin_one_point_per_line_per_bin():
+    xyz, ch = _scan(n_blocks=400)
+    keep = R.eval_thin_mask(xyz, ch, dict(MODE='azbin', AZ_RES_DEG=0.332), np.random.default_rng(0))
+    _, _, az = R.sensor_angles(xyz)
+    n_bins = int(round(360 / 0.332))
+    b = np.floor((az + 180) / 360 * n_bins).astype(int) % n_bins
+    key = ch[keep] * n_bins + b[keep]
+    assert len(np.unique(key)) == keep.sum()
+    assert len(np.unique(key)) == len(np.unique(ch * n_bins + b))     # every occupied (line, bin) keeps one point
+    assert 0.5 < keep.mean() < 0.7                                      # 0.2 deg firing step -> 0.332 deg bins
+
+
+def test_eval_thin_elevation_cuts_are_by_channel():
+    xyz, ch = _scan()
+    for mode, deg in (('elmax', 0.0), ('elmax', -3.0), ('elmin', -14.0), ('elmin', -10.0)):
+        keep = R.eval_thin_mask(xyz, ch, dict(MODE=mode, EL_DEG=deg), np.random.default_rng(0))
+        el = R.EL[ch]
+        assert np.all(keep == ((el <= deg) if mode == 'elmax' else (el >= deg)))
+
+
+def test_eval_thin_pattern_is_the_training_render_and_reproducible():
+    xyz, ch = _scan()
+    cfg = dict(MODE='pattern', SPACING_DEG=1.33, AZ_RES_DEG=0.332, TARGET_FOV_DEG=[-30.67, 10.67])
+    k1 = R.eval_thin_mask(xyz, ch, cfg, np.random.default_rng(7))
+    k2 = R.eval_thin_mask(xyz, ch, cfg, np.random.default_rng(7))
+    assert np.array_equal(k1, k2)
+    assert set(np.unique(ch[k1]).tolist()) <= set(R.channels_in_fov([-30.67, 10.67], 1.33).tolist())
+    rng = np.random.default_rng(7)
+    _, _, az = R.sensor_angles(xyz)
+    ref, _ = R.ring_pattern_mask(ch, az, 1.33, 0.332, rng.random(), rng.random(), [-30.67, 10.67])
+    assert np.array_equal(k1, ref)
+
+
+def test_loader_eval_thin_is_evaluation_only_and_seeded_by_frame(tmp_path, monkeypatch):
+    pd = pytest.importorskip('pandas')
+    pytest.importorskip('pandaset')
+    from easydict import EasyDict
+    from pcdet.datasets.pandaset import pandaset_dataset as D
+
+    xyz, t, ch = synthetic_scan(n_blocks=40, drop=0.0, seed=5)
+    raw = pd.DataFrame({'x': xyz[:, 0], 'y': xyz[:, 1], 'z': xyz[:, 2], 'i': np.zeros(len(t)), 't': t * 1e-6,
+                        'd': np.zeros(len(t), dtype=np.int64)})
+    monkeypatch.setattr(D.pd, 'read_pickle', lambda path: raw)
+    monkeypatch.setattr(D.ps.geometry, 'lidar_points_to_ego', lambda pts, pose: np.asarray(pts, dtype=np.float64))
+    import os
+    for frame in (3, 4):
+        p = R.cache_path(str(tmp_path), '045', frame)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        np.save(p, ch.astype(np.int8))
+
+    class Fake:
+        training = False
+        dataset_cfg = EasyDict(LIDAR_DEVICE=0)
+        ring_pattern_cfg = None
+        ring_fov_cut_cfg = None
+        eval_ring_thin_cfg = EasyDict(LABEL_CACHE=str(tmp_path), MODE='random', STRIDE=2)
+        _eval_ring_thin_mask = D.PandasetDataset._eval_ring_thin_mask
+
+    get = D.PandasetDataset._get_lidar_points
+    a = get(Fake(), {'sequence': '045', 'frame_idx': 3, 'lidar_path': 'x'}, pose=None)
+    b = get(Fake(), {'sequence': '045', 'frame_idx': 3, 'lidar_path': 'x'}, pose=None)
+    c = get(Fake(), {'sequence': '045', 'frame_idx': 4, 'lidar_path': 'x'}, pose=None)
+    assert len(a) == (ch % 2 == 0).sum() and np.array_equal(a, b)     # count of the rows cut; same draw on a rerun
+    assert not np.array_equal(a, c)                                   # another frame, another draw
+    Fake.training = True                                              # training: untouched
+    assert len(get(Fake(), {'sequence': '045', 'frame_idx': 3, 'lidar_path': 'x'}, pose=None)) == len(ch)
