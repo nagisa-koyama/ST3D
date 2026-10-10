@@ -193,3 +193,28 @@ def downsample_beams(points, num_beams, beam_ratio=1, bin_ratio=1, centroids=Non
     label = beam_label_from_centroids(theta, centroids, valid=valid)
     mask = generate_mask(phi, label, num_beams, beam_ratio=beam_ratio, bin_ratio=bin_ratio)
     return points[mask], centroids
+
+
+def ring_thin_mask(points, ring, mode, stride=2, rng=None, num_beams=32):
+    """ANALYSIS, evaluation only (experiments_md 20261010_01 §3): which points of ONE scan to keep when its scan
+    pattern is cut, given each point's laser ring (nuScenes stores it as the .bin's 5th column).
+
+    'rows' keeps every STRIDE-th ring (whole scan lines removed); 'cols' keeps every STRIDE-th return of every ring
+    in azimuth order (the azimuth step x STRIDE); 'random' / 'random_cols' keep the SAME NUMBER of points as
+    'rows' / 'cols', drawn uniformly, so every line keeps points (the count-matched controls). Azimuth is taken about
+    the points' own origin, so call it on the sensor-frame scan, before SHIFT_COOR.
+    """
+    ring = np.asarray(ring).astype(np.int64)
+    if mode in ('rows', 'random'):
+        base = (ring % stride) == 0
+    elif mode in ('cols', 'random_cols'):
+        phi = np.degrees(np.arctan2(points[:, 1], points[:, 0]))
+        base = generate_mask(phi, ring, num_beams, beam_ratio=1, bin_ratio=stride)
+    else:
+        raise ValueError("MODE must be 'rows', 'cols', 'random' or 'random_cols', got %r" % (mode,))
+    if mode in ('rows', 'cols'):
+        return base
+    rng = np.random.default_rng(0) if rng is None else rng
+    keep = np.zeros(len(ring), dtype=bool)
+    keep[rng.choice(len(ring), int(base.sum()), replace=False)] = True
+    return keep

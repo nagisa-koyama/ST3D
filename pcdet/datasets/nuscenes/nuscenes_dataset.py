@@ -306,7 +306,18 @@ class NuScenesDataset(DatasetTemplate):
     def get_lidar_with_sweeps(self, index, max_sweeps=1):
         info = self.infos[index]
         lidar_path = self.root_path / info['lidar_path']
-        points = np.fromfile(str(lidar_path), dtype=np.float32, count=-1).reshape([-1, 5])[:, :4]
+        points = np.fromfile(str(lidar_path), dtype=np.float32, count=-1).reshape([-1, 5])
+        # EVAL_RING_THIN (ANALYSIS, evaluation only; absent = unchanged): cut the keyframe's scan pattern by its stored
+        # ring index - every STRIDE-th ring ('rows'), every STRIDE-th return per ring ('cols'), or their count-matched
+        # random controls (experiments_md 20261010_01 §3: how the nuScenes oracle degrades under pattern changes).
+        thin = self.dataset_cfg.get('EVAL_RING_THIN', None)
+        if thin is not None and not self.training:
+            assert max_sweeps <= 1, 'EVAL_RING_THIN cuts one scan'
+            import zlib
+            from ...utils.beam_downsample_utils import ring_thin_mask
+            rng = np.random.default_rng(zlib.crc32(str(info['lidar_path']).encode()))
+            points = points[ring_thin_mask(points, points[:, 4], thin.MODE, stride=thin.get('STRIDE', 2), rng=rng)]
+        points = points[:, :4]
         points = self.remove_ego_points(points, center_radius=1.5)
         sweep_points_list = [points]
         sweep_times_list = [np.zeros((points.shape[0], 1))]

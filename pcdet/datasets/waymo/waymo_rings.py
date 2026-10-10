@@ -209,17 +209,21 @@ def eval_top_thin_points(raw, num_points_of_each_lidar, calib, mode, stride=2, r
     n_top = int(counts[0])
     keep = np.ones(len(raw), dtype=bool)
     if n_top:
-        beam, _, _, _, _ = top_beam_ids(raw[:n_top, :3], calib['extrinsic'], calib['inclinations'])
+        beam, col, _, _, _ = top_beam_ids(raw[:n_top, :3], calib['extrinsic'], calib['inclinations'])
         rows = (beam % stride) == 0
+        cols = (np.floor(col).astype(np.int64) % stride) == 0   # every STRIDE-th range-image column (col is fractional)
         if mode == 'rows':
             keep[:n_top] = rows
-        elif mode == 'random':
+        elif mode == 'cols':
+            keep[:n_top] = cols
+        elif mode in ('random', 'random_cols'):
+            # count-matched controls: 'random' matches the rows cut (as since 20261009_02), 'random_cols' the cols cut
             rng = np.random.default_rng(0) if rng is None else rng
             sel = np.zeros(n_top, dtype=bool)
-            sel[rng.choice(n_top, int(rows.sum()), replace=False)] = True
+            sel[rng.choice(n_top, int((rows if mode == 'random' else cols).sum()), replace=False)] = True
             keep[:n_top] = sel
         else:
-            raise ValueError("EVAL_TOP_THIN.MODE must be 'rows' or 'random', got %r" % (mode,))
+            raise ValueError("MODE must be 'rows', 'cols', 'random' or 'random_cols', got %r" % (mode,))
     pts = raw[keep]
     pts = pts[pts[:, 5] == -1]
     out = np.array(pts[:, 0:5], dtype=raw.dtype)

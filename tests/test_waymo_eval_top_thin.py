@@ -69,3 +69,31 @@ def test_unknown_mode_is_refused(frame):
     _, raw, counts, calib = frame
     with pytest.raises(ValueError):
         eval_top_thin_points(raw, counts, calib, 'beams')
+
+
+def test_cols_keep_even_columns_and_random_cols_matches_their_count(frame):
+    _, raw, counts, calib = frame
+    n_top = counts[0]
+    _, col, _, _, _ = top_beam_ids(raw[:n_top, :3], calib['extrinsic'], calib['inclinations'])
+    cols = eval_top_thin_points(raw, counts, calib, 'cols', stride=2)
+    rcol = eval_top_thin_points(raw, counts, calib, 'random_cols', stride=2, rng=np.random.default_rng(3))
+    kept_top = len(cols) - (len(raw) - n_top)
+    assert kept_top == int((np.floor(col).astype(np.int64) % 2 == 0).sum()) and 0.4 < kept_top / n_top < 0.6
+    assert len(rcol) == len(cols)
+
+
+def test_ring_thin_mask_on_synthetic_rings():
+    from pcdet.utils.beam_downsample_utils import ring_thin_mask
+    n_ring, n_az = 32, 100
+    ring = np.repeat(np.arange(n_ring), n_az)
+    az = np.tile(np.linspace(-np.pi, np.pi, n_az, endpoint=False), n_ring)
+    pts = np.stack([10 * np.cos(az), 10 * np.sin(az), np.zeros_like(az)], 1)
+    rows = ring_thin_mask(pts, ring, 'rows'); cols = ring_thin_mask(pts, ring, 'cols')
+    assert set(np.unique(ring[rows])) == set(range(0, 32, 2)) and rows.sum() == 16 * n_az
+    assert len(np.unique(ring[cols])) == 32 and cols.sum() == 32 * n_az // 2
+    r = ring_thin_mask(pts, ring, 'random', rng=np.random.default_rng(0))
+    rc = ring_thin_mask(pts, ring, 'random_cols', rng=np.random.default_rng(0))
+    assert r.sum() == rows.sum() and rc.sum() == cols.sum()
+    assert len(np.unique(ring[r])) == 32                       # the random control keeps every ring
+    with pytest.raises(ValueError):
+        ring_thin_mask(pts, ring, 'beams')

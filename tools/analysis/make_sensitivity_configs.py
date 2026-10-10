@@ -7,7 +7,9 @@ Each twin is `_BASE_CONFIG_: <as-scored config>` plus changes in DATA_CONFIG_TAR
     loader needs for keyframe chaining), and the test voxel cap raised so accumulated points are never dropped (the
     cap never binds at N = 1, so it changes nothing for the as-scored config);
   - density dose: a `sample_points` step with RATIO {'test': r} inserted before voxelisation (uniform random keep);
-  - pattern: RING_PATTERN with APPLY_AT_EVAL (27807's nuScenes HDL-32E rule applied to the evaluation cloud).
+  - pattern: RING_PATTERN with APPLY_AT_EVAL (27807's nuScenes HDL-32E rule applied to the evaluation cloud);
+  - thin: the scan pattern cut at evaluation - lines or columns halved, or their count-matched random controls
+    (EVAL_TOP_THIN on Waymo's TOP block, EVAL_RING_THIN on nuScenes' stored ring index).
 Box-based motion compensation never runs at evaluation (should_compensate requires training), so accumulation reads no
 label. `--check` resolves every twin and passes only if nothing outside DATA_CONFIG_TAR differs from its base.
 
@@ -34,12 +36,13 @@ TWINS = {
     'centerpoint-gblobs-sourceonly-waymo': [('acc', 20)],
     'centerpoint-ringpattern-waymo2nuscenes': [('acc', 20)],
     'centerpoint-sourceonly-nuscenes': [('acc', 10), ('acc', 20), ('acc', 30), ('ratio', 0.75), ('ratio', 0.5),
-                                        ('ratio', 0.25)],
+                                        ('ratio', 0.25), ('thin', 'rows'), ('thin', 'random'), ('thin', 'cols'),
+                                        ('thin', 'random_cols')],
     # B: Waymo target accumulation (nuScenes-trained models + the Waymo oracle)
     'centerpoint-accum-legaldepth-nuscenes2waymo': [('acc', 3), ('acc', 7)],
     'centerpoint-gblobs-sourceonly-nuscenes2waymo': [('acc', 7)],
     'centerpoint-sourceonly-waymo2waymo': [('acc', 3), ('acc', 7), ('ratio', 0.75), ('ratio', 0.5), ('ratio', 0.25),
-                                           ('pattern', 'hdl32e')],
+                                           ('pattern', 'hdl32e'), ('thin', 'cols'), ('thin', 'random_cols')],
 }
 
 
@@ -83,6 +86,10 @@ def tar_change(rb, kind, val):
         return tar, f'acc{val}'
     if kind == 'ratio':
         return {'DATA_PROCESSOR': with_ratio(tb['DATA_PROCESSOR'], val)}, 'ratio%03d' % int(round(val * 100))
+    if kind == 'thin':   # scan-pattern cut at evaluation: lines / columns halved, or a count-matched random control
+        if tb['DATASET'] == 'WaymoDataset':
+            return {'EVAL_TOP_THIN': {'TOP_CALIB': RING['TOP_CALIB'], 'MODE': val, 'STRIDE': 2}}, 'top' + val.replace('_', '')
+        return {'EVAL_RING_THIN': {'MODE': val, 'STRIDE': 2}}, 'ring' + val.replace('_', '')
     if kind == 'pattern':
         assert tb['DATASET'] == 'WaymoDataset'
         return {'RING_PATTERN': RING}, 'pattern' + val
