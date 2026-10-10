@@ -213,7 +213,7 @@ class WaymoDataset(DatasetTemplate):
         from .waymo_rings import eval_top_thin_points
         calib = self._top_calibration(cfg.TOP_CALIB)[info['point_cloud']['lidar_sequence']]
         return eval_top_thin_points(self._raw_frame(info), info['num_points_of_each_lidar'], calib, cfg.MODE,
-                                    stride=cfg.get('STRIDE', 2), rng=rng)
+                                    stride=cfg.get('STRIDE', 2), rng=rng, az_res_deg=cfg.get('AZ_RES_DEG', None))
 
     def get_lidar_with_ring_labels(self, info):
         """(points, ring label per point) for BEAM_DISTILL / BEAM_DROP: TOP rows from the stored order, side lidars -1."""

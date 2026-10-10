@@ -97,3 +97,16 @@ def test_ring_thin_mask_on_synthetic_rings():
     assert len(np.unique(ring[r])) == 32                       # the random control keeps every ring
     with pytest.raises(ValueError):
         ring_thin_mask(pts, ring, 'beams')
+
+
+def test_azbin_keeps_one_point_per_line_per_bin(frame):
+    _, raw, counts, calib = frame
+    n_top = counts[0]
+    beam, col, _, _, _ = top_beam_ids(raw[:n_top, :3], calib['extrinsic'], calib['inclinations'])
+    out = eval_top_thin_points(raw, counts, calib, 'azbin', az_res_deg=0.332)
+    kept = len(out) - (len(raw) - n_top)
+    key = beam.astype(np.int64) * 100000 + np.floor(col * (360.0 / 2650) / 0.332).astype(np.int64)
+    assert kept == len(np.unique(key))
+    assert 0.3 < kept / n_top < 0.5                      # 0.136 -> 0.332 deg keeps ~1 / 2.44 of each line
+    rnd = eval_top_thin_points(raw, counts, calib, 'random_azbin', az_res_deg=0.332, rng=np.random.default_rng(5))
+    assert len(rnd) == len(out)

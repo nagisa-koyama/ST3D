@@ -37,12 +37,16 @@ TWINS = {
     'centerpoint-ringpattern-waymo2nuscenes': [('acc', 20)],
     'centerpoint-sourceonly-nuscenes': [('acc', 10), ('acc', 20), ('acc', 30), ('ratio', 0.75), ('ratio', 0.5),
                                         ('ratio', 0.25), ('thin', 'rows'), ('thin', 'random'), ('thin', 'cols'),
-                                        ('thin', 'random_cols')],
+                                        ('thin', 'random_cols'), ('thin', 'cols:4'), ('thin', 'random_cols:4'),
+                                        ('elev', 'max:0'), ('elev', 'max:-3'), ('elev', 'min:-14'), ('elev', 'min:-10')],
     # B: Waymo target accumulation (nuScenes-trained models + the Waymo oracle)
     'centerpoint-accum-legaldepth-nuscenes2waymo': [('acc', 3), ('acc', 7)],
     'centerpoint-gblobs-sourceonly-nuscenes2waymo': [('acc', 7)],
     'centerpoint-sourceonly-waymo2waymo': [('acc', 3), ('acc', 7), ('ratio', 0.75), ('ratio', 0.5), ('ratio', 0.25),
-                                           ('pattern', 'hdl32e'), ('thin', 'cols'), ('thin', 'random_cols')],
+                                           ('pattern', 'hdl32e'), ('thin', 'cols'), ('thin', 'random_cols'),
+                                           ('thin', 'cols:4'), ('thin', 'random_cols:4'), ('thin', 'azbin:0.332'),
+                                           ('thin', 'random_azbin:0.332'), ('elev', 'max:0'), ('elev', 'max:-3'),
+                                           ('elev', 'min:-14'), ('elev', 'min:-10')],
 }
 
 
@@ -86,10 +90,22 @@ def tar_change(rb, kind, val):
         return tar, f'acc{val}'
     if kind == 'ratio':
         return {'DATA_PROCESSOR': with_ratio(tb['DATA_PROCESSOR'], val)}, 'ratio%03d' % int(round(val * 100))
-    if kind == 'thin':   # scan-pattern cut at evaluation: lines / columns halved, or a count-matched random control
+    if kind == 'thin':   # scan-pattern cut at evaluation: lines / columns cut, or a count-matched random control
+        mode, _, par = val.partition(':')            # 'cols:4' = every 4th column; 'azbin:0.332' = one per line per 0.332 deg
+        cut = {'MODE': mode, 'STRIDE': int(par) if par and mode.endswith('cols') else 2}
+        if mode.endswith('azbin'):
+            cut['AZ_RES_DEG'] = float(par)
+        suffix = mode.replace('_', '') + (par.replace('.', 'p') if par else '')
         if tb['DATASET'] == 'WaymoDataset':
-            return {'EVAL_TOP_THIN': {'TOP_CALIB': RING['TOP_CALIB'], 'MODE': val, 'STRIDE': 2}}, 'top' + val.replace('_', '')
-        return {'EVAL_RING_THIN': {'MODE': val, 'STRIDE': 2}}, 'ring' + val.replace('_', '')
+            return {'EVAL_TOP_THIN': {'TOP_CALIB': RING['TOP_CALIB'], **cut}}, 'top' + suffix
+        assert not mode.endswith('azbin')
+        return {'EVAL_RING_THIN': cut}, 'ring' + suffix
+    if kind == 'elev':   # vertical field of view cut at evaluation, elevation about the dataset's top sensor (spec)
+        side, _, deg = val.partition(':')
+        origin = [1.43, 0.0, 2.184] if tb['DATASET'] == 'WaymoDataset' else [0.0, 0.0, 1.75]
+        step = {'NAME': 'mask_points_by_spec', 'SENSOR_ORIGIN': origin,
+                ('ELEVATION_MAX_DEG' if side == 'max' else 'ELEVATION_MIN_DEG'): float(deg)}
+        return {'DATA_PROCESSOR': [step] + tb['DATA_PROCESSOR']}, 'el' + side + deg.replace('-', 'm')
     if kind == 'pattern':
         assert tb['DATASET'] == 'WaymoDataset'
         return {'RING_PATTERN': RING}, 'pattern' + val

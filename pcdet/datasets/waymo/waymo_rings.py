@@ -15,7 +15,8 @@ mislead: a row with no valid pixel at all (open sky above the top beams) is invi
 points all lie within a few columns of the seam can merge with its neighbour.
 
 `RING_PATTERN` (WaymoDataset, training only) uses these rows to thin the TOP cloud to a target sensor's published
-scan pattern: rows at the target's vertical spacing with a random phase, one point per row per target azimuth bin.
+scan pattern: rows at the target's vertical spacing with a random phase, one point per row per target azimuth bin
+(`AZ_RES_DEG: null`: every point of the kept rows, the vertical-only ablation; experiments_md 20261005_01).
 """
 import numpy as np
 
@@ -124,6 +125,7 @@ def top_beam_ids(xyz, extrinsic, inclinations, width=W_TOP):
 def ring_pattern_mask(beam, col, inc_desc, spacing_deg, az_res_deg, phase_v, phase_h, width=W_TOP):
     """Keep the rows nearest a vertical lattice of `spacing_deg` (offset `phase_v` in [0, 1) of a spacing) inside
     the source's field of view, and one point per kept row per azimuth bin of `az_res_deg` (offset `phase_h`).
+    `az_res_deg` None keeps every point of the kept rows (the vertical lattice alone; `phase_h` unused).
 
     Within a row the stored order is column order, so the point kept per bin is the first one the scan reached.
     """
@@ -135,6 +137,8 @@ def ring_pattern_mask(beam, col, inc_desc, spacing_deg, az_res_deg, phase_v, pha
     targets = targets[(targets >= lo) & (targets <= hi)]
     kept_beams = np.unique(np.argmin(np.abs(inc_desc[None, :] - targets[:, None]), axis=1))
     keep = np.isin(beam, kept_beams)
+    if az_res_deg is None:
+        return keep, kept_beams
     n_bins = int(round(360.0 / az_res_deg))
     b = np.floor((col / width + phase_h / n_bins) * n_bins).astype(np.int64) % n_bins
     key = beam.astype(np.int64) * n_bins + b
@@ -152,7 +156,8 @@ def ring_pattern_points(raw, num_points_of_each_lidar, calib, cfg, rng=None):
     `calib` the segment's {'inclinations', 'extrinsic'} for TOP. Rows are recovered on the FULL TOP block, before
     the no-label-zone filter, because the filter removes points from the middle of rows and the order is what
     identifies them; the filter (nlz == -1 kept, as `get_lidar`) is applied to what is kept. Side lidars are dropped
-    unless `cfg.TOP_ONLY` is False.
+    unless `cfg.TOP_ONLY` is False. `cfg.AZ_RES_DEG` must be present: null switches the azimuth binning off (both
+    phases are still drawn, so the vertical phase stream is the same as with binning on).
     """
     rng = np.random if rng is None else rng
     counts = np.asarray(num_points_of_each_lidar).astype(np.int64)
@@ -194,7 +199,7 @@ def ring_labelled_points(raw, num_points_of_each_lidar, calib):
     return out, label[keep]
 
 
-def eval_top_thin_points(raw, num_points_of_each_lidar, calib, mode, stride=2, rng=None):
+def eval_top_thin_points(raw, num_points_of_each_lidar, calib, mode, stride=2, rng=None, az_res_deg=None):
     """ANALYSIS: one stored frame with its TOP block thinned (EVAL_TOP_THIN at evaluation, TRAIN_TOP_THIN in training), returned as `get_lidar` returns it.
 
     `mode` 'rows' keeps the TOP beams whose index (0 = highest declared beam) is a multiple of `stride`, so every
@@ -212,7 +217,21 @@ def eval_top_thin_points(raw, num_points_of_each_lidar, calib, mode, stride=2, r
         beam, col, _, _, _ = top_beam_ids(raw[:n_top, :3], calib['extrinsic'], calib['inclinations'])
         rows = (beam % stride) == 0
         cols = (np.floor(col).astype(np.int64) % stride) == 0   # every STRIDE-th range-image column (col is fractional)
-        if mode == 'rows':
+        if mode in ('azbin', 'random_azbin'):
+            # one point per line per AZ_RES_DEG azimuth bin (a non-integer step, e.g. nuScenes' 0.332 deg = 2.44 Waymo
+            # columns): the first point of each (beam, bin) in stored order (20261010_01 §3)
+            assert az_res_deg, 'azbin needs AZ_RES_DEG'
+            key = beam.astype(np.int64) * 100000 + np.floor(col * (360.0 / W_TOP) / az_res_deg).astype(np.int64)
+            azbin = np.zeros(n_top, dtype=bool)
+            azbin[np.unique(key, return_index=True)[1]] = True
+        if mode == 'azbin':
+            keep[:n_top] = azbin
+        elif mode == 'random_azbin':
+            rng = np.random.default_rng(0) if rng is None else rng
+            sel = np.zeros(n_top, dtype=bool)
+            sel[rng.choice(n_top, int(azbin.sum()), replace=False)] = True
+            keep[:n_top] = sel
+        elif mode == 'rows':
             keep[:n_top] = rows
         elif mode == 'cols':
             keep[:n_top] = cols
@@ -223,7 +242,7 @@ def eval_top_thin_points(raw, num_points_of_each_lidar, calib, mode, stride=2, r
             sel[rng.choice(n_top, int((rows if mode == 'random' else cols).sum()), replace=False)] = True
             keep[:n_top] = sel
         else:
-            raise ValueError("MODE must be 'rows', 'cols', 'random' or 'random_cols', got %r" % (mode,))
+            raise ValueError("MODE must be 'rows', 'cols', 'azbin', 'random', 'random_cols' or 'random_azbin', got %r" % (mode,))
     pts = raw[keep]
     pts = pts[pts[:, 5] == -1]
     out = np.array(pts[:, 0:5], dtype=raw.dtype)
