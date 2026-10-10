@@ -1,0 +1,24 @@
+# Waymo -> nuScenes, scan-pattern row 27807 with its AZIMUTH thinning switched off: the vertical lattice alone.
+# Paper-strategy session, decision 2 approved by the user 2026-10-10; experiments_md 20261005_01 (vertical-only ablation).
+#
+# One variable from centerpoint-ringpattern-waymo2nuscenes.yaml (27807 / 27840, two-seed mean 36.21 / 16.65):
+# RING_PATTERN.AZ_RES_DEG 0.332 -> null. The TOP rows nearest a 1.33-deg vertical lattice (random phase per sample)
+# are kept with EVERY point on them, instead of one point per row per 0.332-deg azimuth bin. TOP only, recount, the
+# schedule and the launcher shape are 27807's.
+#
+# Why: the oracle table (20261010_01 §5.1) says line structure matters and azimuth resolution does not. At an equal
+# point count, halving lines costs the oracles 2.7 / 5.9 Car BEV; halving columns costs +0.2 / +2.1. So 27807's gain
+# over the density-matched C1 (31.14) should come from its vertical lattice.
+# Density changes: the kept rows keep ~2.4x 27807's points (measured before launch; see the report).
+#
+# PRE-DECLARED READING (before launch; Car BEV AP_R40, nuScenes val, KITTI metric, epoch 7, one seed):
+#   within +-2 of 27807's 36.21 -> the vertical lattice carries the gain; the azimuth step is not needed;
+#   <= -2 below 36.21           -> the azimuth step matters;
+#   >= +2 above 36.21           -> the azimuth thinning was hurting.
+#   Also read against C1 (27850, 31.14).
+#
+# Legal: Waymo is the SOURCE; the target enters only through nuScenes' published vertical spacing (spec), no label.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-ringpattern-waymo2nuscenes.yaml
+DATA_CONFIG:
+    RING_PATTERN:
+        AZ_RES_DEG: null      # no azimuth binning: every point of the kept rows (27807: 0.332)

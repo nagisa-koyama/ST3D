@@ -139,8 +139,9 @@ def test_absent_key_leaves_the_loader_unchanged():
     from pcdet.datasets.waymo.waymo_dataset import WaymoDataset
     ds = object.__new__(WaymoDataset)
     ds.dataset_cfg = EasyDict(MAX_SWEEPS=1); ds.training = True; ds.ring_pattern_cfg = None
+    ds.eval_top_thin_cfg = None; ds.train_top_thin_cfg = None   # the other opt-in TOP cuts (2d7892d), absent here too
     sentinel = np.ones((3, 5), np.float32)
-    ds.get_lidar = lambda seq, idx: sentinel
+    ds.get_lidar = lambda seq, idx, *counts: sentinel
     info = {'point_cloud': {'lidar_sequence': 's', 'sample_idx': 0}}
     assert ds.get_lidar_with_sweeps(info) is sentinel
     ds.ring_pattern_cfg = EasyDict(TOP_CALIB='x'); ds.training = False      # evaluation: untouched
@@ -178,3 +179,139 @@ def test_waymo_attach_ring_labels_override():
     except AssertionError:
         return
     raise AssertionError('Waymo must refuse to fall back to elevation clustering')
+
+
+# ---- AZ_RES_DEG: null, the vertical-only ablation of 27807 (experiments_md 20261005_01 §16) ----
+
+def _mask_as_27807(beam, col, inc_desc, spacing_deg, az_res_deg, phase_v, phase_h, width=W_TOP):
+    """ring_pattern_mask as 27807 / 27840 ran it (ST3D b3c3eec), transcribed literally: the reference for the
+    'numeric key unchanged' tests below."""
+    lo, hi = inc_desc.min(), inc_desc.max()
+    sp = np.radians(spacing_deg)
+    j0 = int(np.floor((lo - phase_v * sp) / sp)) - 1
+    j1 = int(np.ceil((hi - phase_v * sp) / sp)) + 1
+    targets = (np.arange(j0, j1 + 1) + phase_v) * sp
+    targets = targets[(targets >= lo) & (targets <= hi)]
+    kept_beams = np.unique(np.argmin(np.abs(inc_desc[None, :] - targets[:, None]), axis=1))
+    keep = np.isin(beam, kept_beams)
+    n_bins = int(round(360.0 / az_res_deg))
+    b = np.floor((col / width + phase_h / n_bins) * n_bins).astype(np.int64) % n_bins
+    key = beam.astype(np.int64) * n_bins + b
+    idx = np.nonzero(keep)[0]
+    _, first = np.unique(key[idx], return_index=True)
+    out = np.zeros(len(beam), dtype=bool)
+    out[idx[first]] = True
+    return out, kept_beams
+
+
+def _raw_frame(seed, nlz_every=7, n_side=50):
+    E = _extrinsic()
+    xyz, true = _scan(E, valid_frac=0.8, seed=seed)
+    rng = np.random.default_rng(seed + 100)
+    top = np.concatenate([xyz, rng.random((len(xyz), 2)), np.full((len(xyz), 1), -1.0)], 1)
+    top[::nlz_every, 5] = 1.0
+    side = np.concatenate([rng.random((n_side, 5)), np.full((n_side, 1), -1.0)], 1)
+    return np.concatenate([top, side]).astype(np.float32), [len(top), n_side, 0, 0, 0], \
+        {'extrinsic': E, 'inclinations': INC}, true
+
+
+def _ringpattern_cfg(name):
+    import os
+    from pcdet.config import cfg_from_yaml_file
+    prev = os.getcwd()
+    os.chdir(ROOT / 'tools')                       # _BASE_CONFIG_ paths are tools/-relative
+    try:
+        return cfg_from_yaml_file('cfgs/da-ieee-access/%s.yaml' % name, EasyDict())
+    finally:
+        os.chdir(prev)
+
+
+def test_numeric_resolution_is_bit_identical_to_27807():
+    E = _extrinsic()
+    for seed, (pv, ph) in zip((6, 7, 8), ((0.0, 0.0), (0.37, 0.81), (0.999, 0.5))):
+        xyz, _ = _scan(E, valid_frac=0.9, seed=seed)
+        beam, col, _, inc_desc, _ = top_beam_ids(xyz, E, INC)
+        keep, kept = ring_pattern_mask(beam, col, inc_desc, 1.33, 0.332, pv, ph)
+        ref, ref_kept = _mask_as_27807(beam, col, inc_desc, 1.33, 0.332, pv, ph)
+        assert np.array_equal(keep, ref) and np.array_equal(kept, ref_kept)
+
+
+def test_27807_config_cloud_is_bit_identical():
+    """27807's resolved RING_PATTERN block through ring_pattern_points, against the transcribed mask on the same
+    draws: the thinned training cloud is unchanged byte for byte."""
+    rp = _ringpattern_cfg('centerpoint-ringpattern-waymo2nuscenes').DATA_CONFIG.RING_PATTERN
+    assert rp.AZ_RES_DEG == 0.332
+    for seed in (9, 10):
+        raw, counts, calib, _ = _raw_frame(seed)
+        out = ring_pattern_points(raw, counts, calib, rp, rng=np.random.default_rng(seed))
+        draw = np.random.default_rng(seed)
+        pv, ph = draw.random(), draw.random()
+        top = raw[:counts[0]]
+        beam, col, _, inc_desc, _ = top_beam_ids(top[:, :3], calib['extrinsic'], calib['inclinations'])
+        ref, _ = _mask_as_27807(beam, col, inc_desc, rp.SPACING_DEG, rp.AZ_RES_DEG, pv, ph)
+        pts = top[ref]
+        pts = pts[pts[:, 5] == -1]
+        expect = np.array(pts[:, 0:5], dtype=raw.dtype)
+        expect[:, 3] = np.tanh(expect[:, 3])
+        assert out.dtype == expect.dtype and out.tobytes() == expect.tobytes()
+
+
+def test_vertical_only_keeps_every_point_of_the_same_rows():
+    E = _extrinsic()
+    xyz, true = _scan(E, valid_frac=0.9, seed=11)
+    beam, col, _, inc_desc, _ = top_beam_ids(xyz, E, INC)
+    for pv in (0.0, 0.42, 0.93):
+        keep_v, kept_v = ring_pattern_mask(beam, col, inc_desc, 1.33, None, pv, 0.7)
+        keep_b, kept_b = ring_pattern_mask(beam, col, inc_desc, 1.33, 0.332, pv, 0.7)
+        assert np.array_equal(kept_v, kept_b)                    # the vertical lattice is untouched
+        assert np.array_equal(keep_v, np.isin(beam, kept_v))     # every point of a kept row, nothing else
+        assert np.all(keep_v[keep_b])                            # a superset of the binned selection
+        assert keep_v.sum() > keep_b.sum()
+        assert set(np.unique(true[keep_v])) == set(kept_v)       # whole TRUE rows (recovery is exact here)
+    # phase_h is unused
+    a, _ = ring_pattern_mask(beam, col, inc_desc, 1.33, None, 0.42, 0.0)
+    b, _ = ring_pattern_mask(beam, col, inc_desc, 1.33, None, 0.42, 0.99)
+    assert np.array_equal(a, b)
+
+
+def test_vertical_only_points_nlz_side_lidars_and_vertical_phase_stream():
+    raw, counts, calib, _ = _raw_frame(12)
+    cfg_v = EasyDict(SPACING_DEG=1.33, AZ_RES_DEG=None, TOP_ONLY=True)
+    cfg_b = EasyDict(SPACING_DEG=1.33, AZ_RES_DEG=0.332, TOP_ONLY=True)
+    out_v = ring_pattern_points(raw, counts, calib, cfg_v, rng=np.random.default_rng(3))
+    out_b = ring_pattern_points(raw, counts, calib, cfg_b, rng=np.random.default_rng(3))
+    top = raw[:counts[0]]
+    beam, _, _, inc_desc, _ = top_beam_ids(top[:, :3], calib['extrinsic'], calib['inclinations'])
+    draw = np.random.default_rng(3)
+    pv = draw.random()
+    keep, _ = ring_pattern_mask(beam, None, inc_desc, 1.33, None, pv, None)
+    pts = top[keep & (top[:, 5] == -1)]
+    assert np.array_equal(out_v[:, :3], pts[:, :3])              # exactly the kept rows' non-NLZ TOP points, in order
+    assert len(out_v) > 2 * len(out_b)                           # ~2.4 Waymo columns per 0.332-deg bin
+    xyz_v = {tuple(p) for p in out_v[:, :3]}
+    assert all(tuple(p) in xyz_v for p in out_b[:, :3])          # same rows: the binned cloud is a subset
+    out_all = ring_pattern_points(raw, counts, calib, EasyDict(cfg_v, TOP_ONLY=False), rng=np.random.default_rng(3))
+    assert len(out_all) == len(out_v) + counts[1]
+
+
+def test_vertical_only_empty_top_block_and_absent_key_still_refused():
+    E = _extrinsic()
+    raw = np.zeros((5, 6), np.float32); raw[:, 5] = -1
+    out = ring_pattern_points(raw, [0, 5, 0, 0, 0], {'extrinsic': E, 'inclinations': INC},
+                              EasyDict(SPACING_DEG=1.33, AZ_RES_DEG=None, TOP_ONLY=True))
+    assert out.shape == (0, 5)
+    raw, counts, calib, _ = _raw_frame(13)
+    try:                                           # absent is NOT "off": only an explicit null switches binning off
+        ring_pattern_points(raw, counts, calib, EasyDict(SPACING_DEG=1.33, TOP_ONLY=True))
+    except KeyError:
+        return
+    raise AssertionError('a RING_PATTERN block without AZ_RES_DEG must be refused')
+
+
+def test_vertical_only_config_differs_from_27807_in_az_res_only():
+    base = _ringpattern_cfg('centerpoint-ringpattern-waymo2nuscenes')
+    vonly = _ringpattern_cfg('centerpoint-ringpattern-vonly-waymo2nuscenes')
+    assert vonly.DATA_CONFIG.RING_PATTERN.AZ_RES_DEG is None
+    vonly.DATA_CONFIG.RING_PATTERN.AZ_RES_DEG = base.DATA_CONFIG.RING_PATTERN.AZ_RES_DEG
+    vonly.pop('_BASE_CONFIG_'); base.pop('_BASE_CONFIG_')          # the chain itself, one link longer
+    assert vonly == base
