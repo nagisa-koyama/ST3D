@@ -159,7 +159,7 @@ def test_loader_cuts_before_axis_swap_and_shift_keyed_by_frame(tmp_path, monkeyp
     assert len(D.PandasetDataset._get_lidar_points(Fake(), info, pose=None)) == len(t)
 
 
-# ---- EVAL_RING_THIN (evaluation-only cuts for the oracle-degradation table, experiments_md 20261011_02) ----
+# ---- EVAL_RING_THIN (evaluation-only cuts for the oracle-degradation table, experiments_md 20261011_03) ----
 
 def _scan(seed=4, n_blocks=300):
     xyz, t, ch = synthetic_scan(n_blocks=n_blocks, drop=0.1, seed=seed)

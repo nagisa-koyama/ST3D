@@ -141,7 +141,7 @@ class PandasetDataset(DatasetTemplate):
             assert os.path.isdir(ring_cfg['LABEL_CACHE']), 'no ring label cache at %s' % ring_cfg['LABEL_CACHE']
         # EVAL_RING_THIN (ANALYSIS, evaluation only; absent = unchanged): cut the EVALUATION scan's pattern by its laser
         # channels (pandaset_rings.eval_thin_mask: lines / columns / azimuth bins, their count-matched random controls,
-        # the HDL-32E render, channel-elevation cuts); experiments_md 20261011_02, the PandaSet oracle-degradation table.
+        # the HDL-32E render, channel-elevation cuts); experiments_md 20261011_03, the PandaSet oracle-degradation table.
         self.eval_ring_thin_cfg = self.dataset_cfg.get('EVAL_RING_THIN', None)
         if self.eval_ring_thin_cfg is not None:
             assert self.dataset_cfg.get('LIDAR_DEVICE', 0) == 0, 'channel labels exist for the Pandar64 (device 0) only'

@@ -237,7 +237,7 @@ EVAL_THIN_MODES = ('rows', 'random', 'cols', 'random_cols', 'azbin', 'random_azb
 
 
 def eval_thin_mask(xyz_ego, labels, cfg, rng):
-    """ANALYSIS, evaluation only (EVAL_RING_THIN; experiments_md 20261011_02): which points of ONE Pandar64 scan (stored
+    """ANALYSIS, evaluation only (EVAL_RING_THIN; experiments_md 20261011_03): which points of ONE Pandar64 scan (stored
     order, PandaSet ego axes) to keep under one scan-pattern manipulation, from the scan's channel labels.
 
     'rows' keeps every STRIDE-th channel (0 = top laser), so whole lines go. 'cols' keeps every STRIDE-th return of each

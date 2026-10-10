@@ -1,4 +1,4 @@
-"""Pre-launch check of the PandaSet oracle-degradation twins (experiments_md 20261011_02): is each manipulated
+"""Pre-launch check of the PandaSet oracle-degradation twins (experiments_md 20261011_03): is each manipulated
 evaluation cloud what the twin says? CPU, PandaSet VAL frames, evaluation mode, as scored.
 
     python analysis/pandaset_eval_thin_check.py <frames> <twin.yaml> [<twin.yaml> ...]

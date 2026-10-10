@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pre-launch checks of the PandaSet oracle-degradation twins (experiments_md 20261011_02), as one Slurm CPU job:
+# Pre-launch checks of the PandaSet oracle-degradation twins (experiments_md 20261011_03), as one Slurm CPU job:
 # the manipulated-cloud check over every spin twin, preflight_eval one config per process, and the config tests.
 # From ST3D/tools:  bash analysis/pandaset_sensitivity_prelaunch.sh <frames>
 set -u
