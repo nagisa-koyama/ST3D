@@ -261,7 +261,9 @@ class WaymoDataset(DatasetTemplate):
         at MAX_SWEEPS 5, moving/static goes 0.61 -> 1.03 with static untouched.
         """
         pc_info = info['point_cloud']
-        if self.ring_pattern_cfg is not None and self.training:
+        # RING_PATTERN.APPLY_AT_EVAL (ANALYSIS, off by default): render the EVALUATION cloud to the pattern too - the
+        # Waymo oracle scored on a Waymo val cloud thinned to nuScenes' published scan pattern (20261010_01).
+        if self.ring_pattern_cfg is not None and (self.training or self.ring_pattern_cfg.get('APPLY_AT_EVAL', False)):
             return self.get_lidar_ring_pattern(info)
         if self.eval_top_thin_cfg is not None and not self.training:
             return self.get_lidar_eval_top_thin(info)
