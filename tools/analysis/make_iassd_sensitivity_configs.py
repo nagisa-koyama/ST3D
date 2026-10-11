@@ -26,7 +26,8 @@ from analysis.make_sensitivity_configs import resolved  # noqa: E402
 
 OUT = Path('cfgs/da-ieee-access-analysis/sensitivity-iassd')
 BASES = ['cfgs/da-ieee-access-pointrcnn/iassd-published-kitti.yaml',          # 27600: published recipe, FOV-cropped
-         'cfgs/da-ieee-access-pointrcnn/iassd-sourceonly-kitti2kitti.yaml']   # 27569: family protocol, 360 deg
+         'cfgs/da-ieee-access-pointrcnn/iassd-sourceonly-kitti2kitti.yaml',   # 27569: family protocol, 360 deg
+         'cfgs/da-ieee-access-pointrcnn/iassd-sourceonly-kitti2kitti-fovcrop-noros-zshift.yaml']   # 28141: row K
 
 
 def with_ratio_before_budget(processors, r):
