@@ -1,0 +1,154 @@
+# IA-SSD in-domain ORACLE on PandaSet Pandar64 (spinning, 360 deg), ANALYSIS: experiments_md 20261011_07 (user's decision C,
+# 2026-10-11). The IA-SSD twin of the CenterPoint PandaSet spin oracle 26389 (centerpoint-pandaset-spin2flash trained, scored on
+# spin val by centerpoint-pandaset-spin2spin, reported under rule A), for the CenterPoint-vs-IA-SSD oracle-sensitivity table.
+#
+# The IA-SSD family recipe of the Waymo rows (iassd-sourceonly-waymo2nuscenes: model, LR 0.01 as published, x,y,z, family size
+# augmentation, SCORE_THRESH 0.0001, 16,384-point budget + drop_empty_gt_boxes right after it, global batch 6, NUM_WORKERS 8) on
+# CenterPoint 26389's source: Pandar64 (LIDAR_DEVICE 0), single frame, SHIFT_COOR 0.3, 115 epochs (the family's sample budget).
+# The target block IS the spin val set over 360 deg (as centerpoint-pandaset-spin2spin), so the in-run eval scores the oracle
+# itself; rule A comes from its result.pkl (analysis/pandaset_eval_protocols.py), as for 26389.
+# mean_size = PandaSet Pandar64 SOURCE train means over all boxes (Car 4.51 / 1.92 / 1.69, Pedestrian 0.85 / 0.82 / 1.80,
+# Cyclist 2.14 / 0.71 / 1.42; analysis/pandaset_source_mean_sizes.py, job 28124, 2026-10-11).
+# Budget: 16,384 of ~95,700 points per frame in range (~17%), even over 360-deg labels; the recount drops the boxes it empties.
+# PRE-DECLARED acceptance bar and fallback: 20261011_07 (written before launch).
+# Every PandaSet job needs `--bind /home/koyama/code/ST3D:/root/ST3D` (the launcher binds the snapshot there).
+DATA_CONFIG:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_pandaset_spin_dataset.yaml
+    MAX_SWEEPS: 1
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+        - NAME: sample_points
+          NUM_POINTS: {
+            'train': 16384,
+            'test': 16384
+          }
+        - NAME: drop_empty_gt_boxes
+          MIN_POINTS: 1     # = MIN_POINTS_OF_GT, the threshold of the zero-point filter and of 27807's recount
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+
+DATA_CONFIG_TAR:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_pandaset_spin_dataset.yaml
+    LIDAR_DEVICE: 0
+    EVAL_FOV_FILTER: False
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+        - NAME: sample_points
+          NUM_POINTS: {
+            'train': 16384,
+            'test': 16384
+          }
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+
+CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
+ONTOLOGY: 'kitti'
+
+MODEL:
+    NAME: IASSD
+
+    BACKBONE_3D:
+        NAME: IASSD_Backbone
+        SA_CONFIG:
+            NPOINT_LIST: [[4096], [1024], [512], [256], [-1], [256]]
+            SAMPLE_RANGE_LIST: [[-1], [-1], [-1], [-1], [-1], [-1]]
+            SAMPLE_METHOD_LIST: &sample_method_list [['D-FPS'], ['D-FPS'], ['ctr_aware'], ['ctr_aware'], [], []]
+            RADIUS_LIST: [[0.2,0.8], [0.8,1.6], [1.6,4.8], [], [], [4.8, 6.4]]
+            NSAMPLE_LIST: [[16,32], [16,32], [16,32], [], [], [16, 32]]
+            MLPS: [[[16,16,32],  [32,32,64]],
+                   [[64,64,128],  [64,96,128]],
+                   [[128,128,256],  [128,256,256]],
+                   [],
+                   [128],
+                   [[256,256,512], [256,512,1024]]]
+            LAYER_TYPE: ['SA_Layer', 'SA_Layer', 'SA_Layer', 'SA_Layer', 'Vote_Layer', 'SA_Layer']
+            DILATED_GROUP: [False, False, False, False, False, False]
+            AGGREGATION_MLPS: [[64], [128], [256], [256], [], [512]]
+            CONFIDENCE_MLPS: [[], [128], [256], [], [], []]
+            LAYER_INPUT: [0, 1, 2, 3, 4, 3]
+            CTR_INDEX: [-1, -1, -1, -1, -1, 5]
+            MAX_TRANSLATE_RANGE: [3.0, 3.0, 2.0]
+
+    POINT_HEAD:
+        NAME: IASSD_Head
+        CLS_FC: [256, 256]
+        REG_FC: [256, 256]
+        CLASS_AGNOSTIC: False
+        USE_POINT_FEATURES_BEFORE_FUSION: False
+        TARGET_CONFIG:
+            INS_AWARE_ASSIGN: True
+            GT_EXTRA_WIDTH: [0.2, 0.2, 0.2]
+            ASSIGN_METHOD:
+                NAME: 'extend_gt'
+                ASSIGN_TYPE: 'centers_origin'
+                EXTRA_WIDTH: [1.0, 1.0, 1.0]
+                FG_PC_IGNORE: False
+            BOX_CODER: PointResidual_BinOri_Coder
+            BOX_CODER_CONFIG: {
+                'angle_bin_num': 12,
+                'use_mean_size': True,
+                'mean_size': [
+                    [4.51, 1.92, 1.69],
+                    [0.85, 0.82, 1.80],
+                    [2.14, 0.71, 1.42]
+                ]
+            }
+        LOSS_CONFIG:
+            LOSS_CLS: WeightedCrossEntropy
+            LOSS_REG: WeightedSmoothL1Loss
+            LOSS_INS: WeightedCrossEntropy
+            SAMPLE_METHOD_LIST: *sample_method_list
+            LOSS_VOTE_TYPE: 'none'
+            CORNER_LOSS_REGULARIZATION: True
+            CENTERNESS_REGULARIZATION: True
+            CENTERNESS_REGULARIZATION_SA: True
+            LOSS_WEIGHTS: {
+                'ins_aware_weight': [0, 1.0, 1.0],
+                'vote_weight': 1.0,
+                'point_cls_weight': 1.0,
+                'point_box_weight': 1.0,
+                'corner_weight': 1.0,
+                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+                'dir_weight': 0.2
+            }
+
+    POST_PROCESSING:
+        RECALL_MODE: 'normal'
+        RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+        SCORE_THRESH: 0.0001
+        OUTPUT_RAW_SCORE: False
+        EVAL_METRIC: kitti
+        NMS_CONFIG:
+            MULTI_CLASSES_NMS: False
+            NMS_TYPE: nms_gpu
+            NMS_THRESH: 0.01
+            NMS_PRE_MAXSIZE: 4096
+            NMS_POST_MAXSIZE: 500
+
+# Global batch 6 as in the family (--batch_size 6 on one GPU); optimiser as published; the Waymo budget of 7 epochs.
+OPTIMIZATION:
+    BATCH_SIZE_PER_GPU: 3
+    NUM_EPOCHS_TO_EVAL: 1
+    NUM_WORKERS: 8
+    NUM_EPOCHS: 115
+    OPTIMIZER: adam_onecycle
+    LR: 0.01
+    WEIGHT_DECAY: 0.01
+    MOMENTUM: 0.9
+    MOMS: [0.95, 0.85]
+    PCT_START: 0.4
+    DIV_FACTOR: 10
+    DECAY_STEP_LIST: [35, 45]
+    LR_DECAY: 0.1
+    LR_CLIP: 0.0000001
+    LR_WARMUP: False
+    WARMUP_EPOCH: 1
+    GRAD_NORM_CLIP: 10
