@@ -1,0 +1,163 @@
+# IA-SSD KITTI in-domain ORACLE, family protocol, cropped to the camera FOV at training AND evaluation, no object scaling,
+# z shift (row K of experiments_md 20261011_07; user's decision 2026-10-11). ANALYSIS: the like-for-like IA-SSD twin of the
+# CenterPoint KITTI oracle 26843 (centerpoint-sourceonly-kitti2kitti-noros-zshift, 80.33 / 70.59 moderate) for the oracle-
+# sensitivity comparison.
+#
+# From the family IA-SSD KITTI oracle 27569 (iassd-sourceonly-kitti2kitti, 360 deg, 56.87 / 44.26):
+#   - FOV_POINTS_ONLY (+ ALLOW_FOV_POINTS_ONLY) on both blocks: KITTI's labels exist only in the camera FOV, so the 16,384
+#     budget is spent there (~87% of the cropped frame kept, against ~14% of the 360-deg frame);
+#   - DATA_AUGMENTOR = 26843's resolved one: object scaling off (27569 had the family's [0.85, 1.20] / [0.80, 1.25]) and a
+#     Gaussian z shift of the scene, std 0.3 m;
+#   - mean_size = KITTI SOURCE train means over all boxes (Car 3.89 / 1.62 / 1.53, Pedestrian 0.82 / 0.63 / 1.77, Cyclist
+#     1.77 / 0.57 / 1.72; kitti_infos_train.pkl, 2026-10-11), as every other IA-SSD oracle uses its own source's means
+#     (27569 kept nuScenes' on purpose, to be one variable from A1).
+# Everything else is 27569's: x,y,z, 152 epochs, global batch 6, SCORE_THRESH 0.0001, the camera-FOV prediction filter.
+# PRE-DECLARED bar, recount rule and the reading if it misses: 20261011_07 §12 (written before launch).
+DATA_CONFIG:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_kitti_dataset.yaml
+    FOV_POINTS_ONLY: True
+    ALLOW_FOV_POINTS_ONLY: True   # crop to the camera FOV on purpose (kitti_dataset.py lock, commit 1d20716)
+    DATA_AUGMENTOR:               # = CenterPoint 26843's resolved augmentor (no object scaling, z shift std 0.3 m)
+        DISABLE_AUG_LIST: ['normalize_object_size', 'random_object_rotation', 'random_object_scaling']
+        AUG_CONFIG_LIST:
+            - NAME: normalize_object_size
+              SIZE_RES: [-0.91, -0.49, -0.26]
+            - NAME: random_object_rotation
+              ROT_PROB: 1.0
+              ROT_UNIFORM_NOISE: [-0.78539816, 0.78539816]
+            - NAME: random_object_scaling
+              SCALE_UNIFORM_NOISE: {
+                  'Car': [0.85, 1.2],
+                  'Pedestrian': [0.8, 1.25]
+              }
+            - NAME: random_world_flip
+              ALONG_AXIS_LIST: ['x', 'y']
+            - NAME: random_world_rotation
+              WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+            - NAME: random_world_scaling
+              WORLD_SCALE_RANGE: [0.95, 1.05]
+            - NAME: random_world_translation
+              NOISE_TRANSLATE_STD: [0.0, 0.0, 0.3]
+    DATA_PROCESSOR: &iassd_processor
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+        - NAME: sample_points
+          NUM_POINTS: {
+            'train': 16384,
+            'test': 16384
+          }
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+
+DATA_CONFIG_TAR:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_kitti_dataset.yaml
+    FOV_POINTS_ONLY: True
+    ALLOW_FOV_POINTS_ONLY: True
+    DATA_PROCESSOR: *iassd_processor
+
+CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
+ONTOLOGY: 'kitti'
+
+MODEL:
+    NAME: IASSD
+
+    BACKBONE_3D:
+        NAME: IASSD_Backbone
+        SA_CONFIG:
+            NPOINT_LIST: [[4096], [1024], [512], [256], [-1], [256]]
+            SAMPLE_RANGE_LIST: [[-1], [-1], [-1], [-1], [-1], [-1]]
+            SAMPLE_METHOD_LIST: &sample_method_list [['D-FPS'], ['D-FPS'], ['ctr_aware'], ['ctr_aware'], [], []]
+            RADIUS_LIST: [[0.2,0.8], [0.8,1.6], [1.6,4.8], [], [], [4.8, 6.4]]
+            NSAMPLE_LIST: [[16,32], [16,32], [16,32], [], [], [16, 32]]
+            MLPS: [[[16,16,32],  [32,32,64]],
+                   [[64,64,128],  [64,96,128]],
+                   [[128,128,256],  [128,256,256]],
+                   [],
+                   [128],
+                   [[256,256,512], [256,512,1024]]]
+            LAYER_TYPE: ['SA_Layer', 'SA_Layer', 'SA_Layer', 'SA_Layer', 'Vote_Layer', 'SA_Layer']
+            DILATED_GROUP: [False, False, False, False, False, False]
+            AGGREGATION_MLPS: [[64], [128], [256], [256], [], [512]]
+            CONFIDENCE_MLPS: [[], [128], [256], [], [], []]
+            LAYER_INPUT: [0, 1, 2, 3, 4, 3]
+            CTR_INDEX: [-1, -1, -1, -1, -1, 5]
+            MAX_TRANSLATE_RANGE: [3.0, 3.0, 2.0]
+
+    POINT_HEAD:
+        NAME: IASSD_Head
+        CLS_FC: [256, 256]
+        REG_FC: [256, 256]
+        CLASS_AGNOSTIC: False
+        USE_POINT_FEATURES_BEFORE_FUSION: False
+        TARGET_CONFIG:
+            INS_AWARE_ASSIGN: True
+            GT_EXTRA_WIDTH: [0.2, 0.2, 0.2]
+            ASSIGN_METHOD:
+                NAME: 'extend_gt'
+                ASSIGN_TYPE: 'centers_origin'
+                EXTRA_WIDTH: [1.0, 1.0, 1.0]
+                FG_PC_IGNORE: False
+            BOX_CODER: PointResidual_BinOri_Coder
+            BOX_CODER_CONFIG: {
+                'angle_bin_num': 12,
+                'use_mean_size': True,
+                'mean_size': [
+                    [3.89, 1.62, 1.53],
+                    [0.82, 0.63, 1.77],
+                    [1.77, 0.57, 1.72]
+                ]
+            }
+        LOSS_CONFIG:
+            LOSS_CLS: WeightedCrossEntropy
+            LOSS_REG: WeightedSmoothL1Loss
+            LOSS_INS: WeightedCrossEntropy
+            SAMPLE_METHOD_LIST: *sample_method_list
+            LOSS_VOTE_TYPE: 'none'
+            CORNER_LOSS_REGULARIZATION: True
+            CENTERNESS_REGULARIZATION: True
+            CENTERNESS_REGULARIZATION_SA: True
+            LOSS_WEIGHTS: {
+                'ins_aware_weight': [0, 1.0, 1.0],
+                'vote_weight': 1.0,
+                'point_cls_weight': 1.0,
+                'point_box_weight': 1.0,
+                'corner_weight': 1.0,
+                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+                'dir_weight': 0.2
+            }
+
+    POST_PROCESSING:
+        RECALL_MODE: 'normal'
+        RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+        SCORE_THRESH: 0.0001
+        OUTPUT_RAW_SCORE: False
+        EVAL_METRIC: kitti
+        NMS_CONFIG:
+            MULTI_CLASSES_NMS: False
+            NMS_TYPE: nms_gpu
+            NMS_THRESH: 0.01
+            NMS_PRE_MAXSIZE: 4096
+            NMS_POST_MAXSIZE: 500
+
+# Global batch 6 as in the family (3 per GPU on 2 GPUs, or --batch_size 6 on one); optimiser as published.
+OPTIMIZATION:
+    BATCH_SIZE_PER_GPU: 3
+    NUM_EPOCHS_TO_EVAL: 1
+    NUM_WORKERS: 4
+    NUM_EPOCHS: 152
+    OPTIMIZER: adam_onecycle
+    LR: 0.01
+    WEIGHT_DECAY: 0.01
+    MOMENTUM: 0.9
+    MOMS: [0.95, 0.85]
+    PCT_START: 0.4
+    DIV_FACTOR: 10
+    DECAY_STEP_LIST: [35, 45]
+    LR_DECAY: 0.1
+    LR_CLIP: 0.0000001
+    LR_WARMUP: False
+    WARMUP_EPOCH: 1
+    GRAD_NORM_CLIP: 10
