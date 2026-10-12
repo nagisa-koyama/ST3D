@@ -212,8 +212,29 @@ class WaymoDataset(DatasetTemplate):
         """One stored frame with its TOP block thinned by `cfg` (EVAL_TOP_THIN or TRAIN_TOP_THIN)."""
         from .waymo_rings import eval_top_thin_points
         calib = self._top_calibration(cfg.TOP_CALIB)[info['point_cloud']['lidar_sequence']]
+        if cfg.get('REGION', None) is not None:
+            # ANALYSIS (experiments_md 20261010_04 §5.0a; absent = unchanged): thin only INSIDE or only OUTSIDE the
+            # frame's boxes from REGION.BOX_FILE (a legal model's predictions; waymo_region_thin.py)
+            from .waymo_region_thin import region_top_thin_points
+            region = cfg.REGION
+            return region_top_thin_points(self._raw_frame(info), info['num_points_of_each_lidar'], calib, cfg.MODE,
+                                          self._region_boxes(region.BOX_FILE, info['frame_id']), region.SIDE,
+                                          margin_xy=region.MARGIN_XY, margin_z=region.MARGIN_Z,
+                                          stride=cfg.get('STRIDE', 2), rng=rng)
         return eval_top_thin_points(self._raw_frame(info), info['num_points_of_each_lidar'], calib, cfg.MODE,
                                     stride=cfg.get('STRIDE', 2), rng=rng, az_res_deg=cfg.get('AZ_RES_DEG', None))
+
+    def _region_boxes(self, box_file, frame_id):
+        """The REGION box-file entry of one frame ({frame_id: {'boxes', 'labels'}}, loaded once per process). A frame
+        missing from the file is an error, not an empty region: every evaluated frame must have been predicted."""
+        if getattr(self, '_region_box_path', None) != box_file:
+            import pickle
+            with open(box_file, 'rb') as f:
+                self._region_box_table = pickle.load(f)
+            self._region_box_path = box_file
+        if frame_id not in self._region_box_table:
+            raise KeyError('frame %s is not in REGION.BOX_FILE %s' % (frame_id, box_file))
+        return self._region_box_table[frame_id]
 
     def get_lidar_with_ring_labels(self, info):
         """(points, ring label per point) for BEAM_DISTILL / BEAM_DROP: TOP rows from the stored order, side lidars -1."""
