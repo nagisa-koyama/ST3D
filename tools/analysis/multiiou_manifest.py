@@ -32,7 +32,8 @@ def find_eval(job, pick=None):
             ped = re.findall(r'Pedestrian AP_R40@0\.50, 0\.50, 0\.50:\s*\nbbox AP:[^\n]*\nbev  AP:([\d.]+), ([\d.]+), ([\d.]+)\n3d   AP:([\d.]+), ([\d.]+), ([\d.]+)', block)
             inrun = re.search(r'run-\d{8}_\d{6}-([a-z0-9]{8})/files/eval', rdir)
             own = re.findall(r'Run data is saved locally in \S*run-\d{8}_\d{6}-([a-z0-9]{8})', txt[:pos])
-            cfgs = re.findall(r'--cfg_file[ =]([^\s\'",]+)', txt) or re.findall(r"cfg_file\s+(cfgs/\S+\.yaml)", txt)
+            upto = txt[:pos]   # the config logged BEFORE this evaluation (a multi-evaluation job logs several)
+            cfgs = re.findall(r'--cfg_file[ =]([^\s\'",]+)', upto) or re.findall(r"cfg_file\s+(cfgs/\S+\.yaml)", upto)
             found = {'log': f, 'result_dir': rdir, 'wandb': inrun.group(1) if inrun else (own[-1] if own else None),
                      'cfg': cfgs[-1] if cfgs else None,
                      'car_bev_3d_mod': [float(car[-1][1]), float(car[-1][4])] if car else None,
