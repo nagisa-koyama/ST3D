@@ -1,0 +1,57 @@
+# setting	label	job	dataset	ledger BEV/3D (0.7, moderate)	extra
+A	KITTI -> nuScenes, source-only	25921	nuscenes	6.04/2.16	training job 25817
+A	Lyft -> nuScenes, source-only (seed 1)	25835	nuscenes	23.17/10.16
+A	Lyft -> nuScenes, source-only (seed 667)	27172	nuscenes	25.05/11.34
+A	PandaSet -> nuScenes, source-only	26533	nuscenes	27.32/13.08
+A	Waymo -> nuScenes, source-only	26398	nuscenes	27.67/12.28
+A	nuScenes oracle	25768	nuscenes	44.98/26.63	training job 25743
+B	S1 + per-bin global thinning	25781	nuscenes	28.22/13.12
+B	S1 + one uniform keep rate	26969	nuscenes	27.67/12.93
+B	S1 + random beam drop (approximate: KMeans clusters)	26968	nuscenes	27.45/12.26
+B	S1 GBlobs	25723	nuscenes	31.43/16.30
+B	S1 UADA3D (fixed)	26390	nuscenes	25.37/12.34
+B	S1 pseudo-labelling, plain (seed 1)	26838	nuscenes	26.26/11.14	training job 26695 (rescored);pick=rescore_ep30
+B	S1 pseudo-labelling, plain (seed 667)	27173	nuscenes	26.23/11.81
+B	S1 pseudo-labelling + global (seed 1)	26716	nuscenes	29.57/13.49	training job 26696 (rescored, ep30)
+B	S1 pseudo-labelling + global (seed 667)	26809	nuscenes	29.61/13.38
+B	S1 per-domain BN method (fixed head)	27594	nuscenes	33.39/15.43
+B	S1 matched baseline (fixed head)	27592	nuscenes	23.03/8.34
+C	S2 single sweep (control)	26265	kitti	41.57/22.58	ped
+C	S2 UADA3D, single sweep	27174	kitti	66.62/31.22	ped
+C	S2 10 stored sweeps, no compensation	26966	kitti	67.56/36.30	ped
+C	S2 accumulation, label-free depths (legal teacher)	27468	kitti	73.70/46.82	ped
+C	S2 + pseudo-labelling (legal headline)	27566	kitti	76.66/48.25	ped
+C	S2 GBlobs, single sweep	27263	kitti	72.29/49.49	ped
+C	S2 GBlobs + accumulation	27471	kitti	75.67/47.93	ped
+C	S2 GBlobs teacher + pseudo-labelling	27612	kitti	78.09/47.42	ped
+C	S2 legal teacher + learned sampler (L3-legal)	27570	kitti	72.17/45.68	ped
+C	KITTI oracle + vertical shift (ceiling)	26843	kitti	80.33/70.59	ped
+C	KITTI oracle without scaling	26717	kitti	76.56/65.71	ped
+D	S3 control (seed 1)	26510	pandaset	70.32/51.94	ped;device=1;cone=1;result=/home/koyama/data/wandb/run-20260928_191624-qwbujvrh/files/eval/eval_with_train/epoch_15/val/result.pkl
+D	S3 control (seed 667)	27003	pandaset	69.76/49.93	ped;device=1;cone=1;result=/home/koyama/data/wandb/run-20261002_012748-r65hpn4e/files/eval/eval_with_train/epoch_15/val/result.pkl
+D	S3 accumulation N=4 (seed 1)	26692	pandaset	76.45/62.76	ped;device=1;cone=1;result=/home/koyama/data/wandb/run-20260929_215545-vjutu18e/files/eval/eval_with_train/epoch_15/val/result.pkl
+D	S3 accumulation N=4 (seed 667)	27004	pandaset	76.57/62.81	ped;device=1;cone=1;result=/home/koyama/data/wandb/run-20261002_025227-oj1yf0mg/files/eval/eval_with_train/epoch_15/val/result.pkl
+D	S3 accumulation + in-cone correction	26512	pandaset	76.76/62.81	ped;device=1;cone=1;result=/home/koyama/data/wandb/run-20260928_231658-o0wrcnps/files/eval/eval_with_train/epoch_15/val/result.pkl
+D	S3 oracle flash -> flash	26974	pandaset	75.75/60.79	ped;device=1;cone=1;result=/home/koyama/code/ST3D/output/da-ieee-access/centerpoint-pandaset-flash2flash/20261001_pandaset/eval/epoch_15/val/s3oracle15/result.pkl
+D	S3 GBlobs, single frame (seed 1)	27472	pandaset	76.27/62.08	ped;device=1;cone=1
+D	S3 GBlobs, single frame (seed 2)	27690	pandaset	75.69/61.00	ped;device=1;cone=1
+D	S3 GBlobs + accumulation N=4 (seed 1)	27475	pandaset	76.33/63.00	ped;device=1;cone=1
+D	S3 GBlobs + accumulation N=4 (seed 2)	27695	pandaset	76.08/62.22	ped;device=1;cone=1
+D	S4 control flash -> spin, 360 deg	26974	pandaset	67.40/50.07	ped;device=0;cone=0;result=/home/koyama/data/wandb/run-20261001_222222-uzi23xbs/files/eval/eval_with_train/epoch_15/val/result.pkl
+D	S4 control flash -> spin, in cone	26974	pandaset	77.68/60.61	ped;device=0;cone=1;result=/home/koyama/data/wandb/run-20261001_222222-uzi23xbs/files/eval/eval_with_train/epoch_15/val/result.pkl
+D	S4 thinning in the cone (fixed), 360 deg	27005	pandaset	64.78/46.70	ped;device=0;cone=0;result=/home/koyama/data/wandb/run-20261002_041932-xrk47zew/files/eval/eval_with_train/epoch_15/val/result.pkl
+D	S4 thinning in the cone (fixed), in cone	27005	pandaset	78.19/60.67	ped;device=0;cone=1;result=/home/koyama/data/wandb/run-20261002_041932-xrk47zew/files/eval/eval_with_train/epoch_15/val/result.pkl
+D	S4 oracle spin -> spin, 360 deg	26510	pandaset	78.39/63.97	ped;device=0;cone=0;result=/home/koyama/code/ST3D/output/da-ieee-access/centerpoint-pandaset-spin2spin/20261001_pandaset/eval/epoch_15/val/s4oracle15_360/result.pkl
+D	S4 oracle spin -> spin, in cone	26510	pandaset	81.63/68.84	ped;device=0;cone=1;result=/home/koyama/code/ST3D/output/da-ieee-access/centerpoint-pandaset-spin2spin/20261001_pandaset/eval/epoch_15/val/s4oracle15_360/result.pkl
+W	nuScenes -> Waymo single sweep (25743 ckpt)	27178	waymo	2.20/0.84
+W	nuScenes -> Waymo, legal accumulation teacher 27468	27590	waymo	48.30/23.47
+W	nuScenes -> Waymo, GBlobs + accumulation 27471	27596	waymo	51.58/28.35
+W	Waymo oracle (26398 ckpt)	27179	waymo	65.92/51.77
+P	Waymo -> nuScenes scan-pattern thinning (seed 1)	27807	nuscenes	36.12/16.73
+P	Waymo -> nuScenes scan-pattern thinning (seed 667)	27840	nuscenes	36.30/16.57
+P	Waymo -> nuScenes C1 density twin	27850	nuscenes	31.14/14.36
+P	Waymo -> nuScenes vertical-only ablation	28028	nuscenes	35.03/16.82
+P	Waymo -> nuScenes per-bin thinning	27599	nuscenes	30.63/13.52
+P	Waymo -> nuScenes GBlobs	27598	nuscenes	28.86/15.16
+Q	PandaSet -> nuScenes scan pattern (P)	28034	nuscenes	33.93/15.48
+Q	PandaSet -> nuScenes C1-analog	28041	nuscenes	28.57/14.31
