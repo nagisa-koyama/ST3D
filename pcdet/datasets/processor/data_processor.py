@@ -244,6 +244,7 @@ class DataProcessor(object):
         """
         state = self.__dict__.copy()
         state['voxel_generator'] = None
+        state['_sample_voxel_generator'] = None   # sample_points_by_voxels' own generator, same reason
         return state
 
     def transform_points_to_voxels(self, data_dict=None, config=None):
@@ -275,6 +276,45 @@ class DataProcessor(object):
         data_dict['voxel_coords'] = coordinates
         data_dict['voxel_num_points'] = num_points
         return data_dict
+
+    def sample_points_by_voxels(self, data_dict=None, config=None):
+        """IA-SSD's published Waymo point budget (yifanzhang713/IA-SSD `waymo_models/IA-SSD.yaml`, as in UADA3D; ported
+        2026-10-13 for experiments_md 20261011_07 §13): voxelise, keep ONE point per occupied voxel, then `sample_points`
+        to NUM_POINTS (padding with duplicates when fewer voxels are occupied). Opt-in by its processor NAME: no
+        existing config lists it.
+
+        SAMPLE_TYPE 'raw' (default, as published) keeps each voxel's FIRST point in the current order, so list it after
+        `shuffle_points`, as the published config does; 'mean_vfe' keeps the voxel's mean. MAX_NUMBER_OF_VOXELS (per
+        mode) caps the occupied voxels, as published. The generator is this step's own, separate from
+        `transform_points_to_voxels`' one and keyed by mode; it is created lazily and dropped when pickled (see
+        `__getstate__`). A frame with no point in range keeps its empty cloud: there is nothing to sample.
+        """
+        if data_dict is None:
+            return partial(self.sample_points_by_voxels, config=config)
+        if config.NUM_POINTS[self.mode] == -1:
+            return data_dict
+        points = np.ascontiguousarray(data_dict['points'], dtype=np.float32)
+        if len(points) == 0:
+            return data_dict
+        gen = getattr(self, '_sample_voxel_generator', None)
+        if gen is None or gen[0] != self.mode:
+            gen = (self.mode, VoxelGeneratorWrapper(
+                vsize_xyz=config.VOXEL_SIZE,
+                coors_range_xyz=self.point_cloud_range,
+                num_point_features=points.shape[1],
+                max_num_points_per_voxel=config.MAX_POINTS_PER_VOXEL,
+                max_num_voxels=config.MAX_NUMBER_OF_VOXELS[self.mode],
+            ))
+            self._sample_voxel_generator = gen
+        voxels, _, num_points = gen[1].generate(points)
+        if config.get('SAMPLE_TYPE', 'raw') == 'mean_vfe':
+            kept = voxels.sum(axis=1) / np.maximum(num_points, 1)[:, None].astype(voxels.dtype)
+        else:
+            kept = voxels[:, 0]
+        data_dict['points'] = np.ascontiguousarray(kept, dtype=data_dict['points'].dtype)
+        if len(kept) == 0:   # every point outside the range: nothing to sample from
+            return data_dict
+        return self.sample_points(data_dict, config)
 
     def sample_points(self, data_dict=None, config=None):
         if data_dict is None:

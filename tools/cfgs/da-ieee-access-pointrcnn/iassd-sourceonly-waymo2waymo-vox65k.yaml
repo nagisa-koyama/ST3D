@@ -1,0 +1,160 @@
+# IA-SSD in-domain ORACLE, row W2 of experiments_md 20261011_07 §13 (the pre-declared fallback; user's decision (c), 2026-10-13).
+# A FULL COPY of iassd-sourceonly-waymo2waymo.yaml with exactly two changes, the IA-SSD authors' Waymo budget and backbone
+# (UADA3D tools/cfgs/waymo_models/IA-SSD.yaml):
+#   - points: sample_points_by_voxels (voxel 0.1 x 0.1 x 0.15 m, first point of each voxel after shuffling, at most 80,000 /
+#     90,000 voxels, then 65,536 points) in place of sample_points 16,384, on both blocks; the recount stays after the budget;
+#   - backbone: NPOINT_LIST [16384, 4096, 2048, 1024, -1, 1024] (x4 per layer).
+# NOT adopted from the published Waymo config, to stay two changes from the 16,384 row: its NMS_THRESH 0.1 (kept 0.01), its
+# Waymo label mean sizes (kept the SOURCE train means), its Waymo metric (kept the family's KITTI metric).
+# Bar unchanged (§3); reading of a miss: §13.
+DATA_CONFIG:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_waymo_dataset.yaml
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+        - NAME: sample_points_by_voxels   # the IA-SSD authors' Waymo budget (waymo_models/IA-SSD.yaml), ported 2026-10-13
+          SAMPLE_TYPE: 'raw'
+          VOXEL_SIZE: [0.1, 0.1, 0.15]
+          MAX_POINTS_PER_VOXEL: 5
+          MAX_NUMBER_OF_VOXELS: {
+            'train': 80000,
+            'test': 90000
+          }
+          NUM_POINTS: {
+            'train': 65536,
+            'test': 65536
+          }
+        - NAME: drop_empty_gt_boxes
+          MIN_POINTS: 1     # = MIN_POINTS_OF_GT; recount on what the detector sees, as the 16,384 row
+
+DATA_CONFIG_TAR:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_waymo_dataset.yaml
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+        - NAME: sample_points_by_voxels   # the IA-SSD authors' Waymo budget (waymo_models/IA-SSD.yaml), ported 2026-10-13
+          SAMPLE_TYPE: 'raw'
+          VOXEL_SIZE: [0.1, 0.1, 0.15]
+          MAX_POINTS_PER_VOXEL: 5
+          MAX_NUMBER_OF_VOXELS: {
+            'train': 80000,
+            'test': 90000
+          }
+          NUM_POINTS: {
+            'train': 65536,
+            'test': 65536
+          }
+
+CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
+ONTOLOGY: 'kitti'
+
+MODEL:
+    NAME: IASSD
+
+    BACKBONE_3D:
+        NAME: IASSD_Backbone
+        SA_CONFIG:
+            NPOINT_LIST: [[16384], [4096], [2048], [1024], [-1], [1024]]   # the authors' Waymo backbone (x4)
+            SAMPLE_RANGE_LIST: [[-1], [-1], [-1], [-1], [-1], [-1]]
+            SAMPLE_METHOD_LIST: &sample_method_list [['D-FPS'], ['D-FPS'], ['ctr_aware'], ['ctr_aware'], [], []]
+            RADIUS_LIST: [[0.2,0.8], [0.8,1.6], [1.6,4.8], [], [], [4.8, 6.4]]
+            NSAMPLE_LIST: [[16,32], [16,32], [16,32], [], [], [16, 32]]
+            MLPS: [[[16,16,32],  [32,32,64]],
+                   [[64,64,128],  [64,96,128]],
+                   [[128,128,256],  [128,256,256]],
+                   [],
+                   [128],
+                   [[256,256,512], [256,512,1024]]]
+            LAYER_TYPE: ['SA_Layer', 'SA_Layer', 'SA_Layer', 'SA_Layer', 'Vote_Layer', 'SA_Layer']
+            DILATED_GROUP: [False, False, False, False, False, False]
+            AGGREGATION_MLPS: [[64], [128], [256], [256], [], [512]]
+            CONFIDENCE_MLPS: [[], [128], [256], [], [], []]
+            LAYER_INPUT: [0, 1, 2, 3, 4, 3]
+            CTR_INDEX: [-1, -1, -1, -1, -1, 5]
+            MAX_TRANSLATE_RANGE: [3.0, 3.0, 2.0]
+
+    POINT_HEAD:
+        NAME: IASSD_Head
+        CLS_FC: [256, 256]
+        REG_FC: [256, 256]
+        CLASS_AGNOSTIC: False
+        USE_POINT_FEATURES_BEFORE_FUSION: False
+        TARGET_CONFIG:
+            INS_AWARE_ASSIGN: True
+            GT_EXTRA_WIDTH: [0.2, 0.2, 0.2]
+            ASSIGN_METHOD:
+                NAME: 'extend_gt'
+                ASSIGN_TYPE: 'centers_origin'
+                EXTRA_WIDTH: [1.0, 1.0, 1.0]
+                FG_PC_IGNORE: False
+            BOX_CODER: PointResidual_BinOri_Coder
+            BOX_CODER_CONFIG: {
+                'angle_bin_num': 12,
+                'use_mean_size': True,
+                'mean_size': [
+                    [4.80, 2.10, 1.78],
+                    [0.91, 0.86, 1.74],
+                    [1.81, 0.84, 1.77]
+                ]
+            }
+        LOSS_CONFIG:
+            LOSS_CLS: WeightedCrossEntropy
+            LOSS_REG: WeightedSmoothL1Loss
+            LOSS_INS: WeightedCrossEntropy
+            SAMPLE_METHOD_LIST: *sample_method_list
+            LOSS_VOTE_TYPE: 'none'
+            CORNER_LOSS_REGULARIZATION: True
+            CENTERNESS_REGULARIZATION: True
+            CENTERNESS_REGULARIZATION_SA: True
+            LOSS_WEIGHTS: {
+                'ins_aware_weight': [0, 1.0, 1.0],
+                'vote_weight': 1.0,
+                'point_cls_weight': 1.0,
+                'point_box_weight': 1.0,
+                'corner_weight': 1.0,
+                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+                'dir_weight': 0.2
+            }
+
+    POST_PROCESSING:
+        RECALL_MODE: 'normal'
+        RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+        SCORE_THRESH: 0.0001
+        OUTPUT_RAW_SCORE: False
+        EVAL_METRIC: kitti
+        NMS_CONFIG:
+            MULTI_CLASSES_NMS: False
+            NMS_TYPE: nms_gpu
+            NMS_THRESH: 0.01
+            NMS_PRE_MAXSIZE: 4096
+            NMS_POST_MAXSIZE: 500
+
+# Global batch 6 as in the family (--batch_size 6 on one GPU); optimiser as published; the Waymo budget of 7 epochs.
+OPTIMIZATION:
+    BATCH_SIZE_PER_GPU: 3
+    NUM_EPOCHS_TO_EVAL: 1
+    NUM_WORKERS: 8
+    NUM_EPOCHS: 7
+    OPTIMIZER: adam_onecycle
+    LR: 0.01
+    WEIGHT_DECAY: 0.01
+    MOMENTUM: 0.9
+    MOMS: [0.95, 0.85]
+    PCT_START: 0.4
+    DIV_FACTOR: 10
+    DECAY_STEP_LIST: [35, 45]
+    LR_DECAY: 0.1
+    LR_CLIP: 0.0000001
+    LR_WARMUP: False
+    WARMUP_EPOCH: 1
+    GRAD_NORM_CLIP: 10
