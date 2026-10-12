@@ -22,7 +22,7 @@ C	S2 10 stored sweeps, no compensation	26966	kitti	67.56/36.30	ped
 C	S2 accumulation, label-free depths (legal teacher)	27468	kitti	73.70/46.82	ped
 C	S2 + pseudo-labelling (legal headline)	27566	kitti	76.66/48.25	ped
 C	S2 GBlobs, single sweep	27263	kitti	72.29/49.49	ped
-C	S2 GBlobs + accumulation	27471	kitti	75.67/47.93	ped
+C	S2 GBlobs + accumulation	27471	kitti	74.42/46.24	ped;note=final epoch 20, the ledger quoted epoch 19 (75.67/47.93) until 2026-10-13
 C	S2 GBlobs teacher + pseudo-labelling	27612	kitti	78.09/47.42	ped
 C	S2 legal teacher + learned sampler (L3-legal)	27570	kitti	72.17/45.68	ped
 C	KITTI oracle + vertical shift (ceiling)	26843	kitti	80.33/70.59	ped
