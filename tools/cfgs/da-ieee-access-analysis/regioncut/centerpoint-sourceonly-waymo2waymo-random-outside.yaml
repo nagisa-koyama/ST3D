@@ -1,0 +1,18 @@
+# ANALYSIS, eval-only twin (experiments_md 20261010_04 §5.0a, pre-declared 2026-10-10 23:08, experiments_md 992ef0e):
+# centerpoint-sourceonly-waymo2waymo (the Waymo oracle 26398) scored on Waymo val with the TOP block thinned ONLY
+# OUTSIDE the frame's boxes. MODE rows = even TOP beams kept there (whole scan lines removed); MODE random = the same
+# number of that region's TOP points drawn uniformly (count-matched control). The other region and the side lidars are
+# untouched. Boxes: 27704's Waymo-val predictions (rescore 27803, epoch 20), Car, score >= 0.180, written by
+# analysis/make_region_boxes.py - label-free, no Waymo label is read. Margin +0.5 m per side in l / w, +0.15 m top and
+# bottom. One key added to DATA_CONFIG_TAR; nothing else.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-waymo2waymo.yaml
+DATA_CONFIG_TAR:
+    EVAL_TOP_THIN:
+        TOP_CALIB: /home/koyama/data/waymo_top_calib/top_calib.pkl
+        MODE: random
+        STRIDE: 2
+        REGION:
+            BOX_FILE: /home/koyama/data/samplers/regioncut_20261010/boxes_27704_car_ge0p180.pkl
+            SIDE: outside
+            MARGIN_XY: 0.5
+            MARGIN_Z: 0.15
