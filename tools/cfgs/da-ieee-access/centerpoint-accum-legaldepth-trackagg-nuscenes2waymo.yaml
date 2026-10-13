@@ -11,7 +11,7 @@ DATA_CONFIGS:
             ICP: True
             VISIBILITY: True
             SENSOR_Z: 2.184
-            ROW_DROP: 0.25
+            MIN_RANGE_RATIO: 0.6
     NUSCENES_N015:
         TRACK_AGG:
             CACHE_DIR: /home/koyama/data/track_agg/v1
@@ -19,4 +19,4 @@ DATA_CONFIGS:
             ICP: True
             VISIBILITY: True
             SENSOR_Z: 2.184
-            ROW_DROP: 0.25
+            MIN_RANGE_RATIO: 0.6
