@@ -1,0 +1,20 @@
+# EVAL-ONLY Waymo twin of centerpoint-accum-legaldepth-trackagg-nuscenes2kitti ((c1), experiments_md 20261010_04 §5.1).
+# Source blocks identical to the training config (TRACK_AGG and the z-buffer act in training only); target block =
+# 27834's twin (centerpoint-accum-legaldepth-zbuffer-nuscenes2waymo). Reading in the training config.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-legaldepth-zbuffer-nuscenes2waymo.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        TRACK_AGG:
+            CACHE_DIR: /home/koyama/data/track_agg/v1
+            RAYDROP: /home/koyama/data/track_agg/raydrop_waymo_train_v1.npz
+            ICP: True
+            VISIBILITY: True
+            SENSOR_Z: 2.184
+    NUSCENES_N015:
+        TRACK_AGG:
+            CACHE_DIR: /home/koyama/data/track_agg/v1
+            RAYDROP: /home/koyama/data/track_agg/raydrop_waymo_train_v1.npz
+            ICP: True
+            VISIBILITY: True
+            SENSOR_Z: 2.184

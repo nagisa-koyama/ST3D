@@ -303,6 +303,37 @@ class NuScenesDataset(DatasetTemplate):
                           h_fill=bool(cfg.get('H_FILL', False)))
         return out
 
+    def track_agg_points(self, info, rng=np.random):
+        """DATA_CONFIG.TRACK_AGG = {CACHE_DIR (analysis/build_track_agg_cache.py), RAYDROP (npz of
+        analysis/waymo_raydrop_rate.py, or None = off), ICP (True), VISIBILITY (True), SENSOR_Z (2.184: the virtual
+        target sensor above the ground, SHIFT_COOR frame)} (experiments_md 20261010_04 §5.1).
+
+        The whole-track Car aggregation of this anchor - every other keyframe's in-box points of each Car track at the
+        anchor, ICP-refined, back-face culled and ray-dropped - as (N, 5) = x, y, z, intensity, time lag 0 in the
+        anchor's LIDAR_TOP frame. Source labels only. An anchor missing from the cache raises."""
+        from . import track_aggregation as TA
+        cfg = self.dataset_cfg.TRACK_AGG
+        if getattr(self, '_track_agg_index', None) is None:
+            from ..rerender_utils import lattice_spec
+            with open(Path(cfg.CACHE_DIR) / 'index.pkl', 'rb') as f:
+                self._track_agg_index = pickle.load(f)
+            self._track_agg_raydrop = TA.load_raydrop(cfg.RAYDROP) if cfg.get('RAYDROP', None) else None
+            self._track_agg_lattice = lattice_spec('waymo_top')
+        scene_token, pos = self._track_agg_index[info['token']]
+        scene = TA.load_scene(Path(cfg.CACHE_DIR) / f'{scene_token}.pkl')
+        assert scene['frames'][pos]['token'] == info['token'], 'TRACK_AGG cache index and scene file disagree'
+        shift_z = float(self.dataset_cfg.SHIFT_COOR[2]) if self.dataset_cfg.get('SHIFT_COOR', None) else 0.0
+        sensor = np.array([0.0, 0.0, float(cfg.get('SENSOR_Z', 2.184)) - shift_z])
+        agg = TA.aggregate_anchor(scene, pos, sensor, icp=bool(cfg.get('ICP', True)),
+                                  visibility=bool(cfg.get('VISIBILITY', True)))
+        if self._track_agg_raydrop is not None and len(agg):
+            rd, lat = self._track_agg_raydrop, self._track_agg_lattice
+            agg = agg[TA.raydrop_keep(agg[:, :3], rd['rates'], rd['range_edges'], rd['elev_split_rad'], lat['thetas'],
+                                      lat['n_cols'], sensor[2], rng)]
+        out = np.zeros((len(agg), 5), np.float32)
+        out[:, :4] = agg[:, :4]
+        return out
+
     def get_lidar_with_sweeps(self, index, max_sweeps=1):
         info = self.infos[index]
         lidar_path = self.root_path / info['lidar_path']
@@ -384,6 +415,15 @@ class NuScenesDataset(DatasetTemplate):
             assert mix == 'uniform', f'SWEEP_COUNT_MIX: unknown mode {mix!r}'
             max_sweeps = int(np.random.randint(1, int(max_sweeps) + 1))
         points = self.get_lidar_with_sweeps(index, max_sweeps=max_sweeps)
+
+        # TRACK_AGG (experiments_md 20261010_04 §5.1): append this anchor's whole-track Car aggregation (source labels
+        # only) in the anchor's LIDAR_TOP frame, so that INTENSITY_SCALE and SHIFT_COOR treat it like the accumulated
+        # cloud; the detector's renderer (27834's z-buffer processor) resolves occlusion after augmentation. Training
+        # only; absent = unchanged.
+        if self.training and self.dataset_cfg.get('TRACK_AGG', None) is not None:
+            assert self.dataset_cfg.get('LEVEL_COOR', None) is None, \
+                'TRACK_AGG places its virtual sensor in the unlevelled LIDAR_TOP frame'
+            points = np.concatenate([points, self.track_agg_points(info).astype(points.dtype)])
 
         # nuScenes stores intensity as raw 0-255 returns, while KITTI (as stored), Waymo (tanh in its
         # loader) and PandaSet (/255 in its loader) all arrive in [0, 1]. INTENSITY_SCALE: 255.0 puts
