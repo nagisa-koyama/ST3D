@@ -29,7 +29,7 @@ logger = common_utils.create_logger('/dev/null', rank=0)
 for path in sys.argv[2:]:
     cfg = cfg_from_yaml_file(path, EasyDict())
     blk = cfg.DATA_CONFIG_TAR if cfg.get('DATA_CONFIG_TAR', None) else cfg.DATA_CONFIG
-    budget = [p for p in blk.DATA_PROCESSOR if p.NAME == 'sample_points' and p.NUM_POINTS['test'] != -1]
+    budget = [p for p in blk.DATA_PROCESSOR if p.NAME in ('sample_points', 'sample_points_by_voxels') and p.NUM_POINTS['test'] != -1]
     ds, _, _ = build_dataloader(dataset_cfg=blk, class_names=cfg.CLASS_NAMES, batch_size=1, dist=False, workers=0,
                                 logger=logger, training=False, model_ontology=cfg.get('ONTOLOGY', None))
     idx = np.linspace(0, len(ds) - 1, n).astype(int)
