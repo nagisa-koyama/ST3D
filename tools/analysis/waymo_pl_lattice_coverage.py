@@ -8,7 +8,7 @@ between frames 40 and 50, from the infos' poses (the per-sequence infos are read
 with 10-49 TOP first-return points inside (50-199 reported), centre at 20-75 m planar range. Silhouette, occlusion
 (0.5 m) and RC on the segment's OWN TOP inclinations: waymo_own_lattice_coverage.py's functions, unchanged.
 
-    python analysis/waymo_pl_lattice_coverage.py measure <pred result.pkl> <out.npz> [min_score=0.18] [frame=50] [prev=40] [stride=4]
+    python analysis/waymo_pl_lattice_coverage.py measure <pred result.pkl> <out.npz> [min_score=0.18] [frame=50] [prev=40] [stride=4] [offset=0]
     python analysis/waymo_pl_lattice_coverage.py reference <out.npz> <ref.npz>
 """
 import pickle
@@ -39,9 +39,9 @@ def poses(seq):
     return out
 
 
-def measure(pred_path, out, min_score=0.18, frame_idx=50, prev_idx=40, stride=4):
+def measure(pred_path, out, min_score=0.18, frame_idx=50, prev_idx=40, stride=4, offset=0):
     preds = {str(p['frame_id']): p for p in pickle.load(open(pred_path, 'rb'))}
-    seqs = [s.strip().replace('.tfrecord', '') for s in open(ROOT / 'ImageSets' / 'train.txt') if s.strip()][::stride]
+    seqs = [s.strip().replace('.tfrecord', '') for s in open(ROOT / 'ImageSets' / 'train.txt') if s.strip()][offset::stride]
     recs, n_frames, n_moving, n_boxes = [], 0, 0, 0
     for si, seq in enumerate(seqs):
         ps = poses(seq)
@@ -88,7 +88,7 @@ def measure(pred_path, out, min_score=0.18, frame_idx=50, prev_idx=40, stride=4)
         if (si + 1) % 20 == 0:
             print(f'  {si + 1} / {len(seqs)} sequences, {len(recs)} boxes', flush=True)
     np.savez(out, rows=np.array(recs, float), sequences=len(seqs), frames=n_frames, moving_frames=n_moving,
-             car_boxes=n_boxes, min_score=min_score, pred=str(pred_path))
+             car_boxes=n_boxes, min_score=min_score, pred=str(pred_path), offset=offset, stride=stride)
     print(f'saved {out}: {n_frames} frames ({n_moving} moving), {n_boxes} Car boxes >= {min_score}, '
           f'{len(recs)} with 10-199 TOP points at 20-75 m')
 
@@ -104,7 +104,8 @@ def reference(path, ref):
             rc = float(np.nanmedian(w1[:, 5])) if len(w1) else np.nan
             cells.append((lo, s, rc)); rows.append((lo, hi, s, len(w1), rc, len(w2),
                                                     float(np.nanmedian(w2[:, 5])) if len(w2) else np.nan))
-    name = (f'Waymo own RC with 27704 Car boxes >= {float(G["min_score"]):.3f}, TRAIN frame 50 of '
+    off = int(G['offset']) if 'offset' in G.files else 0
+    name = (f'Waymo own RC with 27704 Car boxes >= {float(G["min_score"]):.3f}, TRAIN train.txt[{off}::4] frame 50 of '
             f'{int(G["frames"])} sequences ({int(G["moving_frames"])} moving); label-free (20261010_04 §5.1 option A)')
     np.savez(ref, cells=np.array(cells, float), name=name, counts=np.array([r[3] for r in rows]))
     print(name)
@@ -119,6 +120,6 @@ def reference(path, ref):
 if __name__ == '__main__':
     if sys.argv[1] == 'measure':
         a = sys.argv[2:]
-        measure(a[0], a[1], *(float(a[2]),) if len(a) > 2 else (), *(int(x) for x in a[3:6]))
+        measure(a[0], a[1], *(float(a[2]),) if len(a) > 2 else (), *(int(x) for x in a[3:7]))
     else:
         reference(sys.argv[2], sys.argv[3])

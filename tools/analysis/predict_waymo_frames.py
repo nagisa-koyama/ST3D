@@ -5,9 +5,9 @@ The evaluator is never called, so no AP is computed on these frames. The kept in
 length 0 before the loader sees them, so no label reaches the data dict (the loader's code path is the evaluation's). The model and the dataset are built exactly as tools/test.py builds
 them, with the config's target block (DATA_CONFIG_TAR); only the split ('train') and the frame list change.
 
-    python analysis/predict_waymo_frames.py <cfg> <ckpt.pth> <out result.pkl> [frame=50] [stride=4] [batch=4]
+    python analysis/predict_waymo_frames.py <cfg> <ckpt.pth> <out result.pkl> [frame=50] [stride=4] [batch=4] [offset=0]
 
-Frames: `sample_idx == frame` of every `stride`-th sequence of ImageSets/train.txt. Output: the list of prediction dicts
+Frames: `sample_idx == frame` of the sequences train.txt[offset::stride] (offset 2 = the re-gate's fresh reference). Output: the list of prediction dicts
 that eval_one_epoch would pickle as result.pkl (frame_id, name, score, boxes_lidar, ...), plus <out>.meta.json.
 """
 import json
@@ -36,6 +36,7 @@ def main():
     frame = int(sys.argv[4]) if len(sys.argv) > 4 else 50
     stride = int(sys.argv[5]) if len(sys.argv) > 5 else 4
     batch = int(sys.argv[6]) if len(sys.argv) > 6 else 4
+    offset = int(sys.argv[7]) if len(sys.argv) > 7 else 0
     cfg = EasyDict(); cfg_from_yaml_file(cfg_file, cfg)
     tar = cfg.DATA_CONFIG_TAR
     assert tar.DATASET == 'WaymoDataset', tar.DATASET
@@ -46,7 +47,7 @@ def main():
     ds, _, _ = build_dataloader(dataset_cfg=tar, class_names=cfg.CLASS_NAMES, batch_size=batch, dist=False, workers=0,
                                 logger=logger, training=False, model_ontology=ontology)
     root = Path(ds.root_path)
-    seqs = [s.strip().replace('.tfrecord', '') for s in open(root / 'ImageSets' / 'train.txt') if s.strip()][::stride]
+    seqs = [s.strip().replace('.tfrecord', '') for s in open(root / 'ImageSets' / 'train.txt') if s.strip()][offset::stride]
     want = set(seqs)
     keep = [i for i in ds.infos if i['point_cloud']['lidar_sequence'] in want and int(i['point_cloud']['sample_idx']) == frame]
     # Every annotation array is emptied to length 0 (dtype and trailing shape kept), so the loader takes exactly the
@@ -77,7 +78,7 @@ def main():
     with open(out, 'wb') as f:
         pickle.dump(det, f)
     sha = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], capture_output=True, text=True).stdout.strip()
-    meta = dict(cfg=cfg_file, ckpt=ckpt, frame=frame, stride=stride, sequences=len(seqs), frames=len(det),
+    meta = dict(cfg=cfg_file, ckpt=ckpt, frame=frame, stride=stride, offset=offset, sequences=len(seqs), frames=len(det),
                 missing_sequences=sorted(want - found), seconds=time.time() - t0, git=sha,
                 names=sorted({str(n) for d in det for n in np.asarray(d['name'])}),
                 created=time.strftime('%Y-%m-%d %H:%M:%S %Z'))

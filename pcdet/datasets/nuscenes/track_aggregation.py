@@ -214,6 +214,26 @@ def raydrop_keep(xyz, rates, range_edges, elev_split_rad, inclinations, n_cols, 
     return keep
 
 
+def rowrun_keep(xyz, ids, q, inclinations, n_cols, sensor_z, rng):
+    """Row-run drop (experiments_md 20261010_04 §5.1, re-gate item 1, pre-declared 2026-10-14 00:34): group the
+    aggregated points by (object id, lattice row of a virtual sensor at (0, 0, sensor_z)) and remove each group with
+    probability q, independently. Applied to every object, range and sector alike. Points outside the lattice's
+    vertical field of view are kept (the renderer drops them)."""
+    from ..processor.point_sampler import lattice_pixels
+    keep = np.ones(len(xyz), bool)
+    if len(xyz) == 0 or q <= 0:
+        return keep
+    _, row, _ = lattice_pixels(np.asarray(xyz, np.float64), inclinations, n_cols, sensor_z)
+    ok = np.nonzero(row >= 0)[0]
+    if not len(ok):
+        return keep
+    _, obj = np.unique(np.asarray(ids)[ok], return_inverse=True)
+    groups, inv = np.unique(obj.astype(np.int64) * (len(inclinations) + 1) + row[ok], return_inverse=True)
+    drop = rng.random(len(groups)) < q
+    keep[ok[drop[inv]]] = False
+    return keep
+
+
 def load_raydrop(path):
     d = np.load(path)
     return dict(rates=d['rates'], range_edges=d['range_edges'], elev_split_rad=float(d['elev_split_rad']))

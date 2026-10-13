@@ -3,10 +3,16 @@ pre-declared 2026-10-13 23:37 JST), on the aggregation cache (`analysis/build_tr
 except the G1' reference, which is read from a file (see the report for its provenance).
 
     python analysis/track_aggregation_gate.py g3c <cfg> <DATA_CONFIGS key> <cache_dir> <frames> <out.npz>
-    python analysis/track_aggregation_gate.py g1 <cfg> <DATA_CONFIGS key> <cache_dir> <raydrop.npz> <frames> <out.npz>
+    python analysis/track_aggregation_gate.py g1 <cfg> <DATA_CONFIGS key> <cache_dir> <raydrop.npz> <frames> <out.npz> [q,q,...]
     python analysis/track_aggregation_gate.py g4 <trackagg cfg> <DATA_CONFIGS key> <frames> <out.npz>
     python analysis/track_aggregation_gate.py report <reference: val_analysis | ref.npz> <g1 n008.npz> <g1 n015.npz> \
         <g3c n008.npz> <g3c n015.npz> [<g4 n008.npz> <g4 n015.npz>]
+    python analysis/track_aggregation_gate.py calibrate <ref.npz> <g1 n008.npz> <g1 n015.npz>
+    python analysis/track_aggregation_gate.py report_q <ref.npz> <q> <g1 n008.npz> <g1 n015.npz> <g3c ...> <g3c ...> <g4 ...> <g4 ...>
+
+Frames: GATE_FRAMES=calib (default; the frames of gate job 28398) or GATE_FRAMES=fresh (the re-gate's rule, pre-declared
+2026-10-14 00:34: every anchor whose scene holds no calibration anchor, strided to n). g1's optional q list adds one
+render per row-run drop rate q (after the per-cell ray-drop), for the calibration and the re-gate.
 
 g3c - leave-anchor-out transport accuracy with the additions (item 7): per sparse far car of the anchor keyframe
       (20-75 m, 10-49 own in-box points), ICP fitted on its EVEN-ring own points and |dr| scored on its ODD-ring own
@@ -51,6 +57,23 @@ def dataset(cfg, key, training=True):
                             logger=common_utils.create_logger(), training=training, model_ontology=cfg.get('ONTOLOGY'))[0]
 
 
+WHICH = os.environ.get('GATE_FRAMES', 'calib')
+
+
+def gate_frames(infos, n, index, which=None):
+    """'calib': range(0, N, N // n)[:n] (gate job 28398's frames). 'fresh': the anchors whose scene holds no calibration
+    anchor, strided to n (re-gate item 3)."""
+    which = which or WHICH
+    step = max(1, len(infos) // n)
+    calib = list(range(0, len(infos), step))[:n]
+    if which == 'calib':
+        return calib
+    assert which == 'fresh', which
+    used = {index[infos[i]['token']][0] for i in calib}
+    pool = [i for i, inf in enumerate(infos) if index[inf['token']][0] not in used]
+    return pool[::max(1, len(pool) // n)][:n]
+
+
 def load_index(cache):
     with open(Path(cache) / 'index.pkl', 'rb') as f:
         return pickle.load(f)
@@ -66,8 +89,8 @@ def g3c(cfg, key, cache, n, out):
     ds = dataset(cfg, key); index = load_index(cache)
     spec = RR.lattice_spec('waymo_top'); th, nc, hs = spec['thetas'], spec['n_cols'], spec['height']
     sensor, shift = sensor_lidar(dc)
-    step = max(1, len(ds.infos) // n); recs = []; fits = [0, 0]
-    for fi, i in enumerate(list(range(0, len(ds.infos), step))[:n]):
+    recs = []; fits = [0, 0]
+    for fi, i in enumerate(gate_frames(ds.infos, n, index)):
         scene_tok, a = index[ds.infos[i]['token']]
         sc = TA.load_scene(Path(cache) / f'{scene_tok}.pkl'); fa = sc['frames'][a]
         for k, box in zip(fa['tids'], fa['boxes']):
@@ -106,7 +129,7 @@ def g3c(cfg, key, cache, n, out):
         if (fi + 1) % 20 == 0:
             print(f'  {key}: {fi + 1} frames, {len(recs)} cells, ICP accepted {fits[1]} / {fits[0]}', flush=True)
     R = np.array(recs, float)
-    np.savez(out, key=key, cells=R, icp_fits=np.array(fits), n_frames=n)
+    np.savez(out, key=key, cells=R, icp_fits=np.array(fits), n_frames=n, which=WHICH)
     for lo, hi in ((20, 40), (40, 75), (20, 75)):
         s = (R[:, 1] >= lo) & (R[:, 1] < hi)
         print(f'{key} {lo}-{hi} m: {s.sum()} cells; median |dr| {np.median(R[s, 3]):.3f} m, share > 0.5 m '
@@ -114,7 +137,7 @@ def g3c(cfg, key, cache, n, out):
     print(f'ICP accepted {fits[1]} of {fits[0]} fits')
 
 
-def g1(cfg, key, cache, raydrop, n, out):
+def g1(cfg, key, cache, raydrop, n, out, qs=()):
     dc = cfg.DATA_CONFIGS[key]; dc.RERENDER = None; dc.TRACK_AGG = None
     ds = dataset(cfg, key); index = load_index(cache); rd = TA.load_raydrop(raydrop)
     spec = RR.lattice_spec('waymo_top'); th, nc, hs = spec['thetas'], spec['n_cols'], spec['height']
@@ -122,7 +145,7 @@ def g1(cfg, key, cache, raydrop, n, out):
     sensor, shift = sensor_lidar(dc)
     rows = []
     with _augmentation_off(ds):
-        step = max(1, len(ds) // n); frames = list(range(0, len(ds), step))[:n]
+        frames = gate_frames(ds.infos, n, index)
         dirs = [travel_direction(ds.infos[i]) for i in frames]
         for fi, i in enumerate(frames):
             if dirs[fi] is None:
@@ -141,11 +164,17 @@ def g1(cfg, key, cache, raydrop, n, out):
             P = ds.get_lidar_with_sweeps(i, max_sweeps=ds.dataset_cfg.MAX_SWEEPS)[:, :3].astype(np.float64)
             scene_tok, a = index[info['token']]
             sc = TA.load_scene(Path(cache) / f'{scene_tok}.pkl')
-            A = TA.aggregate_anchor(sc, a, sensor)[:, :3]
+            A, ids = TA.aggregate_anchor(sc, a, sensor, return_tids=True)
+            A = A[:, :3]
             rng = np.random.default_rng(zlib.crc32(info['token'].encode()))
-            A_rd = A[TA.raydrop_keep(A, rd['rates'], rd['range_edges'], rd['elev_split_rad'], th, nc, sensor[2], rng)]
+            krd = TA.raydrop_keep(A, rd['rates'], rd['range_edges'], rd['elev_split_rad'], th, nc, sensor[2], rng)
+            A_rd, ids_rd = A[krd], ids[krd]
             clouds = {'control': P + shift, 'agg': np.concatenate([P, A]) + shift,
                       'agg_raydrop': np.concatenate([P, A_rd]) + shift}
+            for qi, q in enumerate(qs):
+                rq = np.random.default_rng([zlib.crc32(info['token'].encode()), qi + 1])
+                kq = TA.rowrun_keep(A_rd, ids_rd, q, th, nc, sensor[2], rq)
+                clouds[f'q{qi}'] = np.concatenate([P, A_rd[kq]]) + shift
             recs = {name: rc_records(RR.rerender(np.column_stack([Q, np.zeros(len(Q))]), spec, fill='none')[0][:, :3]
                                      .astype(np.float64), b, cand, inc_desc, nc, hs) for name, Q in clouds.items()}
             fa = sc['frames'][a]
@@ -160,13 +189,13 @@ def g1(cfg, key, cache, raydrop, n, out):
                     dd = np.hypot(cen[:, 0] - b[j, 0], cen[:, 1] - b[j, 1])
                     k = fa['tids'][int(np.argmin(dd))] if dd.min() < 0.2 else None
                 row = [fi, rr[j], sector_of(b[j:j + 1, :2], fwd)[0], 1, ns[j]]
-                for name in ('control', 'agg', 'agg_raydrop'):
+                for name in ['control', 'agg', 'agg_raydrop'] + [f'q{qi}' for qi in range(len(qs))]:
                     row += list(recs[name][jj])
                 row += [closest.get(k, np.nan) if k else np.nan]
                 rows.append(row)
             if (fi + 1) % 20 == 0:
                 print(f'  {key}: {fi + 1} / {len(frames)} frames, {len(rows)} sparse far cars', flush=True)
-    np.savez(out, key=key, rows=np.array(rows, float), n_frames=len(frames))
+    np.savez(out, key=key, rows=np.array(rows, float), n_frames=len(frames), qs=np.array(qs, float), which=WHICH)
     print(f'saved {out}: {len(rows)} records')
 
 
@@ -181,8 +210,8 @@ def g4(cfg, key, n, out):
     assert sampler is not None and sampler.rule_kind == 'zbuffer', "g4 times 27834's z-buffer rule"
     cap = [p for p in ds.dataset_cfg.DATA_PROCESSOR if p.NAME == 'transform_points_to_voxels'][0].MAX_NUMBER_OF_VOXELS['train']
     shift = np.array(ds.dataset_cfg.get('SHIFT_COOR', [0, 0, 0]), np.float32)
-    step = max(1, len(ds.infos) // n); recs = []
-    for fi, i in enumerate(list(range(0, len(ds.infos), step))[:n]):
+    index = load_index(ds.dataset_cfg.TRACK_AGG.CACHE_DIR); recs = []
+    for fi, i in enumerate(gate_frames(ds.infos, n, index)):
         info = ds.infos[i]
         t0 = time.time(); A = ds.track_agg_points(info); t_hook = time.time() - t0
         P = ds.get_lidar_with_sweeps(i, max_sweeps=ds.dataset_cfg.MAX_SWEEPS)
@@ -195,37 +224,75 @@ def g4(cfg, key, n, out):
         if (fi + 1) % 20 == 0:
             print(f'  {key}: {fi + 1} frames', flush=True)
     R = np.array(recs, float)
-    np.savez(out, key=key, recs=R, cap=cap)
+    np.savez(out, key=key, recs=R, cap=cap, which=WHICH, row_drop=float(ds.dataset_cfg.TRACK_AGG.get('ROW_DROP', 0.0) or 0.0))
     t = R[:, 3] + R[:, 4]
     print(f'{key}: {len(R)} anchors; aggregated points per anchor median {np.median(R[:, 2]):.0f} (control '
           f'{np.median(R[:, 1]):.0f}); hook + z-buffer time median {np.median(t):.3f} s, p99 {np.percentile(t, 99):.3f} s, '
           f'< 0.5 s in {np.mean(t < 0.5):.3f}; voxels median {np.median(R[:, 5]):.0f}, at the {cap} cap in {R[:, 6].sum():.0f}')
 
 
-def g1_table(path, ref):
+def g1_table(path, ref, last=2):
+    """Per cell: cars, then (RC, RC_front) of control, aggregated and block `last` (2 = + ray-drop; 3 + i = the i-th q of
+    the row-run drop), and the share of tracks ever within 20 m."""
     G = np.load(path); R = G['rows']
-    # columns: 0 fi, 1 range, 2 sector, 3 moving, 4 ns, then (RC, RC_front, pts) x [control, agg, agg_raydrop], closest
+    # columns: 0 fi, 1 range, 2 sector, 3 moving, 4 ns, then (RC, RC_front, pts) x [control, agg, agg_raydrop, q0, ...],
+    # closest
     c = lambda block, k: 5 + 3 * block + k
     out = {}
     for (lo, hi), s in CELLS:
         q = R[(R[:, 1] >= lo) & (R[:, 1] < hi) & (R[:, 2] == s)]
-        out[(lo, s)] = (len(q), *[np.nanmedian(q[:, c(b, k)]) if len(q) else np.nan for b in range(3) for k in range(2)],
+        out[(lo, s)] = (len(q), *[np.nanmedian(q[:, c(b, k)]) if len(q) else np.nan for b in (0, 1, last) for k in range(2)],
                         np.mean(q[:, -1] < 20) if len(q) else np.nan)
     return str(G['key']), int(G['n_frames']), out
 
 
-def report(ref_arg, g1_paths, g3_paths, g4_paths):
+def load_ref(ref_arg):
     if ref_arg == 'val_analysis':
-        ref = WAYMO_RC; ref_name = 'Waymo own RC, Waymo VAL labels (20261009_01 §9.1; ANALYSIS)'
-    else:
-        d = np.load(ref_arg); ref = {(int(a), int(b)): float(v) for a, b, v in d['cells']}; ref_name = str(d['name'])
-    print(f'Reference: {ref_name}\n')
-    print('| platform | ring | sector | cars | control RC / front | aggregated RC / front | + ray-drop RC / **front** | '
+        return WAYMO_RC, 'Waymo own RC, Waymo VAL labels (20261009_01 §9.1; ANALYSIS)'
+    d = np.load(ref_arg)
+    return {(int(a), int(b)): float(v) for a, b, v in d['cells']}, str(d['name'])
+
+
+def calibrate(ref_arg, g1_paths):
+    """Re-gate item 2: per q, the calibration cells (of 12) within 0.10 two-sided and the mean |RC_front - reference|;
+    the choice is the most cells, then the smallest mean, then the smallest q."""
+    ref, ref_name = load_ref(ref_arg)
+    print(f'Calibration reference: {ref_name}')
+    qs = [list(np.load(p)['qs']) for p in g1_paths]
+    assert all(q == qs[0] for q in qs) and len(qs[0]), 'both platforms need the same q grid'
+    res = []
+    print('| q | cells within 0.10 (of 12) | mean abs(RC_front - reference) | ' +
+          ' | '.join(f'{SECTORS[s][:2]} {lo}' for (lo, hi), s in CELLS) + ' (Boston, then Singapore) |')
+    for qi, q in enumerate(qs[0]):
+        n_in, diffs, fr = 0, [], []
+        for p in g1_paths:
+            _, _, cells = g1_table(p, ref, last=3 + qi)
+            for (lo, hi), s in CELLS:
+                v = cells[(lo, s)][6]; d = v - ref[(lo, s)]
+                n_in += abs(d) <= 0.10; diffs.append(abs(d)); fr.append(v)
+        res.append((n_in, float(np.mean(diffs)), q))
+        print(f'| {q:.2f} | {n_in} | {np.mean(diffs):.3f} | ' + ' | '.join(f'{v:.2f}' for v in fr) + ' |')
+    best = sorted(res, key=lambda r: (-r[0], r[1], r[2]))[0]
+    print(f'\nCHOSEN q = {best[2]:.2f} ({best[0]} of 12 calibration cells within 0.10, mean abs diff {best[1]:.3f})')
+    return best[2]
+
+
+def report(ref_arg, g1_paths, g3_paths, g4_paths, q=None):
+    ref, ref_name = load_ref(ref_arg)
+    print(f'Reference: {ref_name}')
+    last = 2
+    if q is not None:
+        qs = [float(x) for x in np.load(g1_paths[0])['qs']]
+        last = 3 + min(range(len(qs)), key=lambda i: abs(qs[i] - q))
+        assert abs(qs[last - 3] - q) < 1e-9, f'q {q} not rendered (qs {qs})'
+        print(f'Last column: + ray-drop + row-run drop q = {q:.2f}; frames {str(np.load(g1_paths[0])["which"])}')
+    print()
+    print('| platform | ring | sector | cars | control RC / front | aggregated RC / front | + drop(s) RC / **front** | '
           'reference | two-sided | one-sided | track ever < 20 m |')
     print('|---|---|---|---|---|---|---|---|---|---|---|')
     two = one = tot = 0
     for p in g1_paths:
-        key, nf, cells = g1_table(p, ref)
+        key, nf, cells = g1_table(p, ref, last=last)
         for (lo, hi), s in CELLS:
             n_c, c0, c0f, a0, a0f, d0, d0f, near = cells[(lo, s)]
             r = ref[(lo, s)]; tw = abs(d0f - r) <= 0.10; on = r <= d0f + 0.10
@@ -253,11 +320,17 @@ if __name__ == '__main__':
     if mode == 'report':
         a = sys.argv[3:]
         report(sys.argv[2], a[0:2], a[2:4], a[4:6]); sys.exit(0)
+    if mode == 'report_q':
+        a = sys.argv[4:]
+        report(sys.argv[2], a[0:2], a[2:4], a[4:6], q=float(sys.argv[3])); sys.exit(0)
+    if mode == 'calibrate':
+        calibrate(sys.argv[2], sys.argv[3:5]); sys.exit(0)
     cfg = EasyDict(); cfg_from_yaml_file(sys.argv[2], cfg)
     if mode == 'g3c':
         g3c(cfg, sys.argv[3], sys.argv[4], int(sys.argv[5]), sys.argv[6])
     elif mode == 'g1':
-        g1(cfg, sys.argv[3], sys.argv[4], sys.argv[5], int(sys.argv[6]), sys.argv[7])
+        qs = tuple(float(x) for x in sys.argv[8].split(',')) if len(sys.argv) > 8 else ()
+        g1(cfg, sys.argv[3], sys.argv[4], sys.argv[5], int(sys.argv[6]), sys.argv[7], qs)
     elif mode == 'g4':
         g4(cfg, sys.argv[3], int(sys.argv[4]), sys.argv[5])
     else:

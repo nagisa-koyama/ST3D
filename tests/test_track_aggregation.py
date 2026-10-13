@@ -186,3 +186,57 @@ def test_build_scene_and_cache_round_trip(tmp_path):
     a1 = TA.aggregate_anchor(back, 0, np.array([0, 0, 0.434]), visibility=False)
     a2 = TA.aggregate_anchor(sc, 0, np.array([0, 0, 0.434]), visibility=False)
     assert a1.shape == a2.shape and np.abs(a1[:, :3] - a2[:, :3]).max() < 5e-3
+
+
+def _two_cars_xyz():
+    """Two aggregated cars side by side at 30 m (several lattice rows and many cells each), plus one point far above
+    Waymo TOP's vertical field of view."""
+    a = TA.from_box_local(car_surface(300, seed=3), np.array([30.0, 3.0, -1.0, 4.5, 1.8, 1.5, 0.0]))
+    b = TA.from_box_local(car_surface(300, seed=4), np.array([30.0, -3.0, -1.0, 4.5, 1.8, 1.5, 0.0]))
+    xyz = np.concatenate([a, b, [[5.0, 0.0, 30.0]]])
+    ids = np.array(['a'] * len(a) + ['b'] * len(b) + ['a'], dtype=object)
+    return xyz, ids
+
+
+def test_rowrun_drop_q0_keeps_all_q1_drops_all_in_fov():
+    th = RR.lattice_spec('waymo_top')['thetas']
+    xyz, ids = _two_cars_xyz()
+    rng = np.random.default_rng(0)
+    assert TA.rowrun_keep(xyz, ids, 0.0, th, 2650, 0.434, rng).all()
+    k = TA.rowrun_keep(xyz, ids, 1.0, th, 2650, 0.434, rng)
+    assert not k[:-1].any() and k[-1]
+    assert TA.rowrun_keep(np.zeros((0, 3)), np.zeros(0, dtype=object), 0.5, th, 2650, 0.434, rng).shape == (0,)
+
+
+def test_rowrun_drop_removes_whole_object_rows_independently_per_object():
+    from pcdet.datasets.processor.point_sampler import lattice_pixels
+    th = RR.lattice_spec('waymo_top')['thetas']
+    xyz, ids = _two_cars_xyz()
+    _, row, _ = lattice_pixels(xyz, th, 2650, 0.434)
+    seen_split = False
+    for seed in range(10):
+        k = TA.rowrun_keep(xyz, ids, 0.5, th, 2650, 0.434, np.random.default_rng(seed))
+        for obj in ('a', 'b'):
+            for r in np.unique(row[(ids == obj) & (row >= 0)]):
+                g = k[(ids == obj) & (row == r)]
+                assert g.all() or not g.any()                # an (object, row) group shares one fate
+        # the same row of the two cars is decided independently at least once
+        common = np.intersect1d(row[(ids == 'a') & (row >= 0)], row[(ids == 'b') & (row >= 0)])
+        for r in common:
+            if k[(ids == 'a') & (row == r)].all() != k[(ids == 'b') & (row == r)].all():
+                seen_split = True
+    assert seen_split
+
+
+def test_rowrun_drop_rate_matches_q():
+    th = RR.lattice_spec('waymo_top')['thetas']
+    xyz, ids = _two_cars_xyz()
+    from pcdet.datasets.processor.point_sampler import lattice_pixels
+    _, row, _ = lattice_pixels(xyz, th, 2650, 0.434)
+    groups = {(o, r) for o, r in zip(ids[row >= 0], row[row >= 0])}
+    dropped = 0; total = 0
+    for seed in range(400):
+        k = TA.rowrun_keep(xyz, ids, 0.3, th, 2650, 0.434, np.random.default_rng(seed))
+        for o, r in groups:
+            dropped += not k[(ids == o) & (row == r)].any(); total += 1
+    assert abs(dropped / total - 0.3) < 0.03
