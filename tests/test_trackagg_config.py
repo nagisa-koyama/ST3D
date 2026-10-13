@@ -45,6 +45,7 @@ def test_trackagg_is_zbuffer_plus_track_agg_only(target):
     for key in ('NUSCENES_N008', 'NUSCENES_N015'):
         t = c.DATA_CONFIGS[key].TRACK_AGG
         assert t.ICP and t.VISIBILITY and t.SENSOR_Z == 2.184
+        assert t.ROW_DROP == 0.25                      # calibrated on the seen frames only, 20261010_04 §5.1
         assert t.CACHE_DIR.startswith('/home/koyama/data/') and t.RAYDROP.startswith('/home/koyama/data/')
         assert c.DATA_CONFIGS[key].get('LEVEL_COOR', None) is None
         assert [p.NAME for p in c.DATA_CONFIGS[key].DATA_PROCESSOR][2] == 'sample_points_learned'

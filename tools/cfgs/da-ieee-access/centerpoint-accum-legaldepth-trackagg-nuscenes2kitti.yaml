@@ -4,6 +4,8 @@
 # Car track (gt_names 'car', devkit instance_token) placed on the anchor's box of that track, 4-DoF ICP-refined onto the
 # anchor's own points, back-face culled against the anchor box from the virtual Waymo TOP (2.184 m), and ray-dropped
 # per cell at a rate measured on unlabelled Waymo TRAIN above-ground surfaces; 27834's z-buffer then renders everything.
+# Re-gate (§5.1, option 2): plus a row-run drop - each (aggregated object, lattice row) group removed with probability
+# ROW_DROP = 0.25, calibrated on the first gate's (seen) frames only by the pre-declared rule, 2026-10-14 00:47 JST.
 # Training only. Legality: nuScenes (source) labels and clouds; the ray-drop rate reads unlabelled Waymo TRAIN clouds
 # only; the Waymo lattice is the published spec. Launched ONLY if the §5.1 CPU gate passes.
 # PRE-DECLARED READING (§5.1, one seed): Car BEV AP_R40 on Waymo val (the -nuscenes2waymo twin, epoch 20) against 27834's
@@ -20,6 +22,7 @@ DATA_CONFIGS:
             ICP: True
             VISIBILITY: True
             SENSOR_Z: 2.184
+            ROW_DROP: 0.25
     NUSCENES_N015:
         TRACK_AGG:
             CACHE_DIR: /home/koyama/data/track_agg/v1
@@ -27,3 +30,4 @@ DATA_CONFIGS:
             ICP: True
             VISIBILITY: True
             SENSOR_Z: 2.184
+            ROW_DROP: 0.25
