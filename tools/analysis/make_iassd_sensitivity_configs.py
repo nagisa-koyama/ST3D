@@ -13,6 +13,10 @@ are the CenterPoint generator's, unchanged.
 The Waymo base (W2, 20261011_07 §21) takes the arms of the CenterPoint Waymo oracle's table (20261010_01 §5.1 / §5.2, plus
 the lines-halved pair of 27953) from `make_sensitivity_configs.tar_change` unchanged (EVAL_TOP_THIN, RING_PATTERN, the
 elevation cut about the TOP sensor), except the density dose, which goes before its budget step `sample_points_by_voxels`.
+The PandaSet base (P2, 20261011_07 §22) likewise takes the CenterPoint PandaSet oracle's arms (20261011_03) from
+`make_pandaset_sensitivity_configs.tar_change` unchanged (EVAL_RING_THIN on the recovered Pandar64 channels: lines, columns,
+the 0.332-deg bin, their random controls, channel-elevation cuts, the HDL-32E render), the density dose again before the
+budget; the accumulation arms are left out, as for W2.
 `--check` resolves every twin and passes only if nothing outside the evaluated block differs from its oracle and the block
 changed in exactly the intended keys.
 
@@ -28,6 +32,7 @@ from analysis.make_kitti_sensitivity_configs import ARMS  # noqa: E402  (imports
 from analysis.make_kitti_sensitivity_configs import tar_change as kitti_change  # noqa: E402
 from analysis.make_sensitivity_configs import resolved  # noqa: E402
 from analysis.make_sensitivity_configs import tar_change as waymo_change  # noqa: E402
+from analysis.make_pandaset_sensitivity_configs import tar_change as pandaset_change  # noqa: E402
 
 OUT = Path('cfgs/da-ieee-access-analysis/sensitivity-iassd')
 BASES = ['cfgs/da-ieee-access-pointrcnn/iassd-published-kitti.yaml',          # 27600: published recipe, FOV-cropped
@@ -38,7 +43,13 @@ WAYMO_ARMS = [('ratio', 0.75), ('ratio', 0.5), ('ratio', 0.25), ('thin', 'rows')
               ('thin', 'cols'), ('thin', 'random_cols'), ('thin', 'cols:4'), ('thin', 'random_cols:4'),
               ('thin', 'azbin:0.332'), ('thin', 'random_azbin:0.332'), ('pattern', 'hdl32e'),
               ('elev', 'max:0'), ('elev', 'max:-3'), ('elev', 'min:-14'), ('elev', 'min:-10')]
+PANDASET_BASES = ['cfgs/da-ieee-access-pointrcnn/iassd-sourceonly-pandaset-vox65k.yaml']      # 28287: row P2
+PANDASET_ARMS = [('ratio', 0.75), ('ratio', 0.5), ('ratio', 0.25), ('thin', 'rows'), ('thin', 'random'),
+                 ('thin', 'cols'), ('thin', 'random_cols'), ('thin', 'cols:4'), ('thin', 'random_cols:4'),
+                 ('thin', 'azbin:0.332'), ('thin', 'random_azbin:0.332'), ('thin', 'elmax:0'), ('thin', 'elmax:-3'),
+                 ('thin', 'elmin:-14'), ('thin', 'elmin:-10'), ('thin', 'pattern:hdl32e')]
 BUDGET_STEPS = ('sample_points', 'sample_points_by_voxels')
+DATASET = {id(ARMS): 'KittiDataset', id(WAYMO_ARMS): 'WaymoDataset', id(PANDASET_ARMS): 'PandasetDataset'}
 
 
 def with_ratio_before_budget(processors, r):
@@ -58,6 +69,8 @@ def block_change(blk, kind, val):
     if blk['DATASET'] == 'WaymoDataset':
         assert not any(blk.get('SHIFT_COOR') or []), 'the TOP-sensor elevation origin assumes no SHIFT_COOR'
         return waymo_change({'DATA_CONFIG_TAR': blk}, kind, val)
+    if blk['DATASET'] == 'PandasetDataset':
+        return pandaset_change({'DATA_CONFIG_TAR': blk}, kind, val)
     if kind == 'elev':
         side, _, deg = val.partition(':')
         step = {'NAME': 'mask_points_by_spec', 'SENSOR_ORIGIN': list(blk.get('SHIFT_COOR') or [0.0, 0.0, 0.0]),
@@ -69,12 +82,13 @@ def block_change(blk, kind, val):
 def main(check=False):
     OUT.mkdir(parents=True, exist_ok=True)
     ok_all = True
-    for base, arms in [(b, ARMS) for b in BASES] + [(b, WAYMO_ARMS) for b in WAYMO_BASES]:
+    for base, arms in [(b, ARMS) for b in BASES] + [(b, WAYMO_ARMS) for b in WAYMO_BASES] + \
+            [(b, PANDASET_ARMS) for b in PANDASET_BASES]:
         base_path = Path(base)
         rb = resolved(base_path)
         key = 'DATA_CONFIG_TAR' if rb.get('DATA_CONFIG_TAR') else 'DATA_CONFIG'
         blk = rb[key]
-        assert blk['DATASET'] == ('KittiDataset' if arms is ARMS else 'WaymoDataset')
+        assert blk['DATASET'] == DATASET[id(arms)], blk['DATASET']
         for kind, val in arms:
             change, tag = block_change(blk, kind, val)
             child = OUT / f'{base_path.stem}-{tag}.yaml'
