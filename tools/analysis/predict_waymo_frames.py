@@ -1,8 +1,8 @@
 """Predictions of one checkpoint on chosen Waymo TRAIN frames, WITHOUT evaluation (experiments_md 20261010_04 §5.1,
 G1' reference, option A, pre-declared 2026-10-14 00:10 JST).
 
-The evaluator is never called, so no AP is computed on these frames. The kept infos lose their `annos` before the loader
-sees them, so no label reaches the data dict. The model and the dataset are built exactly as tools/test.py builds
+The evaluator is never called, so no AP is computed on these frames. The kept infos' annotation arrays are emptied to
+length 0 before the loader sees them, so no label reaches the data dict (the loader's code path is the evaluation's). The model and the dataset are built exactly as tools/test.py builds
 them, with the config's target block (DATA_CONFIG_TAR); only the split ('train') and the frame list change.
 
     python analysis/predict_waymo_frames.py <cfg> <ckpt.pth> <out result.pkl> [frame=50] [stride=4] [batch=4]
@@ -49,8 +49,11 @@ def main():
     seqs = [s.strip().replace('.tfrecord', '') for s in open(root / 'ImageSets' / 'train.txt') if s.strip()][::stride]
     want = set(seqs)
     keep = [i for i in ds.infos if i['point_cloud']['lidar_sequence'] in want and int(i['point_cloud']['sample_idx']) == frame]
+    # Every annotation array is emptied to length 0 (dtype and trailing shape kept), so the loader takes exactly the
+    # path a normal evaluation takes (prepare_data remaps gt_names; num_points_of_each_lidar is set in the annos
+    # branch) while no label content remains.
     for i in keep:
-        i.pop('annos', None)
+        i['annos'] = {k: np.asarray(v)[:0] for k, v in i['annos'].items()}
     ds.infos = keep
     found = {i['point_cloud']['lidar_sequence'] for i in keep}
     logger.info(f'kept {len(keep)} frames (sample_idx {frame}) of {len(seqs)} requested train sequences; '
@@ -66,7 +69,7 @@ def main():
     t0 = time.time()
     with torch.no_grad():
         for batch_dict in loader:
-            assert 'gt_boxes' not in batch_dict, 'a label reached the batch'
+            assert batch_dict['gt_boxes'].shape[1] == 0, 'a label reached the batch'
             load_data_to_gpu(batch_dict)
             pred_dicts, _ = model(batch_dict)
             det += ds.generate_prediction_dicts(batch_dict, pred_dicts, ds.class_names, output_path=None)
