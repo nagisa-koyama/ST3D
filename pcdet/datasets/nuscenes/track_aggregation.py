@@ -151,14 +151,17 @@ def visible_mask(local, dims, sensor_local):
     return visible_faces(sensor_local, dims)[nearest_face(local, dims)]
 
 
-def aggregate_anchor(scene, a, sensor_lidar, icp=True, visibility=True, tracks=None, return_tids=False):
+def aggregate_anchor(scene, a, sensor_lidar, icp=True, visibility=True, tracks=None, return_tids=False,
+                     min_range_ratio=0.0):
     """Aggregated Car points for anchor keyframe `a` of a cached scene, in the anchor's LIDAR_TOP frame.
 
     Each other keyframe j's in-box points of track k (box-local) get the cached ICP correction for (a, k, j) when
     `icp`, are culled against the anchor box when `visibility` (virtual sensor at `sensor_lidar`, anchor lidar frame),
     and are placed on the anchor's box of k. Returns (N, 3 + k) = xyz + the stored attributes (intensity, ring), and,
     with return_tids, the track id of each point. `tracks` limits the tracks used (None = every Car track at the
-    anchor)."""
+    anchor). min_range_ratio f (range matching, 20261010_04 §5.1 third gate): keyframe j contributes to track k only if
+    k's box in j is at least f times as far from j's sensor as k's anchor box is from the anchor's sensor (planar
+    box-centre ranges); 0 = every keyframe."""
     fa = scene['frames'][a]
     out, ids = [], []
     icp_tab = scene.get('icp', {}) if icp else {}
@@ -166,11 +169,14 @@ def aggregate_anchor(scene, a, sensor_lidar, icp=True, visibility=True, tracks=N
         if tracks is not None and k not in tracks:
             continue
         box = np.asarray(box, np.float64)
+        r_min = float(min_range_ratio) * np.hypot(box[0], box[1])
         s_loc = to_box_local(np.asarray(sensor_lidar, np.float64)[None], box)[0]
         corr = icp_tab.get((a, k))
         corr = {int(r[0]): r[1:] for r in corr} if corr is not None else {}
         for j, fj in enumerate(scene['frames']):
             if j == a or k not in fj['points']:
+                continue
+            if r_min > 0 and np.hypot(*np.asarray(fj['boxes'])[fj['tids'].index(k)][:2]) < r_min:
                 continue
             xyz, attr = fj['points'][k]
             loc = np.asarray(xyz, np.float64)

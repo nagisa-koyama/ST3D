@@ -9,9 +9,14 @@ except the G1' reference, which is read from a file (see the report for its prov
         <g3c n008.npz> <g3c n015.npz> [<g4 n008.npz> <g4 n015.npz>]
     python analysis/track_aggregation_gate.py calibrate <ref.npz> <g1 n008.npz> <g1 n015.npz>
     python analysis/track_aggregation_gate.py report_q <ref.npz> <q> <g1 n008.npz> <g1 n015.npz> <g3c ...> <g3c ...> <g4 ...> <g4 ...>
+    python analysis/track_aggregation_gate.py calibrate_f <ref set 1> <ref set 2> <set 1 g1 n008> <set 1 g1 n015> <set 2 g1 n008> <set 2 g1 n015>
+    python analysis/track_aggregation_gate.py report_f <ref.npz> <f> <g1 n008.npz> <g1 n015.npz> <g3c ...> <g3c ...> <g4 ...> <g4 ...>
 
-Frames: GATE_FRAMES=calib (default; the frames of gate job 28398) or GATE_FRAMES=fresh (the re-gate's rule, pre-declared
-2026-10-14 00:34: every anchor whose scene holds no calibration anchor, strided to n). g1's optional q list adds one
+Frames: GATE_FRAMES=calib (default; the frames of gate job 28398), GATE_FRAMES=fresh (the re-gate's rule, pre-declared
+2026-10-14 00:34: every anchor whose scene holds no calibration anchor, strided to n) or GATE_FRAMES=third (the third
+gate, pre-declared 01:05: nuScenes VAL through the same training-mode loader, strided to n; GATE_CACHE = the val cache
+for g4). GATE_FS = a comma list of range-matching ratios f: g1 adds one render per f (no row drop); TRACK_F = the f g3c
+applies. g1's optional q list adds one
 render per row-run drop rate q (after the per-cell ray-drop), for the calibration and the re-gate.
 
 g3c - leave-anchor-out transport accuracy with the additions (item 7): per sparse far car of the anchor keyframe
@@ -53,11 +58,18 @@ CELLS = [((20, 40), s) for s in range(3)] + [((40, 75), s) for s in range(3)]
 
 def dataset(cfg, key, training=True):
     dc = cfg.DATA_CONFIGS[key]
+    if WHICH == 'third':                     # nuScenes VAL through the same training-mode loader (third gate item 3)
+        dc.INFO_PATH['train'] = ['nuscenes_infos_200sweeps_val.pkl']
+        dc.DATA_SPLIT['train'] = 'val'
+        if dc.get('TRACK_AGG', None) is not None and os.environ.get('GATE_CACHE'):
+            dc.TRACK_AGG.CACHE_DIR = os.environ['GATE_CACHE']
     return build_dataloader(dataset_cfg=dc, class_names=cfg.CLASS_NAMES, batch_size=1, dist=False, workers=0,
                             logger=common_utils.create_logger(), training=training, model_ontology=cfg.get('ONTOLOGY'))[0]
 
 
 WHICH = os.environ.get('GATE_FRAMES', 'calib')
+FS = tuple(float(x) for x in os.environ.get('GATE_FS', '').split(',') if x != '')
+TRACK_F = float(os.environ.get('TRACK_F', '0') or 0)
 
 
 def gate_frames(infos, n, index, which=None):
@@ -66,7 +78,7 @@ def gate_frames(infos, n, index, which=None):
     which = which or WHICH
     step = max(1, len(infos) // n)
     calib = list(range(0, len(infos), step))[:n]
-    if which == 'calib':
+    if which in ('calib', 'third'):          # 'third': the same stride over the VAL infos
         return calib
     assert which == 'fresh', which
     used = {index[infos[i]['token']][0] for i in calib}
@@ -101,8 +113,10 @@ def g3c(cfg, key, cache, n, out):
             own_loc = np.asarray(own_loc, np.float64); ring = np.asarray(own_attr)[:, 1].astype(int)
             if not 10 <= len(own_loc) < 50:
                 continue
+            r_min = TRACK_F * r
             others = [(np.asarray(fj['points'][k][0], np.float64)) for j, fj in enumerate(sc['frames'])
-                      if j != a and k in fj['points']]
+                      if j != a and k in fj['points']
+                      and np.hypot(*np.asarray(fj['boxes'])[fj['tids'].index(k)][:2]) >= r_min]
             if not others:
                 continue
             s_loc = TA.to_box_local(sensor[None], box)[0]
@@ -129,7 +143,7 @@ def g3c(cfg, key, cache, n, out):
         if (fi + 1) % 20 == 0:
             print(f'  {key}: {fi + 1} frames, {len(recs)} cells, ICP accepted {fits[1]} / {fits[0]}', flush=True)
     R = np.array(recs, float)
-    np.savez(out, key=key, cells=R, icp_fits=np.array(fits), n_frames=n, which=WHICH)
+    np.savez(out, key=key, cells=R, icp_fits=np.array(fits), n_frames=n, which=WHICH, track_f=TRACK_F)
     for lo, hi in ((20, 40), (40, 75), (20, 75)):
         s = (R[:, 1] >= lo) & (R[:, 1] < hi)
         print(f'{key} {lo}-{hi} m: {s.sum()} cells; median |dr| {np.median(R[s, 3]):.3f} m, share > 0.5 m '
@@ -175,6 +189,11 @@ def g1(cfg, key, cache, raydrop, n, out, qs=()):
                 rq = np.random.default_rng([zlib.crc32(info['token'].encode()), qi + 1])
                 kq = TA.rowrun_keep(A_rd, ids_rd, q, th, nc, sensor[2], rq)
                 clouds[f'q{qi}'] = np.concatenate([P, A_rd[kq]]) + shift
+            for fi_, f in enumerate(FS):          # range matching (third gate): aggregate, ray-drop, no row drop
+                Af = TA.aggregate_anchor(sc, a, sensor, min_range_ratio=f)[:, :3]
+                rf = np.random.default_rng([zlib.crc32(info['token'].encode()), 1000 + fi_])
+                Af = Af[TA.raydrop_keep(Af, rd['rates'], rd['range_edges'], rd['elev_split_rad'], th, nc, sensor[2], rf)]
+                clouds[f'f{fi_}'] = np.concatenate([P, Af]) + shift
             recs = {name: rc_records(RR.rerender(np.column_stack([Q, np.zeros(len(Q))]), spec, fill='none')[0][:, :3]
                                      .astype(np.float64), b, cand, inc_desc, nc, hs) for name, Q in clouds.items()}
             fa = sc['frames'][a]
@@ -189,13 +208,15 @@ def g1(cfg, key, cache, raydrop, n, out, qs=()):
                     dd = np.hypot(cen[:, 0] - b[j, 0], cen[:, 1] - b[j, 1])
                     k = fa['tids'][int(np.argmin(dd))] if dd.min() < 0.2 else None
                 row = [fi, rr[j], sector_of(b[j:j + 1, :2], fwd)[0], 1, ns[j]]
-                for name in ['control', 'agg', 'agg_raydrop'] + [f'q{qi}' for qi in range(len(qs))]:
+                for name in (['control', 'agg', 'agg_raydrop'] + [f'q{qi}' for qi in range(len(qs))]
+                             + [f'f{i}' for i in range(len(FS))]):
                     row += list(recs[name][jj])
                 row += [closest.get(k, np.nan) if k else np.nan]
                 rows.append(row)
             if (fi + 1) % 20 == 0:
                 print(f'  {key}: {fi + 1} / {len(frames)} frames, {len(rows)} sparse far cars', flush=True)
-    np.savez(out, key=key, rows=np.array(rows, float), n_frames=len(frames), qs=np.array(qs, float), which=WHICH)
+    np.savez(out, key=key, rows=np.array(rows, float), n_frames=len(frames), qs=np.array(qs, float),
+             fs=np.array(FS, float), which=WHICH)
     print(f'saved {out}: {len(rows)} records')
 
 
@@ -211,6 +232,9 @@ def g4(cfg, key, n, out):
     cap = [p for p in ds.dataset_cfg.DATA_PROCESSOR if p.NAME == 'transform_points_to_voxels'][0].MAX_NUMBER_OF_VOXELS['train']
     shift = np.array(ds.dataset_cfg.get('SHIFT_COOR', [0, 0, 0]), np.float32)
     index = load_index(ds.dataset_cfg.TRACK_AGG.CACHE_DIR); recs = []
+    print(f'{key}: frames {WHICH}, {len(ds.infos)} infos, cache {ds.dataset_cfg.TRACK_AGG.CACHE_DIR}, '
+          f"MIN_RANGE_RATIO {ds.dataset_cfg.TRACK_AGG.get('MIN_RANGE_RATIO', 0)}, ROW_DROP {ds.dataset_cfg.TRACK_AGG.get('ROW_DROP', 0)}",
+          flush=True)
     for fi, i in enumerate(gate_frames(ds.infos, n, index)):
         info = ds.infos[i]
         t0 = time.time(); A = ds.track_agg_points(info); t_hook = time.time() - t0
@@ -224,7 +248,8 @@ def g4(cfg, key, n, out):
         if (fi + 1) % 20 == 0:
             print(f'  {key}: {fi + 1} frames', flush=True)
     R = np.array(recs, float)
-    np.savez(out, key=key, recs=R, cap=cap, which=WHICH, row_drop=float(ds.dataset_cfg.TRACK_AGG.get('ROW_DROP', 0.0) or 0.0))
+    np.savez(out, key=key, recs=R, cap=cap, which=WHICH, row_drop=float(ds.dataset_cfg.TRACK_AGG.get('ROW_DROP', 0.0) or 0.0),
+             min_range_ratio=float(ds.dataset_cfg.TRACK_AGG.get('MIN_RANGE_RATIO', 0.0) or 0.0))
     t = R[:, 3] + R[:, 4]
     print(f'{key}: {len(R)} anchors; aggregated points per anchor median {np.median(R[:, 2]):.0f} (control '
           f'{np.median(R[:, 1]):.0f}); hook + z-buffer time median {np.median(t):.3f} s, p99 {np.percentile(t, 99):.3f} s, '
@@ -277,7 +302,42 @@ def calibrate(ref_arg, g1_paths):
     return best[2]
 
 
-def report(ref_arg, g1_paths, g3_paths, g4_paths, q=None):
+def f_block(path, f):
+    G = np.load(path)
+    qs, fs = list(G['qs']) if 'qs' in G.files else [], list(G['fs']) if 'fs' in G.files else []
+    i = min(range(len(fs)), key=lambda k: abs(fs[k] - f))
+    assert abs(fs[i] - f) < 1e-9, f'f {f} not rendered in {path} (fs {fs})'
+    return 3 + len(qs) + i
+
+
+def calibrate_f(refs, sets):
+    """Third gate item 2: per f, the cells (of 24: two used sets x 12) within 0.10 two-sided and the mean |RC_front -
+    reference|; the choice is the most cells, then the smallest mean, then the smallest f."""
+    fs = [list(np.load(p)['fs']) for pair in sets for p in pair]
+    assert all(f == fs[0] for f in fs) and len(fs[0]), 'every file needs the same f grid'
+    res = []
+    print('| f | cells within 0.10 (of 24) | set 1 | set 2 | mean abs diff |')
+    print('|---|---|---|---|---|')
+    for f in fs[0]:
+        per_set, diffs = [], []
+        for ref_arg, pair in zip(refs, sets):
+            ref, _ = load_ref(ref_arg); n_in = 0
+            for p in pair:
+                _, _, cells = g1_table(p, ref, last=f_block(p, f))
+                for (lo, hi), s in CELLS:
+                    d = cells[(lo, s)][6] - ref[(lo, s)]; n_in += abs(d) <= 0.10; diffs.append(abs(d))
+            per_set.append(n_in)
+        res.append((sum(per_set), float(np.mean(diffs)), f))
+        print(f'| {f:.2f} | {sum(per_set)} | {per_set[0]} | {per_set[1]} | {np.mean(diffs):.3f} |')
+    best = sorted(res, key=lambda r: (-r[0], r[1], r[2]))[0]
+    print(f'\nCHOSEN f = {best[2]:.2f} ({best[0]} of 24 calibration cells within 0.10, mean abs diff {best[1]:.3f})')
+    for ref_arg, pair in zip(refs, sets):
+        print(f'\n# calibration set against {load_ref(ref_arg)[1]}')
+        report(ref_arg, list(pair), [], [], f=best[2])
+    return best[2]
+
+
+def report(ref_arg, g1_paths, g3_paths, g4_paths, q=None, f=None):
     ref, ref_name = load_ref(ref_arg)
     print(f'Reference: {ref_name}')
     last = 2
@@ -286,6 +346,10 @@ def report(ref_arg, g1_paths, g3_paths, g4_paths, q=None):
         last = 3 + min(range(len(qs)), key=lambda i: abs(qs[i] - q))
         assert abs(qs[last - 3] - q) < 1e-9, f'q {q} not rendered (qs {qs})'
         print(f'Last column: + ray-drop + row-run drop q = {q:.2f}; frames {str(np.load(g1_paths[0])["which"])}')
+    if f is not None:
+        last = f_block(g1_paths[0], f)
+        assert all(f_block(p, f) == last for p in g1_paths)
+        print(f'Last column: range matching f = {f:.2f} + ray-drop (no row drop); frames {str(np.load(g1_paths[0])["which"])}')
     print()
     print('| platform | ring | sector | cars | control RC / front | aggregated RC / front | + drop(s) RC / **front** | '
           'reference | two-sided | one-sided | track ever < 20 m |')
@@ -325,6 +389,12 @@ if __name__ == '__main__':
         report(sys.argv[2], a[0:2], a[2:4], a[4:6], q=float(sys.argv[3])); sys.exit(0)
     if mode == 'calibrate':
         calibrate(sys.argv[2], sys.argv[3:5]); sys.exit(0)
+    if mode == 'calibrate_f':
+        a = sys.argv[2:]
+        calibrate_f(a[0:2], [a[2:4], a[4:6]]); sys.exit(0)
+    if mode == 'report_f':
+        a = sys.argv[4:]
+        report(sys.argv[2], a[0:2], a[2:4], a[4:6], f=float(sys.argv[3])); sys.exit(0)
     cfg = EasyDict(); cfg_from_yaml_file(sys.argv[2], cfg)
     if mode == 'g3c':
         g3c(cfg, sys.argv[3], sys.argv[4], int(sys.argv[5]), sys.argv[6])

@@ -240,3 +240,18 @@ def test_rowrun_drop_rate_matches_q():
         for o, r in groups:
             dropped += not k[(ids == o) & (row == r)].any(); total += 1
     assert abs(dropped / total - 0.3) < 0.03
+
+
+def test_range_matching_keeps_only_views_at_least_f_times_as_far():
+    sc = _scene()             # track A at x = 15, 18, 21 m (+ y 2 m) in keyframes 0, 1, 2
+    s = np.array([0, 0, 0.434])
+    r = [np.hypot(*f['boxes'][0][:2]) for f in sc['frames']]
+    full = TA.aggregate_anchor(sc, 2, s, visibility=False)
+    assert np.array_equal(TA.aggregate_anchor(sc, 2, s, visibility=False, min_range_ratio=0.0), full)
+    for f, expect in ((0.70, {0.0, 1.0}), (0.80, {1.0}), (0.90, set())):
+        assert (r[0] / r[2] >= f) == (0.0 in expect) and (r[1] / r[2] >= f) == (1.0 in expect)
+        got = TA.aggregate_anchor(sc, 2, s, visibility=False, min_range_ratio=f, tracks={'A'})
+        assert set(np.unique(got[:, 3]).tolist()) == expect          # attribute column = source keyframe of A
+    # farther views are always kept: from anchor 0 (the nearest), f = 1.0 still keeps keyframes 1 and 2
+    got = TA.aggregate_anchor(sc, 0, s, visibility=False, min_range_ratio=1.0, tracks={'A'})
+    assert set(np.unique(got[:, 3]).tolist()) == {1.0, 2.0}

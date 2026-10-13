@@ -306,7 +306,8 @@ class NuScenesDataset(DatasetTemplate):
     def track_agg_points(self, info, rng=np.random):
         """DATA_CONFIG.TRACK_AGG = {CACHE_DIR (analysis/build_track_agg_cache.py), RAYDROP (npz of
         analysis/waymo_raydrop_rate.py, or None = off), ICP (True), VISIBILITY (True), SENSOR_Z (2.184: the virtual
-        target sensor above the ground, SHIFT_COOR frame), ROW_DROP (q of the row-run drop; absent = 0)}
+        target sensor above the ground, SHIFT_COOR frame), ROW_DROP (q of the row-run drop; absent = 0), MIN_RANGE_RATIO (f of range matching;
+        absent = 0)}
         (experiments_md 20261010_04 §5.1).
 
         The whole-track Car aggregation of this anchor - every other keyframe's in-box points of each Car track at the
@@ -326,7 +327,8 @@ class NuScenesDataset(DatasetTemplate):
         shift_z = float(self.dataset_cfg.SHIFT_COOR[2]) if self.dataset_cfg.get('SHIFT_COOR', None) else 0.0
         sensor = np.array([0.0, 0.0, float(cfg.get('SENSOR_Z', 2.184)) - shift_z])
         agg, ids = TA.aggregate_anchor(scene, pos, sensor, icp=bool(cfg.get('ICP', True)),
-                                       visibility=bool(cfg.get('VISIBILITY', True)), return_tids=True)
+                                       visibility=bool(cfg.get('VISIBILITY', True)), return_tids=True,
+                                       min_range_ratio=float(cfg.get('MIN_RANGE_RATIO', 0.0) or 0.0))
         lat = self._track_agg_lattice
         if self._track_agg_raydrop is not None and len(agg):
             rd = self._track_agg_raydrop
