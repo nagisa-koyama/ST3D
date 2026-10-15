@@ -1,0 +1,13 @@
+# EVAL ONLY, analysis row (experiments_md 20261015_03). OpenPCDet's released KITTI second_iou checkpoint (3 classes, trained
+# on KITTI train) = the denominator for the prior-method rows. The fork's cfgs/kitti_models/second_iou.yaml is OpenPCDet's own
+# model block (commit e3bec15); only the eval regime is set: FOV_POINTS_ONLY False + FOV_FILTER True, as for every
+# KITTI-target row of this study (native OpenPCDet crops the points to the camera FOV instead).
+_BASE_CONFIG_: cfgs/kitti_models/second_iou.yaml
+
+DATA_CONFIG:
+    ONTOLOGY: 'kitti'
+    FOV_POINTS_ONLY: False
+    TEST:
+        BOX_FILTER: {
+            'FOV_FILTER': True
+        }
