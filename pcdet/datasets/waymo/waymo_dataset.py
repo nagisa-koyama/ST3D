@@ -40,6 +40,14 @@ class WaymoDataset(DatasetTemplate):
         # experiments_md 20261005_01 (Waymo -> nuScenes scan-pattern row).
         self.ring_pattern_cfg = self.dataset_cfg.get('RING_PATTERN', None)
         self._top_calib = None
+        # LIT_TRANSLATED (opt-in, training only; absent = unchanged): serve LiT's translated nuScenes-style frame in place
+        # of the stored cloud (waymo_lit.py). The zero-point GT filter recounts on it (experiments_md 20261015_02).
+        self.lit_cfg = self.dataset_cfg.get('LIT_TRANSLATED', None)
+        if self.lit_cfg is not None:
+            assert (self.dataset_cfg.get('MAX_SWEEPS', 1) or 1) <= 1, 'LIT_TRANSLATED serves one translated scan'
+            assert self.ring_pattern_cfg is None and self.dataset_cfg.get('LIDAR_INDICES', None) is None, \
+                'LIT_TRANSLATED replaces the cloud; RING_PATTERN / LIDAR_INDICES would act on a cloud it does not use'
+            assert self.lit_cfg.get('DIR', None), 'set LIT_TRANSLATED.DIR (LiT sim_nuscenes directory)'
         # EVAL_TOP_THIN (ANALYSIS, evaluation only; absent = unchanged): thin the TOP block of the EVALUATION cloud by
         # whole scan lines (MODE rows, every STRIDE-th beam) or by a count-matched random draw (MODE random), to ask
         # whether lattice-row coverage is what costs a source-trained model (experiments_md 20261009_02).
@@ -282,6 +290,9 @@ class WaymoDataset(DatasetTemplate):
         at MAX_SWEEPS 5, moving/static goes 0.61 -> 1.03 with static untouched.
         """
         pc_info = info['point_cloud']
+        if getattr(self, 'lit_cfg', None) is not None and self.training:
+            from .waymo_lit import load_translated
+            return load_translated(self.lit_cfg.DIR, pc_info['lidar_sequence'], pc_info['sample_idx'])
         # RING_PATTERN.APPLY_AT_EVAL (ANALYSIS, off by default): render the EVALUATION cloud to the pattern too - the
         # Waymo oracle scored on a Waymo val cloud thinned to nuScenes' published scan pattern (20261010_01).
         if self.ring_pattern_cfg is not None and (self.training or self.ring_pattern_cfg.get('APPLY_AT_EVAL', False)):
@@ -377,6 +388,10 @@ class WaymoDataset(DatasetTemplate):
             # positives (control 3.1%). A sensor with the target's pattern only yields labels with >= 1 point, so the
             # zero-point filter recounts on the thinned cloud (prepare_data does when the count is None).
             if self.ring_pattern_cfg is not None and self.training and self.ring_pattern_cfg.get('RECOUNT_GT_POINTS', True):
+                input_dict['num_points_in_gt'] = None
+            # LIT_TRANSLATED replaces the whole cloud, so the stored per-box count (all returns, all five lidars) says nothing
+            # about the translated one: recount, and drop the boxes the translation left empty (as 27807 did).
+            if getattr(self, 'lit_cfg', None) is not None and self.training:
                 input_dict['num_points_in_gt'] = None
             # TRAIN_TOP_THIN removes TOP points, so the stored count no longer says whether a box holds a point either.
             if self.train_top_thin_cfg is not None and self.training:
