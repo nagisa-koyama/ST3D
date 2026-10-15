@@ -3,8 +3,10 @@
 # Adapted: the multi-teacher wrappers (NAME PVRCNNMT, ROI_HEAD PVRCNNHeadMT) are replaced by the plain classes of this fork (the
 # *MT classes only add training-time outputs; same module list and state-dict keys); EMA_MODEL_ALPHA, CONSISTENCY_LOSS and
 # INTER_GRAPH_THRESHOLD dropped (training only). Target input has 4 features (checkpoint conv_input has 4 in-channels).
+# CLASS_NAMES / anchor class_name are set to KITTI's own 'Car' (test.py builds the target loader from cfg.CLASS_NAMES; the
+# released configs say 'car' and map it in their own test.py).
 # Regime: KITTI val, Car, FOV_POINTS_ONLY False + TEST.BOX_FILTER.FOV_FILTER True (every KITTI-target row of this study).
-CLASS_NAMES: [car]
+CLASS_NAMES: [Car]
 DATA_CONFIG:
   _BASE_CONFIG_: cfgs/dataset_configs/da_nuscenes_kitti_dataset.yaml
   MAX_SWEEPS: 1
@@ -40,7 +42,7 @@ MODEL:
     DIR_LIMIT_OFFSET: 0.0
     NUM_DIR_BINS: 2
     ANCHOR_GENERATOR_CONFIG:
-    - class_name: car
+    - class_name: Car
       anchor_sizes:
       - [4.2, 2.0, 1.6]
       anchor_rotations: [0, 1.57]

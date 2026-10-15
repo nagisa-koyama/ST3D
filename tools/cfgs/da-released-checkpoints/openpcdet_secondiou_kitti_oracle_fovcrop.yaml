@@ -1,0 +1,13 @@
+# EVAL ONLY, analysis row (experiments_md 20261015_03). AMENDMENT 2026-10-15 19:15: the same OpenPCDet checkpoint in its NATIVE
+# regime, points cropped to the camera FOV (FOV_POINTS_ONLY True, opt-in ALLOW_FOV_POINTS_ONLY), added after the 360-degree-points
+# regime missed the PV-RCNN README value by 5 AP (keypoint sampling sees twice the area). FOV_FILTER stays on.
+_BASE_CONFIG_: cfgs/kitti_models/second_iou.yaml
+
+DATA_CONFIG:
+    ONTOLOGY: 'kitti'
+    FOV_POINTS_ONLY: True
+    ALLOW_FOV_POINTS_ONLY: True
+    TEST:
+        BOX_FILTER: {
+            'FOV_FILTER': True
+        }
