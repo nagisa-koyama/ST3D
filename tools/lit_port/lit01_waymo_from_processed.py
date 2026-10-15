@@ -1,7 +1,7 @@
 """Replacement for LiT's lit_01_extract_scene.py (Waymo branch) that reads OUR processed Waymo data instead of tfrecords
 through TensorFlow (experiments_md 20261015_02 §1). Runs INSIDE the LiT container, with LiT's code on PYTHONPATH:
 
-    python -I lit_port/lit01_waymo_from_processed.py --infos <waymo_infos_train.pkl> --data <waymo_processed_data> \
+    lit_port/lit_exec.sh python -I lit_port/lit01_waymo_from_processed.py --infos <waymo_infos_train.pkl> --data <waymo_processed_data> \
         --calib <top_calib.pkl> --out <scene_dir> [--scene_index i | --scene_names a,b] [--skip_existing]
 
 It writes one `Scene` pickle per sequence, in LiT's format (`Scene.save`), with only the TOP lidar (LiT's reconstruction
@@ -40,7 +40,10 @@ def main():
     ap.add_argument('--scene_names', default=None)
     ap.add_argument('--skip_existing', action='store_true')
     ap.add_argument('--max_frames', type=int, default=None, help='smoke only')
+    ap.add_argument('--lit', default='/home/koyama/code/lit')
     a = ap.parse_args()
+    here = Path(__file__).resolve().parent
+    sys.path[:0] = [str(here / 'shims'), a.lit]            # python -I ignores PYTHONPATH
 
     from lit.containers.frame import Frame
     from lit.containers.scene import Scene

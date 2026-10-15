@@ -30,6 +30,14 @@ def main():
     sys.path[:0] = [str(here / 'shims'), a.lit]            # the shim pcdet must win over LiT's own fork
 
     from lit.path_utils import LitPaths
+    import types  # noqa: E402
+    _g = types.ModuleType('lit.raycast_engine_gpu')   # the OptiX engine needs cupy / pyoptix / pynvrtc: the legal row ray casts on CPU
+    class _NoGPU:                                      # noqa: E301
+        def __init__(self, *a, **k):
+            raise RuntimeError('the OptiX ray caster is not installed; use the CPU engine (--cpu)')
+    _g.RaycastEngineGPU = _NoGPU
+    sys.modules['lit.raycast_engine_gpu'] = _g
+
     root = Path(a.root)
     names = a.scenes.split(',')
     paths = LitPaths(data_version='v0', data_domain='waymo', scene_names=names, lit_data_root=root,
@@ -58,8 +66,7 @@ def main():
             from lit.raycast_engine_cpu import RaycastEngineCPU
             eng = RaycastEngineCPU()
         else:
-            from lit.raycast_engine_gpu import RaycastEngineGPU
-            eng = RaycastEngineGPU()
+            raise SystemExit('pass --cpu: the OptiX engine is not installed')
         for n in names:
             t = time.time()
             m.run_sim(data_version='v0', src_style='waymo', dst_style=a.dst, lit_paths=paths, scene_name=n,

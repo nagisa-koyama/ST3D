@@ -44,7 +44,7 @@ singularity exec --writable --no-home --bind "$SCRATCH:/scratch" --env MAX_JOBS=
     mkdir -p /scratch/home
     python -c 'import torch, sys; print(sys.version); print(torch.__version__, torch.version.cuda)'
     which nvcc gcc g++ ninja || true
-    conda install -y -q -c conda-forge eigen git
+    conda install -y -q -c conda-forge eigen git libegl libgl libglx libopengl libglu
     pip install --no-cache-dir torch-scatter -f https://data.pyg.org/whl/torch-2.7.0+cu128.html
     # numpy < 2: LiT and its dependencies predate numpy 2
     pip install --no-cache-dir 'numpy==1.26.4' 'python-pycg>=1.0.1' matplotlib ninja GitPython pyntcloud plyfile \
@@ -65,9 +65,7 @@ PY
     cd /opt/NKSR
     CPATH=/opt/conda/include/eigen3:\${CPATH:-} pip install --no-cache-dir --no-build-isolation /opt/NKSR/package/
     pip freeze > /opt/lit_container_pip_freeze.txt
-    python -c 'import torch, torch_scatter, camtools, nksr; print(\"core imports ok\", torch.__version__, nksr.__file__)'
-    python -c 'import open3d; print(\"open3d\", open3d.__version__)' || echo 'WARNING: open3d import failed'
-    python -c 'import pycg.vis; print(\"pycg.vis ok\")' || echo 'WARNING: pycg.vis import failed'
+    # imports are checked AFTER the SIF is packed (job 28656 lost its 27-minute build to a failed check: libEGL)
 "
 singularity build "$SCRATCH/lit_cuda128.sif" "$SB"
 cp "$SCRATCH/lit_cuda128.sif" "$OUT"
