@@ -6,6 +6,25 @@ from pcdet.ops.iou3d_nms import iou3d_nms_utils
 from pcdet.models.model_utils.model_nms_utils import class_agnostic_nms
 
 
+def _apply_voting(gt_infos, voting):
+    """Memory voting on counters already incremented: ignore at IGNORE_THRESH (class kept), remove at RM_THRESH."""
+    boxes = gt_infos['gt_boxes']
+    counter = gt_infos['memory_counter']
+    ignore_mask = counter >= voting.IGNORE_THRESH
+    if voting.get('KEEP_CLASS', False):
+        boxes[ignore_mask, 7] = -np.abs(boxes[ignore_mask, 7])
+    else:
+        boxes[ignore_mask, 7] = -1
+    keep = counter < voting.RM_THRESH
+    return {
+        'gt_boxes': boxes[keep],
+        'cls_scores': gt_infos['cls_scores'][keep] if gt_infos['cls_scores'] is not None else None,
+        'iou_scores': gt_infos['iou_scores'][keep] if gt_infos['iou_scores'] is not None else None,
+        'memory_counter': counter[keep],
+        'teacher_classes': gt_infos['teacher_classes'][keep],
+    }
+
+
 def consistency_ensemble(gt_infos_a, gt_infos_b, memory_ensemble_cfg):
     """
     Args:
@@ -43,6 +62,13 @@ def consistency_ensemble(gt_infos_a, gt_infos_b, memory_ensemble_cfg):
     # if gt_box_b or gt_box_a don't have any predictions
     if gt_box_b.shape[0] == 0:
         gt_infos_a['memory_counter'] += 1
+        voting = memory_ensemble_cfg.get('MEMORY_VOTING', None)
+        if voting and voting.ENABLED and voting.get('VOTE_ON_EMPTY', False):
+            # Opt-in (absent = the published early return, which counts the miss but never ignores or
+            # removes). An empty current prediction IS a miss for every remembered box; with several
+            # classes the per-class group is empty whenever that class is not predicted in the frame,
+            # so without this a class that is sparsely predicted never forgets a box.
+            return _apply_voting(gt_infos_a, voting)
         return gt_infos_a
     elif gt_box_a.shape[0] == 0:
         return gt_infos_b
@@ -103,7 +129,14 @@ def consistency_ensemble(gt_infos_a, gt_infos_b, memory_ensemble_cfg):
         new_memory_counter[disappear_idx] += 1
         # ignore gt_boxes that ignore_count == IGNORE_THRESH
         ignore_mask = new_memory_counter >= memory_ensemble_cfg.MEMORY_VOTING.IGNORE_THRESH
-        new_gt_box[ignore_mask, 7] = -1
+        if memory_ensemble_cfg.MEMORY_VOTING.get('KEEP_CLASS', False):
+            # Opt-in (absent = the published -1, correct for a single class). With several classes
+            # -1 would turn a voted Pedestrian into a Car-group member, since memory_ensemble groups
+            # by abs(label): it would then be matched against Car boxes, and its own class group
+            # would re-add the same object as new.
+            new_gt_box[ignore_mask, 7] = -np.abs(new_gt_box[ignore_mask, 7])
+        else:
+            new_gt_box[ignore_mask, 7] = -1
 
         # remove gt_boxes that ignore_count >= RM_THRESH
         remain_mask = new_memory_counter < memory_ensemble_cfg.MEMORY_VOTING.RM_THRESH
@@ -363,6 +396,10 @@ def memory_ensemble(gt_infos_a, gt_infos_b, memory_ensemble_cfg, ensemble_func):
     classes_b = np.unique(np.abs(gt_infos_b['gt_boxes'][:, -2]))
 
     n_classes = max(classes_a.shape[0], classes_b.shape[0])
+    if memory_ensemble_cfg.get('UNION_CLASSES', False):
+        # Opt-in (absent = unchanged). max() of the two counts is 1 for a = {Car} and b = {Pedestrian},
+        # which takes the single-category path and matches the two classes against each other.
+        n_classes = np.union1d(classes_a, classes_b).shape[0]
     if n_classes == 0:
         return gt_infos_a
     

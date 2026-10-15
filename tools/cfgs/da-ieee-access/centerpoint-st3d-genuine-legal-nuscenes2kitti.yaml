@@ -1,0 +1,200 @@
+# GENUINE ST3D ROW, S2 (nuScenes -> KITTI), the LEGAL TWIN (experiments_md/20261015_01 §2; the professor's Q8).
+#
+# ST3D as published (Yang et al., CVPR 2021) on our CenterPoint, in our protocol:
+#   - starts from the single-sweep source-only checkpoint 25743 (centerpoint-sourceonly-nuscenes, Car [0.85, 1.20],
+#     41.57 / 22.58 on KITTI val; run-20260922_155434-wfdcq75s epoch 20). Pass it as --pretrained_model ONLY.
+#   - SELF_TRAIN.TEACHER_IS_STUDENT: the student regenerates its OWN pseudo-labels every 2 epochs (15 passes in
+#     30 epochs); the paper has no frozen teacher. Never FROZEN_TEACHER_SINGLE_PASS.
+#   - consistency_ensemble memory (IoU 0.1) + memory voting (IGNORE 2 / RM 3); KEEP_CLASS makes the voted ignore
+#     label -|label| instead of the published -1 (the published recipe is single-class; here a voted Pedestrian
+#     must stay a Pedestrian in the next pass's per-class grouping). Two more opt-in fixes of the same function, both
+#     disclosed: VOTE_ON_EMPTY (the published early return counts a frame with no current prediction as a miss but
+#     never ignores or removes the box; with per-class groups that leaves any sparsely predicted class unable to
+#     forget) and UNION_CLASSES (a Car-only memory and a Pedestrian-only prediction took the single-class path).
+#   - PROG_AUG ON at the published UPDATE_AUG [5, 10, 20, 25], SCALE 1.1 (the released nuScenes -> KITTI config had it
+#     OFF; the paper's method has it; user default 2026-10-15: ON, disclosed).
+#   - ST3D's target augmentation (object scaling [0.95, 1.05], object rotation p 0.8 +-0.785, world flip, world rotation
+#     +-0.785, world scaling [0.95, 1.05]); target only (SRC.USE_DATA False); 30 epochs; LR 0.0015; epoch follows the
+#     target (3712 frames).
+#   - CUTS: the published 0.5 / 0.2 act on SECOND-IoU's predicted 3D IoU and do not transfer to a heatmap peak. They
+#     are replaced by the family's pre-declared label-free rules, re-derived for THIS teacher (25743): rule B
+#     (source-val precision, SCORE_THRESH) and rule A (background plateau, NEG_THRESH). DISCLOSED DEVIATION.
+#     Values: see the SELF_TRAIN block (job ids in the comment).
+# UDA-legal: no target label influences any value (the ROS interval [0.75, 1.00] of the published row is target-informed
+# and is NOT used; the start is the default-interval checkpoint).
+# Launch: scripts/submit.sh ... run_sourceonly_2gpu.sh <this cfg> <tag> <run> --pretrained_model <25743 ep20 host path>
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-nuscenes2kitti.yaml
+
+DATA_CONFIG_TAR:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_kitti_dataset.yaml
+    USE_PSEUDO_LABEL: True
+    DATA_AUGMENTOR:
+        DISABLE_AUG_LIST: ['placeholder']
+        AUG_CONFIG_LIST:
+            - NAME: random_object_scaling
+              SCALE_UNIFORM_NOISE: [0.95, 1.05]
+            - NAME: random_object_rotation
+              ROT_PROB: 0.8
+              ROT_UNIFORM_NOISE: [-0.78539816, 0.78539816]
+            - NAME: random_world_flip
+              ALONG_AXIS_LIST: ['x', 'y']
+            - NAME: random_world_rotation
+              WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+            - NAME: random_world_scaling
+              WORLD_SCALE_RANGE: [0.95, 1.05]
+
+OPTIMIZATION:
+    NUM_EPOCHS: 30
+    LR: 0.0015
+
+SELF_TRAIN:
+    TEACHER_IS_STUDENT: True
+    FROZEN_TEACHER_SINGLE_PASS: False
+    EPOCH_FOLLOWS: target
+    # Job 28641 (scripts/_genuine_st3d_cuts.sh), teacher 25743 epoch 20, pre-declared rules, nothing chosen here:
+    #   rule B on nuScenes val, 1 sweep (source-val precision >= 0.50): Car 0.20, Pedestrian 0.33, Cyclist 0.41
+    #   rule A on KITTI train (background-plateau upper half-maximum; plateau mode 0.407 / 0.407 / 0.349):
+    #       NEG_THRESH Car 0.589, Pedestrian 0.511, Cyclist 0.482
+    # Each rule-B cut is below its NEG_THRESH, so (plateau_neg_thresh.py step 6) SCORE_THRESH is raised to NEG_THRESH:
+    # no ignore band from the thresholds. Memory voting is then the only source of ignore regions.
+    SCORE_THRESH: [0.589, 0.511, 0.482]
+    NEG_THRESH: [0.589, 0.511, 0.482]
+    UPDATE_PSEUDO_LABEL: [0]
+    UPDATE_PSEUDO_LABEL_INTERVAL: 2
+    INIT_PS: None
+
+    SRC:
+        USE_DATA: False
+        USE_GRAD: False
+        LOSS_WEIGHT: 1.0
+        BACKWARD_TOGETHER: True
+
+    TAR:
+        USE_DATA: True
+        LOSS_WEIGHT: 1.0
+        BACKWARD_TOGETHER: True
+
+    PROG_AUG:
+        ENABLED: True
+        UPDATE_AUG: [5, 10, 20, 25]
+        SCALE: 1.1
+
+    MEMORY_ENSEMBLE:
+        ENABLED: True
+        NAME: consistency_ensemble
+        IOU_THRESH: 0.1
+        UNION_CLASSES: True
+        NMS_CONFIG:
+            NMS_TYPE: nms_gpu
+            MULTI_CLASSES_NMS: False
+            NMS_PRE_MAXSIZE: 512
+            NMS_POST_MAXSIZE: 100
+            NMS_THRESH: 0.1
+        MEMORY_VOTING:
+            ENABLED: True
+            IGNORE_THRESH: 2
+            RM_THRESH: 3
+            KEEP_CLASS: True
+            VOTE_ON_EMPTY: True
+
+    # Read by analysis/pseudo_label_threshold/generate_pseudo_labels.py only: train.py ignores it under
+    # TEACHER_IS_STUDENT. Mirrors the student exactly.
+    MODEL_TEACHER:
+        CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
+        ONTOLOGY: 'kitti'
+        NAME: CenterPoint
+
+        VFE:
+            NAME: MeanVFE
+
+        BACKBONE_3D:
+            NAME: VoxelResBackBone8x
+
+        MAP_TO_BEV:
+            NAME: HeightCompression
+            NUM_BEV_FEATURES: 256
+
+        BACKBONE_2D:
+            NAME: BaseBEVBackbone
+
+            LAYER_NUMS: [5]
+            LAYER_STRIDES: [1]
+            NUM_FILTERS: [128]
+            UPSAMPLE_STRIDES: [2]
+            NUM_UPSAMPLE_FILTERS: [256]
+
+        DENSE_HEAD:
+            NAME: CenterHead
+            CLASS_AGNOSTIC: False
+
+            CLASS_NAMES_EACH_HEAD: [
+                ['Car', 'Pedestrian', 'Cyclist'],
+            ]
+
+            SHARED_CONV_CHANNEL: 64
+            USE_BIAS_BEFORE_NORM: True
+            NUM_HM_CONV: 2
+            SEPARATE_HEAD_CFG:
+                HEAD_ORDER: ['center', 'center_z', 'dim', 'rot']
+                HEAD_DICT: {
+                    'center': {'out_channels': 2, 'num_conv': 2},
+                    'center_z': {'out_channels': 1, 'num_conv': 2},
+                    'dim': {'out_channels': 3, 'num_conv': 2},
+                    'rot': {'out_channels': 2, 'num_conv': 2},
+                }
+
+            TARGET_ASSIGNER_CONFIG:
+                FEATURE_MAP_STRIDE: 4
+                NUM_MAX_OBJS: 500
+                GAUSSIAN_OVERLAP: 0.1
+                MIN_RADIUS: 2
+
+            LOSS_CONFIG:
+                LOSS_WEIGHTS: {
+                    'cls_weight': 1.0,
+                    'loc_weight': 2.0,
+                    'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+                }
+
+            # CenterPoint has TWO live POST_PROCESSING blocks - this one and the model-level one below -
+            # each with its own SCORE_THRESH and NMS_CONFIG. Both are set to 0.0001 here; changing only
+            # one is a common way to get an unexplained AP shift.
+            POST_PROCESSING:
+                SCORE_THRESH: 0.0001
+                POST_CENTER_LIMIT_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+                MAX_OBJ_PER_SAMPLE: 500
+                NMS_CONFIG:
+                    NMS_TYPE: nms_gpu
+                    NMS_THRESH: 0.5
+                    NMS_PRE_MAXSIZE: 4096
+                    NMS_POST_MAXSIZE: 500
+
+        POST_PROCESSING:
+            RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+
+            # 0.0001, uniform across this whole family, and NOT the 0.01 the existing sourceonly
+            # configs use. eval_class() fills only len(thresholds) of its 41 R40 precision slots and
+            # averages the rest as ZERO, so discarding low-confidence detections before scoring caps
+            # achievable recall and biases AP DOWNWARD - worst exactly in the weak cross-domain regime
+            # a source-only floor lives in. Never raise this to relieve eval-time OOM; if numba's
+            # separate CUDA pool runs out (it is not PyTorch's allocator), add
+            # torch.cuda.empty_cache() before dataset.evaluation() in tools/eval_utils/eval_utils.py.
+            # See experiments_md/20260920_01 and 20260920_02.
+            SCORE_THRESH: 0.0001
+            OUTPUT_RAW_SCORE: False
+
+            # KITTI R40 AP. Note what this means with a NON-KITTI evaluation target: nuscenes_dataset.py
+            # fabricates the 2D bbox as [0, 0, 50, 50] with truncation/occlusion 0, so every GT passes
+            # all three difficulty levels, nothing is ever ignored, and easy == moderate == hard
+            # identically. Three identical AP values in the log is the expected output, not a bug. Those
+            # numbers are "all objects, no difficulty filter" - stricter than KITTI hard, and NOT
+            # comparable with a KITTI-target row's "moderate". The bbox/aos columns are meaningless here
+            # (all boxes identical, so 2D IoU is trivially 1). See experiments_md/20260919_05 sections 6-8.
+            EVAL_METRIC: kitti
+
+            NMS_CONFIG:
+                MULTI_CLASSES_NMS: False
+                NMS_TYPE: nms_gpu
+                NMS_THRESH: 0.5
+                NMS_PRE_MAXSIZE: 4096
+                NMS_POST_MAXSIZE: 500
