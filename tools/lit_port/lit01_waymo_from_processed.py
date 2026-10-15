@@ -30,6 +30,40 @@ import numpy as np
 LABEL = {'Vehicle': 1, 'Pedestrian': 2, 'Cyclist': 3}
 
 
+def build_scene(name, frames, data, calib, max_frames=None):
+    """One Scene from the per-frame infos of a sequence (shared by main() and lit_worker.py). Returns (scene, L2V); the frame poses are scene.frames[k].frame_pose (raw, float32)."""
+    from lit.containers.frame import Frame
+    from lit.containers.scene import Scene
+    L2V = np.asarray(calib[name]['extrinsic'], np.float64).reshape(4, 4).astype(np.float32)
+    scene = Scene(scene_name=name)
+    frames = sorted(frames, key=lambda i: i['point_cloud']['sample_idx'])
+    assert [i['point_cloud']['sample_idx'] for i in frames] == list(range(len(frames))), \
+        f'{name}: sample_idx is not 0..N-1, LiT appends frames sequentially'
+    if max_frames:
+        frames = frames[:max_frames]
+    for k, inf in enumerate(frames):
+        raw = np.load(Path(data) / name / ('%04d.npy' % inf['point_cloud']['sample_idx']))
+        counts = np.asarray(inf['num_points_of_each_lidar'], np.int64)
+        assert counts.sum() == len(raw), f'{name} {k}: per-lidar counts do not match the file'
+        top = raw[:counts[0]]
+        top = top[top[:, 5] == -1][:, :5].astype(np.float32)
+        top[:, 3] = np.tanh(top[:, 3])
+        an = inf['annos']
+        keep = [i for i, n in enumerate(an['name']) if n in LABEL]
+        if keep:
+            b = np.asarray(an['gt_boxes_lidar'], np.float32)[keep, :7]
+            lab = np.array([LABEL[an['name'][i]] for i in keep], np.float32)[:, None]
+            boxes = np.concatenate([b, lab], 1).astype(np.float32)
+            ids = [str(an['obj_ids'][i]) for i in keep]
+        else:
+            boxes, ids = np.zeros((0, 8), np.float32), []
+        scene.append_frame(Frame(scene_name=name, frame_index=k,
+                                 frame_pose=np.asarray(inf['pose'], np.float32).reshape(4, 4),
+                                 lidar_to_vehicle_poses=[L2V], num_points_of_each_lidar=[len(top)],
+                                 local_points=top, local_bboxes=boxes, object_ids=ids), check_valid=True)
+    return scene, L2V
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--infos', required=True)
@@ -67,33 +101,7 @@ def main():
         if a.skip_existing and path.exists():
             print('skip', name)
             continue
-        L2V = np.asarray(calib[name]['extrinsic'], np.float64).reshape(4, 4).astype(np.float32)
-        scene = Scene(scene_name=name)
-        frames = sorted(seqs[name], key=lambda i: i['point_cloud']['sample_idx'])
-        assert [i['point_cloud']['sample_idx'] for i in frames] == list(range(len(frames))), \
-            f'{name}: sample_idx is not 0..N-1, LiT appends frames sequentially'
-        if a.max_frames:
-            frames = frames[:a.max_frames]
-        for k, inf in enumerate(frames):
-            raw = np.load(Path(a.data) / name / ('%04d.npy' % inf['point_cloud']['sample_idx']))
-            counts = np.asarray(inf['num_points_of_each_lidar'], np.int64)
-            assert counts.sum() == len(raw), f'{name} {k}: per-lidar counts do not match the file'
-            top = raw[:counts[0]]
-            top = top[top[:, 5] == -1][:, :5].astype(np.float32)
-            top[:, 3] = np.tanh(top[:, 3])
-            an = inf['annos']
-            keep = [i for i, n in enumerate(an['name']) if n in LABEL]
-            if keep:
-                b = np.asarray(an['gt_boxes_lidar'], np.float32)[keep, :7]
-                lab = np.array([LABEL[an['name'][i]] for i in keep], np.float32)[:, None]
-                boxes = np.concatenate([b, lab], 1).astype(np.float32)
-                ids = [str(an['obj_ids'][i]) for i in keep]
-            else:
-                boxes, ids = np.zeros((0, 8), np.float32), []
-            scene.append_frame(Frame(scene_name=name, frame_index=k,
-                                     frame_pose=np.asarray(inf['pose'], np.float32).reshape(4, 4),
-                                     lidar_to_vehicle_poses=[L2V], num_points_of_each_lidar=[len(top)],
-                                     local_points=top, local_bboxes=boxes, object_ids=ids), check_valid=True)
+        scene, _ = build_scene(name, seqs[name], a.data, calib, a.max_frames)
         scene.save(path)
         print(f'{name}: {len(scene)} frames -> {path}', flush=True)
 

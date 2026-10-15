@@ -14,5 +14,5 @@
 _BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-waymo.yaml
 DATA_CONFIG:
     LIT_TRANSLATED:
-        DIR: /home/koyama/data/lit/data/sim_nuscenes_v1
+        DIR: /home/koyama/data/lit/data/sim_nuscenes
         KEEP_CLASSES: ['Vehicle']   # Waymo names. LiT erases pedestrians / cyclists: a kept box there labels bare ground

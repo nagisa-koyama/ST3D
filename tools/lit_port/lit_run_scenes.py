@@ -62,6 +62,15 @@ def main():
             print(f'[stage fg] {n} {time.time() - t:.1f} s', flush=True)
     if 'sim' in stages:
         m = importlib.import_module('lit_tools.lit_04_sim')
+        # LiT's CPU engine returns float64 points / zero incident angles, and BaseContainer asserts float32 (the authors ray
+        # cast on the GPU): cast at construction. Values are unchanged; float64 -> float32 only (job 28676).
+        import numpy as np
+        _SimFrame = m.SimFrame
+
+        def _SimFrame32(**kw):
+            return _SimFrame(**{k: (v.astype(np.float32) if isinstance(v, np.ndarray) and v.dtype == np.float64 else v)
+                                for k, v in kw.items()})
+        m.SimFrame = _SimFrame32
         if a.cpu:
             from lit.raycast_engine_cpu import RaycastEngineCPU
             eng = RaycastEngineCPU()
