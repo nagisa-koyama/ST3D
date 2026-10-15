@@ -117,3 +117,23 @@ def test_hook_serves_the_translated_cloud_without_the_stored_file(tmp_path):
     ds.training = False                      # evaluation never uses translated frames: it reaches the stored-file path
     with pytest.raises(Exception):
         ds.get_lidar_with_sweeps(info)
+
+
+def test_keep_classes_drops_the_classes_lit_erased():
+    from pcdet.datasets.waymo.waymo_lit import keep_classes_mask
+    names = np.array(['Vehicle', 'Pedestrian', 'Cyclist', 'Vehicle', 'Sign'])
+    assert list(keep_classes_mask(names, ['Vehicle'])) == [True, False, False, True, False]
+    assert keep_classes_mask(names, None).all()
+    assert keep_classes_mask(np.array([]), ['Vehicle']).shape == (0,)
+
+
+def test_the_row_config_keeps_vehicles_only(monkeypatch):
+    """Pre-declared handling (20261015_02 amendment 1): a config that loses KEEP_CLASSES would train erased pedestrians as
+    positives on bare ground."""
+    from pcdet.config import cfg_from_yaml_file
+    monkeypatch.chdir(Path(__file__).resolve().parent.parent / 'tools')       # _BASE_CONFIG_ paths are relative to tools/
+    cfg = EasyDict()
+    cfg_from_yaml_file('cfgs/da-ieee-access/centerpoint-lit-waymo2nuscenes.yaml', cfg)
+    assert list(cfg.DATA_CONFIG.LIT_TRANSLATED.KEEP_CLASSES) == ['Vehicle']
+    assert cfg.DATA_CONFIG.get('RING_PATTERN', None) is None and cfg.DATA_CONFIG.get('MAX_SWEEPS', 1) in (1, None)
+    assert cfg.OPTIMIZATION.NUM_EPOCHS == 7

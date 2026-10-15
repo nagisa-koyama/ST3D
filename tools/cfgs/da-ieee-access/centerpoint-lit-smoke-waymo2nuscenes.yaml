@@ -1,0 +1,10 @@
+# SMOKE ONLY (experiments_md 20261015_02 step 3): centerpoint-lit-waymo2nuscenes on the two translated TRAIN sequences of
+# /home/koyama/data/lit/smoke (ImageSets/lit_smoke.txt). Never a training config.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-lit-waymo2nuscenes.yaml
+DATA_CONFIG:
+    DATA_SPLIT:
+        train: lit_smoke
+        test: val
+    LIT_TRANSLATED:
+        DIR: /home/koyama/data/lit/smoke/sim_nuscenes
+        KEEP_CLASSES: ['Vehicle']

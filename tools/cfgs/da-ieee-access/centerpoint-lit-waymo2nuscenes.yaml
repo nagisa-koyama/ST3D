@@ -1,0 +1,18 @@
+# Waymo -> nuScenes, trained on LiT's TRANSLATED frames (the legal LiT row of experiments_md 20261015_02, pre-declared
+# 2026-10-15 18:59 JST, commit 248956c): the source-only control centerpoint-sourceonly-waymo (26398) with ONE opt-in key,
+# LIT_TRANSLATED, which serves the nuScenes-style frame LiT's NKSR + DeepSDF + ray-cast translation made from each Waymo
+# TRAIN frame in place of the stored cloud (pcdet/datasets/waymo/waymo_lit.py). Compare 27807 (centerpoint-ringpattern-
+# waymo2nuscenes): the same family recipe, but the scan pattern there comes from thinning, here from re-simulation.
+#
+# Pre-declared in 20261015_02 (see it for the legality table): ray-drop OFF, no --enable_scaling, no SN (CenterPoint), beam
+# elevations LiT's table (re-measured on nuScenes TRAIN, max |diff| 0.037 deg <= the 0.10 rule), the FINAL epoch (7), Car
+# is the comparison: only Vehicle boxes are kept (KEEP_CLASSES; amendment 1 of 20261015_02), and the Vehicle boxes the
+# translation left empty are dropped by the zero-point filter (the loader sets the stored count to None). Reading, Car BEV AP_R40 on nuScenes val, ONE seed, against 27807 + 27840 (36.21) and C1 (30.92): +-3
+# bars, 1-3 AP unresolved. See the report.
+#
+# DIR is the directory of per-sequence `NNNN.npz` frames written by lit_port/lit_run_scenes.py (LiT's sim_nuscenes layout).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-waymo.yaml
+DATA_CONFIG:
+    LIT_TRANSLATED:
+        DIR: /home/koyama/data/lit/data/sim_nuscenes_v1
+        KEEP_CLASSES: ['Vehicle']   # Waymo names. LiT erases pedestrians / cyclists: a kept box there labels bare ground

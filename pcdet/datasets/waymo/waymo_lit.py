@@ -33,3 +33,14 @@ def load_translated(root, sequence, sample_idx):
     out = np.zeros((len(pts), 5), np.float32)
     out[:, :3] = pts
     return out
+
+
+def keep_classes_mask(gt_names, keep):
+    """Boolean mask of the boxes whose (Waymo) class name is in `keep`; `keep` None keeps all. LiT erases every non-vehicle
+    foreground object from the translated scene (lit_02 removes the points of all boxes, lit_03 puts back vehicles only), so
+    a Pedestrian / Cyclist box that still holds a point holds GROUND, not a pedestrian: trained as a positive it would be a
+    label on empty road (smoke, 2026-10-15: 45% of the sampled Pedestrian boxes passed the zero-point filter that way)."""
+    names = np.asarray(gt_names)
+    if keep is None:
+        return np.ones(len(names), bool)
+    return np.isin(names, list(keep))

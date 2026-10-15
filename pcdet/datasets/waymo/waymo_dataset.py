@@ -383,6 +383,14 @@ class WaymoDataset(DatasetTemplate):
             if self.dataset_cfg.get('USE_PSEUDO_LABEL', None) and self.training:
                 input_dict['gt_boxes'] = None
 
+            # LIT_TRANSLATED.KEEP_CLASSES (Waymo names, e.g. ['Vehicle']): drop the other classes' boxes. LiT erased those
+            # objects from the translated scene, so their boxes would label bare ground (waymo_lit.keep_classes_mask).
+            if getattr(self, 'lit_cfg', None) is not None and self.training \
+                    and self.lit_cfg.get('KEEP_CLASSES', None) is not None and input_dict['gt_boxes'] is not None:
+                from .waymo_lit import keep_classes_mask
+                m = keep_classes_mask(input_dict['gt_names'], self.lit_cfg.KEEP_CLASSES)
+                input_dict.update({'gt_names': input_dict['gt_names'][m], 'gt_boxes': input_dict['gt_boxes'][m]})
+
             # RING_PATTERN keeps ~10% of the cloud, so Waymo's stored per-box count (all returns, all lidars) no longer
             # says whether a box holds a point: 17.4% of Car training boxes would be empty and still trained as
             # positives (control 3.1%). A sensor with the target's pattern only yields labels with >= 1 point, so the
