@@ -276,6 +276,65 @@ def test_context_run_is_tagged_and_never_the_rule(tmp_path):
         W.stage_diagnose(argparse.Namespace(out_dir=str(tmp_path), direct_only=False))
 
 
+def test_waymo_count_merge_diagnose_end_to_end(tmp_path, monkeypatch):
+    import argparse
+    import json
+    W = _load('pseudo_label_propagation_waymo')
+    seq = 'segment-y_with_camera_labels'
+    (tmp_path / 'wd' / seq).mkdir(parents=True)
+    Ms = ego_poses(3)
+    rng = np.random.default_rng(1)
+    infos, ps = [], {}
+    for i, M in enumerate(Ms):
+        fid = f'{seq}_{10 * i:03d}'
+        car_local = local_box(CAR_G, M)
+        infos.append({'frame_id': fid, 'pose': M, 'point_cloud': {'lidar_sequence': seq, 'sample_idx': 10 * i},
+                      'annos': {'name': np.array(['Vehicle']), 'gt_boxes_lidar': car_local[None].copy(),
+                                'num_points_in_gt': np.array([50]), 'obj_ids': np.array(['car0'])}})
+        gx, gy = np.meshgrid(np.arange(-70, 70, 0.5), np.arange(-20, 20, 0.5))
+        ground = np.stack([gx.ravel(), gy.ravel(), np.zeros(gx.size)], 1)
+        c, s = np.cos(car_local[6]), np.sin(car_local[6])
+        u, v = rng.uniform(-2, 2, 200), rng.uniform(-0.9, 0.9, 200)
+        body = np.stack([car_local[0] + u * c - v * s, car_local[1] + u * s + v * c, rng.uniform(0.5, 1.4, 200)], 1)
+        pts = np.concatenate([ground, body])
+        pf = np.concatenate([pts, np.zeros((len(pts), 2)), -np.ones((len(pts), 1))], 1).astype(np.float32)
+        np.save(tmp_path / 'wd' / seq / ('%04d.npy' % (10 * i)), pf)
+        rows = [row([-30, 0, 0, .6, .6, 1.7, 0], -2, 0.25), row([10, 5, 0.8, 4, 2, 1.5, 0], 1, 0.3)]
+        if i >= 1:
+            rows.append(row(car_local, 1, 0.9))
+        ps[fid] = {'gt_boxes': np.array(rows, dtype=np.float64), 'cls_scores': np.array([r[8] for r in rows], np.float32),
+                   'iou_scores': np.array([r[8] for r in rows], np.float32), 'memory_counter': np.zeros(len(rows)),
+                   'teacher_classes': np.array(['Ignored', 'Car', 'Car'][:len(rows)])}
+    pickle.dump(infos, open(tmp_path / 'wd' / seq / f'{seq}.pkl', 'wb'))
+    pickle.dump(ps, open(tmp_path / 'ps.pkl', 'wb'))
+    calib = {'s_conf': 0.5, 'd_assoc': 0.5, 'd_init': 10.0, 'd_cv': 1.0, 'S': {'q': 0.0, 'H': 2}, 'D': {'q': 0.0, 'H': 1}}
+    json.dump(calib, open(tmp_path / 'c.json', 'w'))
+    monkeypatch.setattr(W, 'WAYMO', tmp_path / 'wd')
+    ns = dict(calib=str(tmp_path / 'c.json'), ps=str(tmp_path / 'ps.pkl'), out_dir=str(tmp_path / 'o'),
+              ps_out=str(tmp_path / 'pso'), shard=0, num_shards=1, context=None, direct_only=False)
+    W.stage_count(argparse.Namespace(**ns))
+    W.stage_merge(argparse.Namespace(**ns))
+    tab = json.load(open(tmp_path / 'o' / 'label_free.json'))
+    assert tab['frames'] == 3 and tab['J1'] is True
+    assert sum(tab['S']['pos_per_frame_by_bin']) == pytest.approx(1 / 3)  # one positive, in frame 0
+    out = pickle.load(open(tmp_path / 'pso' / 'S' / 'ps_label_e0.pkl', 'rb'))
+    f0 = f'{seq}_000'
+    assert np.array_equal(out[f0]['gt_boxes'][:2], ps[f0]['gt_boxes']) and list(out[f0]['gt_boxes'][:, 7]) == [-2, 1, 1]
+    assert np.array_equal(out[f'{seq}_010']['gt_boxes'], ps[f'{seq}_010']['gt_boxes'])
+    W.stage_diagnose(argparse.Namespace(**ns))
+    dg = json.load(open(tmp_path / 'o' / 'diagnosis.json'))
+    assert dg['precision']['S_pos']['pooled'] == 1.0 and dg['static_cluster_calls']['one_static_object'] == 1
+    # a context run writes no augmented file and refuses the full diagnosis
+    ctx = dict(ns, out_dir=str(tmp_path / 'oc'), ps_out=str(tmp_path / 'psc'), context='2,1,0.0')
+    W.stage_count(argparse.Namespace(**ctx))
+    W.stage_merge(argparse.Namespace(**ctx))
+    assert not (tmp_path / 'psc').exists()
+    with pytest.raises(AssertionError):
+        W.stage_diagnose(argparse.Namespace(**ctx))
+    W.stage_diagnose(argparse.Namespace(**dict(ctx, direct_only=True)))
+    assert 'S_pos' not in json.load(open(tmp_path / 'oc' / 'diagnosis.json'))['precision']
+
+
 def test_waymo_get_lidar_filters_nlz_and_range(tmp_path):
     pf = np.array([[1, 2, 0.5, 0.3, 0.1, -1], [3, 4, 0.5, 0.3, 0.1, 1], [80, 0, 0.5, 0.3, 0.1, -1],
                    [5, 5, 5.0, 0.3, 0.1, -1]], dtype=np.float32)

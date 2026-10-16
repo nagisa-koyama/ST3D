@@ -219,6 +219,15 @@ def stage_merge(args):
         far = slice(3, nb)  # >= 30 m
         tab[V]['pos_gain_ge30_rel'] = float(pos[far].sum() / max(direct_bin[far].sum() / F, 1e-9))
         tab[V]['pos_gain_50_75_rel'] = float(pos[5] / max(direct_bin[5] / F, 1e-9))
+        # The NMS among candidates runs in ascending Delta, so the set at H = h is exactly the round(Delta) <= h subset
+        # of this run: one run gives the gain at every smaller horizon.
+        by_h = []
+        for h in range(1, int(calib[V]['H'] or 0) + 1):
+            ph = per_bin(boxes, [(c == 'pos') & (np.round(r[f'{V}_delta']) <= h) for c, r in zip(cls, recs)]) / F
+            by_h.append({'H': h, 'pos_per_frame_by_bin': ph.tolist(),
+                         'pos_gain_ge30_rel': float(ph[far].sum() / max(direct_bin[far].sum() / F, 1e-9)),
+                         'pos_gain_50_75_rel': float(ph[5] / max(direct_bin[5] / F, 1e-9))})
+        tab[V]['by_H'] = by_h
     # J1 / J2 (20261017_02 §7)
     tab['J1'] = bool((calib['S']['H'] or 0) >= 1)
     tab['J2'] = bool(tab['S']['pos_gain_ge30_rel'] >= 0.10)
@@ -241,6 +250,8 @@ def stage_merge(args):
                   f'   empty     ' + '  '.join(f'{x:.3f}' for x in t['empty_per_frame_by_bin']),
                   f'   positives over direct: >=30 m +{100 * t["pos_gain_ge30_rel"]:.1f}%, 50-75 m +{100 * t["pos_gain_50_75_rel"]:.1f}%; '
                   f'Delta histogram {t["delta_hist"]}; ignored area share {100 * t["ignored_area_share"]:.3f}%']
+        lines += [f'   at H = {b["H"]}: positives over direct >=30 m +{100 * b["pos_gain_ge30_rel"]:.1f}%, '
+                  f'50-75 m +{100 * b["pos_gain_50_75_rel"]:.1f}%' for b in t['by_H']]
     lines += [f'k_S {tab["k_S"]}  k_D {tab["k_D"]}; static clusters {tab["static_clusters"]}, CV tracks {tab["cv_tracks"]}',
               f'J1 {tab["J1"]}  J2 {tab["J2"]}']
     open(d / 'label_free.txt', 'w').write('\n'.join(lines) + '\n')
