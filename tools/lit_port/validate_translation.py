@@ -1,6 +1,6 @@
 """Completeness check of the full LiT translation (experiments_md 20261015_02 §7), before the row may train. Fails loudly (exit 1)
 on ANY problem; there is no fallback. Plain numpy.
-    python3 -I lit_port/validate_translation.py <root> <plan.json> <out.json>
+    python3 -I lit_port/validate_translation.py <root> <plan.json> <out.json> [sim_dir_name=sim_nuscenes] [stage=sim]
 Checks: every plan sequence has done/<seq>.gpu and .sim and no failed/ marker; its sim directory holds EXACTLY the sampled
 sample_idx files (the frames WaymoDataset will read at SAMPLED_INTERVAL 2), each loadable by the training hook's own
 `load_translated` (shape, finite, frame_index); the totals match the plan (79,041 declared). Also the per-frame point count
@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from pcdet.datasets.waymo.waymo_lit import load_translated  # noqa: E402
 
 
-def main(root, plan, out):
+def main(root, plan, out, sim_name='sim_nuscenes', sim_stage='sim'):
     root = Path(root)
     plan = json.load(open(plan))
     problems, counts, empty, n = [], [], 0, 0
@@ -24,17 +24,17 @@ def main(root, plan, out):
         problems.append(f'failed markers: {failed[:5]} ({len(failed)})')
     for s in plan['sequences']:
         nm = s['name']
-        for st in ('gpu', 'sim'):
+        for st in ('gpu', sim_stage):
             if not (root / 'done' / f'{nm}.{st}').exists():
                 problems.append(f'{nm}: no done.{st}')
-        d = root / 'sim_nuscenes' / nm
+        d = root / sim_name / nm
         have = sorted(int(p.stem) for p in d.glob('*.npz')) if d.is_dir() else []
         if have != s['sampled']:
             problems.append(f'{nm}: {len(have)} files, plan {len(s["sampled"])}')
             continue
         for k in s['sampled']:
             try:
-                p = load_translated(root / 'sim_nuscenes', nm, k)
+                p = load_translated(root / sim_name, nm, k)
             except Exception as e:  # noqa: BLE001
                 problems.append(f'{nm} {k}: {e}')
                 continue
@@ -52,4 +52,4 @@ def main(root, plan, out):
 
 
 if __name__ == '__main__':
-    main(*sys.argv[1:4])
+    main(*sys.argv[1:6])

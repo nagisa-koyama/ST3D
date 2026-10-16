@@ -17,8 +17,8 @@ def main():
     root = Path(sys.argv[1])
     clear_failed = '--clear-failed' in sys.argv
     cache, n = {}, 0
-    for stage in ('gpu', 'sim'):
-        for c in (root / 'claims' / stage).glob('*'):
+    for stage in ('gpu', 'sim', 'simrd'):
+        for c in (root / 'claims' / stage).glob('*') if (root / 'claims' / stage).is_dir() else []:
             if (root / 'done' / f'{c.name}.{stage}').exists():
                 continue
             owner = (c / 'owner').read_text() if (c / 'owner').exists() else 'x.0.x'

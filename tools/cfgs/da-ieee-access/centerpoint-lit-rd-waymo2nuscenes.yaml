@@ -1,0 +1,10 @@
+# Waymo -> nuScenes, LiT translation WITH a label-free ray-drop (the second legal LiT row, experiments_md 20261017_01, pre-declared
+# 2026-10-17). Identical to centerpoint-lit-waymo2nuscenes.yaml (28955) except DIR: the same NKSR / DeepSDF reconstructions,
+# ray cast again with a range-bin keep-probability fitted ONCE on unlabelled nuScenes TRAIN scans (lit_port/ray_drop.py,
+# /home/koyama/data/lit/data/ray_drop_v1.json). No scaling, no SN, Car is the comparison, the FINAL epoch (7). Readings:
+# 20261017_01 §6 (+-3 bars, ONE seed; against 27807 + 27840 36.21, C1 30.92, source-only 27.67 and the first LiT row 27.39).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-waymo.yaml
+DATA_CONFIG:
+    LIT_TRANSLATED:
+        DIR: /home/koyama/data/lit/data/sim_nuscenes_rd
+        KEEP_CLASSES: ['Vehicle']   # Waymo names. LiT erases pedestrians / cyclists: a kept box there labels bare ground

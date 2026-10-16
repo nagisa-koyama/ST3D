@@ -38,6 +38,7 @@ class Queue:
             (self.root / d).mkdir(parents=True, exist_ok=True)
 
     def claim(self, stage, seq):
+        (self.root / 'claims' / stage).mkdir(parents=True, exist_ok=True)
         try:
             os.mkdir(self.root / 'claims' / stage / seq)
         except FileExistsError:
@@ -158,7 +159,7 @@ def cast_fast(bg_scene, fg_mesh, lidar, o3d, np):
     return points[np.linalg.norm(points - center, axis=1) < lidar.intrinsics.max_range]
 
 
-def sim_sequence(a, paths, s, engine, frames=None):
+def sim_sequence(a, paths, s, engine, frames=None, drop=None):
     """Returns {frame_index: SimFrame}; `frames` overrides the plan's sampled list (checks)."""
     import numpy as np
     import open3d as o3d
@@ -198,9 +199,13 @@ def sim_sequence(a, paths, s, engine, frames=None):
                 pts = cast_fast(bg_scene, fg_mesh, lidar, o3d, np)
         local = ct.transform.transform_points(pts, ct.convert.pose_to_T(poses[k]))
         f32 = lambda x: x.astype(np.float32) if isinstance(x, np.ndarray) and x.dtype == np.float64 else x  # noqa: E731
-        out[k] = SimFrame(frame_index=k, frame_pose=poses[k], local_points=f32(local),
+        local = f32(local)
+        if drop is not None:      # label-free ray-drop (20261017_01): a post-filter on the hit rays, range-bin keep probability
+            import ray_drop
+            local = local[ray_drop.keep_mask(local, L2V[:3, 3], drop['p'], n, k)]
+        out[k] = SimFrame(frame_index=k, frame_pose=poses[k], local_points=local,
                           local_bboxes=f32(fg_scene.get_frame_local_bboxes(frame_index=k, src_to_dst_scales=None)),
-                          incident_angles=np.zeros(len(pts), np.float32))
+                          incident_angles=np.zeros(len(local), np.float32))
     return out
 
 
@@ -209,18 +214,22 @@ def run_sim(a, plan, q):
     paths = lit_setup(a, names)
     ndone, nfail = 0, 0
     t_start = time.time()
+    drop = json.load(open(a.ray_drop)) if a.ray_drop else None
+    stage = 'simrd' if drop else 'sim'                       # separate claims / done markers: the no-drop outputs stay untouched
+    out_dir = Path(a.root) / (a.out_name if drop else 'sim_nuscenes')
+    assert not drop or a.out_name != 'sim_nuscenes', 'ray-drop output must go to a NEW directory'
     from lit.containers.sim_scene import SimScene
     while True:
         if a.max_seqs and ndone >= a.max_seqs:
             break
-        todo = [s for s in plan['sequences'] if not q.done('sim', s['name']) and
-                not (q.root / 'claims' / 'sim' / s['name']).exists()]
+        todo = [s for s in plan['sequences'] if not q.done(stage, s['name']) and
+                not (q.root / 'claims' / stage / s['name']).exists()]
         if not todo:
             break
         ready = [s for s in todo if q.done('gpu', s['name'])]
         picked = None
         for s in ready:
-            if q.claim('sim', s['name']):
+            if q.claim(stage, s['name']):
                 picked = s
                 break
         if picked is None:
@@ -234,22 +243,22 @@ def run_sim(a, plan, q):
         for attempt in (1, 2):
             t0 = time.time()
             try:
-                frames = sim_sequence(a, paths, picked, a.engine)
+                frames = sim_sequence(a, paths, picked, a.engine, drop=drop)
                 sc = SimScene()
                 for k in sorted(frames):
                     sc.append_frame(frames[k])
-                d = paths.sim_nuscenes_dir / n
+                d = out_dir / n
                 if d.exists():
                     shutil.rmtree(d)
                 sc.save_sim_frames(d)
-                q.mark_done('sim', n, {'frames': len(frames), 's': time.time() - t0, 'engine': a.engine, 'owner': q.owner})
-                log(f'[sim] {n} {len(frames)} frames {time.time() - t0:.0f}s')
+                q.mark_done(stage, n, {'frames': len(frames), 's': time.time() - t0, 'engine': a.engine, 'owner': q.owner})
+                log(f'[{stage}] {n} {len(frames)} frames {time.time() - t0:.0f}s')
                 ndone += 1
                 break
             except Exception:
-                log(f'[sim] {n} attempt {attempt} FAILED\n{traceback.format_exc()}')
+                log(f'[{stage}] {n} attempt {attempt} FAILED\n{traceback.format_exc()}')
                 if attempt == 2:
-                    q.mark_failed('sim', n, traceback.format_exc())
+                    q.mark_failed(stage, n, traceback.format_exc())
                     nfail += 1
     log(f'sim worker done: {ndone} sequences, {nfail} failed')
     return nfail
@@ -266,6 +275,8 @@ def main():
     ap.add_argument('--calib', default='/home/koyama/data/waymo_top_calib/top_calib.pkl')
     ap.add_argument('--scene_tmp', default=None)
     ap.add_argument('--engine', default='fast', choices=['fast', 'legacy'])
+    ap.add_argument('--ray_drop', default=None, help='ray_drop json (20261017_01): sim role only; output to --out_name')
+    ap.add_argument('--out_name', default='sim_nuscenes_rd')
     ap.add_argument('--tag', default='0')
     ap.add_argument('--max_seqs', type=int, default=0)
     ap.add_argument('--hb_timeout', type=int, default=1200)
