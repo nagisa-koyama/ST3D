@@ -83,8 +83,9 @@ def shift_of(cfg_path):
 
 # ----------------------------------------------------------------------------------------------- prep
 
-def stage_prep(args):
-    t0 = time.time()
+def load_source():
+    """Every val keyframe as a record: teacher rows (raw and with 27704's cuts), frame -> global M, GT for matching,
+    annotated cars by instance. Returns (frames, by_scene, shift, score_th, neg_th)."""
     score_th, neg_th = load_cuts()
     shifts = {p: shift_of(v['cfg']) for p, v in PLATFORMS.items()}
     assert np.allclose(shifts['n008'], shifts['n015']), shifts
@@ -128,10 +129,40 @@ def stage_prep(args):
             # every annotated car with >= 1 point, global BEV, for the static / moving annotation
             'car_inst_all': np.array([ann2inst.get(str(t)) for t in toks[car & (npts >= 1)]], object) if len(gtb) else np.zeros(0, object),
             'car_glob_all': gglob[car & (npts >= 1)][:, :2] if len(gtb) else np.zeros((0, 2)),
+            # annotated cars with NO lidar point in this keyframe (kept in the infos by their radar points)
+            'car_inst_zero': np.array([ann2inst.get(str(t)) for t in toks[car & (npts == 0)]], object) if len(gtb) else np.zeros(0, object),
         }
         by_scene.setdefault(tok2scene[info['token']], []).append(len(frames))
         frames.append(rec)
     del infos, ann2inst
+    return frames, by_scene, shift, score_th, neg_th
+
+
+def phases_of(frames, by_scene):
+    """Each scene's keyframes in time order, split into its two 1 Hz phases (even / odd index)."""
+    phases = []
+    for scene, ix in sorted(by_scene.items()):
+        ix = sorted(ix, key=lambda i: frames[i]['t'])
+        phases += [ix[0::2], ix[1::2]]
+    return [ph for ph in phases if ph]
+
+
+def attach_seeds(frames, s_conf):
+    """Per frame: seed row indices, the GT instance each seed matched (None if none), seeds' global BEV centres."""
+    for f in frames:
+        r = f['raw']
+        sidx = np.nonzero((r[:, 7] == P.CAR_LABEL) & (r[:, 8] >= s_conf))[0]
+        m = P.match_to_gt_index(r[sidx, :2], r[sidx, 8], f['gt_xy'])
+        f['seed_idx'] = sidx
+        f['seed_inst'] = np.array([f['gt_inst'][j] if j >= 0 else None for j in m], object)
+        f['seed_glob'] = P.transform_boxes(r[sidx, :7], f['M'])[:, :2] if len(sidx) else np.zeros((0, 2))
+
+
+def stage_prep(args):
+    t0 = time.time()
+    frames, by_scene, shift, score_th, neg_th = load_source()
+    print(f'cuts SCORE {score_th.tolist()} NEG {neg_th.tolist()}; SHIFT_COOR {shift.tolist()}; '
+          f'{len(frames)} val keyframes with teacher predictions', flush=True)
 
     # R1 / R3: precision of the direct Car predictions by score threshold, over all val keyframes (rule B matching)
     sc, hit = [], []
@@ -153,21 +184,8 @@ def stage_prep(args):
     print(f'R1 s_conf = {s_conf}; R3 P_ref (Car >= {CAR_CUT}) = {P_ref:.4f} over {(sc >= CAR_CUT).sum()} boxes', flush=True)
     assert s_conf is not None, 'R1: no confident score - no seeds, no propagation (null result)'
 
-    # phases: each scene's keyframes in time order, split into even / odd index
-    phases = []
-    for scene, ix in sorted(by_scene.items()):
-        ix = sorted(ix, key=lambda i: frames[i]['t'])
-        phases += [ix[0::2], ix[1::2]]
-    phases = [ph for ph in phases if ph]
-
-    # seeds matched to GT instance, per frame
-    for f in frames:
-        r = f['raw']
-        sidx = np.nonzero((r[:, 7] == P.CAR_LABEL) & (r[:, 8] >= s_conf))[0]
-        m = P.match_to_gt_index(r[sidx, :2], r[sidx, 8], f['gt_xy'])
-        f['seed_idx'] = sidx
-        f['seed_inst'] = np.array([f['gt_inst'][j] if j >= 0 else None for j in m], object)
-        f['seed_glob'] = P.transform_boxes(r[sidx, :7], f['M'])[:, :2] if len(sidx) else np.zeros((0, 2))
+    phases = phases_of(frames, by_scene)
+    attach_seeds(frames, s_conf)
 
     def inst_pos(f):
         return {i: xy for i, xy in zip(f['car_inst_all'], f['car_glob_all']) if i is not None}
@@ -456,14 +474,130 @@ def stage_search(args):
     print('\n'.join(lines), flush=True)
 
 
+def stage_explain(args):
+    """SOURCE-side breakdown of the S-added positives (nuScenes VAL labels only; legal). Why they are true or false:
+    the cluster's seeds matched no GT car (a persistent false positive), several GT instances (an association error),
+    one instance that moved (> STATIC_GT_M over the member frames), or one static instance - and then whether that
+    instance is visible in frame g (>= 1 lidar point), annotated with no lidar point, or not annotated at all there."""
+    out = Path(args.out_dir)
+    calib = json.load(open(out / 'calibration.json'))
+    prep = pickle.load(open(out / 'prep.pkl', 'rb'))['frames']
+    counts = {}
+    for p in PLATFORMS:
+        counts.update(pickle.load(open(out / f'counts_{p}.pkl', 'rb')))
+    frames, by_scene, _, _, _ = load_source()
+    assert [f['fid'] for f in frames] == [f['fid'] for f in prep]
+    s_conf, d_assoc = calib['s_conf'], calib['d_assoc']
+    attach_seeds(frames, s_conf)
+    for f in frames:
+        f['S_cands'] = []
+    cluster_cat = {}
+    for pi, ph in enumerate(phases_of(frames, by_scene)):
+        seq = [P.Frame(frames[i]['fid'], frames[i]['t'], frames[i]['M'], frames[i]['rows']) for i in ph]
+        clusters, _ = P.static_clusters(seq, s_conf, d_assoc)
+        for ci, c in enumerate(clusters):
+            if not c['static']:
+                continue
+            insts = []
+            for fi, ri in c['members']:
+                f = frames[ph[fi]]
+                k = np.nonzero(f['seed_idx'] == ri)[0]
+                insts.append(f['seed_inst'][k[0]] if len(k) else None)
+            if all(i is None for i in insts):
+                cat, inst = 'persistent_fp', None
+            elif any(i is None for i in insts) or len(set(insts)) > 1:
+                cat, inst = 'mixed', None
+            else:
+                inst = insts[0]
+                pos = []
+                for fi, _ in c['members']:
+                    f = frames[ph[fi]]
+                    j = np.nonzero(f['car_inst_all'] == inst)[0]
+                    if len(j):
+                        pos.append(f['car_glob_all'][j[0]])
+                pos = np.array(pos)
+                moved = len(pos) >= 2 and np.max(np.hypot(pos[:, None, 0] - pos[None, :, 0],
+                                                          pos[:, None, 1] - pos[None, :, 1])) > STATIC_GT_M
+                cat = 'one_moving' if moved else 'one_static'
+            cluster_cat[(pi, ci)] = (cat, inst)
+        for g, cl in P.propagate_static(seq, clusters, H_MAX).items():
+            for c in cl:
+                c['phase'] = pi
+            frames[ph[g]]['S_cands'] += cl
+    for f, q_ in zip(frames, prep):
+        a = np.array([c['box'] for c in f['S_cands']]).reshape(-1, 7)
+        b = np.array([c['box'] for c in q_['S_cands']]).reshape(-1, 7)
+        assert a.shape == b.shape and np.allclose(a, b), f'candidates differ from prep in {f["fid"]}'
+        for i, c in enumerate(f['S_cands']):
+            c['cid'] = i
+        f['S_counts'] = np.asarray(counts[f['fid']][1])
+    dn = np.concatenate([np.asarray(counts[f['fid']][0]) for f in frames])
+    dr = np.concatenate([P.range_of(f['rows'][(f['rows'][:, 7] == P.CAR_LABEL) & (f['rows'][:, 8] >= CAR_CUT)])
+                         for f in frames])
+    for f in frames:
+        r = f['rows']
+        d = r[(r[:, 7] == P.CAR_LABEL) & (r[:, 8] >= CAR_CUT)]
+        d = d[P.in_pc_range(d)]
+        _, f['claimed'] = P.greedy_match(d[:, :2], d[:, 8], f['gt_xy'])
+    causes = ('TP', 'persistent_fp', 'mixed', 'one_moving', 'static_absent_in_g', 'static_zero_lidar_in_g',
+              'static_visible_in_g')
+    res = {}
+    lines = [f'SOURCE breakdown of S-added positives (nuScenes VAL labels), s_conf {s_conf} d_assoc {d_assoc}, '
+             f'P_ref {calib["P_ref"]:.3f}', 'H q | positives | ' + ' | '.join(causes) + ' | precision by range bin']
+    for H in (1, 2, 3):
+        for q in (0.0, 0.5):
+            ktab = P.k_table(dn, dr, q)
+            tally = {c: 0 for c in causes}
+            rb_n, rb_tp = np.zeros(len(P.RANGE_NAMES), int), np.zeros(len(P.RANGE_NAMES), int)
+            for f in frames:
+                added, _, _ = P.dedup(f['S_cands'], f['rows'][:, :7], H)
+                if not added:
+                    continue
+                boxes = np.array([a['box'] for a in added])
+                cls = P.classify(f['S_counts'][[a['cid'] for a in added]], P.range_of(boxes), ktab)
+                pos = [i for i in range(len(added)) if cls[i] == 'pos']
+                if not pos:
+                    continue
+                hit, _ = P.greedy_match(boxes[pos, :2], np.array([added[i]['score'] for i in pos]), f['gt_xy'],
+                                        used=f['claimed'])
+                for i, h in zip(pos, hit):
+                    b = P.range_bin(P.range_of(boxes[i:i + 1]))[0]
+                    rb_n[b] += 1; rb_tp[b] += int(h)
+                    if h:
+                        tally['TP'] += 1
+                        continue
+                    cat, inst = cluster_cat[(added[i]['phase'], added[i]['src'])]
+                    if cat != 'one_static':
+                        tally[cat] += 1
+                    elif inst in set(f['car_inst_all']):
+                        tally['static_visible_in_g'] += 1
+                    elif inst in set(f['car_inst_zero']):
+                        tally['static_zero_lidar_in_g'] += 1
+                    else:
+                        tally['static_absent_in_g'] += 1
+            n = sum(tally.values())
+            res[f'H{H}_q{q:.2f}'] = {'positives': n, **tally, 'range_n': rb_n.tolist(), 'range_tp': rb_tp.tolist()}
+            pr = ' '.join(f'{(t / m if m else float("nan")):.2f}({m})' for t, m in zip(rb_tp, rb_n))
+            lines.append(f'{H} {q:.2f} | {n} | ' + ' | '.join(f'{tally[c]} ({100 * tally[c] / max(n, 1):.0f}%)'
+                                                              for c in causes) + f' | {pr}')
+    cats = {}
+    for cat, _ in cluster_cat.values():
+        cats[cat] = cats.get(cat, 0) + 1
+    res['static_clusters_by_category'] = cats
+    lines.append(f'static clusters by category: {cats}')
+    json.dump(res, open(out / 'explain.json', 'w'), indent=1)
+    open(out / 'explain.txt', 'w').write('\n'.join(lines) + '\n')
+    print('\n'.join(lines), flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('stage', choices=['prep', 'points', 'search'])
+    ap.add_argument('stage', choices=['prep', 'points', 'search', 'explain'])
     ap.add_argument('--out_dir', required=True)
     ap.add_argument('--platform', choices=list(PLATFORMS))
     ap.add_argument('--workers', type=int, default=6)
     args = ap.parse_args()
-    {'prep': stage_prep, 'points': stage_points, 'search': stage_search}[args.stage](args)
+    {'prep': stage_prep, 'points': stage_points, 'search': stage_search, 'explain': stage_explain}[args.stage](args)
 
 
 if __name__ == '__main__':

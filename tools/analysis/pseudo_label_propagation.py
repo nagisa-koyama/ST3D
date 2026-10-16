@@ -325,7 +325,7 @@ def propagate_static(frames, clusters, H):
             if g in member:
                 continue
             delta = float(np.min(np.abs(mt - f.t)))
-            if delta > H + 1e-6:
+            if not within_horizon(delta, H):
                 continue
             box = transform_boxes(c['anchor'][None, :], np.linalg.inv(f.M))[0]
             if not in_pc_range(box[None])[0]:
@@ -412,7 +412,7 @@ def propagate_tracks(frames, tracks, H):
             if g in own:
                 continue
             delta = float(np.min(np.abs(ts - f.t)))
-            if delta > H + 1e-6:
+            if not within_horizon(delta, H):
                 continue
             box = transform_boxes(track_box_at(tr, f.t)[None, :], np.linalg.inv(f.M))[0]
             if not in_pc_range(box[None])[0]:
@@ -427,7 +427,7 @@ def dedup(cands, existing, H=np.inf, iou_thresh=DEDUP_IOU):
     `existing` (N, >=7): every box already labelled in the frame - the direct pseudo-labels of ANY class and sign, plus,
     for variant D, the S-added boxes. Candidates sorted by (delta asc, score desc) go through greedy NMS at iou_thresh.
     Returns (added list, n_dup_existing, n_dup_propagated)."""
-    cs = [c for c in cands if c['delta'] <= H + 1e-6]
+    cs = [c for c in cands if within_horizon(c['delta'], H)]
     if not cs:
         return [], 0, 0
     boxes = np.array([c['box'] for c in cs])
@@ -446,6 +446,13 @@ def dedup(cands, existing, H=np.inf, iou_thresh=DEDUP_IOU):
 
 def delta_bin(delta):
     return int(max(1, round(float(delta))))
+
+
+def within_horizon(delta, H):
+    """Delta (s) is ROUNDED to the nearest integer before the horizon cut (20261017_02 §2): a nuScenes 1 Hz phase step
+    is two keyframes, 1.0 s give or take the keyframe jitter, and a raw-seconds cut at H = 1 dropped about half of the
+    one-step candidates (amendment of 2026-10-17 03:50 JST, experiments_md 20261017_02 §11.1). On Waymo every step is exactly 1.0 s, so nothing changes."""
+    return np.isinf(H) or delta_bin(delta) <= H
 
 
 # ----------------------------------------------------------------------------------------------- output

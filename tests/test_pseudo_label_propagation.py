@@ -131,6 +131,20 @@ def test_moving_car_forms_no_static_cluster_and_cv_track_recovers_it():
     assert np.allclose(c['box'][:3], local_box(car_at(0), Ms[0])[:3], atol=1e-6)
 
 
+def test_horizon_cut_uses_the_rounded_delta():
+    # a nuScenes 1 Hz phase step is two keyframes, 1.0 s give or take the jitter: 1.04 s is one step
+    assert P.within_horizon(1.04, 1) and P.within_horizon(0.96, 1) and not P.within_horizon(1.6, 1)
+    assert P.within_horizon(10.4, 10) and not P.within_horizon(10.6, 10) and P.within_horizon(99.0, np.inf)
+    box = np.array([20.0, 0, 0.8, 4.5, 1.9, 1.6, 0])
+    added, _, _ = P.dedup([{'box': box, 'score': 0.9, 'delta': 1.04, 'src': 0}], np.zeros((0, 7)), H=1)
+    assert len(added) == 1
+    Ms = ego_poses(3)
+    frames = [P.Frame(f'j_{i:03d}', t, M, np.array([row(local_box(CAR_G, M), 1, 0.9)]) if i else np.zeros((0, 9)))
+              for i, (t, M) in enumerate(zip([0.0, 1.04, 2.07], Ms))]
+    clusters, _ = P.static_clusters(frames, 0.5, 0.5)
+    assert sorted(P.propagate_static(frames, clusters, H=1)) == [0]
+
+
 def test_cv_tracker_needs_three_observations():
     Ms = ego_poses(2)
     frames = [P.Frame(f'x_{i:03d}', float(i), M, np.array([row(local_box([5 + 5 * i, 0, 0.8, 4, 2, 1.5, 0], M), 1, .9)]))
