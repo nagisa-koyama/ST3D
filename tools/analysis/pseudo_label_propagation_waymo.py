@@ -94,6 +94,22 @@ def process_sequence(seq, fids, ps, calib, with_points=True):
     return recs, cl, len(tracks)
 
 
+def load_calib(args):
+    """The source calibration, or - with --context S_H,D_H,q - a stated NON-RULE setting for label-free context counts.
+
+    A context run is tagged CONTEXT_NOT_RULE in every output, writes no augmented pseudo-label file, and its records
+    may only be diagnosed with --direct_only: a Waymo-label diagnosis of non-rule propagated boxes would make any later
+    redesign of this idea label-influenced (experiments_md 20261017_02 §11)."""
+    calib = json.load(open(args.calib))
+    if getattr(args, 'context', None):
+        s_h, d_h, q = args.context.split(',')
+        calib = dict(calib)
+        calib['S'] = {'q': float(q), 'H': int(s_h)}
+        calib['D'] = {'q': float(q), 'H': int(d_h)}
+        calib['CONTEXT_NOT_RULE'] = True
+    return calib
+
+
 def stage_inspect(args):
     """(LABEL-FREE) structure of 27704's pseudo-label file and of the per-sequence infos it needs; no propagation."""
     ps = pickle.load(open(args.ps, 'rb'))
@@ -124,7 +140,7 @@ def stage_inspect(args):
 
 def stage_count(args):
     t0 = time.time()
-    calib = json.load(open(args.calib))
+    calib = load_calib(args)
     ps = pickle.load(open(args.ps, 'rb'))
     by_seq = {}
     for fid in ps:
@@ -148,7 +164,7 @@ def stage_count(args):
 
 def stage_merge(args):
     t0 = time.time()
-    calib = json.load(open(args.calib))
+    calib = load_calib(args)
     d = Path(args.out_dir)
     recs, clusters, n_tracks = [], {}, 0
     for i in range(args.num_shards):
@@ -206,10 +222,14 @@ def stage_merge(args):
     # J1 / J2 (20261017_02 §7)
     tab['J1'] = bool((calib['S']['H'] or 0) >= 1)
     tab['J2'] = bool(tab['S']['pos_gain_ge30_rel'] >= 0.10)
+    if calib.get('CONTEXT_NOT_RULE'):
+        tab['CONTEXT_NOT_RULE'] = f"S H={calib['S']['H']} D H={calib['D']['H']} q={calib['S']['q']}: not the rule's values"
+        tab['J1'] = tab['J2'] = 'not applicable (context run)'
     tab['created'] = time.strftime('%Y-%m-%d %H:%M %Z')
     json.dump(tab, open(d / 'label_free.json', 'w'), indent=1)
 
-    lines = [f'LABEL-FREE, Waymo TRAIN, {F} frames (27704 pseudo-labels); per frame by range bin {list(P.RANGE_NAMES)}',
+    lines = ([f'CONTEXT, NOT THE RULE: {tab["CONTEXT_NOT_RULE"]}'] if 'CONTEXT_NOT_RULE' in tab else []) + [
+             f'LABEL-FREE, Waymo TRAIN, {F} frames (27704 pseudo-labels); per frame by range bin {list(P.RANGE_NAMES)}',
              f'direct Car positives  ' + '  '.join(f'{x:.2f}' for x in tab['direct_car_per_frame'])]
     for V in ('S', 'D'):
         t = tab[V]
@@ -226,9 +246,9 @@ def stage_merge(args):
     open(d / 'label_free.txt', 'w').write('\n'.join(lines) + '\n')
     print('\n'.join(lines), flush=True)
 
-    # augmented files
+    # augmented files (never for a context run)
     by_fid = {r['fid']: r for r in recs}
-    for name, variants in (('S', ('S',)), ('SD', ('S', 'D'))):
+    for name, variants in ((() if calib.get('CONTEXT_NOT_RULE') else (('S', ('S',)), ('SD', ('S', 'D'))))):
         new = {}
         for fid, entry in ps.items():
             r = by_fid[fid]
@@ -247,7 +267,8 @@ def stage_merge(args):
         pickle.dump(new, open(od / 'ps_label_e0.pkl', 'wb'))
         n_add = sum(len(v['gt_boxes']) for v in new.values()) - sum(len(v['gt_boxes']) for v in ps.values())
         print(f'wrote {od / "ps_label_e0.pkl"}: {len(new)} frames, {n_add} added rows', flush=True)
-    pickle.dump({'records': recs, 'clusters': clusters}, open(d / 'merged.pkl', 'wb'))
+    pickle.dump({'records': recs, 'clusters': clusters, 'context': bool(calib.get('CONTEXT_NOT_RULE'))},
+                open(d / 'merged.pkl', 'wb'))
     print(f'merge done in {time.time() - t0:.0f} s', flush=True)
 
 
@@ -257,6 +278,9 @@ def stage_diagnose(args):
     d = Path(args.out_dir)
     m = pickle.load(open(d / 'merged.pkl', 'rb'))
     recs, clusters = m['records'], m['clusters']
+    assert args.direct_only or not m.get('context', False), \
+        'a context (non-rule) run may only be diagnosed with --direct_only (20261017_02 §11)'
+    variants = () if args.direct_only else ('S', 'D')
     nb = len(P.RANGE_NAMES)
     gt = {}
     for seq in sorted({seq_of(r['fid']) for r in recs}):
@@ -285,7 +309,7 @@ def stage_diagnose(args):
         pr['direct'][0] += np.bincount(P.range_bin(P.range_of(dbox)), minlength=nb)[:nb]
         pr['direct'][1] += np.bincount(P.range_bin(P.range_of(dbox[hit])), minlength=nb)[:nb]
         stats['rec_direct'] += np.bincount(gb[used], minlength=nb)[:nb]
-        for V in ('S', 'D'):
+        for V in variants:
             pos = r[f'{V}_cls'] == 'pos'
             b = r[f'{V}_box'][pos]
             h, used = P.greedy_match(b[:, :2], r[f'{V}_score'][pos], gxy, used=used)
@@ -304,7 +328,7 @@ def stage_diagnose(args):
             elif len(ib):
                 ign[V][0] += len(ib)
         # coverage: GT inside the union of positives and ignore regions (centre within the box footprint)
-        allb = np.concatenate([dbox, r['S_box'], r['D_box']]).reshape(-1, 7)
+        allb = np.concatenate([dbox] + [r[f'{V}_box'] for V in variants]).reshape(-1, 7)
         if len(allb) and len(gxy):
             cov = np.zeros(len(gxy), bool)
             for b in allb:
@@ -315,7 +339,7 @@ def stage_diagnose(args):
             stats['cov_SD'] += np.bincount(gb[cov], minlength=nb)[:nb]
     # static-call error: seeds of static clusters matched to GT, whose GT moved > 0.2 m over the cluster's frames
     calls = {'one_static_object': 0, 'one_object_moved': 0, 'several_objects': 0, 'unmatched_member': 0}
-    for seq, cl in clusters.items():
+    for seq, cl in (() if args.direct_only else clusters.items()):
         for c in cl:
             ids, gglob = [], {}
             for fid, ri, xy in c['members']:
@@ -358,6 +382,12 @@ def stage_diagnose(args):
            'precision_by_delta': {k: {'n': v[0].tolist(), 'tp': v[1].tolist()} for k, v in pr_delta.items()},
            'ignore_on_vehicle': {k: {'n': int(v[0]), 'on_vehicle': int(v[1])} for k, v in ign.items()},
            'created': time.strftime('%Y-%m-%d %H:%M %Z')}
+    if args.direct_only:
+        out = {k: v for k, v in out.items() if k not in ('recall_direct_S', 'recall_direct_S_D', 'precision_by_delta',
+                                                         'ignore_on_vehicle', 'static_cluster_calls')}
+        out['precision'] = {'direct': out['precision']['direct']}
+        out['coverage_all_labels'] = out.pop('coverage_all_labels')  # direct labels only in this mode
+        out['DIRECT_ONLY'] = 'only 27704 direct pseudo-labels were read against the labels'
     json.dump(out, open(d / 'diagnosis.json', 'w'), indent=1)
     print(json.dumps(out, indent=1), flush=True)
     print(f'diagnosis done in {time.time() - t0:.0f} s', flush=True)
@@ -372,6 +402,10 @@ def main():
     ap.add_argument('--ps_out', default='/home/koyama/data/pseudo_labels/prop27704_v1')
     ap.add_argument('--shard', type=int, default=0)
     ap.add_argument('--num_shards', type=int, default=8)
+    ap.add_argument('--context', default=None, metavar='S_H,D_H,q',
+                    help='LABEL-FREE context counts at a stated NON-RULE setting (tagged; no augmented file)')
+    ap.add_argument('--direct_only', action='store_true',
+                    help='diagnose: only 27704\'s direct labels (the pre-declared target-side reference)')
     args = ap.parse_args()
     {'inspect': stage_inspect, 'count': stage_count, 'merge': stage_merge,
      'diagnose': stage_diagnose}[args.stage](args)

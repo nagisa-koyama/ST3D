@@ -261,6 +261,21 @@ def test_label_free_waymo_loader_strips_annos(tmp_path, monkeypatch):
     assert len(recs[0]['D_box']) == 0
 
 
+def test_context_run_is_tagged_and_never_the_rule(tmp_path):
+    import argparse
+    import json
+    W = _load('pseudo_label_propagation_waymo')
+    calib = {'s_conf': 0.44, 'd_assoc': 0.45, 'd_init': 13.0, 'd_cv': 1.3, 'S': {'q': None, 'H': 0}, 'D': {'q': None, 'H': 0}}
+    json.dump(calib, open(tmp_path / 'c.json', 'w'))
+    rule = W.load_calib(argparse.Namespace(calib=str(tmp_path / 'c.json'), context=None))
+    assert rule['S']['H'] == 0 and 'CONTEXT_NOT_RULE' not in rule
+    ctx = W.load_calib(argparse.Namespace(calib=str(tmp_path / 'c.json'), context='3,1,0.0'))
+    assert ctx['S'] == {'q': 0.0, 'H': 3} and ctx['D'] == {'q': 0.0, 'H': 1} and ctx['CONTEXT_NOT_RULE']
+    pickle.dump({'records': [], 'clusters': {}, 'context': True}, open(tmp_path / 'merged.pkl', 'wb'))
+    with pytest.raises(AssertionError):
+        W.stage_diagnose(argparse.Namespace(out_dir=str(tmp_path), direct_only=False))
+
+
 def test_waymo_get_lidar_filters_nlz_and_range(tmp_path):
     pf = np.array([[1, 2, 0.5, 0.3, 0.1, -1], [3, 4, 0.5, 0.3, 0.1, 1], [80, 0, 0.5, 0.3, 0.1, -1],
                    [5, 5, 5.0, 0.3, 0.1, -1]], dtype=np.float32)
