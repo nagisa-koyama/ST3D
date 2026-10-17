@@ -508,25 +508,35 @@ def lowest_per_cell(pts):
 
 def fit_plane(g, rng=None):
     """ground_tilt.fit_plane(g) with its parameters (300 iterations, 0.12 m, slopes <= 0.2, refits at 0.12 / 0.08 m).
-    Returns (a, b, c) of z = a x + b y + c, or None."""
+    Returns (a, b, c) of z = a x + b y + c, or None. The 300 candidate triples are drawn with the same sequential
+    rng.choice calls as ground_tilt; solving and counting are batched (same result: the first candidate with the most
+    inliers); a singular triple falls back to ground_tilt's loop."""
     if len(g) < GP_MIN_CELLS:
         return None
     rng = rng or np.random.default_rng(0)
     A = np.c_[g[:, 0], g[:, 1], np.ones(len(g))]
-    best, best_n = None, -1
-    for _ in range(GP_ITERS):
-        idx = rng.choice(len(g), 3, replace=False)
-        try:
-            coef = np.linalg.solve(A[idx], g[idx, 2])
-        except np.linalg.LinAlgError:
-            continue
-        if abs(coef[0]) > GP_MAX_SLOPE or abs(coef[1]) > GP_MAX_SLOPE:
-            continue
-        n = np.sum(np.abs(A @ coef - g[:, 2]) < GP_THR)
-        if n > best_n:
-            best, best_n = coef, n
-    if best is None:
-        return None
+    tri = np.array([rng.choice(len(g), 3, replace=False) for _ in range(GP_ITERS)])
+    try:
+        coefs = np.linalg.solve(A[tri], g[tri, 2][..., None])[..., 0]
+        okc = (np.abs(coefs[:, 0]) <= GP_MAX_SLOPE) & (np.abs(coefs[:, 1]) <= GP_MAX_SLOPE)
+        if not okc.any():
+            return None
+        n = (np.abs(A @ coefs[okc].T - g[:, 2:3]) < GP_THR).sum(0)
+        best = coefs[okc][int(np.argmax(n))]
+    except np.linalg.LinAlgError:
+        best, best_n = None, -1
+        for idx in tri:
+            try:
+                coef = np.linalg.solve(A[idx], g[idx, 2])
+            except np.linalg.LinAlgError:
+                continue
+            if abs(coef[0]) > GP_MAX_SLOPE or abs(coef[1]) > GP_MAX_SLOPE:
+                continue
+            nn = np.sum(np.abs(A @ coef - g[:, 2]) < GP_THR)
+            if nn > best_n:
+                best, best_n = coef, nn
+        if best is None:
+            return None
     for t in (GP_THR, GP_REFIT):
         inl = np.abs(A @ best - g[:, 2]) < t
         best = np.linalg.lstsq(A[inl], g[inl, 2], rcond=None)[0]
@@ -740,7 +750,7 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
     add_pts = np.zeros((0, pts.shape[1]), pts.dtype); add_id = np.zeros(0, np.int64)
     add_rng = np.zeros(0); add_pix = np.zeros(0, np.int64); add_alive = np.zeros(0, bool)
     placed_boxes = []
-    gt_corners = bev_corners(boxes[:, :7].astype(np.float64)) if n_box else np.zeros((0, 4, 2))
+    occ_corners = bev_corners(boxes[:, :7].astype(np.float64)) if n_box else np.zeros((0, 4, 2))
     removed_orig = []
     vis_h = float(p['VIS_HEIGHT'])
 
@@ -765,9 +775,7 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
             if (g[:, 0] < pcr[0]).any() or (g[:, 0] > pcr[3]).any() or (g[:, 1] < pcr[1]).any() or \
                     (g[:, 1] > pcr[4]).any():
                 rec['reject']['range'] += 1; continue
-            others = gt_corners if not placed_boxes else \
-                np.concatenate([gt_corners, bev_corners(np.array([pb[:7] for pb in placed_boxes]))])
-            if len(others) and rects_overlap(g, others).any():
+            if len(occ_corners) and rects_overlap(g, occ_corners).any():
                 rec['reject']['overlap'] += 1; continue
             zb = cb[2] - cb[5] / 2 + p['CLEARANCE']
             c = grid.query(g)
@@ -783,40 +791,52 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
             if not len(kept):
                 rec['reject']['empty'] += 1; continue
             cpix = rrow * n_cols + rcol
-            sil = silhouette(cb, thetas, n_cols, height)
-            qcols = np.union1d(rcol, sil[0] % n_cols)
-            # scene in the copy's columns and its silhouette's (alive originals + alive copies), points inside the
-            # copy's box excluded (they are removed on acceptance)
             if colidx is None:
                 colidx = _ColIndex(xyz[:, :2], n_cols)
-            sc = colidx.query(qcols)
-            sc = sc[alive[sc]]
-            sc = sc[~points_in_box(xyz[sc], cb)] if len(sc) else sc
-            srow, scol, srng, sval = to_lattice(xyz[sc], height, thetas, n_cols)
-            sxyz = xyz[sc]
-            if len(add_pts):
-                am = add_alive & np.isin(add_pix % n_cols, qcols)
-                am &= ~points_in_box(add_pts[:, :3], cb) if am.any() else am
-                ap = add_pts[am, :3].astype(np.float64)
-                arow, acol, arng, aval = to_lattice(ap, height, thetas, n_cols)
-                srow = np.r_[srow, arow]; scol = np.r_[scol, acol]; srng = np.r_[srng, arng]; sval = np.r_[sval, aval]
-                sxyz = np.concatenate([sxyz, ap]) if len(ap) else sxyz
+            am_all = add_alive & ~points_in_box(add_pts[:, :3], cb) if len(add_pts) else np.zeros(0, bool)
+
+            def scene_in(cols):
+                """Scene points in these lattice columns: alive originals and alive copies, none inside the copy's box
+                (they are removed on acceptance). Returns (original ids, row, col, range, valid, xyz)."""
+                sc_ = colidx.query(cols)
+                sc_ = sc_[alive[sc_]]
+                sc_ = sc_[~points_in_box(xyz[sc_], cb)] if len(sc_) else sc_
+                r_, c_, g_, v_ = to_lattice(xyz[sc_], height, thetas, n_cols)
+                x_ = np.asarray(xyz[sc_], np.float64)
+                if len(add_pts):
+                    am = am_all & np.isin(add_pix % n_cols, cols)
+                    if am.any():
+                        ap = add_pts[am, :3].astype(np.float64)
+                        ar, ac, ag, av = to_lattice(ap, height, thetas, n_cols)
+                        r_, c_, g_, v_ = np.r_[r_, ar], np.r_[c_, ac], np.r_[g_, ag], np.r_[v_, av]
+                        x_ = np.concatenate([x_, ap])
+                return sc_, r_, c_, g_, v_, x_
             # visibility: columns with a nearer scene point > VIS_HEIGHT above the plane inside the copy's row span
             ucol, inv = np.unique(rcol, return_inverse=True)
+            sc, srow, scol, srng, sval, sxyz = scene_in(ucol)
             rmin = np.full(len(ucol), np.inf); np.minimum.at(rmin, inv, rr)
-            hz = np.asarray(sxyz[:, 2], np.float64) - plane_z(plane, sxyz[:, 0], sxyz[:, 1]) if len(sxyz) else np.zeros(0)
-            vm = sval & (srow >= rrow.min()) & (srow <= rrow.max()) & (hz > vis_h)
+            hz = sxyz[:, 2] - plane_z(plane, sxyz[:, 0], sxyz[:, 1]) if len(sxyz) else np.zeros(0)
+            vm = sval & (srow >= rrow.min()) & (srow <= rrow.max()) & (hz > vis_h) & np.isin(scol, ucol)
             blocked = np.zeros(len(ucol), bool)
             if vm.any():
-                ci = np.searchsorted(ucol, scol[vm]); okc = (ci < len(ucol))
-                ci, okc = np.clip(ci, 0, len(ucol) - 1), okc & (ucol[np.clip(ci, 0, len(ucol) - 1)] == scol[vm])
                 near = np.full(len(ucol), np.inf)
-                np.minimum.at(near, ci[okc], srng[vm][okc])
+                np.minimum.at(near, np.searchsorted(ucol, scol[vm]), srng[vm])
                 blocked = near < rmin
             vshare = float(blocked.mean())
             if vshare >= p['VIS_MAX_SHARE']:
                 rec['reject']['visibility'] += 1; continue
-            # row coverage of the render in this scene
+            # row coverage of the render in this scene: the scene of the silhouette's extra columns is added
+            sil = silhouette(cb, thetas, n_cols, height)
+            extra = np.setdiff1d(sil[0] % n_cols, ucol)
+            if len(extra):
+                e = scene_in(extra)
+                n_o = len(sc); n_a = len(srow) - n_o; n_eo = len(e[0])
+                # keep originals first, then copies, in both parts (the shadow step below indexes the originals)
+                srow = np.r_[srow[:n_o], e[1][:n_eo], srow[n_o:], e[1][n_eo:]]
+                scol = np.r_[scol[:n_o], e[2][:n_eo], scol[n_o:], e[2][n_eo:]]
+                srng = np.r_[srng[:n_o], e[3][:n_eo], srng[n_o:], e[3][n_eo:]]
+                sval = np.r_[sval[:n_o], e[4][:n_eo], sval[n_o:], e[4][n_eo:]]
+                sc = np.r_[sc, e[0]]
             spix = np.where(sval, srow * n_cols + scol, -1)
             rc, _ = row_coverage(cb, cpix, rr, spix, srng, thetas, n_cols, height, p['RC_OCCL_M'], sil=sil)
             if not (rc >= p['RC_MIN']):
@@ -878,6 +898,7 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
         cb_store = np.zeros(boxes.shape[1]) if boxes.ndim == 2 else np.zeros(7)
         cb_store[:7] = cb
         placed_boxes.append(cb_store.astype(boxes.dtype))
+        occ_corners = np.concatenate([occ_corners, bev_corners(placed_boxes[-1][None, :7].astype(np.float64))])
         crec = dict(instance=inst, box=cb.copy(), r_new=float(np.hypot(cb[0], cb[1])), phi_new=float(phi), alpha=alpha,
                     tries=tries, rc_loader=float(rc), vis_share_loader=vshare, n_db=int(len(local)),
                     n_rendered=int(len(cpix)), n_visible=int(vis.sum()), p_keep=float(pk), n_kept=int(keep.sum()),
