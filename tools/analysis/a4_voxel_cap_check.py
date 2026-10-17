@@ -57,17 +57,24 @@ def main():
                 ds.eval()
             else:
                 ds.train()
-            counts, mismatch = [], 0
+            counts, mismatch, diffs = [], 0, []
             for i in frames:
                 d = ds[i]
                 c = occupied(d['points'], dcfg.POINT_CLOUD_RANGE, vox.VOXEL_SIZE)
                 counts.append(c)
                 if len(d['voxel_coords']) != min(c, cap):
                     mismatch += 1
+                if c <= cap:
+                    diffs.append(c - len(d['voxel_coords']))
             x = np.array(counts)
             print(f'  {view:11s}: above cap {np.mean(x > cap):.3f} ({int((x > cap).sum())} of {len(x)}); voxels median '
                   f'{int(np.median(x))}, p90 {int(np.percentile(x, 90))}, max {int(x.max())}; voxeliser count != '
                   f'min(count, cap) on {mismatch} frames', flush=True)
+            if diffs:
+                dd = np.array(diffs)
+                print(f'    below the cap: count - voxeliser count median {np.median(dd):.0f}, min {dd.min()}, max {dd.max()}, '
+                      f'max relative {np.max(np.abs(dd) / np.maximum(1, np.array(counts)[np.array(counts) <= cap])):.5f}',
+                      flush=True)
         del ds
 
 
