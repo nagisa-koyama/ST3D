@@ -18,7 +18,8 @@
 #   trained; smallest t from which precision stays >= 0.50 (1.0 m centre match, >= 50 kept), else 1.01.
 # - NEG_THRESH, rule A: the background plateau's upper half-maximum on the teacher's nuScenes TRAIN pseudo-labels (floor
 #   0.0001). A SCORE_THRESH below its NEG_THRESH is raised to it.
-# The passes: scripts/_a3_cuts_w2n_ringpattern.sh (GPU) then scripts/_a3_cut_checks.sh (CPU).
+# The passes: scripts/_a3_cuts_w2n_ringpattern.sh (GPU, job 29316) then scripts/_a3_cut_checks.sh (CPU, job 29317). Predicted
+# first-pass labels per nuScenes TRAIN frame: positives 20.895 / 5.568 / 0.061, ignore band 4.480 / 11.698 / 0.063.
 # Legality: teacher trained on Waymo labels + nuScenes' published scan spec and TRAIN-cloud azimuth step (no target label);
 # target = unlabelled nuScenes TRAIN; cuts by pre-declared label-free rules (rule B reads SOURCE labels only); PROG_AUG and
 # the memory ensemble as published (decision F); family default size augmentation; nuScenes SHIFT_COOR 1.75 as 27807.
@@ -36,8 +37,8 @@ DATA_CONFIG_TAR:
     USE_PSEUDO_LABEL: True
 
 SELF_TRAIN:
-  SCORE_THRESH: [1.01, 1.01, 1.01]   # PLACEHOLDER (every class gated off) until the cut passes have run
-  NEG_THRESH: [1.01, 1.01, 1.01]     # PLACEHOLDER
+  SCORE_THRESH: [0.19, 0.28, 0.32]      # jobs 29316 / 29317: rule B, teacher 27807 ep7 on Waymo val int5 through RING_PATTERN (7,998 frames); none below its NEG
+  NEG_THRESH: [0.175, 0.185, 0.198]     # jobs 29316 / 29317: rule A on teacher 27807's nuScenes TRAIN pseudo-labels (floor 0.0001; plateau modes 0.133 / 0.133 / 0.133)
   MODEL_TEACHER:
     CLASS_NAMES: [Car, Pedestrian, Cyclist]
     ONTOLOGY: kitti
