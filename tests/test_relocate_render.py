@@ -495,3 +495,201 @@ def test_v2_ground_plane_on_a_tilted_toy():
     pl = R.ground_plane(np.concatenate([np.c_[g, z], wall]))
     assert abs(np.degrees(np.arctan(pl[1])) - 2.3) < 0.05 and abs(pl[0]) < 1e-3 and abs(pl[2] + 0.05) < 0.02
     assert R.ground_plane(np.c_[rng.uniform(-2, 2, (100, 2)), np.zeros(100)]) is None   # too few cells
+
+
+class RngV2:
+    """uniform(lo, hi) from a queue (logged); uniform(lo, hi, size) -> `arr` (default zeros); randint -> `ints`
+    (default 0). With the defaults the sparsifier keeps everything (p = 1 - 0 = 1, u = 0 < 1)."""
+
+    def __init__(self, values, ints=(), arr=0.0):
+        self.v, self.ints, self.arr, self.calls = list(values), list(ints), arr, []
+
+    def uniform(self, lo, hi, size=None):
+        if size is not None:
+            return np.full(size, self.arr)
+        self.calls.append((lo, hi))
+        x = self.v.pop(0) if self.v else lo
+        assert lo - 1e-9 <= x <= hi + 1e-9, (lo, x, hi)
+        return x
+
+    def randint(self, n):
+        return self.ints.pop(0) if self.ints else 0
+
+
+def make_db(tmp_path, instances):
+    """instances: list of (local points (k, 3 or 4), size (3,), alphas)."""
+    pts, cnt, size, oa, oc = [], [], [], [], []
+    for loc, s, al in instances:
+        loc = np.asarray(loc, np.float64)
+        if loc.shape[1] == 3:
+            loc = np.c_[loc, np.full(len(loc), 0.25)]
+        pts.append(loc.astype(np.float32)); cnt.append(len(loc)); size.append(s); oa += list(al); oc.append(len(al))
+    cnt = np.array(cnt); oc = np.array(oc)
+    pp, ip = tmp_path / 'db_points.npy', tmp_path / 'db_index.npz'
+    np.save(pp, np.concatenate(pts))
+    np.savez(ip, offset=np.r_[0, np.cumsum(cnt)[:-1]], count=cnt, size=np.array(size, np.float64),
+             obs_offset=np.r_[0, np.cumsum(oc)[:-1]], obs_count=oc, obs_alpha=np.array(oa, np.float64))
+    return R.DonorDB(pp, ip)
+
+
+SIZE = np.array([4.2, 1.8, 1.5])
+CAR_LOCAL = R.to_box_frame(car_surface(np.r_[0, 0, 0, SIZE, 0.0], n_side=40, n_up=16), np.zeros(7))
+
+
+def ground(slope=0.0, extent=46.0, step=0.4):
+    g = np.stack(np.meshgrid(np.arange(-extent, extent, step), np.arange(-extent, extent, step)), -1).reshape(-1, 2)
+    far = np.stack(np.meshgrid(np.arange(-74, 74, 1.0), np.arange(-74, 74, 1.0)), -1).reshape(-1, 2)
+    far = far[np.abs(far).max(1) > extent]
+    g = np.concatenate([g, far])
+    return np.c_[g, slope * g[:, 1] - 0.03]
+
+
+def scene_v2(extra=(), boxes=(), names=(), slope=0.0, **kw):
+    pts = np.concatenate([ground(slope)] + list(extra))
+    b = np.asarray(boxes, np.float64).reshape(-1, 7)
+    return frame(b, list(names), pts, **kw)
+
+
+P2 = dict(R.DEFAULTS); P2.update(R.DEFAULTS_V2); P2['N_COPIES'] = 1
+
+
+def run2(d, db, rng, **over):
+    p = dict(P2); p.update(over)
+    return R.relocate_render_scene_v2(d, p, LAT, db, rng=rng, keep_points=True)
+
+
+def test_v2_copy_on_the_plane_with_the_observed_view_one_point_per_pixel(tmp_path):
+    db = make_db(tmp_path, [(CAR_LOCAL, SIZE, [0.7, -2.0])])
+    d = scene_v2(slope=np.tan(np.radians(2.0)))
+    out, rec = run2(d, db, RngV2([30.0, 1.0], ints=[0, 1]))
+    assert rec['n_placed'] == 1, rec['reject']
+    c = rec['copies'][0]; b = c['box']; pl = rec['plane']
+    assert b[2] - b[5] / 2 == pytest.approx(R.plane_z(pl, b[0], b[1]), abs=1e-9)          # bottom on the plane
+    assert abs(np.degrees(np.arctan(pl[1])) - 2.0) < 0.05
+    assert c['alpha'] == -2.0 and b[6] == pytest.approx(1.0 - 2.0)                         # heading = phi + alpha
+    assert R.relative_view_angle(b) == pytest.approx(-2.0, abs=1e-12)
+    assert c['r_new'] == pytest.approx(30.0) and c['rc_loader'] >= 0.8 and c['vis_share_loader'] < 0.1
+    p = out['points'][c['point_index']]
+    row, col, rr, val = RU.to_lattice(p[:, :3], H, TH, NC)
+    assert val.all() and len(np.unique(row * NC + col)) == len(p)
+    assert np.all(p[:, 3] == np.float32(0.25)) and np.all(p[:, 4] == 0)
+    assert not R.points_in_box(out['points'][:-len(p), :3], b).any()                       # in-box scene removed
+    assert out['gt_names'].tolist() == ['Car'] and out['gt_boxes_mask'].tolist() == [True]
+    assert c['p_keep'] == 1.0 and c['n_kept'] == c['n_visible']
+
+
+def test_v2_visibility_rule_on_a_wall_toy(tmp_path):
+    db = make_db(tmp_path, [(CAR_LOCAL, SIZE, [0.0])])
+    wall = lambda zlo, zhi: np.stack(np.meshgrid(np.linspace(-6, 6, 241), np.linspace(zlo, zhi, 40)), -1).reshape(-1, 2)
+    hi = wall(0.5, 3.0); hi = np.c_[hi[:, 0], np.full(len(hi), 25.0), hi[:, 1]]           # > 0.3 m above the plane
+    lo = wall(-0.03, 0.2); lo = np.c_[lo[:, 0], np.full(len(lo), 25.0), lo[:, 1]]         # within 0.3 m of the plane
+    out, rec = run2(scene_v2([hi]), db, RngV2([40.0, np.pi / 2] * 3), MAX_TRIES=3)
+    assert rec['n_placed'] == 0 and rec['reject']['visibility'] == 3
+    out, rec = run2(scene_v2([lo]), db, RngV2([40.0, np.pi / 2]), MAX_TRIES=1)
+    assert rec['n_placed'] == 1 and rec['copies'][0]['vis_share_loader'] == 0.0
+    part = hi[np.abs(hi[:, 0]) < 0.06]                                                   # a pole: few columns only
+    side = make_db(tmp_path / 'side', [(CAR_LOCAL, SIZE, [np.pi / 2])]) if (tmp_path / 'side').mkdir() is None else None
+    out, rec = run2(scene_v2([part]), side, RngV2([40.0, np.pi / 2]), MAX_TRIES=1)       # broadside: ~44 columns
+    assert rec['n_placed'] == 1, rec['reject']
+    assert 0 < rec['copies'][0]['vis_share_loader'] < 0.1
+
+
+def test_v2_row_coverage_replacement(tmp_path):
+    roof = CAR_LOCAL[CAR_LOCAL[:, 2] > SIZE[2] / 2 * 0.99]                                  # only the roof: RC low
+    db = make_db(tmp_path, [(roof, SIZE, [0.0])])
+    rng = RngV2([10.0, np.pi / 2, 15.0, 20.0, 26.0])
+    out, rec = run2(scene_v2(), db, rng, MAX_TRIES=4)
+    assert rec['n_placed'] == 0 and rec['reject']['rc'] == 4 and rec['n_no_place'] == 1
+    assert rng.calls == [(5.0, 75.2), (0.0, 2 * np.pi), (10.0, 75.2), (15.0, 75.2), (20.0, 75.2)]
+
+
+def test_v2_sparsifier_bounds_and_zero_point_drop(tmp_path):
+    db = make_db(tmp_path, [(CAR_LOCAL, SIZE, [0.0])])
+    d = scene_v2(); before = {k: np.copy(v) for k, v in d.items()}
+    out, rec = run2(d, db, RngV2([30.0, 1.0, 1.0 - 1e-9], arr=0.5))                     # p = 1e-9: nothing kept
+    assert rec['n_zero'] == 1 and rec['n_placed'] == 0
+    for k in before:
+        np.testing.assert_array_equal(out[k], before[k])
+    out, rec = run2(scene_v2(), db, RngV2([30.0, 1.0, 0.5], arr=0.4999))                 # p = 0.5, u = 0.4999 < p
+    assert rec['copies'][0]['p_keep'] == 0.5 and rec['copies'][0]['n_kept'] == rec['copies'][0]['n_visible']
+    out, rec = run2(scene_v2(), db, RngV2([30.0, 1.0, 0.5], arr=0.5))                    # u = p is dropped: keep is u < p
+    assert rec['n_zero'] == 1
+    ps = []
+    for s in range(30):                                                                  # the real RNG: p in (0, 1]
+        np.random.seed(s)
+        _, r2 = run2(scene_v2(), db, np.random, N_COPIES=2)
+        ps += [c['p_keep'] for c in r2['copies']]
+        assert all(c['n_kept'] <= c['n_visible'] for c in r2['copies'])
+    assert len(ps) > 20 and min(ps) > 0 and max(ps) <= 1
+
+
+@pytest.mark.parametrize('kind', ['neg_class', 'ignore99', 'masked', 'ignore_mask', 'other_class'])
+def test_v2_sentinels_never_moved_always_obstacles(tmp_path, kind):
+    db = make_db(tmp_path, [(CAR_LOCAL, SIZE, [0.0])])
+    sb = np.array([0.0, 40.0, 0.72, 4.0, 2.0, 1.5, 0.0])
+    kw, names = {}, ['Truck' if kind == 'other_class' else 'Car']
+    if kind == 'neg_class':
+        kw = dict(gt_classes=np.array([-1], np.int32), gt_scores=np.array([0.2], np.float32))
+    elif kind == 'ignore99':
+        kw = dict(gt_classes=np.array([common_utils.IGNORE_CLASS_LABEL], np.int32), gt_scores=np.ones(1, np.float32))
+    elif kind == 'ignore_mask':
+        kw = dict(gt_boxes_ignore_mask=np.array([True]))
+    d = scene_v2([car_surface(sb)], [sb], names, **kw)
+    if kind in ('masked', 'ignore_mask'):
+        d['gt_boxes_mask'] = np.array([False])
+    b0 = d['gt_boxes'].copy()
+    out, rec = run2(d, db, RngV2([40.0, np.pi / 2] * 5), MAX_TRIES=5)                    # every try onto the sentinel
+    assert rec['n_placed'] == 0 and rec['reject']['overlap'] == 5
+    np.testing.assert_array_equal(out['gt_boxes'], b0)
+    out, rec = run2(d, db, RngV2([40.0, 3 * np.pi / 2]))                                 # free elsewhere
+    assert rec['n_placed'] == 1
+    np.testing.assert_array_equal(out['gt_boxes'][0], b0[0])
+    if 'gt_classes' in kw:
+        assert out['gt_classes'].tolist() == [int(kw['gt_classes'][0]), 1]
+    if kind == 'ignore_mask':
+        assert out['gt_boxes_ignore_mask'].tolist() == [True, False]
+
+
+def test_v2_no_plane_no_points_no_db(tmp_path):
+    db = make_db(tmp_path, [(CAR_LOCAL, SIZE, [0.0])])
+    d = frame(np.zeros((0, 7)), [], np.c_[np.random.default_rng(0).uniform(-2, 2, (50, 2)), np.zeros(50)])
+    out, rec = run2(d, db, RngV2([30.0, 1.0]))
+    assert rec['plane'] is None and rec['n_placed'] == 0
+    out, rec = run2(frame(np.zeros((0, 7)), [], np.zeros((0, 3))), db, RngV2([]))
+    assert rec['n_placed'] == 0
+
+
+def test_v2_silhouette_and_row_coverage_equal_the_analysis():
+    import source_coverage as S
+    from lattice_sampler_precheck import silhouette as S_sil
+    rng = np.random.default_rng(21)
+    inc_desc = np.sort(TH)[::-1]
+    for r_new, phi in ((12.0, 0.4), (35.0, 2.2), (61.0, -1.0)):
+        b = np.array([r_new * np.cos(phi), r_new * np.sin(phi), 0.75, 4.4, 1.9, 1.5, phi + 0.6])
+        sp, srow, tin = R.silhouette(b, TH, NC, H)
+        sp2, srow2, tin2 = S_sil(b, inc_desc, hs=H, n_cols=NC)
+        a = sorted(zip(len(TH) - 1 - srow, sp % NC, np.round(tin, 9)))
+        c = sorted(zip(srow2, sp2 % NC, np.round(tin2, 9)))
+        assert a == c and len(a) > 0
+        q = R.from_box_frame(R.to_box_frame(car_surface(b, n_side=30, n_up=12), b) * 0.98, b)
+        xyz, rows, cols, kept = R.render_object(q, TH, NC, H)
+        wall = np.c_[rng.uniform(-3, 3, 400), rng.uniform(-3, 3, 400), rng.uniform(0, 3, 400)] * [1, 1, 1]
+        wall[:, :2] += b[:2] * 0.7
+        scene = np.concatenate([wall, np.c_[rng.uniform(-70, 70, (3000, 2)), np.zeros(3000)]])
+        allp = np.concatenate([xyz, scene])
+        ref = S.lattice_coverage(allp, b[None], [np.arange(len(xyz))], TH, NC, H)[0]
+        _, _, crng, _ = RU.to_lattice(xyz, H, TH, NC)
+        srw, scl, srn, svl = RU.to_lattice(scene, H, TH, NC)
+        rc, nvr = R.row_coverage(b, rows * NC + cols, crng, np.where(svl, srw * NC + scl, -1), srn, TH, NC, H)
+        assert rc == pytest.approx(ref[0], abs=1e-12) and nvr == ref[2]
+
+
+def test_v2_db_is_never_pickled_with_its_points(tmp_path):
+    big = np.random.default_rng(3).normal(0, 1, (200000, 3))
+    db = make_db(tmp_path, [(big, SIZE, [0.0]), (CAR_LOCAL, SIZE, [0.1, 0.2])])
+    assert db.points(0).shape == (200000, 4) and db._pts is not None
+    s = pickle.dumps(db)
+    assert len(s) < 20000
+    db2 = pickle.loads(s)
+    assert db2._pts is None and db2.n == 2
+    np.testing.assert_array_equal(db2.points(1), db.points(1)); np.testing.assert_array_equal(db2.alphas(1), [0.1, 0.2])
