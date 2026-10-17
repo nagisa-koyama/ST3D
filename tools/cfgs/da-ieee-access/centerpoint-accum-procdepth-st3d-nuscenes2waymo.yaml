@@ -1,0 +1,155 @@
+# A4 STAGE 3: THE PROCEDURE'S OWN nuScenes -> Waymo PSEUDO-LABELLING ROW (experiments_md/20261017_09; procedure pre-declared
+# in 20261017_03 §3, step 2; user decision 2026-10-17 ~21:42 JST: the teacher is built from scratch at Boston 22 / Singapore 17).
+#
+# - Teacher and init: the A4 stage-1 row (centerpoint-accum-procdepth-nuscenes2waymo, epoch 20): MeanVFE, Boston (n008) 22 /
+#   Singapore (n015) 17 = min(N*, N_cap) by I2 + I3 (20261017_10 §3.1), per-object motion compensation, default size augmentation.
+# - Pseudo-labelling on Waymo TRAIN from that frozen teacher, generated once, with the 27566 recipe: the SELF_TRAIN block below is
+#   27566's (resolved W&B config of run 2tjw5vuv) except the two cut lines. PROG_AUG on (decision F).
+# - Cuts by the pre-declared rules (20261004_01 §5e), derived for the stage-1 teacher by stage 2 (scripts/_a4_stage2_cuts.sh):
+#   SCORE_THRESH by rule B (teacher precision on the labelled SOURCE val >= 0.50 per class; nuScenes val, n008 at 22 sweeps + n015
+#   at 17, merged); NEG_THRESH by rule A (background-plateau upper half-maximum on the teacher's Waymo TRAIN pseudo-labels through
+#   this config's own target block, floor 0.0001). A SCORE below its NEG is raised to it. The values are copied in by a session
+#   from stage 2's cuts JSON and committed before this row is submitted (20261017_09 §4).
+# - Step 0 of the procedure: target SHIFT_COOR z by rule G (20261007_01 §7.1): -0.044 m.
+# - Target train frames: SAMPLED_INTERVAL train 10 (15,809 frames), as 27704.
+#
+# Against 27704: teacher (27471 GBlobs 15 / 10 -> stage 1 MeanVFE 22 / 17), student encoder and source depth, cuts, target
+# SHIFT_COOR z (0 -> -0.044). Against 27566: target (KITTI -> Waymo), depths (15 / 10 -> 22 / 17), cuts.
+# Legality: as stage 1, plus cuts by pre-declared label-free rules and rule-G SHIFT_COOR from TRAIN clouds.
+#
+# PRE-DECLARED READING (20261017_09 §5): Car BEV AP_R40 at IoU 0.7 on Waymo val, epoch 20, one seed, against ITS teacher scored
+# on the same input (stage 1 at rule G, stage 2): D >= +2 adds; |D| < 2 level; D <= -2 hurts; within 1.5 of a bar a second seed is
+# proposed. 27704 / 28563 are reported beside it, never chosen between on Waymo val.
+#
+# Launch (2 GPUs, 150G, seed 666):
+#   EST_H=44 scripts/submit.sh --mem=150G --time=40:00:00 scripts/run_sourceonly_2gpu.sh \
+#       cfgs/da-ieee-access/centerpoint-accum-procdepth-st3d-nuscenes2waymo.yaml <tag> <run> \
+#       --pretrained_model <stage-1 ep20> --pretrained_model_teacher <stage-1 ep20>
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-procdepth-nuscenes2waymo.yaml
+
+DATA_CONFIG_TAR:
+    USE_PSEUDO_LABEL: True
+    SAMPLED_INTERVAL: {'train': 10, 'test': 5}
+    # Rule G, step 0 of the procedure (20261007_01 §7.1): S_tgt = g_src + S_src - g_tgt = -1.815 + 1.75 + 0.021.
+    SHIFT_COOR: [0.0, 0.0, -0.044]
+
+SELF_TRAIN:
+    EPOCH_FOLLOWS: source
+    SCORE_THRESH: [1.01, 1.01, 1.01]   # PLACEHOLDER until stage 2 (rule B, then raised to NEG where below it)
+    NEG_THRESH: [1.01, 1.01, 1.01]     # PLACEHOLDER until stage 2 (rule A on Waymo TRAIN)
+    UPDATE_PSEUDO_LABEL: [0]
+    UPDATE_PSEUDO_LABEL_INTERVAL: 2
+    FROZEN_TEACHER_SINGLE_PASS: True
+    INIT_PS: None
+
+    SRC:
+        USE_DATA: True
+        USE_GRAD: True
+        LOSS_WEIGHT: 1.0
+        BACKWARD_TOGETHER: True
+
+    TAR:
+        USE_DATA: True
+        LOSS_WEIGHT: 1.0
+        BACKWARD_TOGETHER: True
+
+    PROG_AUG:
+        ENABLED: True
+        UPDATE_AUG: [5, 10, 15]
+        SCALE: 1.1
+
+    MEMORY_ENSEMBLE:
+        ENABLED: True
+        NAME: nms_ensemble
+        IOU_THRESH: 0.1
+        NMS_CONFIG:
+            NMS_TYPE: nms_gpu
+            MULTI_CLASSES_NMS: False
+            NMS_PRE_MAXSIZE: 512
+            NMS_POST_MAXSIZE: 100
+            NMS_THRESH: 0.1
+        MEMORY_VOTING:
+            ENABLED: True
+            IGNORE_THRESH: 2
+            RM_THRESH: 3
+
+    # The teacher is the stage-1 model exactly (MeanVFE); built from this block by train.py and by the stage-2 generator.
+    MODEL_TEACHER:
+        CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
+        ONTOLOGY: 'kitti'
+        NAME: CenterPoint
+
+        VFE:
+            NAME: MeanVFE
+
+        BACKBONE_3D:
+            NAME: VoxelResBackBone8x
+
+        MAP_TO_BEV:
+            NAME: HeightCompression
+            NUM_BEV_FEATURES: 256
+
+        BACKBONE_2D:
+            NAME: BaseBEVBackbone
+
+            LAYER_NUMS: [5]
+            LAYER_STRIDES: [1]
+            NUM_FILTERS: [128]
+            UPSAMPLE_STRIDES: [2]
+            NUM_UPSAMPLE_FILTERS: [256]
+
+        DENSE_HEAD:
+            NAME: CenterHead
+            CLASS_AGNOSTIC: False
+
+            CLASS_NAMES_EACH_HEAD: [
+                ['Car', 'Pedestrian', 'Cyclist'],
+            ]
+
+            SHARED_CONV_CHANNEL: 64
+            USE_BIAS_BEFORE_NORM: True
+            NUM_HM_CONV: 2
+            SEPARATE_HEAD_CFG:
+                HEAD_ORDER: ['center', 'center_z', 'dim', 'rot']
+                HEAD_DICT: {
+                    'center': {'out_channels': 2, 'num_conv': 2},
+                    'center_z': {'out_channels': 1, 'num_conv': 2},
+                    'dim': {'out_channels': 3, 'num_conv': 2},
+                    'rot': {'out_channels': 2, 'num_conv': 2},
+                }
+
+            TARGET_ASSIGNER_CONFIG:
+                FEATURE_MAP_STRIDE: 4
+                NUM_MAX_OBJS: 500
+                GAUSSIAN_OVERLAP: 0.1
+                MIN_RADIUS: 2
+
+            LOSS_CONFIG:
+                LOSS_WEIGHTS: {
+                    'cls_weight': 1.0,
+                    'loc_weight': 2.0,
+                    'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+                }
+
+            POST_PROCESSING:
+                SCORE_THRESH: 0.0001
+                POST_CENTER_LIMIT_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+                MAX_OBJ_PER_SAMPLE: 500
+                NMS_CONFIG:
+                    NMS_TYPE: nms_gpu
+                    NMS_THRESH: 0.5
+                    NMS_PRE_MAXSIZE: 4096
+                    NMS_POST_MAXSIZE: 500
+
+        POST_PROCESSING:
+            RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+            SCORE_THRESH: 0.0001
+            OUTPUT_RAW_SCORE: False
+            EVAL_METRIC: kitti
+
+            NMS_CONFIG:
+                MULTI_CLASSES_NMS: False
+                NMS_TYPE: nms_gpu
+                NMS_THRESH: 0.5
+                NMS_PRE_MAXSIZE: 4096
+                NMS_POST_MAXSIZE: 500

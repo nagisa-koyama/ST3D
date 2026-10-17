@@ -2,6 +2,7 @@
 as `self_training_utils.save_pseudo_label_batch` does at generation, and check the result on the row's own target loader.
 
     python analysis/a4_cut_check.py <cfg> <ps_label_e0.pkl at floor 0.0001> <out_cut.pkl> --score S1 S2 S3 --neg N1 N2 N3 [--frames 200]
+    python analysis/a4_cut_check.py <cfg> <ps_label_e0.pkl at floor 0.0001> <out_cut.pkl> --cuts_json <a4_final_cuts.py output>
 
 1. Cut (all frames): a box whose score is below its class's NEG_THRESH is dropped; one below its SCORE_THRESH keeps a
    NEGATIVE label (the ignore band). Prints per-frame positives and ignore-band boxes per class: the expected values of
@@ -54,10 +55,17 @@ def cut_frame(info, score, neg):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('cfg'); ap.add_argument('ps'); ap.add_argument('out')
-    ap.add_argument('--score', type=float, nargs=3, required=True)
-    ap.add_argument('--neg', type=float, nargs=3, required=True)
+    ap.add_argument('--score', type=float, nargs=3)
+    ap.add_argument('--neg', type=float, nargs=3)
+    ap.add_argument('--cuts_json', default=None, help='SCORE_THRESH / NEG_THRESH from analysis/a4_final_cuts.py')
     ap.add_argument('--frames', type=int, default=200)
     a = ap.parse_args()
+    if a.cuts_json:
+        import json
+        j = json.load(open(a.cuts_json))
+        assert j['classes'] == ['Car', 'Pedestrian', 'Cyclist']
+        a.score, a.neg = j['SCORE_THRESH'], j['NEG_THRESH']
+    assert a.score is not None and a.neg is not None, 'give --score and --neg, or --cuts_json'
     score, neg = np.array(a.score), np.array(a.neg)
     assert (score >= neg).all(), 'rule A step 6: a SCORE_THRESH below its NEG_THRESH must already be raised to it'
     ps = pickle.load(open(a.ps, 'rb'))

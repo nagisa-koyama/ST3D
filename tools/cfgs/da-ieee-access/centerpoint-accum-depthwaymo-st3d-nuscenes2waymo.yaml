@@ -1,3 +1,7 @@
+# SUPERSEDED, NEVER TRAINED (user decision 2026-10-17 ~21:42 JST): 27185 trained past the voxel cap (20261017_10 §3.1), so A4
+# builds its own teacher at Boston 22 / Singapore 17 (centerpoint-accum-procdepth-*.yaml). This file stays as the record of the
+# 27185 cut derivation (job 29315, ANALYSIS only; 20261017_09 §4.3). Its cut lines are placeholders and stay so.
+#
 # A4: THE LABEL-FREE PROCEDURE'S OWN nuScenes -> Waymo ROW (experiments_md/20261017_09; procedure pre-declared in
 # 20261017_03 §3, step 2). User's go 2026-10-17 ~20:42 JST, high priority (「A4も優先度高でお願いします」).
 #

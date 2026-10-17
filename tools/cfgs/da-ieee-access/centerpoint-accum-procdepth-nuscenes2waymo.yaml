@@ -1,0 +1,31 @@
+# A4 STAGE 1: THE PROCEDURE'S OWN nuScenes -> Waymo TEACHER (experiments_md/20261017_09 §2; user decision 2026-10-17
+# ~21:42 JST, relayed by the paper-strategy session: "A4 builds the procedure's own teacher from scratch at Boston 22 /
+# Singapore 17, then pseudo-labels on it. 27185 is NOT used for A4").
+#
+# Depths: I2 + I3 of the pre-declared procedure (20261017_03 §2-§3) as measured by 20261017_10 §3.1 (100 anchors per
+# platform, CPU, label-free): N_cap binds on both platforms, Boston 22 (4% of anchors above the 150,000-voxel cap) and
+# Singapore 17 (10%), under either reading of I2 (20261017_03 §6b). 27185 (Boston 30 / Singapore 20) trained past the cap
+# on about 30% / 21% of frames, a hidden random thinning.
+#
+# One variable from 27185 (centerpoint-accum-depthwaymo-nuscenes2waymo, training run p1a5erux): MAX_SWEEPS per platform.
+# Everything else is that recipe: MeanVFE CenterPoint, per-object motion compensation (source labels), family default size
+# augmentation Car [0.85, 1.20], the 200-sweep infos (depth > 10), 20 epochs OneCycle 0.003, global batch 6 on 2 GPUs,
+# seed 666, trained from scratch on nuScenes only, and the same Waymo val evaluation (target SHIFT_COOR 0, as 27185 was
+# scored; the rule-G reference of the stage-3 reading is scored separately in stage 2).
+#
+# Legality: depths from unlabelled clouds and a label-free voxel cap; no target input to training; Waymo val labels are
+# read by the evaluation only.
+#
+# PRE-DECLARED (20261017_09 §5): the teacher is reported beside 27185 (50.67) and 27471 (51.58) on Waymo val. That
+# comparison decides nothing.
+#
+# Launch (2 GPUs, 150G, seed 666; off node01 / node03 and off any node holding another heavy nuScenes-source row):
+#   EST_H=40 scripts/submit.sh --mem=150G --time=36:00:00 scripts/run_sourceonly_2gpu.sh \
+#       cfgs/da-ieee-access/centerpoint-accum-procdepth-nuscenes2waymo.yaml <tag> <run>
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-nuscenes2waymo.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        MAX_SWEEPS: 22
+    NUSCENES_N015:
+        MAX_SWEEPS: 17
