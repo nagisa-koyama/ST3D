@@ -405,10 +405,11 @@ def part_pandaset(args):
     for s, f in frames:
         have.setdefault(s, set()).add(f)
     grid = [n for n in PD_GRID if n <= (3 if args.smoke else 30)]
-    step = max(1, len(frames) // args.anchors)
-    anchors = frames[::step][:args.anchors]
-    tstep = max(1, len(frames) // args.frames)
-    tframes = frames[tstep // 2::tstep][:args.frames]
+    # Seeded uniform draws, not a stride: a stride of 4880 // 100 = 48 over 80-frame sequences aliases onto five frame
+    # positions {0, 16, 32, 48, 64}, so a fifth of the anchors would sit at a sequence start with no history.
+    rng = np.random.default_rng(20261017)
+    anchors = [frames[i] for i in sorted(rng.choice(len(frames), min(args.anchors, len(frames)), replace=False))]
+    tframes = [frames[i] for i in sorted(rng.choice(len(frames), min(args.frames, len(frames)), replace=False))]
     print('PandaSet: %d train sequences, %d frames; %d anchors, %d target frames; cone [%.1f, %.1f] deg; '
           'source cap %d (target %d), SHIFT_COOR %s'
           % (len(train), len(frames), len(anchors), len(tframes), cone[0], cone[1], gs['cap'], gt['cap'],
