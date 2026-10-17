@@ -1,0 +1,15 @@
+# EVAL-ONLY twin, never trained (experiments_md 20261017_10 §1 rule 8, rescore E1; analysis).
+#
+# Scores the Waymo-depth row 27185 (Boston 30 / Singapore 20 sweeps, per-object motion compensation, family Car interval
+# [0.85, 1.20], MeanVFE) on KITTI val with the camera-FOV filter, so S2 gets a 2N* depth point (2 x 15 / 2 x 10) from an
+# existing checkpoint at its own training depth. 27185 trained with centerpoint-accum-depthwaymo-nuscenes2waymo. Its resolved
+# W&B config differs from 26388's (centerpoint-accum-nuscenes2kitti, the base here) only in these two depths and in
+# DATA_CONFIG_TAR, which a source-only train.py run reads only for its in-run evaluation. The KITTI target block, model and
+# post-processing below are therefore the ones 26388 and the S2 method teacher 27468 were scored with.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-nuscenes2kitti.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        MAX_SWEEPS: 30
+    NUSCENES_N015:
+        MAX_SWEEPS: 20
