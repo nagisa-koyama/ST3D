@@ -93,6 +93,15 @@ def test_local_ground_and_counts():
     assert int(T.points_in_boxes_count(p, V.enlarged(box)[None])[0]) == 2
 
 
+def test_cluster_objects_chains_within_a_key_only():
+    keys = [('m', 's1')] * 4 + [('m', 's2'), ('o', 's1')]
+    centres = [(0, 0), (1.5, 0), (3.0, 0), (10, 0), (0, 0), (0, 0)]   # 0-1-2 chain at 1.5 m steps; 3 is far
+    lab = V.cluster_objects(keys, centres, radius=2.0)
+    assert lab[0] == lab[1] == lab[2] and lab[3] != lab[0]
+    assert len({lab[4], lab[5], lab[0]}) == 3     # another sequence or model never merges, even at 0 m
+    assert V.cluster_objects([], []).tolist() == []
+
+
 def test_selection_uses_the_pass_codes():
     det = dict(score=np.array([0.9, 0.8, 0.7, 0.95, 0.85, 0.6, 0.99]),
                gt7=np.array([0, 1, 2, -1, -1, -1, -1]),

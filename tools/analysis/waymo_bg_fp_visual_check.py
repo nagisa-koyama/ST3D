@@ -377,15 +377,76 @@ def unblind(out):
     print('\n'.join(lines))
 
 
+# ------------------------------------------------------------------------------- distinct objects (descriptive, added)
+def cluster_objects(keys, centres, radius=2.0):
+    """Single-linkage clusters of boxes that share a key (model, sequence) and lie within `radius` m in BEV (world
+    frame). Returns one integer label per box; boxes with different keys never share a label."""
+    labels = -np.ones(len(keys), np.int64)
+    nxt = 0
+    for k in sorted(set(keys)):
+        idx = [i for i, kk in enumerate(keys) if kk == k]
+        for i in idx:
+            if labels[i] >= 0:
+                continue
+            labels[i] = nxt
+            stack = [i]
+            while stack:
+                a = stack.pop()
+                for b in idx:
+                    if labels[b] < 0 and np.hypot(*(np.asarray(centres[a][:2]) - np.asarray(centres[b][:2]))) <= radius:
+                        labels[b] = nxt
+                        stack.append(b)
+            nxt += 1
+    return labels
+
+
+def objects(pass_pkl, out):
+    """Distinct physical objects behind the selected boxes: per model, boxes of one sequence whose world centres chain
+    within 2 m are one object. Category of an object = the most common category among its panels."""
+    out = Path(out)
+    items, _ = build_items(pass_pkl)
+    seq = load_sequences()
+    key = {(r['model'], r['frame_id'], int(r['det_index_in_frame'])): r['blind_id'] for r in csv.DictReader(open(out / 'key.csv'))}
+    cls = {r['blind_id']: r['category'] for r in csv.DictReader(open(out / 'classification.csv'))}
+    for it in items:
+        it['bid'] = key[(it['model'], it['fid'], it['j'])]
+        it['world'] = to_world(it['box'], seq[it['seq']][it['idx']]['pose'])[0]
+    lab = cluster_objects([(it['model'], it['seq']) for it in items], [it['world'] for it in items])
+    lines = ['| model | boxes | distinct objects | largest object (boxes) | objects by majority category |', '|---|---|---|---|---|']
+    for m in ('ours27596', 'oracle', 'pl27704'):
+        sel = [i for i, it in enumerate(items) if it['model'] == m]
+        objs = {}
+        for i in sel:
+            objs.setdefault(lab[i], []).append(i)
+        cats = {}
+        for o, members in objs.items():
+            cs = [cls.get(items[i]['bid'], '-') for i in members]
+            c = max(sorted(set(cs)), key=cs.count)
+            cats[c] = cats.get(c, 0) + 1
+        lines.append('| %s | %d | %d | %d | %s |' % (m, len(sel), len(objs), max(len(v) for v in objs.values()),
+                                                    ', '.join('%s %d' % (c, cats[c]) for c in sorted(cats))))
+    # objects of ours and the oracle that are the same place (world centres within 2 m, same sequence)
+    pair = cluster_objects([('both', it['seq']) for it in items if it['model'] in VISUAL],
+                           [it['world'] for it in items if it['model'] in VISUAL])
+    vis = [it for it in items if it['model'] in VISUAL]
+    shared = sum(1 for o in set(pair) if {vis[i]['model'] for i in range(len(vis)) if pair[i] == o} == set(VISUAL))
+    lines.append('')
+    lines.append('ours + oracle pooled: %d distinct places, %d of them hit by both models' % (len(set(pair)), shared))
+    (out / 'objects.md').write_text('\n'.join(lines) + '\n')
+    print('\n'.join(lines))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('stage', choices=('render', 'unblind'))
+    ap.add_argument('stage', choices=('render', 'unblind', 'objects'))
     ap.add_argument('--pass_pkl')
     ap.add_argument('--out', required=True)
     ap.add_argument('--workers', type=int, default=6)
     a = ap.parse_args()
     if a.stage == 'render':
         render(a.pass_pkl, a.out, a.workers)
+    elif a.stage == 'objects':
+        objects(a.pass_pkl, a.out)
     else:
         unblind(a.out)
 
