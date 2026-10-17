@@ -1,0 +1,164 @@
+# A4: THE LABEL-FREE PROCEDURE'S OWN nuScenes -> Waymo ROW (experiments_md/20261017_09; procedure pre-declared in
+# 20261017_03 §3, step 2). User's go 2026-10-17 ~20:42 JST, high priority (「A4も優先度高でお願いします」).
+#
+# What the procedure returns on this pair (20261017_03 §4): step 2, sparse -> dense.
+# - Teacher and init: job 27183 -> resumed as 27185 (centerpoint-accum-depthwaymo-nuscenes2waymo, training run W&B
+#   p1a5erux, checkpoint_epoch_20; its recovery eval is 0ru2bxor): MeanVFE, accumulation min(N*, N_cap) per platform =
+#   Boston (n008) 30 / Singapore (n015) 20, per-object motion compensation (source labels), family default size
+#   augmentation, trained from scratch on nuScenes only. On Waymo val, as scored (SHIFT_COOR 0): 50.67 / 26.00.
+# - Then pseudo-labelling on Waymo TRAIN from that frozen teacher, generated once, with the 27566 recipe: the SELF_TRAIN
+#   block below is 27566's (centerpoint-accum-legaldepth-st3d-nuscenes2kitti, resolved W&B config of run 2tjw5vuv)
+#   except the two cut lines. PROG_AUG on (decision F).
+# - Cuts by the pre-declared rules (20261004_01 §5e), re-derived for THIS teacher (job in 20261017_09 §4):
+#   SCORE_THRESH by rule B (teacher's precision on the labelled SOURCE val >= 0.50 per class; nuScenes val, n008 at 30
+#   sweeps + n015 at 20, merged); NEG_THRESH by rule A (background-plateau upper half-maximum on the teacher's Waymo
+#   TRAIN pseudo-labels, this config's own target block, score floor 0.0001). A SCORE below its NEG is raised to it.
+# - Step 0 of the procedure: target SHIFT_COOR z by rule G (ground alignment, analysis/ground_height_offset.py, TRAIN
+#   clouds; 20261007_01 §7.1): -0.044 m. 27704 / 28563 and 27185 as scored used 0 (a 4 cm difference, which moved 27471
+#   and 27468 by < 0.1 BEV, 27608).
+# - Target train frames: SAMPLED_INTERVAL train 10 (15,809 frames), as 27704 (a cost choice made before any result).
+#
+# Against 27704 (the development row): teacher (27471 GBlobs, Boston 15 / Singapore 10 -> 27185 MeanVFE 30 / 20),
+# student encoder (GBlobsVFE -> MeanVFE) and source depth, cuts (re-derived), target SHIFT_COOR z (0 -> -0.044).
+# Against 27566 (the recipe's pair): target (KITTI -> Waymo), depths (15 / 10 -> 30 / 20), cuts (re-derived).
+#
+# Legality: teacher trained on nuScenes only, depths from unlabelled clouds (N*) and a label-free voxel cap; cuts by
+# pre-declared label-free rules (source labels, target TRAIN clouds); SHIFT_COOR by rule G (TRAIN clouds); family
+# default size augmentation; PROG_AUG and CenterPoint as published (decision F). No target label reaches any value here.
+#
+# PRE-DECLARED READING (20261017_09 §5; written before any cut or result): Car BEV AP_R40 at IoU 0.7 on Waymo val,
+# epoch 20, one seed, against the teacher 27185 scored on the same input (rule G): >= +2 pseudo-labelling adds;
+# |D| < 2 level; <= -2 hurts. 27704 / 28563 are reported beside it, never chosen between on Waymo val.
+#
+# Launch (2 GPUs, 150G, seed 666; off any node holding another nuScenes-source row):
+#   EST_H=48 scripts/submit.sh --mem=150G scripts/run_sourceonly_2gpu.sh \
+#       cfgs/da-ieee-access/centerpoint-accum-depthwaymo-st3d-nuscenes2waymo.yaml <tag> <run> \
+#       --pretrained_model <27185 ep20> --pretrained_model_teacher <27185 ep20>
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-depthwaymo-nuscenes2waymo.yaml
+
+DATA_CONFIG_TAR:
+    USE_PSEUDO_LABEL: True
+    SAMPLED_INTERVAL: {'train': 10, 'test': 5}
+    # Rule G, step 0 of the procedure (20261007_01 §7.1): S_tgt = g_src + S_src - g_tgt = -1.815 + 1.75 + 0.021.
+    SHIFT_COOR: [0.0, 0.0, -0.044]
+
+SELF_TRAIN:
+    EPOCH_FOLLOWS: source
+    SCORE_THRESH: [1.01, 1.01, 1.01]   # PLACEHOLDER until step 2 (rule B, then raised to NEG where below it)
+    NEG_THRESH: [1.01, 1.01, 1.01]     # PLACEHOLDER until step 2 (rule A on Waymo TRAIN)
+    UPDATE_PSEUDO_LABEL: [0]
+    UPDATE_PSEUDO_LABEL_INTERVAL: 2
+    FROZEN_TEACHER_SINGLE_PASS: True
+    INIT_PS: None
+
+    SRC:
+        USE_DATA: True
+        USE_GRAD: True
+        LOSS_WEIGHT: 1.0
+        BACKWARD_TOGETHER: True
+
+    TAR:
+        USE_DATA: True
+        LOSS_WEIGHT: 1.0
+        BACKWARD_TOGETHER: True
+
+    PROG_AUG:
+        ENABLED: True
+        UPDATE_AUG: [5, 10, 15]
+        SCALE: 1.1
+
+    MEMORY_ENSEMBLE:
+        ENABLED: True
+        NAME: nms_ensemble
+        IOU_THRESH: 0.1
+        NMS_CONFIG:
+            NMS_TYPE: nms_gpu
+            MULTI_CLASSES_NMS: False
+            NMS_PRE_MAXSIZE: 512
+            NMS_POST_MAXSIZE: 100
+            NMS_THRESH: 0.1
+        MEMORY_VOTING:
+            ENABLED: True
+            IGNORE_THRESH: 2
+            RM_THRESH: 3
+
+    # The teacher is 27185's model exactly (MeanVFE); built from this block by train.py and by the step-2 generator.
+    MODEL_TEACHER:
+        CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
+        ONTOLOGY: 'kitti'
+        NAME: CenterPoint
+
+        VFE:
+            NAME: MeanVFE
+
+        BACKBONE_3D:
+            NAME: VoxelResBackBone8x
+
+        MAP_TO_BEV:
+            NAME: HeightCompression
+            NUM_BEV_FEATURES: 256
+
+        BACKBONE_2D:
+            NAME: BaseBEVBackbone
+
+            LAYER_NUMS: [5]
+            LAYER_STRIDES: [1]
+            NUM_FILTERS: [128]
+            UPSAMPLE_STRIDES: [2]
+            NUM_UPSAMPLE_FILTERS: [256]
+
+        DENSE_HEAD:
+            NAME: CenterHead
+            CLASS_AGNOSTIC: False
+
+            CLASS_NAMES_EACH_HEAD: [
+                ['Car', 'Pedestrian', 'Cyclist'],
+            ]
+
+            SHARED_CONV_CHANNEL: 64
+            USE_BIAS_BEFORE_NORM: True
+            NUM_HM_CONV: 2
+            SEPARATE_HEAD_CFG:
+                HEAD_ORDER: ['center', 'center_z', 'dim', 'rot']
+                HEAD_DICT: {
+                    'center': {'out_channels': 2, 'num_conv': 2},
+                    'center_z': {'out_channels': 1, 'num_conv': 2},
+                    'dim': {'out_channels': 3, 'num_conv': 2},
+                    'rot': {'out_channels': 2, 'num_conv': 2},
+                }
+
+            TARGET_ASSIGNER_CONFIG:
+                FEATURE_MAP_STRIDE: 4
+                NUM_MAX_OBJS: 500
+                GAUSSIAN_OVERLAP: 0.1
+                MIN_RADIUS: 2
+
+            LOSS_CONFIG:
+                LOSS_WEIGHTS: {
+                    'cls_weight': 1.0,
+                    'loc_weight': 2.0,
+                    'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+                }
+
+            POST_PROCESSING:
+                SCORE_THRESH: 0.0001
+                POST_CENTER_LIMIT_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+                MAX_OBJ_PER_SAMPLE: 500
+                NMS_CONFIG:
+                    NMS_TYPE: nms_gpu
+                    NMS_THRESH: 0.5
+                    NMS_PRE_MAXSIZE: 4096
+                    NMS_POST_MAXSIZE: 500
+
+        POST_PROCESSING:
+            RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+            SCORE_THRESH: 0.0001
+            OUTPUT_RAW_SCORE: False
+            EVAL_METRIC: kitti
+
+            NMS_CONFIG:
+                MULTI_CLASSES_NMS: False
+                NMS_TYPE: nms_gpu
+                NMS_THRESH: 0.5
+                NMS_PRE_MAXSIZE: 4096
+                NMS_POST_MAXSIZE: 500
