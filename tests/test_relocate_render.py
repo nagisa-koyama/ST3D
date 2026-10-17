@@ -693,3 +693,38 @@ def test_v2_db_is_never_pickled_with_its_points(tmp_path):
     db2 = pickle.loads(s)
     assert db2._pts is None and db2.n == 2
     np.testing.assert_array_equal(db2.points(1), db.points(1)); np.testing.assert_array_equal(db2.alphas(1), [0.1, 0.2])
+
+
+def test_rr2_config_differs_from_27471_only_by_rr_v2_and_the_waymo_target(monkeypatch):
+    from pcdet.config import cfg_from_yaml_file
+    from pcdet.datasets.augmentor.data_augmentor import DataAugmentor
+    monkeypatch.chdir(ROOT / 'tools')
+    load = lambda n: cfg_from_yaml_file('cfgs/da-ieee-access/' + n, EasyDict())
+    rrc = load('centerpoint-gblobs-accum-legaldepth-rr2-nuscenes2waymo.yaml')
+    base = load('centerpoint-gblobs-accum-legaldepth-nuscenes2kitti.yaml')          # 27471
+    waymo = load('centerpoint-gblobs-sourceonly-nuscenes2waymo.yaml')                # 27596's target block
+    v1 = load('centerpoint-gblobs-accum-legaldepth-rr-nuscenes2waymo.yaml')
+    assert 'VERSION' not in v1.DATA_CONFIGS.NUSCENES_N008.DATA_AUGMENTOR.AUG_CONFIG_LIST[0]   # v1 unchanged
+    assert rrc.MODEL == base.MODEL and rrc.OPTIMIZATION == base.OPTIMIZATION and rrc.CLASS_NAMES == base.CLASS_NAMES
+    assert rrc.DATA_CONFIG_TAR == waymo.DATA_CONFIG_TAR
+    for key in ('NUSCENES_N008', 'NUSCENES_N015'):
+        a, b = rrc.DATA_CONFIGS[key], base.DATA_CONFIGS[key]
+        la, lb = a.DATA_AUGMENTOR.AUG_CONFIG_LIST, b.DATA_AUGMENTOR.AUG_CONFIG_LIST
+        assert la[0].NAME == 'relocate_render' and la[0].VERSION == 2 and la[1:] == lb
+        strip = lambda c: {k: v for k, v in c.items() if k not in ('DATA_AUGMENTOR', '_BASE_CONFIG_')}
+        assert strip(a) == strip(b)
+        e = la[0]
+        assert {k: e[k] for k in ('N_COPIES', 'MAX_TRIES', 'R_MIN', 'R_MAX', 'BEV_MARGIN', 'MAX_SCENE_POINTS', 'CLEARANCE',
+                                  'VIS_MAX_SHARE', 'VIS_HEIGHT', 'RC_MIN', 'RC_OCCL_M', 'OCCLUSION_M', 'N_COLS',
+                                  'MOUNT_HEIGHT', 'TIME_COLUMN')} == \
+            dict(N_COPIES=8, MAX_TRIES=20, R_MIN=5.0, R_MAX=75.2, BEV_MARGIN=0.5, MAX_SCENE_POINTS=5, CLEARANCE=0.3,
+                 VIS_MAX_SHARE=0.1, VIS_HEIGHT=0.3, RC_MIN=0.8, RC_OCCL_M=0.5, OCCLUSION_M=0.5, N_COLS=2650,
+                 MOUNT_HEIGHT=2.184, TIME_COLUMN=4)                                   # T05 §5 v2, fixed
+        assert e.DB_POINTS.startswith('/home/koyama/data/') and key in e.DB_POINTS and key in e.DB_INDEX
+        if not (Path(e.DB_POINTS).exists() and Path(e.DB_INDEX).exists()):
+            continue                                                                  # database not built yet
+        aug = DataAugmentor(None, a.DATA_AUGMENTOR, rrc.CLASS_NAMES)
+        q0 = aug.data_augmentor_queue[0]
+        assert q0.func.__name__ == 'relocate_render' and q0.keywords['db'].n > 0 and q0.keywords['db']._pts is None
+        assert len(pickle.dumps(aug)) < 5e7
+    assert 'relocate_render' not in str(rrc.DATA_CONFIG_TAR)

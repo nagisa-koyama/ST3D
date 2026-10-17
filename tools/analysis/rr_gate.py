@@ -313,7 +313,7 @@ def dump_frame(d, CAP, rec, head, side, cell, cfg, i):
     return dict(frame=i, n_copies=k, final_rows=fin, copy_labels=[int(lab[f]) if f >= 0 else None for f in fin],
                 car_peak_at_copy=peaks, positives=pos, peaks=peaks_all,
                 copies=[dict(r_donor=c['r_donor'], r_new=c['r_new'], n_donor=c['n_donor'], n_rendered=c['n_rendered'],
-                             n_final_rr=c['n_final']) for c in rec['copies']],
+                             n_final_rr=c['n_final']) for c in rec['copies']] if rec.get('version', 1) == 1 else [],
                 n_in_final_cloud=[int(x) for x in cnt_final])
 
 
@@ -429,6 +429,345 @@ def report(a):
     print('\nimages:', [p for r in res for p in r['images']])
 
 
+
+# ================================================================================================ gate v2 (§6.3)
+def blocked_share_v2(placed, scene_lat, scene_hz, lat):
+    """(v2 D2, v1 D2) shares of the copy's rendered columns blocked by a scene return in the copy's row span nearer by
+    > 0.5 m than the copy's nearest point in that column; v2 also requires the return > 0.3 m above the gate's plane."""
+    from pcdet.datasets.augmentor import relocate_render as rr
+    _, rows, cols, _, rng = rr._render(placed, lat['thetas'], lat['n_cols'], lat['height'])
+    if not len(cols):
+        return np.nan, np.nan
+    srow, scol, srng, sval = scene_lat
+    ucol, inv = np.unique(cols, return_inverse=True)
+    rmin = np.full(len(ucol), np.inf); np.minimum.at(rmin, inv, rng)
+    base = sval & np.isin(scol, ucol) & (srow >= rows.min()) & (srow <= rows.max())
+    out = []
+    for sel in (base & (scene_hz > 0.3), base):
+        near = np.full(len(ucol), np.inf)
+        if sel.any():
+            np.minimum.at(near, np.searchsorted(ucol, scol[sel]), srng[sel])
+        out.append(float(np.mean(near < rmin - 0.5)))
+    return out[0], out[1]
+
+
+def image_v2(path, title, before, after, rec, lat):
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from pcdet.datasets.augmentor import relocate_render as rr
+    SURF, INK, INK2, MUTED, C_DB, C_COPY = '#fcfcfb', '#0b0b0b', '#52514e', '#b4b2ab', '#2a78d6', '#eb6834'
+    fig, ax = plt.subplots(1, 3, figsize=(21, 7.4), facecolor=SURF, gridspec_kw=dict(width_ratios=[1, 1, 1.1]))
+    copies = rec['copies']
+    nb = len(before['gt_boxes'])
+    for a, d, lab in ((ax[0], before, 'before RR v2 (loader cloud, ground-origin frame)'),
+                      (ax[1], after, f"after RR v2: {len(copies)} copies (sparsified)")):
+        a.set_facecolor(SURF)
+        p = d['points']
+        a.scatter(p[:, 0], p[:, 1], s=0.02, c=MUTED, linewidths=0, rasterized=True)
+        for j, b in enumerate(d['gt_boxes']):
+            cc = rr.bev_corners(b[None].astype(np.float64))[0]; cc = np.vstack([cc, cc[:1]])
+            a.plot(cc[:, 0], cc[:, 1], color=C_COPY if j >= nb else INK2, lw=1.2 if j >= nb else 0.7)
+        if d is after:
+            for c in copies:
+                q = p[c['point_index']]
+                a.scatter(q[:, 0], q[:, 1], s=1.5, c=C_COPY, linewidths=0)
+        a.set_xlim(-75.2, 75.2); a.set_ylim(-75.2, 75.2); a.set_aspect('equal')
+        a.set_title(lab, color=INK, fontsize=11); a.tick_params(colors=INK2, labelsize=8)
+        for sp in a.spines.values():
+            sp.set_color(MUTED)
+        a.set_xlabel('x (m)', color=INK2); a.set_ylabel('y (m)', color=INK2)
+    a = ax[2]; a.set_facecolor(SURF)
+    c = max(copies, key=lambda c: c['r_new'])
+    h = lat['height']
+
+    def ang(x):
+        d = x[:, :3] - [0, 0, h]
+        return np.degrees(np.arctan2(d[:, 1], d[:, 0])), np.degrees(np.arctan2(d[:, 2], np.hypot(d[:, 0], d[:, 1])))
+    ref = np.degrees(c['phi_new'])
+    wrap = lambda v: (v - ref + 180) % 360 - 180
+    for pts_, col, sz, lab in ((c['placed'], C_DB, 1, f"placed database points ({len(c['placed'])})"),
+                               (c['rendered_unsparsified'], MUTED, 9, f"render before the sparsifier ({len(c['rendered_unsparsified'])})"),
+                               (after['points'][c['point_index']], C_COPY, 9, f"kept, p = {c['p_keep']:.2f} ({c['n_final']})")):
+        az, el = ang(pts_)
+        a.scatter(wrap(az), el, s=sz, c=col, linewidths=0, label=lab)
+    az0, el0 = ang(c['placed'])
+    th = np.degrees(lat['thetas']); lo, hi = el0.min() - 0.3, el0.max() + 0.3
+    for t in th[(th >= lo) & (th <= hi)]:
+        a.axhline(t, color=MUTED, lw=0.5, zorder=0)
+    a.set_ylim(lo, hi)
+    a.set_title(f"farthest copy: r' {c['r_new']:.1f} m, RC {c['rc_loader']:.2f}; grey lines = TOP rows", color=INK,
+                fontsize=10)
+    a.set_xlabel('azimuth about the copy centre (deg)', color=INK2)
+    a.set_ylabel('elevation about (0, 0, 2.184) (deg)', color=INK2)
+    a.tick_params(colors=INK2, labelsize=8); a.legend(loc='upper right', fontsize=9, frameon=False)
+    for sp in a.spines.values():
+        sp.set_color(MUTED)
+    fig.suptitle(title, color=INK, fontsize=12)
+    fig.tight_layout(); fig.savefig(path, dpi=110, facecolor=SURF); plt.close(fig)
+
+
+V2_COPY_COLS = ('plat', 'frame', 'moving', 'r_new', 'phi', 'sector', 'tries', 'rc_loader', 'vis_loader', 'n_db',
+                'n_rendered', 'n_visible', 'p_keep', 'n_kept', 'n_final', 'rc_g1', 'ppp_g1', 'visrows_g1', 'n_phantom',
+                'n_final_g3', 'off_plane', 'd2_v2', 'd2_v1', 'n_pts_grid', 'n_vox', 'n_layers', 'ppv', 'instance')
+V2_FRAME_COLS = ('plat', 'frame', 'moving', 'n_boxes', 'has_plane', 'n_attempted', 'n_placed', 'n_no_place', 'n_zero',
+                 'rej_range', 'rej_overlap', 'rej_scene', 'rej_empty', 'rej_vis', 'rej_rc', 'same', 'coll', 'emptied',
+                 'lost', 'pts_before', 'pts_after', 'scene_t', 'copy_t', 'gp_sx', 'gp_sy', 'gp_z0', 'rr_sx', 'rr_sy')
+
+
+def run_v2(a):
+    import torch
+    from scipy.spatial import cKDTree
+    from lattice_depth_ceiling import travel_direction, sector_of
+    from source_coverage import lattice_coverage, descriptors, crop
+    from pcdet.datasets.augmentor import relocate_render as rr
+    from pcdet.datasets.rerender_utils import to_lattice
+    out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
+    plat = PLAT_ID[a.key]
+    cfg, dcfg, ds = build(a.cfg, a.key)
+    aug = ds.data_augmentor
+    q0 = aug.data_augmentor_queue[0]
+    assert getattr(q0, 'func', None) is not None and q0.func.__name__ == 'relocate_render', 'RR is not first'
+    rr_cfg = q0.keywords['config']; lat = q0.keywords['lattice']; db = q0.keywords['db']
+    assert int(rr_cfg.VERSION) == 2 and db is not None
+    assert list(rr_cfg.POINT_CLOUD_RANGE) == list(dcfg.POINT_CLOUD_RANGE), 'RR range != the dataset range'
+    print(f"[rr_gate v2] {a.key}: {len(ds)} infos; database {db.n} instances ({db.points_path}); lattice "
+          f"{lat['n_segments']} train segments; queue {[getattr(f, 'func', f).__name__ for f in aug.data_augmentor_queue]}",
+          flush=True)
+    CAP = {}
+
+    def rr_step(data_dict=None):
+        CAP['before'] = {k: np.copy(data_dict[k]) for k in ('points', 'gt_boxes', 'gt_names', 'gt_boxes_mask')}
+        o, rec = rr.relocate_render_scene_v2(data_dict, rr_cfg, lat, db, rng=np.random, keep_points=True)
+        CAP['rec'] = rec
+        CAP['after'] = {k: np.copy(o[k]) for k in ('points', 'gt_boxes', 'gt_names', 'gt_boxes_mask')}
+        return o
+    fwd0 = aug.forward
+
+    def fwd(data_dict):
+        o = fwd0(data_dict)
+        CAP['post'] = np.copy(o['gt_boxes'])
+        return o
+    queue_rr = list(aug.data_augmentor_queue)
+    aug.data_augmentor_queue = [rr_step] + queue_rr[1:]
+    aug.forward = fwd
+    N = len(ds); step = N // a.n
+    frames = [k * step for k in range(a.n)][:a.max_frames]
+    th, nc, h = lat['thetas'], lat['n_cols'], lat['height']
+    head, side, cell = head_for(cfg, dcfg)
+    copies, frows, dumps, imgs = [], [], [], []
+    t_start = time.time()
+    for n_done, i in enumerate(frames):
+        np.random.seed((plat * 1000003 + i) % (2 ** 31))
+        CAP.clear()
+        d = ds[i]
+        rec, B, A = CAP['rec'], CAP['before'], CAP['after']
+        fwdv = travel_direction(ds.infos[i]); moving = fwdv is not None
+        fv = fwdv if moving else np.array([1.0, 0.0])
+        nb0 = len(B['gt_boxes']); k = rec['n_placed']
+        P = A['points']
+        same = bool(np.array_equal(A['gt_boxes'][:nb0], B['gt_boxes']) and
+                    np.array_equal(A['gt_names'][:nb0], B['gt_names']) and
+                    np.array_equal(A['gt_boxes_mask'][:nb0], B['gt_boxes_mask']))
+        cb = A['gt_boxes'][nb0:].astype(np.float64)
+        coll = 0
+        for j in range(k):
+            others = np.concatenate([B['gt_boxes'][:, :7].astype(np.float64), cb[:j, :7]])
+            coll += int(len(others) > 0 and rr.rects_overlap(rr.bev_corners(cb[j:j + 1])[0], rr.bev_corners(others)).any())
+        cnt_b = in_box_counts(B['points'], B['gt_boxes']); cnt_a = in_box_counts(P, A['gt_boxes'][:nb0])
+        tcol = rr_cfg.TIME_COLUMN
+        copy_t = np.concatenate([P[c['point_index'], tcol] for c in rec['copies']]) if k else np.zeros(0)
+        gp = ground_plane(B['points'][:, :3], seed=i)
+        pl = gp if gp is not None else np.full(3, np.nan)
+        rp = rec['plane'] if rec['plane'] is not None else np.full(3, np.nan)
+        rj = rec['reject']
+        frows.append([plat, i, moving, rec['n_boxes'], rec['plane'] is not None, rec['n_attempted'], k,
+                      rec['n_no_place'], rec['n_zero'], rj['range'], rj['overlap'], rj['scene'], rj['empty'],
+                      rj['visibility'], rj['rc'], same, coll, int(((cnt_b >= 1) & (cnt_a == 0)).sum()),
+                      int((cnt_a < cnt_b).sum()), len(B['points']), len(P),
+                      float(B['points'][:, tcol].max()) if B['points'].shape[1] > tcol else np.nan,
+                      float(np.abs(copy_t).max()) if len(copy_t) else 0.0,
+                      float(np.degrees(np.arctan(pl[0]))), float(np.degrees(np.arctan(pl[1]))), float(pl[2]),
+                      float(np.degrees(np.arctan(rp[0]))), float(np.degrees(np.arctan(rp[1])))])
+        if k:
+            sec = sector_of(cb[:, :2], fv)
+            iscopy = np.zeros(len(P), bool)
+            for c in rec['copies']:
+                iscopy[c['point_index']] = True
+            scene = P[~iscopy, :3].astype(np.float64)
+            scene_lat = to_lattice(scene, h, th, nc)
+            scene_hz = scene[:, 2] - (pl[0] * scene[:, 0] + pl[1] * scene[:, 1] + pl[2])
+            for j, c in enumerate(rec['copies']):
+                ru = c['rendered_unsparsified']
+                cloud = np.concatenate([scene, ru]); idx = [np.arange(len(scene), len(scene) + len(ru))]
+                cov = lattice_coverage(cloud, cb[j:j + 1, :7], idx, th, nc, h)[0]
+                fp = P[c['point_index'], :3].astype(np.float64)
+                dmin = cKDTree(c['placed']).query(fp, k=1)[0] if len(fp) else np.zeros(0)
+                bx = c['box']
+                off = (bx[2] - bx[5] / 2) - (pl[0] * bx[0] + pl[1] * bx[1] + pl[2])
+                d2v2, d2v1 = blocked_share_v2(c['placed'], scene_lat, scene_hz, lat)
+                g = crop(fp); dsc = descriptors(g)
+                copies.append([plat, i, moving, c['r_new'], c['phi_new'], sec[j], c['tries'], c['rc_loader'],
+                               c['vis_share_loader'], c['n_db'], c['n_rendered'], c['n_visible'], c['p_keep'],
+                               c['n_kept'], c['n_final'], cov[0], cov[1], cov[2], int((dmin > PHANTOM_M).sum()), len(fp),
+                               off, d2v2, d2v1, dsc[0], dsc[1], dsc[2], dsc[3], c['instance']])
+        if k and len(dumps) < a.dump:
+            dumps.append(dump_frame_v2(d, CAP, rec, head, side, cell, cfg, i))
+        if k >= 2 and len(imgs) < a.images:
+            pth = out / f'bev_v2_{a.key}_{i:05d}.png'
+            image_v2(pth, f'{a.key} ({PLAT_NAME[plat]}) train info {i}: relocate-and-render v2, before / after', B, A,
+                     rec, lat)
+            imgs.append(str(pth))
+        if n_done % 20 == 0:
+            print(f'[rr_gate v2] {n_done + 1}/{len(frames)} frames, {len(copies)} copies, {time.time() - t_start:.0f} s',
+                  flush=True)
+    aug.forward = fwd0
+    g4 = []
+    for i in frames[::2][:a.g4]:
+        seed = (plat * 1000003 + i) % (2 ** 31)
+        aug.data_augmentor_queue = queue_rr[1:]
+        np.random.seed(seed); ds[i]
+        np.random.seed(seed); t0 = time.perf_counter(); ds[i]; t_off = time.perf_counter() - t0
+        aug.data_augmentor_queue = queue_rr
+        np.random.seed(seed); t0 = time.perf_counter(); ds[i]; t_on = time.perf_counter() - t0
+        g4.append([plat, i, t_off, t_on])
+    res = dict(version=2, key=a.key, plat=plat, n_infos=N, frames=frames,
+               copies=np.array(copies, np.float64).reshape(-1, len(V2_COPY_COLS)),
+               frames_rows=np.array(frows, np.float64).reshape(-1, len(V2_FRAME_COLS)),
+               g4=np.array(g4, np.float64).reshape(-1, 4), dumps=dumps, images=imgs, db_n=db.n,
+               db_points=db.points_path, node=os.uname().nodename)
+    pickle.dump(res, open(out / f'gate_v2_{a.key}.pkl', 'wb'))
+    print(f'[rr_gate v2] done {a.key}: {len(frames)} frames, {len(copies)} copies, images {imgs}', flush=True)
+
+
+def dump_frame_v2(d, CAP, rec, head, side, cell, cfg, i):
+    out = dump_frame(d, CAP, rec, head, side, cell, cfg, i)
+    out['copies'] = [dict(r_new=c['r_new'], n_db=c['n_db'], n_rendered=c['n_rendered'], n_visible=c['n_visible'],
+                          p_keep=c['p_keep'], n_final_rr=c['n_final']) for c in rec['copies']]
+    return out
+
+
+def report_v2(a):
+    D = Path(a.dir)
+    res = [pickle.load(open(p, 'rb')) for p in sorted(D.glob('gate_v2_*.pkl'))]
+    C = {k: j for j, k in enumerate(V2_COPY_COLS)}; F = {k: j for j, k in enumerate(V2_FRAME_COLS)}
+    cp = np.concatenate([r['copies'] for r in res]); fr = np.concatenate([r['frames_rows'] for r in res])
+    g4 = np.concatenate([r['g4'] for r in res])
+    PL = [p for p in (0, 1) if (fr[:, F['plat']] == p).any()]
+    verdict = {}
+    print('nodes:', {r['key']: r['node'] for r in res})
+    for r in res:
+        print(f"{r['key']}: {len(r['frames'])} frames of {r['n_infos']} (stride {r['n_infos'] // 200}), "
+              f"{len(r['copies'])} copies; database {r['db_n']} instances ({r['db_points']})")
+    print('\n== frames ==')
+    for p in PL:
+        f = fr[fr[:, F['plat']] == p]
+        print(f"{PLAT_NAME[p]}: {len(f)} frames ({int(f[:, F['moving']].sum())} moving), with a plane "
+              f"{int(f[:, F['has_plane']].sum())}; per frame: boxes {f[:, F['n_boxes']].mean():.1f}, copies "
+              f"{f[:, F['n_placed']].mean():.2f} of {f[:, F['n_attempted']].mean():.2f} attempted (8 placed in "
+              f"{int((f[:, F['n_placed']] == 8).sum())} frames); no placement {int(f[:, F['n_no_place']].sum())}, "
+              f"0-point after the sparsifier {int(f[:, F['n_zero']].sum())}; rejected tries range "
+              f"{int(f[:, F['rej_range']].sum())} / overlap {int(f[:, F['rej_overlap']].sum())} / scene "
+              f"{int(f[:, F['rej_scene']].sum())} / empty {int(f[:, F['rej_empty']].sum())} / visibility "
+              f"{int(f[:, F['rej_vis']].sum())} / RC {int(f[:, F['rej_rc']].sum())}")
+        print(f"   originals bit-identical in {int(f[:, F['same']].sum())} / {len(f)}; copy collisions "
+              f"{int(f[:, F['coll']].sum())}; originals emptied {int(f[:, F['emptied']].sum())}, that lost points "
+              f"{int(f[:, F['lost']].sum())}; points per frame {f[:, F['pts_before']].mean():.0f} -> "
+              f"{f[:, F['pts_after']].mean():.0f}; scene time-lag max {np.nanmax(f[:, F['scene_t']]):.3f}, copy "
+              f"{f[:, F['copy_t']].max():.3f}; RANSAC plane slope x / y median {np.nanmedian(f[:, F['rr_sx']]):+.2f} / "
+              f"{np.nanmedian(f[:, F['rr_sy']]):+.2f} deg (gate LSQ plane {np.nanmedian(f[:, F['gp_sx']]):+.2f} / "
+              f"{np.nanmedian(f[:, F['gp_sy']]):+.2f})")
+    ok = ~np.isnan(cp[:, C['rc_g1']])
+    print(f"\n== copies: {len(cp)} (RC defined for {int(ok.sum())}); tries median {np.median(cp[:, C['tries']]):.0f}; "
+          f"r' p10 / p50 / p90 {np.percentile(cp[:, C['r_new']], 10):.1f} / {np.median(cp[:, C['r_new']]):.1f} / "
+          f"{np.percentile(cp[:, C['r_new']], 90):.1f} m; database points per copy median {np.median(cp[:, C['n_db']]):.0f}; "
+          f"rendered {cp[:, C['n_rendered']].sum():.0f}, visible {cp[:, C['n_visible']].sum():.0f}, kept "
+          f"{cp[:, C['n_kept']].sum():.0f}; p_keep min {cp[:, C['p_keep']].min():.4f} max {cp[:, C['p_keep']].max():.4f} "
+          f"mean {cp[:, C['p_keep']].mean():.3f}; distinct instances {len(np.unique(cp[:, C['instance']] + 1e6 * cp[:, C['plat']]))}")
+    print('\n== G1 (unsparsified renders): median RC, moving-ego frames ==')
+    print('| platform | ring | sector | copies | median RC | PPP median |')
+    print('|---|---|---|---|---|---|')
+    passed = 0; g2 = True
+    for p in (0, 1):
+        for lo, hi in G1_RINGS:
+            for s_ in range(3):
+                m = ok & (cp[:, C['plat']] == p) & (cp[:, C['moving']] == 1) & (cp[:, C['r_new']] >= lo) & \
+                    (cp[:, C['r_new']] < hi) & (cp[:, C['sector']] == s_)
+                med = np.median(cp[m, C['rc_g1']]) if m.any() else np.nan
+                ppp = np.median(cp[m, C['ppp_g1']]) if m.any() else np.nan
+                passed += int(med >= 0.8); g2 &= bool(1.0 <= ppp <= 1.1)
+                print(f"| {PLAT_NAME[p]} | {lo:g}-{hi:g} | {SECTORS[s_]} | {int(m.sum())} | {med:.3f} | {ppp:.3f} |"
+                      + (' < 15' if m.sum() < 15 else ''))
+    verdict['G1'] = passed >= 10; verdict['G2'] = g2
+    print(f"G1: {passed} of 12 cells >= 0.8 -> {'PASS' if verdict['G1'] else 'FAIL'}; G2 -> {'PASS' if g2 else 'FAIL'}")
+    print('RC (G1) per r\' bin, all frames:')
+    for p in PL:
+        row = []
+        for lo, hi in zip(RBINS[:-1], RBINS[1:]):
+            m = ok & (cp[:, C['plat']] == p) & (cp[:, C['r_new']] >= lo) & (cp[:, C['r_new']] < hi)
+            row.append(f"{lo:g}-{hi:g}: {np.median(cp[m, C['rc_g1']]) if m.any() else np.nan:.3f} [{int(m.sum())}]")
+        print(f"  {PLAT_NAME[p]}: " + '; '.join(row))
+    print(f"loader RC (acceptance) min {np.nanmin(cp[:, C['rc_loader']]):.3f}; G1 RC < 0.8 in {np.mean(cp[ok, C['rc_g1']] < 0.8):.1%} of copies")
+    print('\n== G3: phantom share of kept points per r\' ring, < 1% ==')
+    g3 = True
+    for lo, hi in zip(G3_RINGS[:-1], G3_RINGS[1:]):
+        m = (cp[:, C['r_new']] >= lo) & (cp[:, C['r_new']] < hi)
+        sh = cp[m, C['n_phantom']].sum() / max(cp[m, C['n_final_g3']].sum(), 1)
+        g3 &= bool(sh < 0.01)
+        print(f"{lo:g}-{hi:g} m: {int(cp[m, C['n_phantom']].sum())} of {int(cp[m, C['n_final_g3']].sum())} = {100 * sh:.3f}%")
+    verdict['G3'] = g3; print(f"G3 {'PASS' if g3 else 'FAIL'}")
+    print('\n== G4: dataset[i] time, same frames, same node (database read from NFS) ==')
+    for p in PL:
+        m = g4[:, 0] == p
+        print(f"{PLAT_NAME[p]}: {int(m.sum())} frames, off {g4[m, 2].sum():.1f} s, on {g4[m, 3].sum():.1f} s, ratio "
+              f"{g4[m, 3].sum() / g4[m, 2].sum():.3f} (median per frame {np.median(g4[m, 3] / g4[m, 2]):.3f})")
+    ratio = g4[:, 3].sum() / g4[:, 2].sum(); verdict['G4'] = ratio <= 1.20
+    print(f"pooled ratio {ratio:.3f} -> G4 {'PASS' if verdict['G4'] else 'FAIL'}")
+    print('\n== D1: |copy bottom - gate plane| per platform (median <= 0.25 m and > 1 m below 5%) ==')
+    d1 = True
+    for p in PL:
+        o = np.abs(cp[cp[:, C['plat']] == p, C['off_plane']])
+        med, big = np.nanmedian(o), np.nanmean(o > 1.0)
+        d1 &= bool(med <= 0.25 and big < 0.05)
+        print(f"{PLAT_NAME[p]}: median {med:.3f} m, > 0.5 m {np.nanmean(o > 0.5):.1%}, > 1 m {big:.2%}; signed median "
+              f"{np.nanmedian(cp[cp[:, C['plat']] == p, C['off_plane']]):+.3f} m")
+    verdict['D1'] = d1; print(f"D1 {'PASS' if d1 else 'FAIL'}")
+    print('\n== D2: copies behind a surface in >= half their columns, per platform (< 10%) ==')
+    d2 = True
+    for p in PL:
+        m = cp[:, C['plat']] == p
+        v2s, v1s = np.nanmean(cp[m, C['d2_v2']] >= 0.5), np.nanmean(cp[m, C['d2_v1']] >= 0.5)
+        d2 &= bool(v2s < 0.10)
+        print(f"{PLAT_NAME[p]}: v2 definition {v2s:.2%} (median blocked share {np.nanmedian(cp[m, C['d2_v2']]):.3f}); "
+              f"v1 definition, ground included (descriptive) {v1s:.2%}")
+    verdict['D2'] = d2; print(f"D2 {'PASS' if d2 else 'FAIL'}")
+    print('\n== descriptive: copies on 27471\'s grid (kept points), p25 / p50 / p75 ==')
+    for p in PL:
+        for lo, hi in ((0, 20), (20, 40), (40, 50), (50, 60), (60, 75.2)):
+            m = (cp[:, C['plat']] == p) & (cp[:, C['r_new']] >= lo) & (cp[:, C['r_new']] < hi)
+            if not m.any():
+                continue
+            q = lambda k: '/'.join(f'{v:.1f}' if k == 'ppv' else f'{v:.0f}' for v in np.percentile(cp[m, C[k]], [25, 50, 75]))
+            print(f"{PLAT_NAME[p]} {lo:g}-{hi:g} m [{int(m.sum())}]: n_pts {q('n_pts_grid')}, n_vox {q('n_vox')}, "
+                  f"n_layers {q('n_layers')}, ppv {q('ppv')}")
+    print('\n== target dump ==')
+    dump_ok = True
+    for r in res:
+        for dd in r['dumps']:
+            okd = all(x == 1 for x in dd['copy_labels']) and all(v == 1.0 for v in dd['car_peak_at_copy']) and \
+                dd['positives'] == dd['peaks'] and -1 not in dd['final_rows']
+            dump_ok &= okd
+            print(f"{r['key']} frame {dd['frame']}: copies {dd['n_copies']}, labels {dd['copy_labels']}, Car heatmap at "
+                  f"copy centres {dd['car_peak_at_copy']}; positives {dd['positives']} peaks {dd['peaks']}; copy points in "
+                  f"the final cloud {dd['n_in_final_cloud']}; " + '; '.join(
+                      f"r' {c['r_new']:.1f} db {c['n_db']} rendered {c['n_rendered']} visible {c['n_visible']} p "
+                      f"{c['p_keep']:.2f} kept {c['n_final_rr']}" for c in dd['copies']))
+    same_all = bool(fr[:, F['same']].all()) and int(fr[:, F['coll']].sum()) == 0
+    verdict['dump'] = dump_ok and same_all
+    print(f"target dump {'PASS' if verdict['dump'] else 'FAIL'} (originals bit-identical in all frames and no collision: {same_all})")
+    print('\nimages:', [p for r in res for p in r['images']])
+    print('\nVERDICT (database sanity: see the merge outputs):', {k: ('PASS' if v else 'FAIL') for k, v in verdict.items()})
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = ap.add_subparsers(dest='mode', required=True)
@@ -439,7 +778,14 @@ def main():
     r.add_argument('--max_frames', type=int, default=None)
     q = sp.add_parser('report'); q.add_argument('--dir', required=True)
     a = ap.parse_args()
-    run(a) if a.mode == 'run' else report(a)
+    if a.mode == 'run':
+        from easydict import EasyDict
+        from pcdet.config import cfg_from_yaml_file
+        c = cfg_from_yaml_file(a.cfg, EasyDict())
+        v = int(c.DATA_CONFIGS[a.key].DATA_AUGMENTOR.AUG_CONFIG_LIST[0].get('VERSION', 1))
+        run_v2(a) if v == 2 else run(a)
+    else:
+        report_v2(a) if list(Path(a.dir).glob('gate_v2_*.pkl')) else report(a)
 
 
 if __name__ == '__main__':
