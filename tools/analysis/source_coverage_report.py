@@ -209,7 +209,7 @@ def main_report(a):
     B3in = _rows(cat('car_B3in')) if any('car_B3in' in s for s in shards) else np.zeros((0, len(BOX_COLS)))
     frames_ops = {n: np.asarray(cat(k)).reshape(-1, 6) for n, k in (('base (15 / 10)', 'frame'), ('B1a (30 / 20)', 'frame_B1a'),
                   ('B2a (30 / 20 + z-buffer)', 'frame_B2a'), ('B1b (60 / 60)', 'frame_B1b'), ('B2b (60 / 60 + z-buffer)', 'frame_B2b'))}
-    out(f'# Part B (stride {int(so)}, {len(frames_ops["frame"])} frames)'); out()
+    out(f'# Part B (stride {int(so)}, {len(frames_ops["base (15 / 10)"])} frames)'); out()
     out.table(['source', 'points per frame (median)', 'voxels per frame (median)', 'frames over 150k voxels', 'load s (median)'],
               [[k, f'{np.median(v[:, 2]):,.0f}', f'{np.median(v[:, 3]):,.0f}', _pct(np.mean(v[:, 3] > VOXEL_CAP)),
                 _f(np.median(v[:, 5]))] for k, v in frames_ops.items()])
