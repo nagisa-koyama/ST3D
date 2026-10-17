@@ -28,8 +28,11 @@ LOG=$(ls logs/error_"${JOB}"_*.txt 2>/dev/null | head -n 1)
 RUN=$(tr '\r' '\n' < "$LOG" | /usr/bin/grep -m 1 -o 'Run data is saved locally in /storage/wandb/run-[0-9_]*-[a-z0-9]*' \
       | sed 's#^Run data is saved locally in /storage#/home/koyama/data#')
 RES=""
-for c in "$RUN/files/eval/eval_with_train/epoch_20/val/result.pkl" "$EVD/autorecover_${JOB}/result.pkl" "$EVD/rr_ep20/result.pkl"; do
-    if [ -n "$RUN" ] && [ -f "$c" ]; then RES=$c; break; fi
+OUTD=/home/koyama/code/ST3D/output/da-ieee-access/${TAG}
+for c in "$RUN/files/eval/eval_with_train/epoch_20/val/result.pkl" "$EVD/autorecover_${JOB}/result.pkl" "$EVD/rr_ep20/result.pkl" \
+         "$(find "$OUTD" -path '*epoch_20*' -path "*autorecover_${JOB}*" -name result.pkl 2>/dev/null | head -n 1)" \
+         "$(find "$OUTD" -path '*epoch_20*' -path '*rr_ep20*' -name result.pkl 2>/dev/null | head -n 1)"; do
+    if [ -n "$c" ] && [ -f "$c" ]; then RES=$c; break; fi
 done
 echo "row $JOB: W&B run dir ${RUN:-<none>}; epoch-20 result.pkl: ${RES:-<none>}"
 if [ -z "$RES" ]; then
