@@ -24,6 +24,17 @@ import numpy as np  # noqa: E402
 from pcdet.config import cfg, cfg_from_yaml_file  # noqa: E402
 
 RADII = (30, 40, 50, 54, 60, 65, 70, 75, 80)
+OVERRIDE = {}  # (DATASET, split) -> info file names; labels are the same in the 10- and 200-sweep nuScenes infos
+
+
+def vehicle_filter(block, infos):
+    """VEHICLE (nuScenes n008 / n015) by the log name that prefixes every lidar file name; the loader's own filter
+    goes through the log table, and the two agree because each log belongs to one vehicle."""
+    v = block.get('VEHICLE', None)
+    if not v:
+        return infos
+    v = [v] if isinstance(v, str) else list(v)
+    return [i for i in infos if any(Path(i['lidar_path']).name.startswith(x + '-') for x in v)]
 QUANTILES = (0.5, 0.9, 0.95, 0.99, 0.999)
 
 
@@ -40,12 +51,21 @@ def blocks(c):
 
 
 def info_files(block, split):
+    """Info files of one split, and the frame stride to apply. nuScenes / Lyft infos live under DATA_PATH / VERSION;
+    Waymo has one info file per sequence, listed in ImageSets/<DATA_SPLIT[split]>.txt (waymo_dataset.py)."""
     root = (TOOLS / block.DATA_PATH).resolve() if not str(block.DATA_PATH).startswith('/') else Path(block.DATA_PATH)
-    files = []
-    for rel in block.INFO_PATH[split]:
-        p = root / rel
-        files.append(p)
-    return root, files
+    if block.get('INFO_PATH', None) is not None:
+        if split not in block.INFO_PATH:
+            return root, [], 1
+        base = root / block.VERSION if block.get('VERSION', None) else root
+        rels = OVERRIDE.get((block.DATASET, split), block.INFO_PATH[split])
+        return root, [base / rel for rel in rels], 1
+    if block.get('PROCESSED_DATA_TAG', None) is not None and split in block.get('DATA_SPLIT', {}):
+        seqs = [s.strip() for s in open(root / 'ImageSets' / f'{block.DATA_SPLIT[split]}.txt') if s.strip()]
+        names = [Path(s).stem for s in seqs]
+        files = [root / block.PROCESSED_DATA_TAG / n / f'{n}.pkl' for n in names]
+        return root, files, int(block.get('SAMPLED_INTERVAL', {}).get(split, 1))
+    return root, [], 1
 
 
 def boxes_of(info):
@@ -82,7 +102,13 @@ def main():
     ap.add_argument('--cfg_file', required=True)
     ap.add_argument('--split', nargs='*', default=['train', 'test'], help='INFO_PATH keys to read')
     ap.add_argument('--out', default=None)
+    ap.add_argument('--override', nargs='*', default=[], metavar='DATASET:SPLIT=FILE',
+                    help='read FILE instead of the configured INFO_PATH, e.g. NuScenesDataset:train=nuscenes_infos_10sweeps_train.pkl')
     args = ap.parse_args()
+    for o in args.override:
+        k, f = o.split('=', 1)
+        d, s = k.split(':', 1)
+        OVERRIDE[(d, s)] = [f]
     cfg_from_yaml_file(args.cfg_file, cfg)
 
     result = {}
@@ -90,16 +116,19 @@ def main():
         print(f'=== {bname}: {block.DATASET}, POINT_CLOUD_RANGE {list(block.POINT_CLOUD_RANGE)}, '
               f'SHIFT_COOR {list(block.get("SHIFT_COOR", [0, 0, 0]))}')
         for split in args.split:
-            if split not in block.INFO_PATH:
+            root, files, stride = info_files(block, split)
+            if not files:
                 continue
-            root, files = info_files(block, split)
-            infos = []
+            infos, missing = [], 0
             for p in files:
                 if not p.exists():
-                    print(f'  [{split}] missing {p}')
+                    missing += 1
                     continue
                 with open(p, 'rb') as f:
                     infos.extend(pickle.load(f))
+            if missing:
+                print(f'  [{split}] {missing} of {len(files)} info files missing')
+            infos = vehicle_filter(block, infos)[::stride]
             per = {}
             for info in infos:
                 names, boxes, pts = boxes_of(info)
@@ -113,8 +142,8 @@ def main():
                     if pts is not None:
                         per[n]['r_pts'].append(r[m & (pts > 0)])
             key = f'{bname}|{split}'
-            result[key] = dict(frames=len(infos), files=[str(p) for p in files], classes={})
-            print(f'  [{split}] {len(infos)} frames from {[p.name for p in files]}')
+            result[key] = dict(frames=len(infos), stride=stride, n_files=len(files), classes={})
+            print(f'  [{split}] {len(infos)} frames (stride {stride}) from {len(files)} info file(s), e.g. {files[0]}')
             for n in sorted(per, key=lambda k: -sum(len(x) for x in per[k]['r'])):
                 r = np.concatenate(per[n]['r'])
                 rp = np.concatenate(per[n]['r_pts']) if per[n]['r_pts'] else np.zeros(0)
