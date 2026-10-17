@@ -1,0 +1,29 @@
+# GENUINE ST3D ROW, CAR-ONLY VARIANT, S2 (nuScenes -> KITTI) (experiments_md/20261017_04; the user's go 2026-10-17 ~04:40).
+#
+# Identical to the genuine ST3D row 28650 (centerpoint-st3d-genuine-legal-nuscenes2kitti.yaml, inherited below) in every
+# key EXCEPT that only Car pseudo-labels are stored. The published ST3D nuScenes -> KITTI row is Car-only; 28650 kept
+# three classes and its single-sweep teacher flooded Pedestrian (77 per KITTI-train frame at epoch 0). This row tests
+# whether that flood drives 28650's decay (Car pseudo-labels 3.70 -> 0.19 per frame over 15 regenerations).
+#
+# Mechanism (NO code change; the existing NEG_THRESH removal step of self_training_utils.save_pseudo_label_batch):
+#   - Pedestrian and Cyclist NEG_THRESH = SCORE_THRESH = 1.01. Every score reaching that step is a sigmoid
+#     (CenterHead post-processing, max 1.0), and the step keeps a box only if score >= NEG_THRESH, so every
+#     Pedestrian / Cyclist prediction is REMOVED before storage, before the memory ensemble and before voting.
+#     1.01 is a "never" sentinel, not a cut: it was not derived from anything.
+#   - Car keeps 28650's rule-derived cut, SCORE = NEG = 0.589 (job 28641, teacher 25743 epoch 20, rule A); the teacher
+#     and the rule are unchanged, so it is not re-derived.
+#   - The network stays 3-class, so --pretrained_model loads 25743 unchanged (the Car heatmap channel included). The
+#     Pedestrian / Cyclist channels train on no positives (every pixel a background negative), as they did outside
+#     the Pedestrian junk in 28650. Their predictions on KITTI val do not enter the Car AP.
+#   - With a Car-only memory, memory_ensemble takes its single-class path, so KEEP_CLASS (-|1| = -1) and UNION_CLASSES
+#     (union of {Car} = 1 class) reduce to the released behaviour. VOTE_ON_EMPTY is kept as in 28650 (one variable
+#     changed); for a single class it still differs from the released early return: a frame with no current Car
+#     prediction votes its remembered Cars (ignore at 2, removal at 3) instead of keeping them. Disclosed.
+# UDA-legal: no target label influences any value (the Car cut is 28650's label-free rule-A value; 1.01 is a constant).
+# Launch: scripts/submit.sh ... run_sourceonly_2gpu.sh <this cfg> <tag> <run> --pretrained_model <25743 ep20 path>
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-st3d-genuine-legal-nuscenes2kitti.yaml
+
+SELF_TRAIN:
+    #             Car    Pedestrian Cyclist
+    SCORE_THRESH: [0.589, 1.01, 1.01]
+    NEG_THRESH: [0.589, 1.01, 1.01]
