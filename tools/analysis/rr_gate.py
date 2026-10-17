@@ -77,6 +77,44 @@ def in_box_counts(xyz, boxes):
     return m.numpy().sum(1)
 
 
+def ground_plane(xyz, seed=0):
+    """Label-free descriptive ground plane z = a x + b y + c of the loader's cloud (3-40 m, |z| < 1 m, iterated
+    least squares keeping residuals < 0.15 m). None if under 100 candidate points."""
+    r = np.hypot(xyz[:, 0], xyz[:, 1])
+    p = xyz[(r > 3) & (r < 40) & (np.abs(xyz[:, 2]) < 1.0)].astype(np.float64)
+    if len(p) < 100:
+        return None
+    if len(p) > 60000:
+        p = p[np.random.default_rng(seed).choice(len(p), 60000, replace=False)]
+    keep = np.abs(p[:, 2]) < 0.3
+    coef = np.zeros(3)
+    for _ in range(5):
+        if keep.sum() < 50:
+            return None
+        A = np.c_[p[keep, 0], p[keep, 1], np.ones(int(keep.sum()))]
+        coef = np.linalg.lstsq(A, p[keep, 2], rcond=None)[0]
+        keep = np.abs(p[:, 2] - (p[:, 0] * coef[0] + p[:, 1] * coef[1] + coef[2])) < 0.15
+    return coef
+
+
+def blocked_share(c, scene_lat, lat):
+    """Share of the copy's rendered columns (all rendered pixels, before occlusion) in which the scene (RR output
+    without copy points) holds a return in the copy's row span nearer than the copy's nearest point in that column
+    by > 0.5 m: a copy behind a surface (e.g. a facade) seen through the scene's sampling gaps scores high."""
+    from pcdet.datasets.augmentor import relocate_render as rr
+    _, rows, cols, _, rng = rr._render(c['moved'], lat['thetas'], lat['n_cols'], lat['height'])
+    if not len(cols):
+        return np.nan
+    srow, scol, srng, sval = scene_lat
+    ucol, inv = np.unique(cols, return_inverse=True)
+    rmin = np.full(len(ucol), np.inf); np.minimum.at(rmin, inv, rng)
+    sel = sval & np.isin(scol, ucol) & (srow >= rows.min()) & (srow <= rows.max())
+    near = np.full(len(ucol), np.inf)
+    if sel.any():
+        np.minimum.at(near, np.searchsorted(ucol, scol[sel]), srng[sel])
+    return float(np.mean(near < rmin - 0.5))
+
+
 def image(path, title, before, after, rec, lat):
     import matplotlib
     matplotlib.use('Agg')
@@ -202,17 +240,29 @@ def run(a):
                       rec['n_zero'], rec['reject']['overlap'], rec['reject']['range'], rec['reject']['scene'],
                       same, coll, emptied, lost, len(B['points']), len(P), scene_t,
                       float(np.abs(copy_t).max()) if len(copy_t) else 0.0])
+        plane = ground_plane(B['points'][:, :3], seed=i)
+        pl = plane if plane is not None else np.full(3, np.nan)
+        frows[-1] += [float(np.degrees(np.arctan(pl[0]))), float(np.degrees(np.arctan(pl[1]))), float(pl[2])]
         if k:
             npp = nearest_per_pixel(P[:, :3], th, nc, h)
             sec = sector_of(cb[:, :2], fv)
+            iscopy = np.zeros(len(P), bool)
+            for c in rec['copies']:
+                iscopy[c['point_index']] = True
+            from pcdet.datasets.rerender_utils import to_lattice
+            scene_lat = to_lattice(P[~iscopy, :3].astype(np.float64), h, th, nc)
             for j, c in enumerate(rec['copies']):
                 cov = lattice_coverage(P[:, :3], cb[j:j + 1, :7], [c['point_index']], th, nc, h, npp)[0]
                 rp = P[c['point_index'], :3].astype(np.float64)
                 dmin = cKDTree(c['moved']).query(rp, k=1)[0] if len(rp) else np.zeros(0)
+                gz = lambda x, y: pl[0] * x + pl[1] * y + pl[2]
+                bx = c['box']; dbx = c['donor_box']
+                off_c = (bx[2] - bx[5] / 2) - gz(bx[0], bx[1]); off_d = (dbx[2] - dbx[5] / 2) - gz(dbx[0], dbx[1])
+                n_foot = int(rr.points_in_rect(B['points'][:, :2], bx, rr_cfg.BEV_MARGIN).sum())
                 copies.append([plat, i, moving, c['r_donor'], c['n_donor'], c['r_new'], c['phi_new'], sec[j],
                                c['n_rendered'], c['n_occluded'], c['n_final'], cov[0], cov[1], cov[2],
                                int((dmin > PHANTOM_M).sum()), len(rp), c['tries'], c['n_inbox_removed'],
-                               c['n_shadow_removed']])
+                               c['n_shadow_removed'], off_c, off_d, n_foot, blocked_share(c, scene_lat, lat)])
         if k and len(dumps) < a.dump:
             dumps.append(dump_frame(d, CAP, rec, head, side, cell, cfg, i))
         if k >= 2 and len(imgs) < a.images:
@@ -233,8 +283,8 @@ def run(a):
         aug.data_augmentor_queue = queue_rr
         np.random.seed(seed); t0 = time.perf_counter(); ds[i]; t_on = time.perf_counter() - t0
         g4.append([plat, i, t_off, t_on])
-    res = dict(key=a.key, plat=plat, n_infos=N, frames=frames, copies=np.array(copies, np.float64).reshape(-1, 19),
-               frames_rows=np.array(frows, np.float64).reshape(-1, 20), g4=np.array(g4, np.float64).reshape(-1, 4),
+    res = dict(key=a.key, plat=plat, n_infos=N, frames=frames, copies=np.array(copies, np.float64).reshape(-1, 23),
+               frames_rows=np.array(frows, np.float64).reshape(-1, 23), g4=np.array(g4, np.float64).reshape(-1, 4),
                dumps=dumps, images=imgs, lattice=dict(n_segments=lat['n_segments'], thetas=lat['thetas']),
                node=os.uname().nodename)
     pickle.dump(res, open(out / f'gate_{a.key}.pkl', 'wb'))
@@ -279,7 +329,8 @@ def report(a):
     # columns
     PL, MOV, RD, ND, RN, SEC, NR, NOC, NF, RC, PPP, VR, NPH, NPT = 0, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15
     print('\n== frames ==')
-    for p in (0, 1):
+    PLATS = [p for p in (0, 1) if (fr[:, 0] == p).any()]
+    for p in PLATS:
         f = fr[fr[:, 0] == p]
         print(f"{PLAT_NAME[p]}: {len(f)} frames ({int(f[:, 2].sum())} moving); per frame: boxes {f[:, 3].mean():.1f}, "
               f"Car candidates {f[:, 4].mean():.2f}, eligible donors {f[:, 5].mean():.2f}, copies {f[:, 6].mean():.2f} "
@@ -311,14 +362,14 @@ def report(a):
                       f'{"< 15" if m.sum() < 15 else ""} |')
     print(f'G1: {passed} of {cells} cells >= 0.8 -> {"PASS" if passed >= 10 else "FAIL"}')
     print('\n== RC per r\' bin (all frames), median [n] ==')
-    for p in (0, 1):
+    for p in PLATS:
         row = []
         for lo, hi in zip(RBINS[:-1], RBINS[1:]):
             m = ok & (cp[:, PL] == p) & (cp[:, RN] >= lo) & (cp[:, RN] < hi)
             row.append(f'{lo:g}-{hi:g}: {np.median(cp[m, RC]) if m.any() else np.nan:.3f} [{int(m.sum())}]')
         print(f'{PLAT_NAME[p]}: ' + '; '.join(row))
     print('\n== secondary: copies with 10-49 final rendered points, median RC per G1 cell [n] ==')
-    for p in (0, 1):
+    for p in PLATS:
         row = []
         for lo, hi in G1_RINGS:
             for s in range(3):
@@ -328,7 +379,7 @@ def report(a):
         print(f'{PLAT_NAME[p]}: ' + '; '.join(row))
     print('\n== G2: PPP per G1 cell in [1.0, 1.1] ==')
     g2 = True
-    for p in (0, 1):
+    for p in PLATS:
         for lo, hi in G1_RINGS:
             for s in range(3):
                 m = ok & (cp[:, PL] == p) & (cp[:, MOV] == 1) & (cp[:, RN] >= lo) & (cp[:, RN] < hi) & (cp[:, SEC] == s)
@@ -345,7 +396,7 @@ def report(a):
         print(f'{lo:g}-{hi:g} m: {int(cp[m, NPH].sum())} of {int(cp[m, NPT].sum())} = {100 * share:.3f}%')
     print(f'G3 {"PASS" if g3 else "FAIL"}')
     print('\n== G4: dataset[i] time, same frames, same node ==')
-    for p in (0, 1):
+    for p in PLATS:
         m = g4[:, 0] == p
         if m.any():
             print(f'{PLAT_NAME[p]}: {int(m.sum())} frames, off {g4[m, 2].sum():.1f} s, on {g4[m, 3].sum():.1f} s, '
@@ -360,6 +411,21 @@ def report(a):
                   f"{dd['positives']}; peaks {dd['peaks']}; copy points in the final cloud {dd['n_in_final_cloud']}; "
                   + '; '.join(f"r {c['r_donor']:.1f}->{c['r_new']:.1f} donor {c['n_donor']} rendered "
                               f"{c['n_rendered']} kept {c['n_final_rr']}" for c in dd['copies']))
+    print('\n== diagnostics (label-free, descriptive, NOT deciding; 20261018_02 §3.1 addendum) ==')
+    for p in PLATS:
+        f = fr[fr[:, 0] == p]; m = cp[:, PL] == p
+        oc, od, nfoot, blk = cp[m, 19], cp[m, 20], cp[m, 21], cp[m, 22]
+        print(f"{PLAT_NAME[p]}: fitted ground slope x {np.nanmedian(f[:, 20]):+.2f} deg / y {np.nanmedian(f[:, 21]):+.2f} "
+              f"deg, z0 {np.nanmedian(f[:, 22]):+.3f} m (median over frames)")
+        print(f"   copy bottom - local ground: median {np.nanmedian(oc):+.2f} m, |.| median {np.nanmedian(np.abs(oc)):.2f}, "
+              f"> 0.5 m {np.nanmean(np.abs(oc) > 0.5):.1%}, > 1 m {np.nanmean(np.abs(oc) > 1.0):.1%}; donors: |.| median "
+              f"{np.nanmedian(np.abs(od)):.2f}, > 0.5 m {np.nanmean(np.abs(od) > 0.5):.1%}")
+        for lo, hi in ((0, 20), (20, 40), (40, 75.2)):
+            mm = (cp[m, RN] >= lo) & (cp[m, RN] < hi)
+            if mm.any():
+                print(f"   r' {lo:g}-{hi:g}: copies {int(mm.sum())}, |ground offset| median {np.nanmedian(np.abs(oc[mm])):.2f} m, "
+                      f"footprint with no scene point {np.mean(nfoot[mm] == 0):.1%}, behind a surface in >= half its "
+                      f"columns {np.nanmean(blk[mm] >= 0.5):.1%} (median blocked share {np.nanmedian(blk[mm]):.2f})")
     print('\nimages:', [p for r in res for p in r['images']])
 
 
