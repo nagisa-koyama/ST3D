@@ -438,3 +438,60 @@ def test_rr_config_differs_from_27471_only_by_rr_and_the_waymo_target(monkeypatc
                          'random_world_scaling']
         assert aug.data_augmentor_queue[0].keywords['lattice']['n_segments'] == 798
     assert 'relocate_render' not in str(rrc.DATA_CONFIG_TAR)
+
+
+# ================================================================================================= RR v2 (§6)
+def test_v2_box_frame_round_trip():
+    rng = np.random.default_rng(7)
+    for _ in range(5):
+        b = np.r_[rng.uniform(-60, 60, 2), rng.uniform(-1, 2), rng.uniform(1, 6, 3), rng.uniform(-7, 7)]
+        p = rng.normal(0, 3, (500, 3)) + b[:3]
+        np.testing.assert_allclose(R.from_box_frame(R.to_box_frame(p, b), b), p, atol=1e-9)
+        q = rng.normal(0, 2, (300, 3))
+        np.testing.assert_allclose(R.to_box_frame(R.from_box_frame(q, b), b), q, atol=1e-9)
+    b = np.array([10.0, 0, 0.8, 4, 2, 1.5, np.pi / 2])                  # +x of the box is +y of the frame
+    np.testing.assert_allclose(R.to_box_frame(np.array([[10.0, 1.0, 0.8]]), b), [[1.0, 0, 0]], atol=1e-12)
+
+
+def test_v2_aggregation_of_a_moving_instance_across_two_keyframes():
+    local = R.to_box_frame(car_surface(np.array([0, 0, 0, 4.2, 1.8, 1.5, 0.0]), n_side=30, n_up=10), np.zeros(7))
+    ka = np.array([12.0, 3.0, 0.75, 4.2, 1.8, 1.5, 0.3])                # keyframe A
+    kb = np.array([31.0, -6.0, 0.95, 4.2, 1.8, 1.5, 1.4])               # keyframe B: moved 20 m, turned 1.1 rad, 0.2 m up
+    wa, wb = R.from_box_frame(local[::2], ka), R.from_box_frame(local[1::2], kb)   # each keyframe sees half the surface
+    acc = R.VoxelAccumulator(0.02, 4)
+    for w, b in ((wa, ka), (wb, kb)):
+        assert R.points_in_box(w, b).all()
+        acc.add(np.c_[R.to_box_frame(w, b), np.full(len(w), 0.5)])
+    ref = R.VoxelAccumulator(0.02, 4); ref.add(np.c_[local, np.full(len(local), 0.5)])
+    np.testing.assert_allclose(np.sort(acc.points(), 0), np.sort(ref.points(), 0), atol=1e-9)
+    assert acc.n_raw == len(local) and len(acc.points()) == len(ref.points())
+    acc.add(np.c_[R.to_box_frame(wa, ka), np.full(len(wa), 0.5)])     # the same points again: no new voxel
+    assert len(acc.points()) == len(ref.points())
+    one = R.VoxelAccumulator(0.02, 4); one.add(np.array([[0.001, 0.001, 0.001, 1.0], [0.011, 0.015, 0.019, 3.0]]))
+    np.testing.assert_allclose(one.points(), [[0.006, 0.008, 0.010, 2.0]])          # centroid of one voxel
+
+
+def test_v2_lowest_per_cell_and_plane_equal_ground_tilt():
+    import ground_tilt as GT
+    rng = np.random.default_rng(11)
+    g = rng.uniform(-45, 45, (60000, 2))
+    z = 0.04 * g[:, 0] - 0.02 * g[:, 1] + rng.normal(0, 0.03, len(g))
+    z[::7] += rng.uniform(0.5, 3.0, len(z[::7]))                        # clutter above the ground
+    z[::97] = z[1::97][:len(z[::97])]                                   # ties
+    pts = np.c_[g, z]
+    np.testing.assert_array_equal(R.lowest_per_cell(pts), GT.lowest_per_cell(pts))
+    ours = R.fit_plane(R.lowest_per_cell(pts), np.random.default_rng(0))
+    ref = GT.fit_plane(GT.lowest_per_cell(pts), rng=np.random.default_rng(0))[0]
+    np.testing.assert_allclose(ours, ref)
+
+
+def test_v2_ground_plane_on_a_tilted_toy():
+    rng = np.random.default_rng(12)
+    g = rng.uniform(-50, 50, (80000, 2))
+    slope = np.tan(np.radians(2.3))
+    z = slope * g[:, 1] - 0.05 + rng.normal(0, 0.02, len(g))
+    wall = np.c_[rng.uniform(-30, 30, 20000), np.full(20000, 15.0), rng.uniform(0, 6, 20000)]
+    wall[:, 2] += slope * 15.0
+    pl = R.ground_plane(np.concatenate([np.c_[g, z], wall]))
+    assert abs(np.degrees(np.arctan(pl[1])) - 2.3) < 0.05 and abs(pl[0]) < 1e-3 and abs(pl[2] + 0.05) < 0.02
+    assert R.ground_plane(np.c_[rng.uniform(-2, 2, (100, 2)), np.zeros(100)]) is None   # too few cells

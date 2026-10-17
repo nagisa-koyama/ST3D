@@ -465,3 +465,451 @@ def relocate_render_scene(data_dict, params=None, lat=None, rng=np.random, keep_
     rec['removed_orig'] = np.unique(np.concatenate(removed_orig)) if removed_orig else np.zeros(0, np.int64)
     rec['alive_orig'] = alive
     return data_dict, rec
+
+
+# =========================================================================================================== RR v2
+# experiments_md 20261018_02 §6 (design fixed in T05 §5, experiments_md 4e290c1): a track-level donor database, the
+# copy's bottom on a per-frame RANSAC ground plane, a visibility rule, row-coverage re-placement and a uniform random
+# sparsifier. Reached only by a config with VERSION: 2 (absent = v1, unchanged).
+DEFAULTS_V2 = dict(N_COPIES=8, R_MIN=5.0, RC_MIN=0.8, VIS_MAX_SHARE=0.1, VIS_HEIGHT=0.3, RC_OCCL_M=0.5,
+                   COPY_CLASS_LABEL=1, DB_POINTS=None, DB_INDEX=None, VOXEL=0.02)
+# ground plane: tools/analysis/ground_tilt.py (20261004_02), ported verbatim in its parameters
+GP_RMIN, GP_RMAX, GP_CELL, GP_MIN_PTS, GP_ITERS, GP_THR, GP_REFIT, GP_MAX_SLOPE, GP_MIN_CELLS = \
+    4.0, 40.0, 1.0, 3, 300, 0.12, 0.08, 0.2, 30
+
+
+def lowest_per_cell(pts):
+    """ground_tilt.lowest_per_cell(pts) (4-40 m, 1 m cells, >= 3 points, the SECOND-lowest return per cell), in the same
+    output order (cells by (floor x, floor y)), with a radix sort instead of a lexsort."""
+    p = np.asarray(pts)
+    r = np.hypot(p[:, 0], p[:, 1])
+    p = p[(r >= GP_RMIN) & (r <= GP_RMAX)]
+    if len(p) == 0:
+        return np.zeros((0, 3))
+    ij = np.floor(p[:, :2] / GP_CELL).astype(np.int64)
+    off = int(np.ceil(GP_RMAX / GP_CELL)) + 1; w = 2 * off + 1
+    key = ((ij[:, 0] + off) * w + (ij[:, 1] + off)).astype(np.uint16 if w * w < 65536 else np.int64)
+    order = np.argsort(key, kind='stable')
+    k = key[order]; z = np.asarray(p[order, 2], np.float64)
+    first = np.r_[True, k[1:] != k[:-1]]
+    starts = np.flatnonzero(first); counts = np.diff(np.r_[starts, len(k)])
+    zmin = np.minimum.reduceat(z, starts)
+    pos = np.arange(len(z))
+    ismin = z == np.repeat(zmin, counts)
+    fmin = np.minimum.reduceat(np.where(ismin, pos, len(z)), starts)          # first occurrence of the minimum
+    z2 = z.copy(); z2[fmin] = np.inf
+    zsec = np.minimum.reduceat(z2, starts)
+    issec = (z2 == np.repeat(zsec, counts)) & np.isfinite(z2)
+    fsec = np.minimum.reduceat(np.where(issec, pos, len(z)), starts)
+    take = np.where(counts >= 2, fsec, fmin)
+    keep = counts >= GP_MIN_PTS
+    return np.asarray(p[order[take[keep]], :3], np.float64)
+
+
+def fit_plane(g, rng=None):
+    """ground_tilt.fit_plane(g) with its parameters (300 iterations, 0.12 m, slopes <= 0.2, refits at 0.12 / 0.08 m).
+    Returns (a, b, c) of z = a x + b y + c, or None."""
+    if len(g) < GP_MIN_CELLS:
+        return None
+    rng = rng or np.random.default_rng(0)
+    A = np.c_[g[:, 0], g[:, 1], np.ones(len(g))]
+    best, best_n = None, -1
+    for _ in range(GP_ITERS):
+        idx = rng.choice(len(g), 3, replace=False)
+        try:
+            coef = np.linalg.solve(A[idx], g[idx, 2])
+        except np.linalg.LinAlgError:
+            continue
+        if abs(coef[0]) > GP_MAX_SLOPE or abs(coef[1]) > GP_MAX_SLOPE:
+            continue
+        n = np.sum(np.abs(A @ coef - g[:, 2]) < GP_THR)
+        if n > best_n:
+            best, best_n = coef, n
+    if best is None:
+        return None
+    for t in (GP_THR, GP_REFIT):
+        inl = np.abs(A @ best - g[:, 2]) < t
+        best = np.linalg.lstsq(A[inl], g[inl, 2], rcond=None)[0]
+    return best
+
+
+def ground_plane(xyz):
+    """The frame's ground plane (a, b, c), RANSAC as ground_tilt.py, numpy default_rng(0) per frame; None if none."""
+    return fit_plane(lowest_per_cell(xyz), np.random.default_rng(0))
+
+
+def plane_z(plane, x, y):
+    return plane[0] * np.asarray(x) + plane[1] * np.asarray(y) + plane[2]
+
+
+# ------------------------------------------------------------------------------------------- box-frame transforms
+def to_box_frame(xyz, box):
+    """Points (k, 3) in the loader frame -> the box frame (centre at 0, x along the heading)."""
+    p = np.asarray(xyz, np.float64)[:, :3]; b = np.asarray(box, np.float64)
+    c, s = np.cos(b[6]), np.sin(b[6])
+    dx, dy = p[:, 0] - b[0], p[:, 1] - b[1]
+    return np.stack([c * dx + s * dy, -s * dx + c * dy, p[:, 2] - b[2]], 1)
+
+
+def from_box_frame(local, box):
+    """Inverse of to_box_frame."""
+    q = np.asarray(local, np.float64)[:, :3]; b = np.asarray(box, np.float64)
+    c, s = np.cos(b[6]), np.sin(b[6])
+    return np.stack([b[0] + c * q[:, 0] - s * q[:, 1], b[1] + s * q[:, 0] + c * q[:, 1], b[2] + q[:, 2]], 1)
+
+
+def relative_view_angle(box):
+    """wrap(heading - azimuth of the box centre): the heading relative to the line of sight."""
+    b = np.asarray(box, np.float64)
+    return float((b[6] - np.arctan2(b[1], b[0]) + np.pi) % (2 * np.pi) - np.pi)
+
+
+class VoxelAccumulator:
+    """Exact centroid voxel downsampling of a union of point sets in one frame (sums and counts per voxel)."""
+
+    def __init__(self, voxel=0.02, n_feat=4):
+        self.voxel, self.n_feat = float(voxel), n_feat
+        self.keys = np.zeros(0, np.int64); self.sums = np.zeros((0, n_feat)); self.cnt = np.zeros(0, np.int64)
+        self.n_raw = 0
+
+    def add(self, pts):
+        p = np.asarray(pts, np.float64)[:, :self.n_feat]
+        if not len(p):
+            return
+        self.n_raw += len(p)
+        ijk = np.floor(p[:, :3] / self.voxel).astype(np.int64) + (1 << 20)
+        key = (ijk[:, 0] << 42) | (ijk[:, 1] << 21) | ijk[:, 2]
+        keys = np.concatenate([self.keys, key]); sums = np.concatenate([self.sums, p])
+        cnt = np.concatenate([self.cnt, np.ones(len(p), np.int64)])
+        u, inv = np.unique(keys, return_inverse=True)
+        s = np.zeros((len(u), self.n_feat)); np.add.at(s, inv, sums)
+        c = np.bincount(inv, weights=cnt, minlength=len(u)).astype(np.int64)
+        self.keys, self.sums, self.cnt = u, s, c
+
+    def points(self):
+        return self.sums / self.cnt[:, None] if len(self.cnt) else np.zeros((0, self.n_feat))
+
+
+class DonorDB:
+    """The platform's donor database: points memory-mapped read-only on first use (never pickled), index in memory."""
+
+    def __init__(self, points_path, index_path):
+        self.points_path, self.index_path = str(points_path), str(index_path)
+        z = np.load(self.index_path, allow_pickle=False)
+        self.offset, self.count = z['offset'].astype(np.int64), z['count'].astype(np.int64)
+        self.size = z['size'].astype(np.float64)
+        self.obs_offset, self.obs_count = z['obs_offset'].astype(np.int64), z['obs_count'].astype(np.int64)
+        self.obs_alpha = z['obs_alpha'].astype(np.float64)
+        self.n = len(self.count)
+        self._pts = None
+
+    def __getstate__(self):
+        d = dict(self.__dict__); d['_pts'] = None
+        return d
+
+    def _points(self):
+        if self._pts is None:
+            self._pts = np.load(self.points_path, mmap_mode='r')
+        return self._pts
+
+    def points(self, i):
+        return np.asarray(self._points()[self.offset[i]:self.offset[i] + self.count[i]], np.float64)
+
+    def alphas(self, i):
+        return self.obs_alpha[self.obs_offset[i]:self.obs_offset[i] + self.obs_count[i]]
+
+
+def db_from_config(cfg):
+    return DonorDB(cfg['DB_POINTS'], cfg['DB_INDEX'])
+
+
+def place_instance(local, size, r, phi, alpha, plane):
+    """Box (7,) and loader-frame points of a database instance at range r, azimuth phi, heading phi + alpha, the box's
+    bottom on the plane at its BEV centre."""
+    x, y = r * np.cos(phi), r * np.sin(phi)
+    box = np.array([x, y, float(plane_z(plane, x, y)) + size[2] / 2, size[0], size[1], size[2], phi + alpha])
+    return box, from_box_frame(local, box)
+
+
+# ------------------------------------------------------------------------------------- silhouette and row coverage
+def box_corners(box):
+    b = np.asarray(box, np.float64)
+    t = np.array([[1, 1, -1], [1, -1, -1], [-1, -1, -1], [-1, 1, -1],
+                  [1, 1, 1], [1, -1, 1], [-1, -1, 1], [-1, 1, 1]], np.float64) / 2 * b[3:6]
+    c, s = np.cos(b[6]), np.sin(b[6])
+    return np.stack([t[:, 0] * c - t[:, 1] * s + b[0], t[:, 0] * s + t[:, 1] * c + b[1], t[:, 2] + b[2]], 1)
+
+
+def silhouette(box, thetas, n_cols, height):
+    """Lattice pixels whose ray from (0, 0, height) hits the box: (pixel ids, ASCENDING rows, entry range). Port of
+    tools/analysis/lattice_sampler_precheck.py `silhouette` (rows there are descending; the hit set is the same)."""
+    th = np.asarray(thetas, np.float64); b = np.asarray(box, np.float64)
+    c = box_corners(b)
+    el = np.arctan2(c[:, 2] - height, np.hypot(c[:, 0], c[:, 1])); az0 = np.arctan2(b[1], b[0])
+    daz = (np.arctan2(c[:, 1], c[:, 0]) - az0 + np.pi) % (2 * np.pi) - np.pi
+    rows = np.nonzero((th >= el.min() - 0.01) & (th <= el.max() + 0.01))[0]
+    c_lo = int(np.floor((az0 + daz.min() + np.pi) / (2 * np.pi) * n_cols)) - 1
+    c_hi = int(np.floor((az0 + daz.max() + np.pi) / (2 * np.pi) * n_cols)) + 1
+    cols = np.arange(c_lo, c_hi + 1)
+    if not len(rows) or len(cols) > n_cols // 2:
+        return np.zeros(0, np.int64), np.zeros(0, np.int64), np.zeros(0)
+    R, C = np.meshgrid(rows, cols, indexing='ij'); R, C = R.ravel(), C.ravel()
+    phi = th[R]; az = ((C % n_cols) + 0.5) / n_cols * 2 * np.pi - np.pi
+    d = np.stack([np.cos(phi) * np.cos(az), np.cos(phi) * np.sin(az), np.sin(phi)], 1)
+    ch, sh = np.cos(-b[6]), np.sin(-b[6])
+    rot = lambda v: np.stack([v[..., 0] * ch - v[..., 1] * sh, v[..., 0] * sh + v[..., 1] * ch, v[..., 2]], -1)
+    o = rot(np.array([0.0, 0.0, height]) - b[:3]); dd = rot(d); e = b[3:6] / 2
+    with np.errstate(divide='ignore', invalid='ignore'):
+        t1 = (-e - o) / dd; t2 = (e - o) / dd
+    t1 = np.where(np.isfinite(t1), t1, -np.inf); t2 = np.where(np.isfinite(t2), t2, np.inf)
+    tmin = np.minimum(t1, t2).max(1); tmax = np.maximum(t1, t2).min(1)
+    hit = tmax >= np.maximum(tmin, 0)
+    return (R[hit] * n_cols + C[hit] % n_cols), R[hit], np.maximum(tmin[hit], 0)
+
+
+def row_coverage(box, copy_pix, copy_rng, scene_pix, scene_rng, thetas, n_cols, height, occl_m=0.5, sil=None):
+    """RC of a copy exactly as `source_coverage.lattice_coverage` defines it: rows of the box's VISIBLE silhouette holding
+    a copy point / rows of the visible silhouette. A silhouette pixel is occluded when the nearest return of the pixel
+    (copy and scene points together) is not a copy point and lies more than occl_m in front of the box entry. Pixels are
+    ascending-row ids (-1 = outside the field of view). Returns (RC or nan, number of visible rows)."""
+    sp, srow, tin = silhouette(box, thetas, n_cols, height) if sil is None else sil
+    if not len(sp):
+        return np.nan, 0
+    cp = np.asarray(copy_pix, np.int64); sc = np.asarray(scene_pix, np.int64)
+    pix = np.concatenate([cp, sc]); rng = np.concatenate([np.asarray(copy_rng, np.float64),
+                                                          np.asarray(scene_rng, np.float64)])
+    inbox = np.r_[np.ones(len(cp), bool), np.zeros(len(sc), bool)]
+    ok = np.nonzero(pix >= 0)[0]
+    occl = np.zeros(len(sp), bool)
+    if len(ok):
+        o = ok[np.lexsort((rng[ok], pix[ok]))]
+        first = np.ones(len(o), bool); first[1:] = pix[o][1:] != pix[o][:-1]
+        nidx = o[first]; up = pix[nidx]
+        pos = np.clip(np.searchsorted(up, sp), 0, len(up) - 1); has = up[pos] == sp
+        occl = has & (rng[nidx][pos] < tin - occl_m) & ~inbox[nidx][pos]
+    vp, vrow = sp[~occl], srow[~occl]
+    if not len(vrow):
+        return np.nan, 0
+    cpv = cp[cp >= 0]
+    occ = np.unique(cpv[np.isin(cpv, vp)])
+    nvr = len(np.unique(vrow))
+    return len(np.unique(occ // n_cols)) / nvr, nvr
+
+
+def _randint(rng, n):
+    return int(rng.randint(n)) if hasattr(rng, 'randint') else int(rng.integers(n))
+
+
+def _params_v2(cfg):
+    p = dict(DEFAULTS); p.update(DEFAULTS_V2)
+    if cfg is not None:
+        for k in cfg:
+            if k in p:
+                p[k] = cfg[k]
+    return p
+
+
+def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.random, keep_points=False):
+    """RR v2 (experiments_md 20261018_02 §6). See the module's v2 block; v1 helpers are reused unchanged."""
+    p = _params_v2(params)
+    if lat is None:
+        lat = lattice_from_config(p)
+    if db is None:
+        db = db_from_config(p)
+    thetas, n_cols, height = lat['thetas'], lat['n_cols'], lat['height']
+    rec = dict(version=2, n_boxes=0, plane=None, n_attempted=0, n_placed=0, n_no_place=0, n_zero=0,
+               reject=dict(range=0, overlap=0, scene=0, empty=0, visibility=0, rc=0), copies=[],
+               removed_orig=np.zeros(0, np.int64))
+    pts = data_dict.get('points', None)
+    boxes = data_dict.get('gt_boxes', None)
+    if pts is None or boxes is None or len(pts) == 0 or db.n == 0:
+        return data_dict, rec
+    pts = np.asarray(pts); boxes = np.asarray(boxes)
+    if boxes.ndim != 2:
+        boxes = boxes.reshape(-1, 7)
+    n_box = len(boxes); rec['n_boxes'] = n_box
+    xyz = pts[:, :3]
+    plane = ground_plane(xyz)
+    if plane is None:
+        return data_dict, rec
+    rec['plane'] = np.asarray(plane, np.float64)
+    pcr = np.asarray(p['POINT_CLOUD_RANGE'], np.float64)
+    grid = _BevGrid(xyz)
+    colidx = None
+    alive = np.ones(len(pts), bool)
+    add_pts = np.zeros((0, pts.shape[1]), pts.dtype); add_id = np.zeros(0, np.int64)
+    add_rng = np.zeros(0); add_pix = np.zeros(0, np.int64); add_alive = np.zeros(0, bool)
+    placed_boxes = []
+    gt_corners = bev_corners(boxes[:, :7].astype(np.float64)) if n_box else np.zeros((0, 4, 2))
+    removed_orig = []
+    vis_h = float(p['VIS_HEIGHT'])
+
+    for _ in range(int(p['N_COPIES'])):
+        rec['n_attempted'] += 1
+        inst = _randint(rng, db.n)
+        local = db.points(inst); size = db.size[inst]; alphas = db.alphas(inst)
+        lxyz = local[:, :3]
+        tries, fresh, acc = 0, True, None
+        r = phi = alpha = None
+        while tries < int(p['MAX_TRIES']):
+            tries += 1
+            if fresh:
+                r = rng.uniform(p['R_MIN'], p['R_MAX']); phi = rng.uniform(0.0, 2 * np.pi)
+                alpha = float(alphas[_randint(rng, len(alphas))])
+            else:
+                r = rng.uniform(r, p['R_MAX'])
+            fresh = True
+            cb, q = place_instance(lxyz, size, r, phi, alpha, plane)
+            # v1 free-space check
+            g = bev_corners(cb[None], p['BEV_MARGIN'])[0]
+            if (g[:, 0] < pcr[0]).any() or (g[:, 0] > pcr[3]).any() or (g[:, 1] < pcr[1]).any() or \
+                    (g[:, 1] > pcr[4]).any():
+                rec['reject']['range'] += 1; continue
+            others = gt_corners if not placed_boxes else \
+                np.concatenate([gt_corners, bev_corners(np.array([pb[:7] for pb in placed_boxes]))])
+            if len(others) and rects_overlap(g, others).any():
+                rec['reject']['overlap'] += 1; continue
+            zb = cb[2] - cb[5] / 2 + p['CLEARANCE']
+            c = grid.query(g)
+            c = c[alive[c] & (xyz[c, 2] > zb)]
+            n_sc = int(points_in_rect(xyz[c, :2], cb, p['BEV_MARGIN']).sum())
+            if len(add_pts):
+                a = add_alive & (add_pts[:, 2] > zb)
+                n_sc += int(points_in_rect(add_pts[a, :2], cb, p['BEV_MARGIN']).sum())
+            if n_sc > p['MAX_SCENE_POINTS']:
+                rec['reject']['scene'] += 1; continue
+            # render
+            rxyz, rrow, rcol, kept, rr = _render(q, thetas, n_cols, height)
+            if not len(kept):
+                rec['reject']['empty'] += 1; continue
+            cpix = rrow * n_cols + rcol
+            sil = silhouette(cb, thetas, n_cols, height)
+            qcols = np.union1d(rcol, sil[0] % n_cols)
+            # scene in the copy's columns and its silhouette's (alive originals + alive copies), points inside the
+            # copy's box excluded (they are removed on acceptance)
+            if colidx is None:
+                colidx = _ColIndex(xyz[:, :2], n_cols)
+            sc = colidx.query(qcols)
+            sc = sc[alive[sc]]
+            sc = sc[~points_in_box(xyz[sc], cb)] if len(sc) else sc
+            srow, scol, srng, sval = to_lattice(xyz[sc], height, thetas, n_cols)
+            sxyz = xyz[sc]
+            if len(add_pts):
+                am = add_alive & np.isin(add_pix % n_cols, qcols)
+                am &= ~points_in_box(add_pts[:, :3], cb) if am.any() else am
+                ap = add_pts[am, :3].astype(np.float64)
+                arow, acol, arng, aval = to_lattice(ap, height, thetas, n_cols)
+                srow = np.r_[srow, arow]; scol = np.r_[scol, acol]; srng = np.r_[srng, arng]; sval = np.r_[sval, aval]
+                sxyz = np.concatenate([sxyz, ap]) if len(ap) else sxyz
+            # visibility: columns with a nearer scene point > VIS_HEIGHT above the plane inside the copy's row span
+            ucol, inv = np.unique(rcol, return_inverse=True)
+            rmin = np.full(len(ucol), np.inf); np.minimum.at(rmin, inv, rr)
+            hz = np.asarray(sxyz[:, 2], np.float64) - plane_z(plane, sxyz[:, 0], sxyz[:, 1]) if len(sxyz) else np.zeros(0)
+            vm = sval & (srow >= rrow.min()) & (srow <= rrow.max()) & (hz > vis_h)
+            blocked = np.zeros(len(ucol), bool)
+            if vm.any():
+                ci = np.searchsorted(ucol, scol[vm]); okc = (ci < len(ucol))
+                ci, okc = np.clip(ci, 0, len(ucol) - 1), okc & (ucol[np.clip(ci, 0, len(ucol) - 1)] == scol[vm])
+                near = np.full(len(ucol), np.inf)
+                np.minimum.at(near, ci[okc], srng[vm][okc])
+                blocked = near < rmin
+            vshare = float(blocked.mean())
+            if vshare >= p['VIS_MAX_SHARE']:
+                rec['reject']['visibility'] += 1; continue
+            # row coverage of the render in this scene
+            spix = np.where(sval, srow * n_cols + scol, -1)
+            rc, _ = row_coverage(cb, cpix, rr, spix, srng, thetas, n_cols, height, p['RC_OCCL_M'], sil=sil)
+            if not (rc >= p['RC_MIN']):
+                rec['reject']['rc'] += 1; fresh = False; continue
+            acc = (cb, q, rxyz, rrow, rcol, kept, rr, cpix, sc, srng, sval, spix, rc, vshare)
+            break
+        if acc is None:
+            rec['n_no_place'] += 1
+            continue
+        cb, q, rxyz, rrow, rcol, kept, rr, cpix, sc, srng, sval, spix, rc, vshare = acc
+        # v1 occlusion: (1) scene points inside the box
+        cc = grid.query(bev_corners(cb[None], 0.02)[0]); cc = cc[alive[cc]]
+        inb = cc[points_in_box(xyz[cc], cb)]
+        alive[inb] = False
+        add_in = np.zeros(len(add_pts), bool)
+        if len(add_pts):
+            add_in = add_alive & points_in_box(add_pts[:, :3], cb)
+            add_alive &= ~add_in
+        # (3)/(4) on the original scene candidates of the copy's columns, and on the alive copies
+        order = np.argsort(cpix); cs = cpix[order]; rs = rr[order]
+        n_orig = len(sc)
+        osp, osr = spix[:n_orig], srng[:n_orig]
+        pos = np.clip(np.searchsorted(cs, osp), 0, len(cs) - 1); hit = (osp >= 0) & (cs[pos] == osp)
+        apos = np.zeros(0, np.int64); ahit = np.zeros(len(add_pts), bool)
+        if len(add_pts):
+            apos = np.clip(np.searchsorted(cs, add_pix), 0, len(cs) - 1)
+            ahit = add_alive & (add_pix >= 0) & (cs[apos] == add_pix)
+        nearest = np.full(len(cs), np.inf)
+        if hit.any():
+            np.minimum.at(nearest, pos[hit], osr[hit])
+        if ahit.any():
+            np.minimum.at(nearest, apos[ahit], add_rng[ahit])
+        keep_sorted = ~(nearest < rs - p['OCCLUSION_M'])
+        sh = hit & (osr > rs[pos])
+        shadow = sc[sh]
+        alive[shadow] = False
+        ash = (ahit & (add_rng > rs[apos])) if len(add_pts) else ahit
+        add_alive &= ~ash
+        vis = np.zeros(len(cpix), bool); vis[order[keep_sorted]] = True        # after the 0.5 m occlusion drop
+        # sparsifier: p ~ U(0, 1], each remaining rendered point kept with p
+        pk = 1.0 - rng.uniform(0.0, 1.0)
+        u = np.asarray(rng.uniform(0.0, 1.0, len(cpix)), np.float64)
+        keep = vis & (u < pk)
+        if not keep.any():
+            alive[inb] = True; alive[shadow] = True
+            if len(add_pts):
+                add_alive |= add_in | ash
+            rec['n_zero'] += 1
+            continue
+        removed_orig.extend([inb, shadow])
+        cid = len(placed_boxes)
+        newp = np.zeros((int(keep.sum()), pts.shape[1]), pts.dtype)
+        newp[:, :3] = rxyz[keep]
+        if pts.shape[1] > 3 and local.shape[1] > 3:
+            newp[:, 3] = local[kept[keep], 3]
+        add_pts = np.concatenate([add_pts, newp]); add_id = np.concatenate([add_id, np.full(len(newp), cid)])
+        add_rng = np.concatenate([add_rng, rr[keep]]); add_pix = np.concatenate([add_pix, cpix[keep]])
+        add_alive = np.concatenate([add_alive, np.ones(len(newp), bool)])
+        cb_store = np.zeros(boxes.shape[1]) if boxes.ndim == 2 else np.zeros(7)
+        cb_store[:7] = cb
+        placed_boxes.append(cb_store.astype(boxes.dtype))
+        crec = dict(instance=inst, box=cb.copy(), r_new=float(np.hypot(cb[0], cb[1])), phi_new=float(phi), alpha=alpha,
+                    tries=tries, rc_loader=float(rc), vis_share_loader=vshare, n_db=int(len(local)),
+                    n_rendered=int(len(cpix)), n_visible=int(vis.sum()), p_keep=float(pk), n_kept=int(keep.sum()),
+                    n_inbox_removed=int(len(inb) + add_in.sum()), n_shadow_removed=int(len(shadow) + ash.sum()))
+        if keep_points:
+            crec['placed'] = q.copy(); crec['rendered_unsparsified'] = rxyz[vis].copy(); crec['rendered'] = rxyz[keep]
+        rec['copies'].append(crec)
+
+    if not placed_boxes:
+        return data_dict, rec
+    k = len(placed_boxes)
+    data_dict['points'] = np.concatenate([pts[alive], add_pts[add_alive]]).astype(pts.dtype, copy=False)
+    n_alive = int(alive.sum()); ids = add_id[add_alive]
+    for cid, crec in enumerate(rec['copies']):
+        crec['point_index'] = n_alive + np.nonzero(ids == cid)[0]
+        crec['n_final'] = int(len(crec['point_index']))
+    data_dict['gt_boxes'] = np.concatenate([boxes, np.stack(placed_boxes)]).astype(boxes.dtype, copy=False)
+    data_dict['gt_names'] = np.concatenate([np.asarray(data_dict['gt_names']), np.array([p['DONOR_CLASS']] * k)])
+    if 'gt_boxes_mask' in data_dict:
+        data_dict['gt_boxes_mask'] = np.concatenate([np.asarray(data_dict['gt_boxes_mask'], bool), np.ones(k, bool)])
+    if data_dict.get('gt_boxes_ignore_mask', None) is not None:
+        data_dict['gt_boxes_ignore_mask'] = np.concatenate(
+            [np.asarray(data_dict['gt_boxes_ignore_mask'], bool), np.zeros(k, bool)])
+    if data_dict.get('gt_classes', None) is not None and len(data_dict['gt_classes']) == n_box:
+        v = np.asarray(data_dict['gt_classes'])
+        data_dict['gt_classes'] = np.concatenate([v, np.full(k, int(p['COPY_CLASS_LABEL']), v.dtype)])
+    if data_dict.get('gt_scores', None) is not None and len(data_dict['gt_scores']) == n_box:
+        v = np.asarray(data_dict['gt_scores']); data_dict['gt_scores'] = np.concatenate([v, np.ones(k, v.dtype)])
+    if data_dict.get('num_points_in_gt', None) is not None and len(data_dict['num_points_in_gt']) == n_box:
+        v = np.asarray(data_dict['num_points_in_gt'])
+        data_dict['num_points_in_gt'] = np.concatenate([v, np.array([c['n_final'] for c in rec['copies']], v.dtype)])
+    rec['n_placed'] = k
+    rec['removed_orig'] = np.unique(np.concatenate(removed_orig)) if removed_orig else np.zeros(0, np.int64)
+    rec['alive_orig'] = alive
+    return data_dict, rec
