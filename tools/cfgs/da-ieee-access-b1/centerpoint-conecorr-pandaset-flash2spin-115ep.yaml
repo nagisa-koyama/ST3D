@@ -1,0 +1,10 @@
+# B1 (experiments_md 20261017_07): FULL-LENGTH twin of the 15-epoch proxy 27005 (W&B xrk47zew).
+# S4 method row: flash -> spin with the global density correction measured inside PandarGT's +-30 deg cone
+# (thinning; source measured with augmentation off since ST3D 2e5ae50, target on Pandar64's TRAIN split).
+# Only the schedule changes against the proxy: NUM_EPOCHS 15 -> 115. Everything else is inherited from the
+# proxy file itself (checked against 27005's W&B config, 20261017_07 section 3). Paired with the full-length
+# S4 control centerpoint-pandaset-flash2spin-115ep.yaml.
+_BASE_CONFIG_: cfgs/da-ieee-access-tier1/centerpoint-conecorr-pandaset-flash2spin-15ep.yaml
+
+OPTIMIZATION:
+    NUM_EPOCHS: 115

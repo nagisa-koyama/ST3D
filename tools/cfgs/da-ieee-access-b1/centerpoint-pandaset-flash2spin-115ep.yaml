@@ -1,0 +1,13 @@
+# B1 (experiments_md 20261017_07): FULL-LENGTH twin of the 15-epoch proxy 26974 (W&B uzi23xbs).
+# PandarGT (flash) source-only, one frame, no correction. One training run, two Table D cells:
+#   - S4 control: scored in-run on Pandar64 val over 360 deg; inside the cone by the rule-A rescorer;
+#   - S3 in-house ORACLE (flash -> flash): the epoch-115 checkpoint rescored with
+#     cfgs/da-ieee-access/centerpoint-pandaset-flash2flash.yaml (eval-only job).
+# Only the schedule changes against the proxy: NUM_EPOCHS 15 -> 115 (the family budget, 93.5k steps at global
+# batch 6; the full-length S3 control / S4 oracle 26389 ran the same 115). Everything else is inherited from
+# the proxy file itself, so the resolved config differs from 26974's W&B config in NUM_EPOCHS alone
+# (checked with analysis/resolved_cfg_vs_wandb.py, 20261017_07 section 3).
+_BASE_CONFIG_: cfgs/da-ieee-access-tier1/centerpoint-pandaset-flash2spin-15ep.yaml
+
+OPTIMIZATION:
+    NUM_EPOCHS: 115

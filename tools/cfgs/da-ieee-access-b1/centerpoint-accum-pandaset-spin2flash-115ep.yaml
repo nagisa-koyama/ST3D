@@ -1,0 +1,11 @@
+# B1 (experiments_md 20261017_07): FULL-LENGTH twin of the 15-epoch proxy 26511 -> 26692 (W&B vjutu18e) and
+# its seed-2 twin 27004 (oj1yf0mg). S3 method row: spin source accumulated to N = 4 (the in-cone parity depth,
+# train split) with motion compensation and the 250k voxel cap, no correction.
+# Only the schedule changes against the proxy: NUM_EPOCHS 15 -> 115. Everything else is inherited from the
+# proxy file itself (checked against 26692's and 27004's W&B configs, 20261017_07 section 3). Paired with the
+# full-length S3 control 26389 (u2i837pw) and the in-house oracle from centerpoint-pandaset-flash2spin-115ep.
+# Run as the proxies did: 2 GPUs x 3 per rank (global batch 6), STAGE_PANDASET=1, --mem=150G.
+_BASE_CONFIG_: cfgs/da-ieee-access-tier1/centerpoint-accum-pandaset-spin2flash-15ep.yaml
+
+OPTIMIZATION:
+    NUM_EPOCHS: 115
