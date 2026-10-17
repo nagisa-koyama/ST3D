@@ -376,6 +376,8 @@ def pd_anchor(job):
         n += 1
         if n in grid:
             snaps[n] = acc.snapshot()['flash']; used[n] = n
+    if n not in snaps:                       # stopped short at a sequence start: keep the partial cloud the loader feeds
+        snaps[n] = acc.snapshot()['flash']
     return snaps, used
 
 
@@ -429,13 +431,16 @@ def curve(src_rows, tar_rows, var, grid, cap, tag=''):
     th = np.mean([r[var] for r in tar_rows], axis=0)
     rows = []
     for n in grid:
-        have = [r[n] for r in src_rows if n in r]
+        # an anchor whose accumulation stopped short (sequence start) contributes the partial cloud the loader feeds:
+        # its deepest snapshot at or below n
+        have = [r[max(k for k in r if k <= n)] for r in src_rows if any(k <= n for k in r)]
+        full = sum(1 for r in src_rows if n in r)
         if not have:
             continue
         sh = np.mean([h[var + tag] for h in have], axis=0)
         ratio = sh / np.maximum(th, 1e-9)
         nv = np.array([h['nvox' + tag] for h in have])
-        rows.append(dict(N=n, anchors=len(have), ratio=ratio[BAND].round(3).tolist(),
+        rows.append(dict(N=n, anchors=len(have), anchors_full=full, ratio=ratio[BAND].round(3).tolist(),
                          bins_ok=int(np.sum(ratio[BAND] >= 1.0)), min_ratio=float(ratio[BAND].min()),
                          bins_ok20=int(np.sum(ratio[BAND20] >= 1.0)), min_ratio20=float(ratio[BAND20].min()),
                          cap_share=float(np.mean(nv > cap)), vox_p50=float(np.median(nv)),
@@ -456,6 +461,7 @@ def part_report(args):
     ns = pickle.load(open(out / ('nuscenes%s.pkl' % sfx), 'rb'))
     tg = pickle.load(open(out / ('targets%s.pkl' % sfx), 'rb'))
     pdd = pickle.load(open(out / ('pandaset%s.pkl' % sfx), 'rb'))
+    print('ratio = mean(source) / mean(target) per 5 m bin; an anchor short of N enters with its partial cloud (column full)')
     print('KITTI camera wedge used on the nuScenes side: [%.2f, %.2f] deg' % tuple(ns['wedge']))
     for pair, tname in (('nuscenes2kitti', 'kitti'), ('nuscenes2waymo', 'waymo')):
         for plat in ('n008', 'n015'):
@@ -489,10 +495,10 @@ def part_report(args):
             continue
         print('\n== %s   N* %s   N*_20 %s   N_cap %s %s' % (key, c['N_star'], c['N_star20'], c['N_cap'],
                                                          c['N_cap_note'] or ''))
-        print('   N  anch  ok13  min13  ok10  min10  cap%   vox_p50   ratios 5-70 m')
+        print('   N  anch  full  ok13  min13  ok10  min10  cap%   vox_p50   ratios 5-70 m')
         for r in c['rows']:
-            print('  %3d  %4d  %4d  %5.2f  %4d  %5.2f  %4.0f  %8.0f   %s'
-                  % (r['N'], r['anchors'], r['bins_ok'], r['min_ratio'], r['bins_ok20'], r['min_ratio20'],
+            print('  %3d  %4d  %4d  %4d  %5.2f  %4d  %5.2f  %4.0f  %8.0f   %s'
+                  % (r['N'], r['anchors'], r['anchors_full'], r['bins_ok'], r['min_ratio'], r['bins_ok20'], r['min_ratio20'],
                      100 * r['cap_share'], r['vox_p50'], ' '.join('%.2f' % x for x in r['ratio'])))
 
 
