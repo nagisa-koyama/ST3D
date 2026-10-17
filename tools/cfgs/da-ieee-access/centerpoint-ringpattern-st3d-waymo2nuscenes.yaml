@@ -1,0 +1,103 @@
+# A3 (user's go 2026-10-17 ~20:35, 「A3 実施」): UDA-LEGAL PSEUDO-LABELLING ON THE WAYMO -> NUSCENES SCAN-PATTERN
+# HEADLINE. experiments_md/20261017_06 (pre-declared there before any cut was computed or any row launched).
+# DEVELOPMENT evidence only: it does not change the label-free selection procedure of experiments_md 20261017_03
+# (whose branch 3a returns scan-pattern thinning WITHOUT pseudo-labelling on a dense -> sparse pair).
+#
+# Teacher and init: job 27807 (centerpoint-ringpattern-waymo2nuscenes, W&B 87h61vfd, epoch 7 = its final epoch; 36.12 /
+# 16.73 Car BEV / 3D R40 IoU 0.7 on nuScenes val in its own run). The student keeps the same scan-pattern thinning of
+# the Waymo source (RING_PATTERN, training only), as 27812 kept 27599's per-bin thinning. This file is
+# centerpoint-ringpattern-waymo2nuscenes + USE_PSEUDO_LABEL on the target + SELF_TRAIN.
+#
+# SELF_TRAIN: the block of 27812 (centerpoint-global-st3d-waymo2nuscenes), which is 27566's resolved block
+# (centerpoint-accum-legaldepth-st3d-nuscenes2kitti) with MODEL_TEACHER = the MeanVFE CenterPoint and PROG_AUG.UPDATE_AUG
+# [5, 10, 15] of 20 epochs scaled to 7 -> [2, 4, 5]. The ONLY change from 27812's block is the two cut lines, re-derived
+# for THIS teacher by the pre-declared rules (20261004_01 §5e):
+# - SCORE_THRESH, rule B: the teacher's precision on its labelled SOURCE val = Waymo val (Vehicle -> Car) at
+#   SAMPLED_INTERVAL 5, seen through the same scan-pattern thinning it was trained with (RING_PATTERN.APPLY_AT_EVAL in the
+#   flat config analysis/pseudo_label_threshold/cfgs/teacher_27807_on_waymo_val_int5_ringpattern.yaml), the teacher as
+#   trained; smallest t from which precision stays >= 0.50 (1.0 m centre match, >= 50 kept), else 1.01.
+# - NEG_THRESH, rule A: the background plateau's upper half-maximum on the teacher's nuScenes TRAIN pseudo-labels (floor
+#   0.0001). A SCORE_THRESH below its NEG_THRESH is raised to it.
+# The passes: scripts/_a3_cuts_w2n_ringpattern.sh (GPU) then scripts/_a3_cut_checks.sh (CPU).
+# Legality: teacher trained on Waymo labels + nuScenes' published scan spec and TRAIN-cloud azimuth step (no target label);
+# target = unlabelled nuScenes TRAIN; cuts by pre-declared label-free rules (rule B reads SOURCE labels only); PROG_AUG and
+# the memory ensemble as published (decision F); family default size augmentation; nuScenes SHIFT_COOR 1.75 as 27807.
+#
+# PRE-DECLARED READING (experiments_md/20261017_06 §4; one seed): Car BEV AP_R40 IoU 0.7 on nuScenes val ("all objects"),
+# final epoch 7, against the teacher 27807 at the same evaluation (36.12): D >= +2 adds, |D| < 2 level, D <= -2 hurts.
+# Within 1.5 of a bar a second seed is PROPOSED, not run. IoU 0.5 and 3D beside; oracle-relative values use the in-house
+# nuScenes oracle 25743 (44.98 / 26.63).
+#
+# Launch: experiments_md/20261017_06 §6 (2 GPUs, global batch 6, 150G, seed 666, --pretrained_model and
+# --pretrained_model_teacher = 27807 epoch 7).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-ringpattern-waymo2nuscenes.yaml
+
+DATA_CONFIG_TAR:
+    USE_PSEUDO_LABEL: True
+
+SELF_TRAIN:
+  SCORE_THRESH: [1.01, 1.01, 1.01]   # PLACEHOLDER (every class gated off) until the cut passes have run
+  NEG_THRESH: [1.01, 1.01, 1.01]     # PLACEHOLDER
+  MODEL_TEACHER:
+    CLASS_NAMES: [Car, Pedestrian, Cyclist]
+    ONTOLOGY: kitti
+    NAME: CenterPoint
+    VFE: {NAME: MeanVFE}
+    BACKBONE_3D: {NAME: VoxelResBackBone8x}
+    MAP_TO_BEV: {NAME: HeightCompression, NUM_BEV_FEATURES: 256}
+    BACKBONE_2D:
+      NAME: BaseBEVBackbone
+      LAYER_NUMS: [5]
+      LAYER_STRIDES: [1]
+      NUM_FILTERS: [128]
+      UPSAMPLE_STRIDES: [2]
+      NUM_UPSAMPLE_FILTERS: [256]
+    DENSE_HEAD:
+      NAME: CenterHead
+      CLASS_AGNOSTIC: false
+      CLASS_NAMES_EACH_HEAD:
+      - [Car, Pedestrian, Cyclist]
+      SHARED_CONV_CHANNEL: 64
+      USE_BIAS_BEFORE_NORM: true
+      NUM_HM_CONV: 2
+      SEPARATE_HEAD_CFG:
+        HEAD_ORDER: [center, center_z, dim, rot]
+        HEAD_DICT:
+          center: {out_channels: 2, num_conv: 2}
+          center_z: {out_channels: 1, num_conv: 2}
+          dim: {out_channels: 3, num_conv: 2}
+          rot: {out_channels: 2, num_conv: 2}
+      TARGET_ASSIGNER_CONFIG: {FEATURE_MAP_STRIDE: 4, NUM_MAX_OBJS: 500, GAUSSIAN_OVERLAP: 0.1, MIN_RADIUS: 2}
+      LOSS_CONFIG:
+        LOSS_WEIGHTS:
+          cls_weight: 1.0
+          loc_weight: 2.0
+          code_weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      POST_PROCESSING:
+        SCORE_THRESH: 0.0001
+        POST_CENTER_LIMIT_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+        MAX_OBJ_PER_SAMPLE: 500
+        NMS_CONFIG: {NMS_TYPE: nms_gpu, NMS_THRESH: 0.5, NMS_PRE_MAXSIZE: 4096, NMS_POST_MAXSIZE: 500}
+    POST_PROCESSING:
+      RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+      SCORE_THRESH: 0.0001
+      OUTPUT_RAW_SCORE: false
+      EVAL_METRIC: kitti
+      NMS_CONFIG: {MULTI_CLASSES_NMS: false, NMS_TYPE: nms_gpu, NMS_THRESH: 0.5, NMS_PRE_MAXSIZE: 4096, NMS_POST_MAXSIZE: 500}
+  EPOCH_FOLLOWS: source
+  UPDATE_PSEUDO_LABEL: [0]
+  UPDATE_PSEUDO_LABEL_INTERVAL: 2
+  FROZEN_TEACHER_SINGLE_PASS: true
+  INIT_PS: None
+  SRC: {USE_DATA: true, USE_GRAD: true, LOSS_WEIGHT: 1.0, BACKWARD_TOGETHER: true}
+  TAR: {USE_DATA: true, LOSS_WEIGHT: 1.0, BACKWARD_TOGETHER: true}
+  PROG_AUG:
+    ENABLED: true
+    UPDATE_AUG: [2, 4, 5]
+    SCALE: 1.1
+  MEMORY_ENSEMBLE:
+    ENABLED: true
+    NAME: nms_ensemble
+    IOU_THRESH: 0.1
+    NMS_CONFIG: {NMS_TYPE: nms_gpu, MULTI_CLASSES_NMS: false, NMS_PRE_MAXSIZE: 512, NMS_POST_MAXSIZE: 100, NMS_THRESH: 0.1}
+    MEMORY_VOTING: {ENABLED: true, IGNORE_THRESH: 2, RM_THRESH: 3}
