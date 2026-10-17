@@ -155,6 +155,16 @@ class DataAugmentor(object):
         data_dict['points'] = points
         return data_dict
 
+    def relocate_render(self, data_dict=None, config=None, lattice=None):
+        """Relocate-and-render (experiments_md 20261018_02): copies of near, dense source boxes of DONOR_CLASS moved
+        farther out and re-rendered through the target's published lattice (augmentor/relocate_render.py). Reached
+        only by a config whose AUG_CONFIG_LIST names it; training only, like every augmentor."""
+        from . import relocate_render as rr
+        if data_dict is None:
+            return partial(self.relocate_render, config=config, lattice=rr.lattice_from_config(config))
+        data_dict, _ = rr.relocate_render_scene(data_dict, config, lattice)
+        return data_dict
+
     def forward(self, data_dict):
         """
         Args:
