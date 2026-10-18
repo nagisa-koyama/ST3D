@@ -942,3 +942,21 @@ def test_v4_hook_counts(tmp_path):
     np.random.seed(3)
     out = aug.forward(frame(np.zeros((0, 7)), [], ground()))
     assert aug._rr_stats[0] == 1 and aug._rr_stats[1] == len(out['gt_boxes'])
+
+
+# ================================================================================================= RR v5 (§9)
+def test_v5_normals_on_a_plane_toy_and_the_fallback():
+    import rr_build_db as BD
+    rng = np.random.default_rng(0)
+    g = np.stack(np.meshgrid(np.arange(0, 2, 0.02), np.arange(0, 1, 0.02)), -1).reshape(-1, 2)
+    tilt = np.c_[g, 0.3 * g[:, 0] + rng.normal(0, 1e-4, len(g))]                       # a plane z = 0.3 x
+    far = np.array([[10.0, 10.0, 10.0], [10.05, 10.0, 10.0], [10.0, 10.05, 10.0]])       # 2 other points only
+    n, deg = BD.instance_normals(np.concatenate([tilt, far]))
+    ref = np.array([-0.3, 0.0, 1.0]) / np.hypot(0.3, 1.0)
+    ok = deg >= 5
+    assert ok[:len(tilt)].all() and not ok[len(tilt):].any()
+    np.testing.assert_allclose(np.abs(n[:len(tilt)] @ ref), 1.0, atol=1e-3)
+    np.testing.assert_allclose(np.linalg.norm(n[:len(tilt)], axis=1), 1.0, atol=1e-5)
+    assert np.all(n[len(tilt):] == 0)
+    n0, d0 = BD.instance_normals(np.zeros((0, 3)))
+    assert n0.shape == (0, 3)

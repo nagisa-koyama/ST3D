@@ -155,6 +155,97 @@ def merge(a):
     assert db.n == len(ids) and (len(ids) == 0 or db.points(0).shape == (c_out[0], 4))
 
 
+
+# ------------------------------------------------------------------------------------------------- RR v5 normals
+def instance_normals(p, radius=0.2, min_nb=5):
+    """Per point of one instance (box frame): the PCA normal (eigenvector of the smallest eigenvalue of the covariance of
+    the points within `radius`, the point included); (0, 0, 0) where fewer than `min_nb` OTHER points lie within radius
+    (experiments_md 20261018_02 §9.1). Returns (normals (n, 3) float32, neighbour counts (n,))."""
+    from scipy.spatial import cKDTree
+    p = np.asarray(p, np.float64)
+    n = len(p)
+    out = np.zeros((n, 3), np.float32)
+    if n == 0:
+        return out, np.zeros(0, np.int64)
+    pr = cKDTree(p).query_pairs(radius, output_type='ndarray')
+    i, j = (pr[:, 0], pr[:, 1]) if len(pr) else (np.zeros(0, np.int64), np.zeros(0, np.int64))
+    deg = np.bincount(i, minlength=n) + np.bincount(j, minlength=n)
+    cnt = deg + 1.0
+    S1 = np.stack([p[:, a] + np.bincount(i, p[j, a], n) + np.bincount(j, p[i, a], n) for a in range(3)], 1)
+    S2 = np.zeros((n, 3, 3))
+    for a in range(3):
+        for b in range(a, 3):
+            v = p[:, a] * p[:, b] + np.bincount(i, p[j, a] * p[j, b], n) + np.bincount(j, p[i, a] * p[i, b], n)
+            S2[:, a, b] = v; S2[:, b, a] = v
+    mu = S1 / cnt[:, None]
+    cov = S2 / cnt[:, None, None] - mu[:, :, None] * mu[:, None, :]
+    ok = deg >= min_nb
+    if ok.any():
+        w, V = np.linalg.eigh(cov[ok])
+        out[ok] = V[:, :, 0].astype(np.float32)
+    return out, deg
+
+
+def _normals_chunk(task):
+    pp, ip, lo, hi = task
+    import numpy as _np
+    P = _np.load(pp, mmap_mode='r'); z = _np.load(ip)
+    off, cnt = z['offset'], z['count']
+    res = []
+    for k in range(lo, hi):
+        nrm, deg = instance_normals(_np.asarray(P[off[k]:off[k] + cnt[k], :3], _np.float64))
+        res.append((k, nrm, int((deg < 5).sum())))
+    return res
+
+
+def normals(a):
+    """Shard a.shard of a.nshards (contiguous instance ranges, balanced by points) of a platform's database."""
+    from multiprocessing import Pool
+    D = Path(a.dir); O = Path(a.out); O.mkdir(parents=True, exist_ok=True)
+    pp, ip = D / f'db_{a.key}_points.npy', D / f'db_{a.key}_index.npz'
+    z = np.load(ip); off, cnt = z['offset'], z['count']
+    cum = np.cumsum(cnt); tot = int(cum[-1])
+    bounds = np.searchsorted(cum, np.linspace(0, tot, a.nshards + 1)[1:-1])
+    edges = np.r_[0, bounds + 1, len(cnt)]
+    lo, hi = int(edges[a.shard]), int(edges[a.shard + 1])
+    chunks = [(str(pp), str(ip), s, min(s + 20, hi)) for s in range(lo, hi, 20)]
+    t0 = time.time()
+    print(f'[rr_normals] {a.key} shard {a.shard}/{a.nshards}: instances {lo}..{hi} ({int(cnt[lo:hi].sum())} points), '
+          f'{len(chunks)} chunks, {a.workers} workers', flush=True)
+    N = np.zeros((int(cnt[lo:hi].sum()), 3), np.float32); nfb = 0; done = 0
+    base = int(off[lo]) if hi > lo else 0
+    with Pool(a.workers) as pool:
+        for res in pool.imap_unordered(_normals_chunk, chunks):
+            for k, nrm, fb in res:
+                N[off[k] - base:off[k] - base + cnt[k]] = nrm; nfb += fb; done += 1
+            if done % 500 < 20:
+                print(f'[rr_normals] {done}/{hi - lo} instances, {time.time() - t0:.0f} s', flush=True)
+    np.save(O / f'normals_{a.key}_{a.shard:02d}.npy', N)
+    np.save(O / f'normals_{a.key}_{a.shard:02d}_meta.npy', np.array([lo, hi, base, nfb], np.int64))
+    print(f'[rr_normals] done shard {a.shard}: {len(N)} points, fallback {nfb} ({nfb / max(len(N), 1):.4%}), '
+          f'{time.time() - t0:.0f} s', flush=True)
+
+
+def normals_merge(a):
+    D = Path(a.dir); O = Path(a.out)
+    z = np.load(D / f'db_{a.key}_index.npz'); tot = int(z['count'].sum())
+    out = np.lib.format.open_memmap(O / f'db_{a.key}_normals.npy', mode='w+', dtype=np.float32, shape=(tot, 3))
+    nfb = 0; seen = 0
+    for k in range(a.nshards):
+        meta = np.load(O / f'normals_{a.key}_{k:02d}_meta.npy'); N = np.load(O / f'normals_{a.key}_{k:02d}.npy')
+        out[meta[2]:meta[2] + len(N)] = N; nfb += int(meta[3]); seen += len(N)
+    out.flush()
+    assert seen == tot, (seen, tot)
+    nn = np.linalg.norm(np.asarray(out[::97]), axis=1)
+    ok = nn > 0
+    print(f'[rr_normals] {a.key}: {tot} points, fallback (< 5 other points within 0.2 m) {nfb} = {nfb / tot:.4%}; '
+          f'unit length (every 97th point): non-fallback |n| max deviation {np.abs(nn[ok] - 1).max():.2e}; file '
+          f'{O / f"db_{a.key}_normals.npy"} {os.path.getsize(O / f"db_{a.key}_normals.npy") / 1e6:.1f} MB', flush=True)
+    full = np.asarray(out); nf = np.linalg.norm(full, axis=1); okf = nf > 0
+    print(f'[rr_normals] {a.key}: full check: fallback rows {int((~okf).sum())} (meta {nfb}); non-fallback |n| max deviation '
+          f'{np.abs(nf[okf] - 1).max():.2e}; {"PASS" if np.abs(nf[okf] - 1).max() <= 1e-3 and int((~okf).sum()) == nfb else "FAIL"}',
+          flush=True)
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = ap.add_subparsers(dest='mode', required=True)
@@ -165,8 +256,15 @@ def main():
     m = sp.add_parser('merge')
     m.add_argument('--key', required=True); m.add_argument('--dir', required=True)
     m.add_argument('--nshards', type=int, required=True); m.add_argument('--min_points', type=int, default=200)
+    n = sp.add_parser('normals')
+    n.add_argument('--key', required=True); n.add_argument('--dir', required=True); n.add_argument('--out', required=True)
+    n.add_argument('--shard', type=int, required=True); n.add_argument('--nshards', type=int, required=True)
+    n.add_argument('--workers', type=int, default=8)
+    nm = sp.add_parser('normals_merge')
+    nm.add_argument('--key', required=True); nm.add_argument('--dir', required=True); nm.add_argument('--out', required=True)
+    nm.add_argument('--nshards', type=int, required=True)
     a = ap.parse_args()
-    run(a) if a.mode == 'run' else merge(a)
+    {'run': run, 'merge': merge, 'normals': normals, 'normals_merge': normals_merge}[a.mode](a)
 
 
 if __name__ == '__main__':
