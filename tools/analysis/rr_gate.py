@@ -512,6 +512,7 @@ V2_COPY_COLS = ('plat', 'frame', 'moving', 'r_new', 'phi', 'sector', 'tries', 'r
                 'n_final_g3', 'off_plane', 'd2_v2', 'd2_v1', 'n_pts_grid', 'n_vox', 'n_layers', 'ppv', 'instance')
 V3_EXTRA_COLS = ('fallback', 'bottom', 'd1v3_ref', 'd1v3_n')
 V4_EXTRA_COLS = V3_EXTRA_COLS + ('d1v4_ref',)
+V5_EXTRA_COLS = V4_EXTRA_COLS + ('vis_frac', 'fill_k') + tuple(f'{n}{b}' for n in ('hit', 'vis', 'rows', 'lost') for b in range(4))
 V2_FRAME_COLS = ('plat', 'frame', 'moving', 'n_boxes', 'has_plane', 'n_attempted', 'n_placed', 'n_no_place', 'n_zero',
                  'rej_range', 'rej_overlap', 'rej_scene', 'rej_empty', 'rej_vis', 'rej_rc', 'same', 'coll', 'emptied',
                  'lost', 'pts_before', 'pts_after', 'scene_t', 'copy_t', 'gp_sx', 'gp_sy', 'gp_z0', 'rr_sx', 'rr_sy')
@@ -532,7 +533,7 @@ def run_v2(a):
     assert getattr(q0, 'func', None) is not None and q0.func.__name__ == 'relocate_render', 'RR is not first'
     rr_cfg = q0.keywords['config']; lat = q0.keywords['lattice']; db = q0.keywords['db']
     version = int(rr_cfg.VERSION)
-    assert version in (2, 3, 4) and db is not None
+    assert version in (2, 3, 4, 5) and db is not None
     assert list(rr_cfg.POINT_CLOUD_RANGE) == list(dcfg.POINT_CLOUD_RANGE), 'RR range != the dataset range'
     print(f"[rr_gate v2] {a.key}: {len(ds)} infos; database {db.n} instances ({db.points_path}); lattice "
           f"{lat['n_segments']} train segments; queue {[getattr(f, 'func', f).__name__ for f in aug.data_augmentor_queue]}",
@@ -592,7 +593,7 @@ def run_v2(a):
                       float(np.abs(copy_t).max()) if len(copy_t) else 0.0,
                       float(np.degrees(np.arctan(pl[0]))), float(np.degrees(np.arctan(pl[1]))), float(pl[2]),
                       float(np.degrees(np.arctan(rp[0]))), float(np.degrees(np.arctan(rp[1])))]
-                     + ([rj['zrange']] if version == 4 else []))
+                     + ([rj['zrange']] if version >= 4 else []) + ([rj['novis']] if version == 5 else []))
         if k:
             sec = sector_of(cb[:, :2], fv)
             iscopy = np.zeros(len(P), bool)
@@ -603,7 +604,7 @@ def run_v2(a):
             scene_hz = scene[:, 2] - (pl[0] * scene[:, 0] + pl[1] * scene[:, 1] + pl[2])
             stree = cKDTree(scene[:, :2]) if version >= 3 else None
             gcells = rr.GroundCells(B['points'][:, :3], rr_cfg.GROUND_CELL, int(rr_cfg.GROUND_CELL_MIN_PTS)) \
-                if version == 4 else None
+                if version >= 4 else None
             for j, c in enumerate(rec['copies']):
                 ru = c['rendered_unsparsified']
                 cloud = np.concatenate([scene, ru]); idx = [np.arange(len(scene), len(scene) + len(ru))]
@@ -622,9 +623,18 @@ def run_v2(a):
                     near = np.asarray(stree.query_ball_point(bx[:2], float(np.hypot(bx[3], bx[4]) / 2 + 3.1)), np.int64)
                     ref, nref = rr.ground_reference(scene[near], bx)
                     row += [float(c['ground_fallback']), c['bottom'], ref, nref]
-                if version == 4:                     # D1 v4: v3's ground-cell height as the reference (§8.2)
+                if version >= 4:                     # D1 v4: v3's ground-cell height as the reference (§8.2)
                     v = gcells.local(bx[0], bx[1], rr_cfg.GROUND_RADIUS)
                     row += [float(np.percentile(v, rr_cfg.GROUND_PCT)) if len(v) >= int(rr_cfg.GROUND_MIN_CELLS) else np.nan]
+                if version == 5:                     # §9.3: realised descriptors of the copy (kept points in the final cloud)
+                    from rr_v5_fit import object_descriptors
+                    from pcdet.datasets.rerender_utils import to_lattice as _tl
+                    kr, kc, _, kv = _tl(fp, h, th, nc)
+                    kpix = (kr * nc + kc)[kv]
+                    vsp = c['sil_vis_pix']
+                    hs, vs, rs, ls, fl = object_descriptors(vsp // nc, c['sil_vis_relh'], np.isin(vsp, kpix).astype(float)) \
+                        if len(vsp) else (np.zeros(4), np.zeros(4), np.zeros(4), np.zeros(4), np.nan)
+                    row += [c['vis_frac'], fl] + list(hs) + list(vs) + list(rs) + list(ls)
                 copies.append(row)
         if k and len(dumps) < a.dump:
             dumps.append(dump_frame_v2(d, CAP, rec, head, side, cell, cfg, i))
@@ -646,10 +656,10 @@ def run_v2(a):
         aug.data_augmentor_queue = queue_rr
         np.random.seed(seed); t0 = time.perf_counter(); ds[i]; t_on = time.perf_counter() - t0
         g4.append([plat, i, t_off, t_on])
-    ncol = len(V2_COPY_COLS) + {2: 0, 3: len(V3_EXTRA_COLS), 4: len(V4_EXTRA_COLS)}[version]
+    ncol = len(V2_COPY_COLS) + {2: 0, 3: len(V3_EXTRA_COLS), 4: len(V4_EXTRA_COLS), 5: len(V5_EXTRA_COLS)}[version]
     res = dict(version=version, key=a.key, plat=plat, n_infos=N, frames=frames,
                copies=np.array(copies, np.float64).reshape(-1, ncol),
-               frames_rows=np.array(frows, np.float64).reshape(-1, len(V2_FRAME_COLS) + (1 if version == 4 else 0)),
+               frames_rows=np.array(frows, np.float64).reshape(-1, len(V2_FRAME_COLS) + {4: 1, 5: 2}.get(version, 0)),
                g4=np.array(g4, np.float64).reshape(-1, 4), dumps=dumps, images=imgs, db_n=db.n,
                db_points=db.points_path, node=os.uname().nodename)
     pickle.dump(res, open(out / f'gate_v{version}_{a.key}.pkl', 'wb'))
@@ -665,11 +675,11 @@ def dump_frame_v2(d, CAP, rec, head, side, cell, cfg, i):
 
 def report_v2(a):
     D = Path(a.dir)
-    version = max(v for v in (2, 3, 4) if list(D.glob(f'gate_v{v}_*.pkl')))
+    version = max(v for v in (2, 3, 4, 5) if list(D.glob(f'gate_v{v}_*.pkl')))
     res = [pickle.load(open(p, 'rb')) for p in sorted(D.glob(f'gate_v{version}_*.pkl'))]
-    cols = V2_COPY_COLS + {2: (), 3: V3_EXTRA_COLS, 4: V4_EXTRA_COLS}[version]
+    cols = V2_COPY_COLS + {2: (), 3: V3_EXTRA_COLS, 4: V4_EXTRA_COLS, 5: V5_EXTRA_COLS}[version]
     C = {k: j for j, k in enumerate(cols)}
-    F = {k: j for j, k in enumerate(V2_FRAME_COLS + (('rej_zrange',) if version == 4 else ()))}
+    F = {k: j for j, k in enumerate(V2_FRAME_COLS + {4: ('rej_zrange',), 5: ('rej_zrange', 'rej_novis')}.get(version, ()))}
     print(f'gate v{version}')
     cp = np.concatenate([r['copies'] for r in res]); fr = np.concatenate([r['frames_rows'] for r in res])
     g4 = np.concatenate([r['g4'] for r in res])
@@ -755,8 +765,8 @@ def report_v2(a):
         d1 &= bool(med <= 0.25 and big < 0.05)
         print(f"{PLAT_NAME[p]}: median {med:.3f} m, > 0.5 m {np.nanmean(o > 0.5):.1%}, > 1 m {big:.2%}; signed median "
               f"{np.nanmedian(cp[cp[:, C['plat']] == p, C['off_plane']]):+.3f} m")
-    if version == 4:
-        print(f"(v2's D1 against the gate's plane is descriptive in v4: it would read {'PASS' if d1 else 'FAIL'})")
+    if version >= 4:
+        print(f"(v2's D1 against the gate's plane is descriptive in v{version}: it would read {'PASS' if d1 else 'FAIL'})")
         print('\n== D1 v4 (deciding): |copy bottom - ground-cell reference| among non-fallback copies with a reference ==')
         d1v4 = True
         for p in PL:
@@ -821,7 +831,11 @@ def report_v2(a):
         d2 &= bool(v2s < 0.10)
         print(f"{PLAT_NAME[p]}: v2 definition {v2s:.2%} (median blocked share {np.nanmedian(cp[m, C['d2_v2']]):.3f}); "
               f"v1 definition, ground included (descriptive) {v1s:.2%}")
-    verdict['D2'] = d2; print(f"D2 {'PASS' if d2 else 'FAIL'}")
+    if version == 5:
+        print(f"D2 (v5: reported only) would read {'PASS' if d2 else 'FAIL'}")
+        report_v5_extra(cp, fr, C, F, PL, verdict, a)
+    else:
+        verdict['D2'] = d2; print(f"D2 {'PASS' if d2 else 'FAIL'}")
     print('\n== descriptive: copies on 27471\'s grid (kept points), p25 / p50 / p75 ==')
     for p in PL:
         for lo, hi in ((0, 20), (20, 40), (40, 50), (50, 60), (60, 75.2)):
@@ -850,6 +864,95 @@ def report_v2(a):
     print(f'\nVERDICT v{version} (deciding items; database sanity: see the merge outputs):',
           {k: ('PASS' if v else 'FAIL') for k, v in verdict.items()})
 
+
+def report_v5_extra(cp, fr, C, F, PL, verdict, a):
+    """§9.3: the held-out fit check (deciding), normals (deciding), the copies' visible fraction, all-copies descriptors and
+    the labelled comparison against Waymo val (reported)."""
+    import rr_v5_fit as FT
+    from box_pattern_visual import _band_of
+    V5 = Path('/home/koyama/data/relocate_render_20261018/v5')
+    z = np.load(Path(getattr(a, 'targets', None) or V5 / 'targets.npz'))
+    T, tcols, n_fit = z['T'], [str(c) for c in z['cols']], int(z['n_fit_segments'])
+    held = (T[:, 2] >= FT.UNOCC) & (T[:, 0] >= n_fit)
+    th, tl, tf, tn = FT.target_stats(T, tcols, held)
+    names = ['r'] + ['fill'] + [f'{n}{b}' for n in ('hit', 'vis', 'rows', 'lost') for b in range(4)]
+    Tc = np.c_[cp[:, C['r_new']], cp[:, C['fill_k']]] if len(cp) else np.zeros((0, 2))
+    Tc = np.c_[Tc, np.stack([cp[:, C[n]] for n in names[2:]], 1)] if len(cp) else np.zeros((0, len(names)))
+    unocc = cp[:, C['vis_frac']] >= FT.UNOCC
+    ch, cl, cf, cn = FT.target_stats(Tc, names, unocc)
+    ah, al, af, an = FT.target_stats(Tc, names, np.ones(len(cp), bool))
+    print('\n== v5 fit check (deciding): held-out targets vs the gate\'s unoccluded copies (realised), 40-75 m ==')
+    print('| bin | band | targets n | copies n | hit target / copy / diff | row-lost target / copy / diff | all copies hit / lost |')
+    print('|---|---|---|---|---|---|---|')
+    ok = True
+    for j in (2, 3, 4):
+        lo, hi = FT.BINS[j]
+        for k in range(4):
+            dh, dl = ch[j, k] - th[j, k], cl[j, k] - tl[j, k]
+            good = tn[j, k] >= 10 and cn[j, k] >= 10 and abs(dh) <= 0.05 and abs(dl) <= 0.08
+            ok &= bool(good)
+            print(f"| {lo:g}-{hi:g} | {k} | {int(tn[j, k])} | {int(cn[j, k])} | {th[j, k]:.3f} / {ch[j, k]:.3f} / {dh:+.3f} | "
+                  f"{tl[j, k]:.3f} / {cl[j, k]:.3f} / {dl:+.3f} | {ah[j, k]:.3f} / {al[j, k]:.3f} |{'' if good else ' FAIL'}")
+    verdict['fit_check'] = ok
+    print(f"fit check {'PASS' if ok else 'FAIL'}")
+    print('reported, all bins: hit / row-lost target (held-out) vs unoccluded copies, and fill p25/p50/p75')
+    for j, (lo, hi) in enumerate(FT.BINS):
+        print(f"  {lo:g}-{hi:g} m: targets n {int(tn[j].max())}, copies n {int(cn[j].max())}; hit "
+              f"{np.round(th[j], 3).tolist()} vs {np.round(ch[j], 3).tolist()}; lost {np.round(tl[j], 3).tolist()} vs "
+              f"{np.round(cl[j], 3).tolist()}; fill {np.round(tf[j], 3).tolist()} vs {np.round(cf[j], 3).tolist()}")
+    print('\n== copies\' visible fraction (envelope) by r\' ring, p25 / p50 / p75 and share >= 0.9 ==')
+    for p in PL:
+        for lo, hi in ((0, 20), (20, 40), (40, 50), (50, 60), (60, 75.2)):
+            m = (cp[:, C['plat']] == p) & (cp[:, C['r_new']] >= lo) & (cp[:, C['r_new']] < hi)
+            if m.any():
+                v = cp[m, C['vis_frac']]
+                print(f"  {PLAT_NAME[p]} {lo:g}-{hi:g} m [{int(m.sum())}]: {np.round(np.percentile(v, (25, 50, 75)), 3).tolist()}, "
+                      f">= 0.9 {np.mean(v >= 0.9):.1%}")
+    print('\n== normals (deciding): unit length and fallback share, from the merge outputs ==')
+    nok = True
+    for k in ('NUSCENES_N008', 'NUSCENES_N015'):
+        fs = sorted(V5.glob(f'normals_merge_{k}_*.txt'))
+        txt = open(fs[-1]).read() if fs else ''
+        lines = [ln for ln in txt.splitlines() if '[rr_normals]' in ln]
+        nok &= bool(lines) and lines[-1].rstrip().endswith('PASS')
+        for ln in lines:
+            print('  ' + ln)
+    verdict['normals'] = nok
+    print(f"normals {'PASS' if nok else 'FAIL'}")
+    print('\n== labelled comparison (analysis only): Waymo val C unoccluded / C all / D (20261018_03 rows_CD.npz) vs copies ==')
+    w = np.load('/home/koyama/data/box_pattern_visual_20261018/rows_CD.npz')
+    R_, B_ = w['rows'], w['boxes']
+    rc = {k: j for j, k in enumerate([str(x) for x in w['row_cols']])}
+    bc = {k: j for j, k in enumerate([str(x) for x in w['box_cols']])}
+    gid_rows = R_[:, rc['gid']].astype(np.int64)
+    band = _band_of(R_[:, rc['relh']])
+    order = np.argsort(B_[:, bc['gid']])
+    gids = B_[order, bc['gid']].astype(np.int64)
+    pos = np.searchsorted(gids, gid_rows)
+    nb_ = len(gids)
+    agg = {}
+    for nm, val in (('hit', R_[:, rc['n_hit']]), ('vis', R_[:, rc['n_vis']]), ('rows', np.ones(len(R_))),
+                    ('lost', (R_[:, rc['n_hit']] == 0).astype(float))):
+        A = np.zeros((nb_, 4))
+        np.add.at(A, (pos, band), val)
+        agg[nm] = A
+    Bo = B_[order]
+    Tw = np.c_[Bo[:, bc['r']], Bo[:, bc['fill']], agg['hit'], agg['vis'], agg['rows'], agg['lost']]
+    unw = Bo[:, bc['n_vis']] / np.maximum(Bo[:, bc['n_sil']], 1) >= 0.9
+    miss = np.asarray(w['miss'], bool)[order]
+    groups = (('C unoccluded', unw), ('C all', np.ones(nb_, bool)), ('D all', miss))
+    for gname, gm in groups:
+        gh, gl, gf, gn = FT.target_stats(Tw, names, gm)
+        for j in (2, 3, 4):
+            lo, hi = FT.BINS[j]
+            print(f"  {gname} {lo:g}-{hi:g} m: n {int(gn[j].max())}; hit {np.round(gh[j], 3).tolist()}; lost "
+                  f"{np.round(gl[j], 3).tolist()}; fill {np.round(gf[j], 3).tolist()}")
+    for gname, (gh, gl, gf, gn) in (('copies unoccluded', (ch, cl, cf, cn)), ('copies all', (ah, al, af, an))):
+        for j in (2, 3, 4):
+            lo, hi = FT.BINS[j]
+            print(f"  {gname} {lo:g}-{hi:g} m: n {int(gn[j].max())}; hit {np.round(gh[j], 3).tolist()}; lost "
+                  f"{np.round(gl[j], 3).tolist()}; fill {np.round(gf[j], 3).tolist()}")
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = ap.add_subparsers(dest='mode', required=True)
@@ -867,7 +970,7 @@ def main():
         v = int(c.DATA_CONFIGS[a.key].DATA_AUGMENTOR.AUG_CONFIG_LIST[0].get('VERSION', 1))
         run_v2(a) if v >= 2 else run(a)
     else:
-        report_v2(a) if list(Path(a.dir).glob('gate_v[234]_*.pkl')) else report(a)
+        report_v2(a) if list(Path(a.dir).glob('gate_v[2345]_*.pkl')) else report(a)
 
 
 if __name__ == '__main__':
