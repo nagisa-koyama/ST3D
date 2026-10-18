@@ -533,7 +533,7 @@ def run_v2(a):
     assert getattr(q0, 'func', None) is not None and q0.func.__name__ == 'relocate_render', 'RR is not first'
     rr_cfg = q0.keywords['config']; lat = q0.keywords['lattice']; db = q0.keywords['db']
     version = int(rr_cfg.VERSION)
-    assert version in (2, 3, 4, 5) and db is not None
+    assert version in (2, 3, 4, 5, 6) and db is not None
     assert list(rr_cfg.POINT_CLOUD_RANGE) == list(dcfg.POINT_CLOUD_RANGE), 'RR range != the dataset range'
     print(f"[rr_gate v2] {a.key}: {len(ds)} infos; database {db.n} instances ({db.points_path}); lattice "
           f"{lat['n_segments']} train segments; queue {[getattr(f, 'func', f).__name__ for f in aug.data_augmentor_queue]}",
@@ -593,7 +593,7 @@ def run_v2(a):
                       float(np.abs(copy_t).max()) if len(copy_t) else 0.0,
                       float(np.degrees(np.arctan(pl[0]))), float(np.degrees(np.arctan(pl[1]))), float(pl[2]),
                       float(np.degrees(np.arctan(rp[0]))), float(np.degrees(np.arctan(rp[1])))]
-                     + ([rj['zrange']] if version >= 4 else []) + ([rj['novis']] if version == 5 else []))
+                     + ([rj['zrange']] if version >= 4 else []) + ([rj['novis']] if version >= 5 else []))
         if k:
             sec = sector_of(cb[:, :2], fv)
             iscopy = np.zeros(len(P), bool)
@@ -626,7 +626,7 @@ def run_v2(a):
                 if version >= 4:                     # D1 v4: v3's ground-cell height as the reference (§8.2)
                     v = gcells.local(bx[0], bx[1], rr_cfg.GROUND_RADIUS)
                     row += [float(np.percentile(v, rr_cfg.GROUND_PCT)) if len(v) >= int(rr_cfg.GROUND_MIN_CELLS) else np.nan]
-                if version == 5:                     # §9.3: realised descriptors of the copy (kept points in the final cloud)
+                if version >= 5:                     # §9.3: realised descriptors of the copy (kept points in the final cloud)
                     from rr_v5_fit import object_descriptors
                     from pcdet.datasets.rerender_utils import to_lattice as _tl
                     kr, kc, _, kv = _tl(fp, h, th, nc)
@@ -656,10 +656,10 @@ def run_v2(a):
         aug.data_augmentor_queue = queue_rr
         np.random.seed(seed); t0 = time.perf_counter(); ds[i]; t_on = time.perf_counter() - t0
         g4.append([plat, i, t_off, t_on])
-    ncol = len(V2_COPY_COLS) + {2: 0, 3: len(V3_EXTRA_COLS), 4: len(V4_EXTRA_COLS), 5: len(V5_EXTRA_COLS)}[version]
+    ncol = len(V2_COPY_COLS) + {2: 0, 3: len(V3_EXTRA_COLS), 4: len(V4_EXTRA_COLS), 5: len(V5_EXTRA_COLS), 6: len(V5_EXTRA_COLS)}[version]
     res = dict(version=version, key=a.key, plat=plat, n_infos=N, frames=frames,
                copies=np.array(copies, np.float64).reshape(-1, ncol),
-               frames_rows=np.array(frows, np.float64).reshape(-1, len(V2_FRAME_COLS) + {4: 1, 5: 2}.get(version, 0)),
+               frames_rows=np.array(frows, np.float64).reshape(-1, len(V2_FRAME_COLS) + {4: 1, 5: 2, 6: 2}.get(version, 0)),
                g4=np.array(g4, np.float64).reshape(-1, 4), dumps=dumps, images=imgs, db_n=db.n,
                db_points=db.points_path, node=os.uname().nodename)
     pickle.dump(res, open(out / f'gate_v{version}_{a.key}.pkl', 'wb'))
@@ -675,11 +675,11 @@ def dump_frame_v2(d, CAP, rec, head, side, cell, cfg, i):
 
 def report_v2(a):
     D = Path(a.dir)
-    version = max(v for v in (2, 3, 4, 5) if list(D.glob(f'gate_v{v}_*.pkl')))
+    version = max(v for v in (2, 3, 4, 5, 6) if list(D.glob(f'gate_v{v}_*.pkl')))
     res = [pickle.load(open(p, 'rb')) for p in sorted(D.glob(f'gate_v{version}_*.pkl'))]
-    cols = V2_COPY_COLS + {2: (), 3: V3_EXTRA_COLS, 4: V4_EXTRA_COLS, 5: V5_EXTRA_COLS}[version]
+    cols = V2_COPY_COLS + {2: (), 3: V3_EXTRA_COLS, 4: V4_EXTRA_COLS, 5: V5_EXTRA_COLS, 6: V5_EXTRA_COLS}[version]
     C = {k: j for j, k in enumerate(cols)}
-    F = {k: j for j, k in enumerate(V2_FRAME_COLS + {4: ('rej_zrange',), 5: ('rej_zrange', 'rej_novis')}.get(version, ()))}
+    F = {k: j for j, k in enumerate(V2_FRAME_COLS + {4: ('rej_zrange',), 5: ('rej_zrange', 'rej_novis'), 6: ('rej_zrange', 'rej_novis')}.get(version, ()))}
     print(f'gate v{version}')
     cp = np.concatenate([r['copies'] for r in res]); fr = np.concatenate([r['frames_rows'] for r in res])
     g4 = np.concatenate([r['g4'] for r in res])
@@ -831,8 +831,8 @@ def report_v2(a):
         d2 &= bool(v2s < 0.10)
         print(f"{PLAT_NAME[p]}: v2 definition {v2s:.2%} (median blocked share {np.nanmedian(cp[m, C['d2_v2']]):.3f}); "
               f"v1 definition, ground included (descriptive) {v1s:.2%}")
-    if version == 5:
-        print(f"D2 (v5: reported only) would read {'PASS' if d2 else 'FAIL'}")
+    if version >= 5:
+        print(f"D2 (v{version}: reported only) would read {'PASS' if d2 else 'FAIL'}")
         report_v5_extra(cp, fr, C, F, PL, verdict, a)
     else:
         verdict['D2'] = d2; print(f"D2 {'PASS' if d2 else 'FAIL'}")
@@ -919,6 +919,13 @@ def report_v5_extra(cp, fr, C, F, PL, verdict, a):
             print('  ' + ln)
     verdict['normals'] = nok
     print(f"normals {'PASS' if nok else 'FAIL'}")
+    uj = Path('/home/koyama/data/relocate_render_20261018/v6/unet_b.json')
+    if getattr(a, 'unet_json', None) or (uj.exists() and 'gate_b' in str(a.dir)):
+        import json as _json
+        u = _json.load(open(getattr(a, 'unet_json', None) or uj))
+        print(f"\n== arm (b') U-Net (reported): train BCE per epoch {[round(x, 4) for x in u['curve']]}; held-out per-pixel "
+              f"BCE {u['heldout_bce']:.4f}, AUC {u['heldout_auc']:.4f} over {u['heldout_pixels']} valid pixels (positive "
+              f"{u['heldout_pos']:.4f}); patches train {u['n_train']}, held-out {u['n_heldout']}")
     print('\n== labelled comparison (analysis only): Waymo val C unoccluded / C all / D (20261018_03 rows_CD.npz) vs copies ==')
     w = np.load('/home/koyama/data/box_pattern_visual_20261018/rows_CD.npz')
     R_, B_ = w['rows'], w['boxes']
@@ -970,7 +977,7 @@ def main():
         v = int(c.DATA_CONFIGS[a.key].DATA_AUGMENTOR.AUG_CONFIG_LIST[0].get('VERSION', 1))
         run_v2(a) if v >= 2 else run(a)
     else:
-        report_v2(a) if list(Path(a.dir).glob('gate_v[2345]_*.pkl')) else report(a)
+        report_v2(a) if list(Path(a.dir).glob('gate_v[23456]_*.pkl')) else report(a)
 
 
 if __name__ == '__main__':
