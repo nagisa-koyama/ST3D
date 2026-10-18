@@ -603,8 +603,10 @@ class VoxelAccumulator:
 class DonorDB:
     """The platform's donor database: points memory-mapped read-only on first use (never pickled), index in memory."""
 
-    def __init__(self, points_path, index_path):
+    def __init__(self, points_path, index_path, normals_path=None):
         self.points_path, self.index_path = str(points_path), str(index_path)
+        self.normals_path = None if normals_path is None else str(normals_path)
+        self._nrm = None
         z = np.load(self.index_path, allow_pickle=False)
         self.offset, self.count = z['offset'].astype(np.int64), z['count'].astype(np.int64)
         self.size = z['size'].astype(np.float64)
@@ -614,8 +616,16 @@ class DonorDB:
         self._pts = None
 
     def __getstate__(self):
-        d = dict(self.__dict__); d['_pts'] = None
+        d = dict(self.__dict__); d['_pts'] = None; d['_nrm'] = None
         return d
+
+    def normals(self, i):
+        """The instance's normals (k, 3) (v5; (0, 0, 0) = no normal), or None without a normals file."""
+        if self.__dict__.get('normals_path') is None:
+            return None
+        if self.__dict__.get('_nrm') is None:
+            self._nrm = np.load(self.normals_path, mmap_mode='r')
+        return np.asarray(self._nrm[self.offset[i]:self.offset[i] + self.count[i]], np.float64)
 
     def _points(self):
         if self._pts is None:
@@ -630,7 +640,7 @@ class DonorDB:
 
 
 def db_from_config(cfg):
-    return DonorDB(cfg['DB_POINTS'], cfg['DB_INDEX'])
+    return DonorDB(cfg['DB_POINTS'], cfg['DB_INDEX'], cfg.get('DB_NORMALS', None))
 
 
 def place_instance(local, size, r, phi, alpha, plane, bottom_fn=None):
@@ -712,7 +722,8 @@ def _randint(rng, n):
 
 
 def _params_v2(cfg):
-    p = dict(DEFAULTS); p.update(DEFAULTS_V2); p.update(DEFAULTS_V3); p.update(DEFAULTS_V4); p['VERSION'] = 2
+    p = dict(DEFAULTS); p.update(DEFAULTS_V2); p.update(DEFAULTS_V3); p.update(DEFAULTS_V4); p.update(DEFAULTS_V5)
+    p['VERSION'] = 2
     if cfg is not None:
         for k in cfg:
             if k in p:
@@ -729,7 +740,7 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
         db = db_from_config(p)
     thetas, n_cols, height = lat['thetas'], lat['n_cols'], lat['height']
     rec = dict(version=2, n_boxes=0, plane=None, n_attempted=0, n_placed=0, n_no_place=0, n_zero=0,
-               reject=dict(range=0, overlap=0, scene=0, empty=0, visibility=0, rc=0, zrange=0), copies=[],
+               reject=dict(range=0, overlap=0, scene=0, empty=0, visibility=0, rc=0, zrange=0, novis=0), copies=[],
                removed_orig=np.zeros(0, np.int64))
     pts = data_dict.get('points', None)
     boxes = data_dict.get('gt_boxes', None)
@@ -745,7 +756,7 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
         return data_dict, rec
     rec['plane'] = np.asarray(plane, np.float64)
     version = int(p['VERSION'])
-    v3 = version in (3, 4)
+    v3 = version in (3, 4, 5)
     rec['version'] = version if v3 else 2
     grid = _BevGrid(xyz)
     last_fb = [False]
@@ -757,7 +768,7 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
             zb, fb = local_bottom(cells, x, y, plane, p['GROUND_RADIUS'], int(p['GROUND_MIN_CELLS']), p['GROUND_PCT'])
             last_fb[0] = fb
             return zb
-    elif version == 4:                              # §8: nearby points of the cloud RR receives (never copies' points)
+    elif version in (4, 5):                         # §8: nearby points of the cloud RR receives (never copies' points)
         def bottom_fn(x, y, yaw):
             s_ = size_now[0]
             zb, fb = nearby_bottom(xyz, grid, np.array([x, y, 0.0, s_[0], s_[1], s_[2], yaw]), plane, p['NEAR_D_LO'],
@@ -768,6 +779,7 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
         bottom_fn = None
     pcr = np.asarray(p['POINT_CLOUD_RANGE'], np.float64)
     colidx = None
+    occ = None
     alive = np.ones(len(pts), bool)
     add_pts = np.zeros((0, pts.shape[1]), pts.dtype); add_id = np.zeros(0, np.int64)
     add_rng = np.zeros(0); add_pix = np.zeros(0, np.int64); add_alive = np.zeros(0, bool)
@@ -793,7 +805,7 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
                 r = rng.uniform(r, p['R_MAX'])
             fresh = True
             cb, q = place_instance(lxyz, size, r, phi, alpha, plane, bottom_fn)
-            if version == 4 and (cb[2] - cb[5] / 2 < pcr[2] or cb[2] + cb[5] / 2 > pcr[5]):   # §8: inside the z range
+            if version >= 4 and (cb[2] - cb[5] / 2 < pcr[2] or cb[2] + cb[5] / 2 > pcr[5]):   # §8: inside the z range
                 rec['reject']['zrange'] += 1; continue
             # v1 free-space check
             g = bev_corners(cb[None], p['BEV_MARGIN'])[0]
@@ -836,9 +848,24 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
                         r_, c_, g_, v_ = np.r_[r_, ar], np.r_[c_, ac], np.r_[g_, ag], np.r_[v_, av]
                         x_ = np.concatenate([x_, ap])
                 return sc_, r_, c_, g_, v_, x_
-            # visibility: columns with a nearer scene point > VIS_HEIGHT above the plane inside the copy's row span
             ucol, inv = np.unique(rcol, return_inverse=True)
             sc, srow, scol, srng, sval, sxyz = scene_in(ucol)
+            if version == 5:                        # §9.1: the occlusion envelope replaces the visibility rule
+                if occ is None:
+                    occ = Occluders(xyz, plane, height, n_cols, p['OCC_H_LO'], p['OCC_H_HI'])
+                sil = silhouette(cb, thetas, n_cols, height)
+                ext = occ.extra(add_pts[add_alive, :3]) if len(add_pts) and add_alive.any() else None
+                env = envelope_visibility(rxyz, rrow, rcol, sil, thetas, n_cols, occ, ext, p['OCC_MARGIN'],
+                                          int(p['OCC_NEIGHBOUR_COLS']))
+                if not env['rend_vis'].any():
+                    rec['reject']['novis'] += 1; continue
+                rc = env['rc']
+                if not (rc >= p['RC_MIN']):
+                    rec['reject']['rc'] += 1; fresh = False; continue
+                spix = np.where(sval, srow * n_cols + scol, -1)
+                acc = (cb, q, rxyz, rrow, rcol, kept, rr, cpix, sc, srng, sval, spix, rc, np.nan, env, sil)
+                break
+            # visibility: columns with a nearer scene point > VIS_HEIGHT above the plane inside the copy's row span
             rmin = np.full(len(ucol), np.inf); np.minimum.at(rmin, inv, rr)
             hz = sxyz[:, 2] - plane_z(plane, sxyz[:, 0], sxyz[:, 1]) if len(sxyz) else np.zeros(0)
             vm = sval & (srow >= rrow.min()) & (srow <= rrow.max()) & (hz > vis_h) & np.isin(scol, ucol)
@@ -866,12 +893,12 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
             rc, _ = row_coverage(cb, cpix, rr, spix, srng, thetas, n_cols, height, p['RC_OCCL_M'], sil=sil)
             if not (rc >= p['RC_MIN']):
                 rec['reject']['rc'] += 1; fresh = False; continue
-            acc = (cb, q, rxyz, rrow, rcol, kept, rr, cpix, sc, srng, sval, spix, rc, vshare)
+            acc = (cb, q, rxyz, rrow, rcol, kept, rr, cpix, sc, srng, sval, spix, rc, vshare, None, None)
             break
         if acc is None:
             rec['n_no_place'] += 1
             continue
-        cb, q, rxyz, rrow, rcol, kept, rr, cpix, sc, srng, sval, spix, rc, vshare = acc
+        cb, q, rxyz, rrow, rcol, kept, rr, cpix, sc, srng, sval, spix, rc, vshare, env, sil = acc
         # v1 occlusion: (1) scene points inside the box
         cc = grid.query(bev_corners(cb[None], 0.02)[0]); cc = cc[alive[cc]]
         inb = cc[points_in_box(xyz[cc], cb)]
@@ -901,10 +928,24 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
         ash = (ahit & (add_rng > rs[apos])) if len(add_pts) else ahit
         add_alive &= ~ash
         vis = np.zeros(len(cpix), bool); vis[order[keep_sorted]] = True        # after the 0.5 m occlusion drop
-        # sparsifier: p ~ U(0, 1], each remaining rendered point kept with p
-        pk = 1.0 - rng.uniform(0.0, 1.0)
-        u = np.asarray(rng.uniform(0.0, 1.0, len(cpix)), np.float64)
-        keep = vis & (u < pk)
+        if version == 5:                            # §9.1: envelope removal, then the learned return model
+            vis &= env['rend_vis']
+            feats = return_features(local, kept, rxyz, cb, height, db.normals(inst), p['I_REL_CLIP'], p['COS_MIN'])
+            if p['RETURN_OFF']:
+                pk, pp_ = 1.0, np.ones(len(cpix))
+                keep = vis.copy()
+            else:
+                kind, par = return_model(p['RETURN_MODEL'], p['RETURN_PARAMS'])
+                eps = float(rng.normal()) if hasattr(rng, 'normal') else 0.0
+                pp_ = 1.0 / (1.0 + np.exp(-(return_logit(feats, kind, par) + np.exp(par['log_sigma']) * eps)))
+                u = np.asarray(rng.uniform(0.0, 1.0, len(cpix)), np.float64)
+                keep = vis & (u < pp_)
+                pk = float(pp_[vis].mean()) if vis.any() else 0.0
+        else:
+            # sparsifier: p ~ U(0, 1], each remaining rendered point kept with p
+            pk = 1.0 - rng.uniform(0.0, 1.0)
+            u = np.asarray(rng.uniform(0.0, 1.0, len(cpix)), np.float64)
+            keep = vis & (u < pk)
         if not keep.any():
             alive[inb] = True; alive[shadow] = True
             if len(add_pts):
@@ -931,6 +972,12 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
                     ground_fallback=bool(last_fb[0]) if v3 else None, bottom=float(cb[2] - cb[5] / 2))
         if keep_points:
             crec['placed'] = q.copy(); crec['rendered_unsparsified'] = rxyz[vis].copy(); crec['rendered'] = rxyz[keep]
+        if version == 5:
+            crec['vis_frac'] = env['vis_frac']; crec['n_sil'] = env['n_sil']; crec['n_sil_vis'] = env['n_sil_vis']
+            if keep_points:
+                crec['sil_vis_pix'] = env['sil_vis_pix']; crec['sil_vis_relh'] = env_relh(env, sil, cb, thetas, n_cols, height)
+                crec['vis_pix'] = cpix[vis]; crec['vis_feats'] = np.stack([f[vis] for f in feats], 1)
+                crec['vis_p'] = pp_[vis] if not p['RETURN_OFF'] else np.ones(int(vis.sum()))
         rec['copies'].append(crec)
 
     if not placed_boxes:
@@ -1062,3 +1109,151 @@ def nearby_bottom(xyz, grid, box, plane, d_lo=0.5, d_hi=3.0, min_points=10, pct=
         if len(z) >= min_points:
             return float(np.percentile(z, pct)), False
     return float(plane_z(plane, b[0], b[1])), True
+
+
+# =========================================================================================================== RR v5
+# experiments_md 20261018_02 §9 (design fixed in T05 §5, experiments_md 461768e): v4 with a column-wise occlusion envelope
+# instead of the visibility rule, and a learned per-pixel return model (arm (a) physics, arm (b) MLP) instead of the
+# uniform sparsifier. Reached only by VERSION: 5.
+DEFAULTS_V5 = dict(RETURN_MODEL='physics', RETURN_PARAMS=None, DB_NORMALS=None, OCC_H_LO=0.3, OCC_H_HI=3.0, OCC_MARGIN=0.5,
+                   OCC_NEIGHBOUR_COLS=1, I_REL_CLIP=(0.05, 20.0), R_REF=50.0, COS_MIN=0.01, RETURN_OFF=False)
+R_REF_M = 50.0
+
+
+class Occluders:
+    """Occluder points of a frame (§9.1): the cloud RR receives, (h_lo, h_hi] m above the plane at their own (x, y), by
+    lattice column, with horizontal range and elevation seen from (0, 0, height)."""
+
+    def __init__(self, xyz, plane, height, n_cols, h_lo=0.3, h_hi=3.0):
+        self.plane, self.height, self.n_cols, self.h_lo, self.h_hi = plane, float(height), int(n_cols), h_lo, h_hi
+        self.col, self.hr, self.el = self._of(np.asarray(xyz, np.float64)[:, :3])
+        o = np.argsort(self.col, kind='stable')
+        self.col, self.hr, self.el = self.col[o], self.hr[o], self.el[o]
+        self.start = np.searchsorted(self.col, np.arange(self.n_cols + 1))
+
+    def _of(self, p):
+        if not len(p):
+            return np.zeros(0, np.int64), np.zeros(0), np.zeros(0)
+        hz = p[:, 2] - plane_z(self.plane, p[:, 0], p[:, 1])
+        m = (hz > self.h_lo) & (hz <= self.h_hi)
+        q = p[m]
+        hr = np.hypot(q[:, 0], q[:, 1])
+        col = np.clip(np.floor((np.arctan2(q[:, 1], q[:, 0]) + np.pi) / (2 * np.pi) * self.n_cols), 0,
+                      self.n_cols - 1).astype(np.int64)
+        return col, hr, np.arctan2(q[:, 2] - self.height, hr)
+
+    def extra(self, xyz):
+        """Occluders among extra points (earlier copies' kept points): (col, hr, el)."""
+        return self._of(np.asarray(xyz, np.float64)[:, :3])
+
+    def envelope(self, cols, r_ref, margin=0.5, nb=1, extra=None):
+        """e_occ per column: the highest elevation of occluders in columns c-nb..c+nb whose horizontal range is below
+        r_ref - margin (-inf if none)."""
+        cols = np.asarray(cols, np.int64); r_ref = np.asarray(r_ref, np.float64)
+        e = np.full(len(cols), -np.inf)
+        for k, (c, rr_) in enumerate(zip(cols, r_ref)):
+            lim = rr_ - margin
+            for o in range(-nb, nb + 1):
+                cc = (c + o) % self.n_cols
+                s0, s1 = self.start[cc], self.start[cc + 1]
+                if s1 > s0:
+                    m = self.hr[s0:s1] < lim
+                    if m.any():
+                        e[k] = max(e[k], float(self.el[s0:s1][m].max()))
+                if extra is not None and len(extra[0]):
+                    m = (extra[0] == cc) & (extra[1] < lim)
+                    if m.any():
+                        e[k] = max(e[k], float(extra[2][m].max()))
+        return e
+
+
+def envelope_visibility(rxyz, rrow, rcol, sil, thetas, n_cols, occ, extra=None, margin=0.5, nb=1):
+    """§9.1: r_c per column (the copy's nearest rendered horizontal range, else its silhouette's nearest entry), e_occ,
+    hidden rendered pixels and the visible silhouette, and RC on it."""
+    th = np.asarray(thetas, np.float64)
+    sp, srow, tin = sil
+    scol = sp % n_cols if len(sp) else np.zeros(0, np.int64)
+    cols = np.unique(np.r_[rcol, scol]).astype(np.int64)
+    rref = np.full(len(cols), np.inf)
+    if len(scol):
+        np.minimum.at(rref, np.searchsorted(cols, scol), tin * np.cos(th[srow]))
+    rh = np.hypot(rxyz[:, 0], rxyz[:, 1])
+    rr_c = np.full(len(cols), np.inf); np.minimum.at(rr_c, np.searchsorted(cols, rcol), rh)
+    rref = np.where(np.isfinite(rr_c), rr_c, rref)
+    e = occ.envelope(cols, rref, margin, nb, extra)
+    rend_vis = th[rrow] > e[np.searchsorted(cols, rcol)]
+    sil_vis = th[srow] > e[np.searchsorted(cols, scol)] if len(sp) else np.zeros(0, bool)
+    vsp = sp[sil_vis]
+    vrend = (rrow * n_cols + rcol)[rend_vis]
+    if len(vsp):
+        held = np.isin(vsp, vrend)
+        rc = len(np.unique(vsp[held] // n_cols)) / len(np.unique(vsp // n_cols))
+    else:
+        rc = np.nan
+    n_sil = len(np.unique(sp)); n_vis = len(np.unique(vsp))
+    return dict(rend_vis=rend_vis, sil_vis=sil_vis, sil_vis_pix=vsp, rc=rc, n_sil=n_sil, n_sil_vis=n_vis,
+                vis_frac=(n_vis / n_sil) if n_sil else np.nan, e_cols=cols, e_occ=e)
+
+
+def env_relh(env, sil, box, thetas, n_cols, height):
+    """Relative entry height (box frame, clipped to [0, 1]) of each visible silhouette pixel (row_records' relh input)."""
+    sp, srow, tin = sil
+    m = env['sil_vis']
+    z_ent = height + tin[m] * np.sin(np.asarray(thetas, np.float64)[srow[m]])
+    b = np.asarray(box, np.float64)
+    return np.clip((z_ent - (b[2] - b[5] / 2)) / b[5], 0.0, 1.0)
+
+
+def return_features(local, kept, rxyz, box, height, normals=None, clip=(0.05, 20.0), cos_min=0.01):
+    """(I_rel, h_rel, r, cos theta) per rendered pixel (§9.1)."""
+    loc = np.asarray(local, np.float64)
+    b = np.asarray(box, np.float64)
+    if loc.shape[1] > 3:
+        med = float(np.median(loc[:, 3]))
+        i_rel = np.clip(loc[kept, 3] / med, clip[0], clip[1]) if med > 0 else np.ones(len(kept))
+    else:
+        i_rel = np.ones(len(kept))
+    h_rel = np.clip((loc[kept, 2] + b[5] / 2) / b[5], 0.0, 1.0)
+    d = np.asarray(rxyz, np.float64) - np.array([0.0, 0.0, height])
+    r = np.linalg.norm(d, axis=1)
+    d = d / np.maximum(r, 1e-9)[:, None]
+    if normals is None:
+        cos = np.ones(len(kept))
+    else:
+        n = np.asarray(normals, np.float64)[kept]
+        c, s = np.cos(b[6]), np.sin(b[6])
+        nw = np.stack([c * n[:, 0] - s * n[:, 1], s * n[:, 0] + c * n[:, 1], n[:, 2]], 1)
+        has = np.linalg.norm(n, axis=1) > 0
+        cos = np.where(has, np.abs((nw * d).sum(1)), 1.0)
+    cos = np.maximum(cos, cos_min)
+    return i_rel, h_rel, r, cos
+
+
+def band_of(h_rel):
+    return np.clip(np.floor(np.asarray(h_rel, np.float64) * 4).astype(np.int64), 0, 3)
+
+
+def return_logit(feats, kind, par):
+    """The return model's logit without the latent (§9.1): (a) 'physics', (b) 'mlp'."""
+    i_rel, h_rel, r, cos = feats
+    if kind == 'physics':
+        return (par['c0'] + np.asarray(par['c_band'])[band_of(h_rel)] + par['beta'] * np.log(i_rel)
+                + par['gamma'] * np.log(r / R_REF_M) + par['delta'] * np.log(cos))
+    x = np.stack([np.log(i_rel), h_rel, np.log(r / R_REF_M), cos], 1)
+    h = np.maximum(x @ par['W1'] + par['b1'], 0.0)
+    h = np.maximum(h @ par['W2'] + par['b2'], 0.0)
+    return (h @ par['W3'] + par['b3'])[:, 0]
+
+
+@functools.lru_cache(maxsize=8)
+def _load_return_model(path):
+    z = np.load(path, allow_pickle=False)
+    return {k: (float(z[k]) if z[k].ndim == 0 else np.asarray(z[k], np.float64)) for k in z.files}
+
+
+def return_model(kind, path):
+    if kind not in ('physics', 'mlp'):
+        raise ValueError(f'RETURN_MODEL {kind!r} (physics | mlp)')
+    if path is None:
+        raise ValueError('RETURN_PARAMS is required unless RETURN_OFF')
+    return kind, _load_return_model(str(path))

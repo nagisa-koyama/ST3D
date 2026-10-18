@@ -1,0 +1,139 @@
+# RELOCATE-AND-RENDER v5, arm (b) mlp: the METHOD row for nuScenes -> Waymo (experiments_md 20261018_02 §9; design fixed
+# in T05 §5, experiments_md 461768e; user ~14:00 10-18 「両方走りましょう」). v5 = v4
+# (centerpoint-gblobs-accum-legaldepth-rr4-nuscenes2waymo) with: a column-wise occlusion envelope (occluders 0.3-3.0 m above
+# the frame's plane, columns +-1, 0.5 m margin) instead of the visibility rule; a learned per-pixel return model (mlp),
+# fitted label-free on teacher 27471's Waymo TRAIN detections (RETURN_PARAMS), instead of the uniform sparsifier; donor
+# normals (DB_NORMALS, new files; the v2 database is unchanged).
+#
+# Base: teacher 27471's source recipe unchanged (ST3D df345c0, W&B jguwly5u) + the FULL Waymo target block 27596 scored
+# 27471 with; read against 27596 = 51.58 Car BEV AP_R40 at IoU 0.7 on Waymo val, epoch 20. Legality: as v2-v4, plus the
+# return model fitted on the stored detections of teacher 27471 (never saw target labels) above 27704's label-free Car
+# cut; its form was motivated by a labelled diagnosis (20261018_03 §7-8, disclosed).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-legaldepth-nuscenes2waymo.yaml
+
+MODEL:
+    VFE:
+        NAME: GBlobsVFE
+        RELATIVE_DISTANCE: True
+        COVARIANCE_ONLY: False
+        COVARIANCE_SCALE: 1.0
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        DATA_AUGMENTOR:
+            AUG_CONFIG_LIST:
+                - NAME: relocate_render
+                  VERSION: 5
+                  RETURN_MODEL: mlp
+                  RETURN_PARAMS: /home/koyama/data/relocate_render_20261018/v5/fit_b.npz
+                  OCC_H_LO: 0.3
+                  OCC_H_HI: 3.0
+                  OCC_MARGIN: 0.5
+                  OCC_NEIGHBOUR_COLS: 1
+                  I_REL_CLIP: [0.05, 20.0]
+                  R_REF: 50.0
+                  COS_MIN: 0.01
+                  NEAR_D_LO: 0.5
+                  NEAR_D_HI: 3.0
+                  NEAR_MIN_POINTS: 10
+                  NEAR_PCT: 10.0
+                  GROUND_CELL: 1.0
+                  GROUND_CELL_MIN_PTS: 3
+                  GROUND_RADIUS: 5.0
+                  GROUND_MIN_CELLS: 3
+                  GROUND_PCT: 20.0
+                  DONOR_CLASS: Car
+                  N_COPIES: 8
+                  MAX_TRIES: 20
+                  R_MIN: 5.0
+                  R_MAX: 75.2
+                  BEV_MARGIN: 0.5
+                  MAX_SCENE_POINTS: 5
+                  CLEARANCE: 0.3
+                  VIS_MAX_SHARE: 0.1
+                  VIS_HEIGHT: 0.3
+                  RC_MIN: 0.8
+                  RC_OCCL_M: 0.5
+                  OCCLUSION_M: 0.5
+                  POINT_CLOUD_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+                  TIME_COLUMN: 4
+                  LATTICE: waymo_top_train
+                  N_COLS: 2650
+                  MOUNT_HEIGHT: 2.184
+                  CALIB: /home/koyama/data/waymo_top_calib/top_calib.pkl
+                  TRAIN_SEGMENTS: /home/koyama/data/waymo_open_dataset_v_1_4_0/pcdet_structure/ImageSets/train.txt
+                  DB_POINTS: /home/koyama/data/relocate_render_20261018/v2/db_NUSCENES_N008_points.npy
+                  DB_INDEX: /home/koyama/data/relocate_render_20261018/v2/db_NUSCENES_N008_index.npz
+                  DB_NORMALS: /home/koyama/data/relocate_render_20261018/v5/db_NUSCENES_N008_normals.npy
+                - NAME: normalize_object_size
+                  SIZE_RES: [-0.91, -0.49, -0.26]
+                - NAME: random_object_rotation
+                  ROT_PROB: 1.0
+                  ROT_UNIFORM_NOISE: [-0.78539816, 0.78539816]
+                - NAME: random_object_scaling
+                  SCALE_UNIFORM_NOISE: {'Car': [0.85, 1.2], 'Pedestrian': [0.8, 1.25]}
+                - NAME: random_world_flip
+                  ALONG_AXIS_LIST: ['x', 'y']
+                - NAME: random_world_rotation
+                  WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+                - NAME: random_world_scaling
+                  WORLD_SCALE_RANGE: [0.95, 1.05]
+    NUSCENES_N015:
+        DATA_AUGMENTOR:
+            AUG_CONFIG_LIST:
+                - NAME: relocate_render
+                  VERSION: 5
+                  RETURN_MODEL: mlp
+                  RETURN_PARAMS: /home/koyama/data/relocate_render_20261018/v5/fit_b.npz
+                  OCC_H_LO: 0.3
+                  OCC_H_HI: 3.0
+                  OCC_MARGIN: 0.5
+                  OCC_NEIGHBOUR_COLS: 1
+                  I_REL_CLIP: [0.05, 20.0]
+                  R_REF: 50.0
+                  COS_MIN: 0.01
+                  NEAR_D_LO: 0.5
+                  NEAR_D_HI: 3.0
+                  NEAR_MIN_POINTS: 10
+                  NEAR_PCT: 10.0
+                  GROUND_CELL: 1.0
+                  GROUND_CELL_MIN_PTS: 3
+                  GROUND_RADIUS: 5.0
+                  GROUND_MIN_CELLS: 3
+                  GROUND_PCT: 20.0
+                  DONOR_CLASS: Car
+                  N_COPIES: 8
+                  MAX_TRIES: 20
+                  R_MIN: 5.0
+                  R_MAX: 75.2
+                  BEV_MARGIN: 0.5
+                  MAX_SCENE_POINTS: 5
+                  CLEARANCE: 0.3
+                  VIS_MAX_SHARE: 0.1
+                  VIS_HEIGHT: 0.3
+                  RC_MIN: 0.8
+                  RC_OCCL_M: 0.5
+                  OCCLUSION_M: 0.5
+                  POINT_CLOUD_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+                  TIME_COLUMN: 4
+                  LATTICE: waymo_top_train
+                  N_COLS: 2650
+                  MOUNT_HEIGHT: 2.184
+                  CALIB: /home/koyama/data/waymo_top_calib/top_calib.pkl
+                  TRAIN_SEGMENTS: /home/koyama/data/waymo_open_dataset_v_1_4_0/pcdet_structure/ImageSets/train.txt
+                  DB_POINTS: /home/koyama/data/relocate_render_20261018/v2/db_NUSCENES_N015_points.npy
+                  DB_INDEX: /home/koyama/data/relocate_render_20261018/v2/db_NUSCENES_N015_index.npz
+                  DB_NORMALS: /home/koyama/data/relocate_render_20261018/v5/db_NUSCENES_N015_normals.npy
+                - NAME: normalize_object_size
+                  SIZE_RES: [-0.91, -0.49, -0.26]
+                - NAME: random_object_rotation
+                  ROT_PROB: 1.0
+                  ROT_UNIFORM_NOISE: [-0.78539816, 0.78539816]
+                - NAME: random_object_scaling
+                  SCALE_UNIFORM_NOISE: {'Car': [0.85, 1.2], 'Pedestrian': [0.8, 1.25]}
+                - NAME: random_world_flip
+                  ALONG_AXIS_LIST: ['x', 'y']
+                - NAME: random_world_rotation
+                  WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+                - NAME: random_world_scaling
+                  WORLD_SCALE_RANGE: [0.95, 1.05]

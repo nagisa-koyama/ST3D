@@ -960,3 +960,173 @@ def test_v5_normals_on_a_plane_toy_and_the_fallback():
     assert np.all(n[len(tilt):] == 0)
     n0, d0 = BD.instance_normals(np.zeros((0, 3)))
     assert n0.shape == (0, 3)
+
+
+def _copy_render(r=40.0, phi=np.pi / 2, alpha=np.pi / 2):
+    b, q = R.place_instance(CAR_LOCAL, SIZE, r, phi, alpha, np.array([0.0, 0.0, 0.0]))
+    xyz, rows, cols, kept, rr = R._render(q, TH, NC, H)
+    return b, xyz, rows, cols, kept
+
+
+def test_v5_occlusion_envelope_toy():
+    b, xyz, rows, cols, kept = _copy_render()
+    sil = R.silhouette(b, TH, NC, H)
+    plane = np.array([0.0, 0.0, 0.0])
+    ground = np.c_[np.random.default_rng(0).uniform(-50, 50, (2000, 2)), np.zeros(2000)]
+    def env_for(extra):
+        occ = R.Occluders(np.concatenate([ground, extra]), plane, H, NC)
+        return R.envelope_visibility(xyz, rows, cols, sil, TH, NC, occ)
+    # nothing in front: all visible
+    e0 = env_for(np.zeros((0, 3)))
+    assert e0['rend_vis'].all() and e0['vis_frac'] == 1.0 and e0['rc'] >= 0.8
+    # a car in front at 25 m (0.3-1.5 m above the plane): the copy's lower rows hidden, its upper rows visible
+    car = np.stack(np.meshgrid(np.linspace(-4, 4, 161), np.linspace(0.35, 1.5, 24)), -1).reshape(-1, 2)
+    car = np.c_[car[:, 0], np.full(len(car), 25.0), car[:, 1]]
+    e1 = env_for(car)
+    el_top = np.arctan2(1.5 - H, 25.0)
+    assert (~e1['rend_vis']).any() and e1['rend_vis'].any()
+    np.testing.assert_array_equal(e1['rend_vis'], TH[rows] > el_top)
+    # a wall up to 3.0 m at 25 m: everything hidden (its top is above the copy's top as seen from 2.184 m)
+    wall = np.stack(np.meshgrid(np.linspace(-6, 6, 241), np.linspace(0.35, 3.0, 54)), -1).reshape(-1, 2)
+    wall = np.c_[wall[:, 0], np.full(len(wall), 25.0), wall[:, 1]]
+    e2 = env_for(wall)
+    assert not e2['rend_vis'].any() and e2['vis_frac'] == 0.0
+    # a canopy 3.2-4 m above the plane in front: ignored (occluders are (0.3, 3.0] m above the plane)
+    can = wall.copy(); can[:, 2] = can[:, 2] / 3.0 * 0.8 + 3.2
+    e3 = env_for(can)
+    assert e3['rend_vis'].all()
+    # an occluder BEHIND the copy never hides it
+    e4 = env_for(np.c_[wall[:, 0], np.full(len(wall), 60.0), wall[:, 2]])
+    assert e4['rend_vis'].all()
+
+
+def test_v5_return_model_p_bounds_and_monotonic_in_i_rel():
+    par = dict(c0=0.3, c_band=np.array([-0.5, 0.0, -1.0, 0.4]), beta=0.8, gamma=-1.2, delta=0.6, log_sigma=np.log(0.7))
+    n = 200
+    i_rel = np.geomspace(0.05, 20, n); h = np.full(n, 0.4); r = np.full(n, 55.0); cos = np.full(n, 0.5)
+    lg = R.return_logit((i_rel, h, r, cos), 'physics', par)
+    p = 1 / (1 + np.exp(-lg))
+    assert np.all((p > 0) & (p < 1)) and np.all(np.diff(p) > 0)
+    lg2 = R.return_logit((i_rel, np.full(n, 0.6), r, cos), 'physics', par)
+    np.testing.assert_allclose(lg2 - lg, -1.0)                                        # band 2 vs the body band
+    mlp = dict(W1=np.ones((4, 32)) * 0.01, b1=np.zeros(32), W2=np.eye(32), b2=np.zeros(32), W3=np.ones((32, 1)), b3=np.zeros(1),
+               log_sigma=0.0)
+    pm = 1 / (1 + np.exp(-R.return_logit((i_rel, h, r, cos), 'mlp', mlp)))
+    assert np.all((pm > 0) & (pm < 1))
+    f = R.return_features(np.c_[CAR_LOCAL, np.full(len(CAR_LOCAL), 10.0)], np.arange(5), _copy_render()[1][:5],
+                          _copy_render()[0], H, None)
+    assert np.all(f[0] == 1.0) and np.all(f[3] == 1.0) and np.all((f[1] >= 0) & (f[1] <= 1))
+
+
+def test_v5_fit_is_deterministic_on_a_toy():
+    import torch
+    import rr_v5_fit as FT
+    rng = np.random.default_rng(1)
+    paths = []
+    import tempfile
+    d = Path(tempfile.mkdtemp())
+    for key, n in (('NUSCENES_N008', 30), ('NUSCENES_N015', 20)):
+        C, sc, sr, srel, sf, F = [], [], [], [], [], []
+        fo = ro = 0
+        for c in range(n):
+            r = rng.uniform(15, 75); C.append([0, c, r, 1.0, c])
+            npx = 40; rows = np.repeat(np.arange(8), 5)
+            sc.append(np.full(npx, c)); sr.append(ro + rows); srel.append(np.repeat(np.linspace(0.05, 0.95, 8), 5))
+            has = rng.random(npx) < 0.8
+            fi = np.where(has, fo + np.cumsum(has) - 1, -1); sf.append(fi)
+            F.append(np.c_[rng.uniform(0.1, 5, has.sum()), rng.uniform(0, 1, has.sum()), np.full(has.sum(), r),
+                           rng.uniform(0.1, 1, has.sum())])
+            fo += int(has.sum()); ro += 8
+        p = d / f'copies_{key}.npz'
+        np.savez(p, C=np.array(C, float), s_copy=np.concatenate(sc), s_row=np.concatenate(sr), s_relh=np.concatenate(srel),
+                 s_feat=np.concatenate(sf), F=np.concatenate(F), n_all=n, frames=np.arange(n), dropped=np.zeros(0))
+        paths.append(p)
+    cd = FT.CopyData(paths)
+    tgt = (np.full((5, 4), 0.5), np.full((5, 4), 0.1), np.tile([0.3, 0.5, 0.6], (5, 1)))
+    out = []
+    for _ in range(2):
+        m, hist = FT.fit_model(cd, tgt, 'a', steps=30, log_every=10)
+        out.append((m.export(), hist))
+    for k in out[0][0]:
+        np.testing.assert_array_equal(np.asarray(out[0][0][k]), np.asarray(out[1][0][k]))
+    assert out[0][1] == out[1][1] and out[0][1][-1][1] < out[0][1][0][1]
+    mb, hb = FT.fit_model(cd, tgt, 'b', steps=10, log_every=5)
+    mb2, hb2 = FT.fit_model(cd, tgt, 'b', steps=10, log_every=5)
+    np.testing.assert_array_equal(mb.export()['W1'], mb2.export()['W1'])
+    # the numpy loader logit equals the torch one
+    par = out[0][0]
+    F = cd.F.numpy()
+    ma = FT.Model('a'); ma.theta.data = torch.tensor([par['c0'], par['c_band'][0], par['c_band'][2], par['c_band'][3],
+                                                     par['beta'], par['gamma'], par['delta']], dtype=torch.float64)
+    np.testing.assert_allclose(R.return_logit((F[:, 0], F[:, 1], F[:, 2], F[:, 3]), 'physics', par),
+                               ma.logit(cd.F).detach().numpy(), atol=1e-9)
+    np.testing.assert_allclose(_torch_logit_a(par, F), ma.logit(cd.F).detach().numpy(), atol=1e-9)
+    np.testing.assert_allclose(R.return_logit((F[:, 0], F[:, 1], F[:, 2], F[:, 3]), 'mlp', mb.export()),
+                               mb.logit(cd.F).detach().numpy(), atol=1e-9)
+
+
+def _torch_logit_a(par, F):
+    band = np.clip(np.floor(F[:, 1] * 4).astype(int), 0, 3)
+    return (par['c0'] + par['c_band'][band] + par['beta'] * np.log(F[:, 0]) + par['gamma'] * np.log(F[:, 2] / 50.0)
+            + par['delta'] * np.log(F[:, 3]))
+
+
+def make_db_v5(tmp_path, instances):
+    db = make_db(tmp_path, instances)
+    import rr_build_db as BD
+    P = np.load(db.points_path)
+    N = np.zeros((len(P), 3), np.float32)
+    for k in range(db.n):
+        N[db.offset[k]:db.offset[k] + db.count[k]] = BD.instance_normals(P[db.offset[k]:db.offset[k] + db.count[k], :3])[0]
+    npth = tmp_path / 'db_normals.npy'; np.save(npth, N)
+    return R.DonorDB(db.points_path, db.index_path, npth)
+
+
+def test_v5_scene_occlusion_return_model_and_sentinels(tmp_path):
+    db = make_db_v5(tmp_path, [(CAR_LOCAL, SIZE, [np.pi / 2])])
+    par = dict(c0=0.0, c_band=np.zeros(4), beta=0.0, gamma=0.0, delta=0.0, log_sigma=np.log(1e-6))
+    pp = tmp_path / 'fit_a.npz'; np.savez(pp, **{k: np.asarray(v, float) for k, v in par.items()})
+    sb = np.array([0.0, 40.0, 0.72, 4.0, 2.0, 1.5, 0.0])
+    d = scene_v2([car_surface(sb)], [sb], ['Car'], gt_classes=np.array([-1], np.int32), gt_scores=np.ones(1, np.float32))
+    b0 = d['gt_boxes'].copy()
+    base = dict(VERSION=5, RETURN_MODEL='physics', RETURN_PARAMS=str(pp), MAX_TRIES=3)
+    out, rec = run2(d, db, RngV2([40.0, np.pi / 2] * 3), **base)                       # onto the sentinel: overlap
+    assert rec['n_placed'] == 0 and rec['reject']['overlap'] == 3
+    np.testing.assert_array_equal(out['gt_boxes'], b0)
+    out, rec = run2(d, db, RngV2([40.0, 3 * np.pi / 2], arr=0.3), **base)            # p = 0.5 everywhere, u = 0.3 < p
+    assert rec['n_placed'] == 1 and rec['version'] == 5, rec['reject']
+    c = rec['copies'][0]
+    assert c['n_kept'] == c['n_visible'] and abs(c['p_keep'] - 0.5) < 1e-6 and c['vis_frac'] == 1.0
+    assert out['gt_classes'].tolist() == [-1, 1]
+    np.testing.assert_array_equal(out['gt_boxes'][0], b0[0])
+    out, rec = run2(scene_v2(), db, RngV2([40.0, 1.0], arr=0.6), **base)              # u = 0.6 >= p: 0 points, dropped
+    assert rec['n_zero'] == 1 and rec['n_placed'] == 0
+    wall = np.stack(np.meshgrid(np.linspace(-6, 6, 241), np.linspace(0.35, 3.0, 54)), -1).reshape(-1, 2)
+    wall = np.c_[wall[:, 0], np.full(len(wall), 25.0), wall[:, 1]]
+    out, rec = run2(scene_v2([wall]), db, RngV2([40.0, np.pi / 2] * 3), **base)      # fully hidden: novis, re-placed
+    assert rec['reject']['novis'] >= 1 and rec['reject']['visibility'] == 0
+    out, rec = run2(scene_v2(), db, RngV2([40.0, 1.0]), **dict(base, RETURN_OFF=True))
+    c = rec['copies'][0]
+    assert c['n_kept'] == c['n_visible'] and c['vis_feats'].shape == (c['n_visible'], 4) and (c['vis_feats'][:, 3] <= 1).all()
+    assert len(c['sil_vis_pix']) == len(c['sil_vis_relh']) and c['n_sil_vis'] == c['n_sil']
+
+
+def test_rr5_configs_are_rr4_plus_the_v5_keys_and_v1_to_v4_unchanged(monkeypatch):
+    from pcdet.config import cfg_from_yaml_file
+    monkeypatch.chdir(ROOT / 'tools')
+    load = lambda n: cfg_from_yaml_file('cfgs/da-ieee-access/' + n, EasyDict())
+    r4 = load('centerpoint-gblobs-accum-legaldepth-rr4-nuscenes2waymo.yaml')
+    for arm, kind in (('a', 'physics'), ('b', 'mlp')):
+        r5 = load(f'centerpoint-gblobs-accum-legaldepth-rr5{arm}-nuscenes2waymo.yaml')
+        for key in ('NUSCENES_N008', 'NUSCENES_N015'):
+            e5, e4 = (c.DATA_CONFIGS[key].DATA_AUGMENTOR.AUG_CONFIG_LIST for c in (r5, r4))
+            assert e5[1:] == e4[1:] and e5[0].VERSION == 5 and e4[0].VERSION == 4 and e5[0].RETURN_MODEL == kind
+            new = {'VERSION', 'RETURN_MODEL', 'RETURN_PARAMS', 'OCC_H_LO', 'OCC_H_HI', 'OCC_MARGIN', 'OCC_NEIGHBOUR_COLS',
+                   'I_REL_CLIP', 'R_REF', 'COS_MIN', 'DB_NORMALS'}
+            assert {k: v for k, v in e5[0].items() if k not in new} == {k: v for k, v in e4[0].items() if k != 'VERSION'}
+            assert (e5[0].OCC_H_LO, e5[0].OCC_H_HI, e5[0].OCC_MARGIN, e5[0].OCC_NEIGHBOUR_COLS, list(e5[0].I_REL_CLIP),
+                    e5[0].R_REF) == (0.3, 3.0, 0.5, 1, [0.05, 20.0], 50.0)
+            assert key in e5[0].DB_NORMALS and e5[0].RETURN_PARAMS.endswith(f'fit_{arm}.npz')
+            assert not any(k in e4[0] for k in new - {'VERSION'})
+        for k in ('MODEL', 'OPTIMIZATION', 'CLASS_NAMES', 'DATA_CONFIG_TAR'):
+            assert r5[k] == r4[k]
