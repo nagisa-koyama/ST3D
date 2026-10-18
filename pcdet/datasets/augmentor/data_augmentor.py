@@ -159,14 +159,24 @@ class DataAugmentor(object):
         """Relocate-and-render (experiments_md 20261018_02): copies of near, dense source boxes of DONOR_CLASS moved
         farther out and re-rendered through the target's published lattice (augmentor/relocate_render.py). Reached
         only by a config whose AUG_CONFIG_LIST names it; training only, like every augmentor. VERSION: 2 (absent = 1)
-        selects v2 (§6: track-level donor database, ground plane, visibility, row coverage, sparsifier)."""
+        selects v2 (§6: track-level donor database, ground plane, visibility, row coverage, sparsifier); VERSION: 3 is v2
+        with the copy's bottom on the local ground cells (§7), and each loader worker prints a cumulative line every 500
+        frames (frames, copies, ground fallbacks)."""
         from . import relocate_render as rr
-        v2 = int(config.get('VERSION', 1)) == 2
+        version = int(config.get('VERSION', 1))
         if data_dict is None:
             return partial(self.relocate_render, config=config, lattice=rr.lattice_from_config(config),
-                           db=rr.db_from_config(config) if v2 else None)
-        if v2:
-            data_dict, _ = rr.relocate_render_scene_v2(data_dict, config, lattice, db)
+                           db=rr.db_from_config(config) if version >= 2 else None)
+        if version >= 2:
+            data_dict, rec = rr.relocate_render_scene_v2(data_dict, config, lattice, db)
+            if version == 3:
+                st = self.__dict__.setdefault('_rr_stats', [0, 0, 0])
+                st[0] += 1; st[1] += rec['n_placed']; st[2] += sum(bool(c['ground_fallback']) for c in rec['copies'])
+                if st[0] % 500 == 0:
+                    import os
+                    import sys
+                    print('[RR v3 stats] pid %d: frames %d, copies %d (%.2f per frame), ground fallbacks %d'
+                          % (os.getpid(), st[0], st[1], st[1] / st[0], st[2]), file=sys.stderr, flush=True)
         else:
             data_dict, _ = rr.relocate_render_scene(data_dict, config, lattice)
         return data_dict

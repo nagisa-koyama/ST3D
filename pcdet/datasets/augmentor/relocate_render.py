@@ -633,11 +633,12 @@ def db_from_config(cfg):
     return DonorDB(cfg['DB_POINTS'], cfg['DB_INDEX'])
 
 
-def place_instance(local, size, r, phi, alpha, plane):
+def place_instance(local, size, r, phi, alpha, plane, bottom_fn=None):
     """Box (7,) and loader-frame points of a database instance at range r, azimuth phi, heading phi + alpha, the box's
-    bottom on the plane at its BEV centre."""
+    bottom on the plane at its BEV centre (v2), or at bottom_fn(x, y) (v3)."""
     x, y = r * np.cos(phi), r * np.sin(phi)
-    box = np.array([x, y, float(plane_z(plane, x, y)) + size[2] / 2, size[0], size[1], size[2], phi + alpha])
+    zb = float(plane_z(plane, x, y)) if bottom_fn is None else float(bottom_fn(x, y))
+    box = np.array([x, y, zb + size[2] / 2, size[0], size[1], size[2], phi + alpha])
     return box, from_box_frame(local, box)
 
 
@@ -711,7 +712,7 @@ def _randint(rng, n):
 
 
 def _params_v2(cfg):
-    p = dict(DEFAULTS); p.update(DEFAULTS_V2)
+    p = dict(DEFAULTS); p.update(DEFAULTS_V2); p.update(DEFAULTS_V3); p['VERSION'] = 2
     if cfg is not None:
         for k in cfg:
             if k in p:
@@ -743,6 +744,18 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
     if plane is None:
         return data_dict, rec
     rec['plane'] = np.asarray(plane, np.float64)
+    v3 = int(p['VERSION']) == 3
+    rec['version'] = 3 if v3 else 2
+    if v3:                                          # §7: ground cells of the cloud RR receives, built once per frame
+        cells = GroundCells(xyz, p['GROUND_CELL'], int(p['GROUND_CELL_MIN_PTS']))
+        last_fb = [False]
+
+        def bottom_fn(x, y):
+            zb, fb = local_bottom(cells, x, y, plane, p['GROUND_RADIUS'], int(p['GROUND_MIN_CELLS']), p['GROUND_PCT'])
+            last_fb[0] = fb
+            return zb
+    else:
+        bottom_fn = None
     pcr = np.asarray(p['POINT_CLOUD_RANGE'], np.float64)
     grid = _BevGrid(xyz)
     colidx = None
@@ -769,7 +782,7 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
             else:
                 r = rng.uniform(r, p['R_MAX'])
             fresh = True
-            cb, q = place_instance(lxyz, size, r, phi, alpha, plane)
+            cb, q = place_instance(lxyz, size, r, phi, alpha, plane, bottom_fn)
             # v1 free-space check
             g = bev_corners(cb[None], p['BEV_MARGIN'])[0]
             if (g[:, 0] < pcr[0]).any() or (g[:, 0] > pcr[3]).any() or (g[:, 1] < pcr[1]).any() or \
@@ -902,7 +915,8 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
         crec = dict(instance=inst, box=cb.copy(), r_new=float(np.hypot(cb[0], cb[1])), phi_new=float(phi), alpha=alpha,
                     tries=tries, rc_loader=float(rc), vis_share_loader=vshare, n_db=int(len(local)),
                     n_rendered=int(len(cpix)), n_visible=int(vis.sum()), p_keep=float(pk), n_kept=int(keep.sum()),
-                    n_inbox_removed=int(len(inb) + add_in.sum()), n_shadow_removed=int(len(shadow) + ash.sum()))
+                    n_inbox_removed=int(len(inb) + add_in.sum()), n_shadow_removed=int(len(shadow) + ash.sum()),
+                    ground_fallback=bool(last_fb[0]) if v3 else None, bottom=float(cb[2] - cb[5] / 2))
         if keep_points:
             crec['placed'] = q.copy(); crec['rendered_unsparsified'] = rxyz[vis].copy(); crec['rendered'] = rxyz[keep]
         rec['copies'].append(crec)
@@ -934,3 +948,85 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
     rec['removed_orig'] = np.unique(np.concatenate(removed_orig)) if removed_orig else np.zeros(0, np.int64)
     rec['alive_orig'] = alive
     return data_dict, rec
+
+
+# =========================================================================================================== RR v3
+# experiments_md 20261018_02 §7 (design fixed in T05 §5, experiments_md 9334105): v2 with the copy's bottom height from the
+# local ground cells (the 20th percentile of the second-lowest z of the 1 m cells within 5 m holding >= 3 points), the
+# plane as fallback. Reached only by VERSION: 3; v1 and v2 unchanged.
+DEFAULTS_V3 = dict(GROUND_CELL=1.0, GROUND_CELL_MIN_PTS=3, GROUND_RADIUS=5.0, GROUND_MIN_CELLS=3, GROUND_PCT=20.0)
+
+
+class GroundCells:
+    """1 m BEV cells of a cloud holding >= min_pts points, each valued at its second-lowest z (ties by point order, as
+    ground_tilt.lowest_per_cell), on a dense grid over +-(LIM) m."""
+    LIM = 82
+
+    def __init__(self, xyz, cell=1.0, min_pts=3):
+        self.cell = float(cell)
+        p = np.asarray(xyz)
+        n = 2 * self.LIM + 1
+        self.vals = np.full((n, n), np.nan)
+        if not len(p):
+            return
+        ij = np.floor(p[:, :2] / self.cell).astype(np.int64)
+        ok = (np.abs(ij) < self.LIM).all(1)
+        ij, z = ij[ok], np.asarray(p[ok, 2], np.float64)
+        if not len(z):
+            return
+        key = ((ij[:, 0] + self.LIM) * n + (ij[:, 1] + self.LIM)).astype(np.uint16 if n * n < 65536 else np.int64)
+        order = np.argsort(key, kind='stable')
+        k = key[order]; zz = z[order]
+        first = np.r_[True, k[1:] != k[:-1]]
+        starts = np.flatnonzero(first); counts = np.diff(np.r_[starts, len(k)])
+        pos = np.arange(len(zz))
+        zmin = np.minimum.reduceat(zz, starts)
+        fmin = np.minimum.reduceat(np.where(zz == np.repeat(zmin, counts), pos, len(zz)), starts)
+        z2 = zz.copy(); z2[fmin] = np.inf
+        zsec = np.minimum.reduceat(z2, starts)
+        keep = counts >= min_pts
+        kk = k[starts[keep]].astype(np.int64)
+        self.vals[kk // n, kk % n] = zsec[keep]
+
+    def local(self, x, y, radius=5.0):
+        """Values of the ground cells whose centre lies within `radius` (BEV) of (x, y)."""
+        c = self.cell; n = self.vals.shape[0]
+        i0, i1 = int(np.floor((x - radius) / c)), int(np.floor((x + radius) / c))
+        j0, j1 = int(np.floor((y - radius) / c)), int(np.floor((y + radius) / c))
+        I = np.arange(max(i0, -self.LIM + 1), min(i1, self.LIM - 1) + 1)
+        J = np.arange(max(j0, -self.LIM + 1), min(j1, self.LIM - 1) + 1)
+        if not len(I) or not len(J):
+            return np.zeros(0)
+        v = self.vals[I[:, None] + self.LIM, J[None, :] + self.LIM]
+        d = np.hypot((I[:, None] + 0.5) * c - x, (J[None, :] + 0.5) * c - y)
+        m = (d <= radius) & np.isfinite(v)
+        return v[m]
+
+
+def local_bottom(cells, x, y, plane, radius=5.0, min_cells=3, pct=20.0):
+    """(bottom z, fallback?): the pct-th percentile of the local ground cells' values, or the plane at (x, y)."""
+    v = cells.local(x, y, radius)
+    if len(v) >= min_cells:
+        return float(np.percentile(v, pct)), False
+    return float(plane_z(plane, x, y)), True
+
+
+def footprint_distance(xy, box):
+    """BEV distance of points to a box's rectangle (0 inside)."""
+    p = np.asarray(xy, np.float64); b = np.asarray(box, np.float64)
+    c, s = np.cos(b[6]), np.sin(b[6])
+    dx, dy = p[:, 0] - b[0], p[:, 1] - b[1]
+    lx, ly = c * dx + s * dy, -s * dx + c * dy
+    return np.hypot(np.maximum(np.abs(lx) - b[3] / 2, 0), np.maximum(np.abs(ly) - b[4] / 2, 0))
+
+
+def ground_reference(scene_xyz, box, d_lo=0.5, d_hi=3.0, min_points=10, pct=5.0):
+    """D1 v3's independent ground reference of a copy (20261018_02 §7.2): the pct-th percentile of z over the scene points
+    whose BEV distance to the box's rectangle lies in (d_lo, d_hi]; (reference or nan, number of points)."""
+    p = np.asarray(scene_xyz, np.float64)
+    if not len(p):
+        return np.nan, 0
+    d = footprint_distance(p[:, :2], box)
+    m = (d > d_lo) & (d <= d_hi)
+    n = int(m.sum())
+    return (float(np.percentile(p[m, 2], pct)) if n >= min_points else np.nan), n

@@ -510,6 +510,7 @@ def image_v2(path, title, before, after, rec, lat):
 V2_COPY_COLS = ('plat', 'frame', 'moving', 'r_new', 'phi', 'sector', 'tries', 'rc_loader', 'vis_loader', 'n_db',
                 'n_rendered', 'n_visible', 'p_keep', 'n_kept', 'n_final', 'rc_g1', 'ppp_g1', 'visrows_g1', 'n_phantom',
                 'n_final_g3', 'off_plane', 'd2_v2', 'd2_v1', 'n_pts_grid', 'n_vox', 'n_layers', 'ppv', 'instance')
+V3_EXTRA_COLS = ('fallback', 'bottom', 'd1v3_ref', 'd1v3_n')
 V2_FRAME_COLS = ('plat', 'frame', 'moving', 'n_boxes', 'has_plane', 'n_attempted', 'n_placed', 'n_no_place', 'n_zero',
                  'rej_range', 'rej_overlap', 'rej_scene', 'rej_empty', 'rej_vis', 'rej_rc', 'same', 'coll', 'emptied',
                  'lost', 'pts_before', 'pts_after', 'scene_t', 'copy_t', 'gp_sx', 'gp_sy', 'gp_z0', 'rr_sx', 'rr_sy')
@@ -529,7 +530,8 @@ def run_v2(a):
     q0 = aug.data_augmentor_queue[0]
     assert getattr(q0, 'func', None) is not None and q0.func.__name__ == 'relocate_render', 'RR is not first'
     rr_cfg = q0.keywords['config']; lat = q0.keywords['lattice']; db = q0.keywords['db']
-    assert int(rr_cfg.VERSION) == 2 and db is not None
+    version = int(rr_cfg.VERSION)
+    assert version in (2, 3) and db is not None
     assert list(rr_cfg.POINT_CLOUD_RANGE) == list(dcfg.POINT_CLOUD_RANGE), 'RR range != the dataset range'
     print(f"[rr_gate v2] {a.key}: {len(ds)} infos; database {db.n} instances ({db.points_path}); lattice "
           f"{lat['n_segments']} train segments; queue {[getattr(f, 'func', f).__name__ for f in aug.data_augmentor_queue]}",
@@ -597,6 +599,7 @@ def run_v2(a):
             scene = P[~iscopy, :3].astype(np.float64)
             scene_lat = to_lattice(scene, h, th, nc)
             scene_hz = scene[:, 2] - (pl[0] * scene[:, 0] + pl[1] * scene[:, 1] + pl[2])
+            stree = cKDTree(scene[:, :2]) if version == 3 else None
             for j, c in enumerate(rec['copies']):
                 ru = c['rendered_unsparsified']
                 cloud = np.concatenate([scene, ru]); idx = [np.arange(len(scene), len(scene) + len(ru))]
@@ -607,16 +610,21 @@ def run_v2(a):
                 off = (bx[2] - bx[5] / 2) - (pl[0] * bx[0] + pl[1] * bx[1] + pl[2])
                 d2v2, d2v1 = blocked_share_v2(c['placed'], scene_lat, scene_hz, lat)
                 g = crop(fp); dsc = descriptors(g)
-                copies.append([plat, i, moving, c['r_new'], c['phi_new'], sec[j], c['tries'], c['rc_loader'],
-                               c['vis_share_loader'], c['n_db'], c['n_rendered'], c['n_visible'], c['p_keep'],
-                               c['n_kept'], c['n_final'], cov[0], cov[1], cov[2], int((dmin > PHANTOM_M).sum()), len(fp),
-                               off, d2v2, d2v1, dsc[0], dsc[1], dsc[2], dsc[3], c['instance']])
+                row = [plat, i, moving, c['r_new'], c['phi_new'], sec[j], c['tries'], c['rc_loader'],
+                       c['vis_share_loader'], c['n_db'], c['n_rendered'], c['n_visible'], c['p_keep'],
+                       c['n_kept'], c['n_final'], cov[0], cov[1], cov[2], int((dmin > PHANTOM_M).sum()), len(fp),
+                       off, d2v2, d2v1, dsc[0], dsc[1], dsc[2], dsc[3], c['instance']]
+                if version == 3:                     # D1 v3: the independent local reference (§7.2)
+                    near = np.asarray(stree.query_ball_point(bx[:2], float(np.hypot(bx[3], bx[4]) / 2 + 3.1)), np.int64)
+                    ref, nref = rr.ground_reference(scene[near], bx)
+                    row += [float(c['ground_fallback']), c['bottom'], ref, nref]
+                copies.append(row)
         if k and len(dumps) < a.dump:
             dumps.append(dump_frame_v2(d, CAP, rec, head, side, cell, cfg, i))
         if k >= 2 and len(imgs) < a.images:
-            pth = out / f'bev_v2_{a.key}_{i:05d}.png'
-            image_v2(pth, f'{a.key} ({PLAT_NAME[plat]}) train info {i}: relocate-and-render v2, before / after', B, A,
-                     rec, lat)
+            pth = out / f'bev_v{version}_{a.key}_{i:05d}.png'
+            image_v2(pth, f'{a.key} ({PLAT_NAME[plat]}) train info {i}: relocate-and-render v{version}, before / after', B,
+                     A, rec, lat)
             imgs.append(str(pth))
         if n_done % 20 == 0:
             print(f'[rr_gate v2] {n_done + 1}/{len(frames)} frames, {len(copies)} copies, {time.time() - t_start:.0f} s',
@@ -631,13 +639,14 @@ def run_v2(a):
         aug.data_augmentor_queue = queue_rr
         np.random.seed(seed); t0 = time.perf_counter(); ds[i]; t_on = time.perf_counter() - t0
         g4.append([plat, i, t_off, t_on])
-    res = dict(version=2, key=a.key, plat=plat, n_infos=N, frames=frames,
-               copies=np.array(copies, np.float64).reshape(-1, len(V2_COPY_COLS)),
+    ncol = len(V2_COPY_COLS) + (len(V3_EXTRA_COLS) if version == 3 else 0)
+    res = dict(version=version, key=a.key, plat=plat, n_infos=N, frames=frames,
+               copies=np.array(copies, np.float64).reshape(-1, ncol),
                frames_rows=np.array(frows, np.float64).reshape(-1, len(V2_FRAME_COLS)),
                g4=np.array(g4, np.float64).reshape(-1, 4), dumps=dumps, images=imgs, db_n=db.n,
                db_points=db.points_path, node=os.uname().nodename)
-    pickle.dump(res, open(out / f'gate_v2_{a.key}.pkl', 'wb'))
-    print(f'[rr_gate v2] done {a.key}: {len(frames)} frames, {len(copies)} copies, images {imgs}', flush=True)
+    pickle.dump(res, open(out / f'gate_v{version}_{a.key}.pkl', 'wb'))
+    print(f'[rr_gate v{version}] done {a.key}: {len(frames)} frames, {len(copies)} copies, images {imgs}', flush=True)
 
 
 def dump_frame_v2(d, CAP, rec, head, side, cell, cfg, i):
@@ -649,8 +658,11 @@ def dump_frame_v2(d, CAP, rec, head, side, cell, cfg, i):
 
 def report_v2(a):
     D = Path(a.dir)
-    res = [pickle.load(open(p, 'rb')) for p in sorted(D.glob('gate_v2_*.pkl'))]
-    C = {k: j for j, k in enumerate(V2_COPY_COLS)}; F = {k: j for j, k in enumerate(V2_FRAME_COLS)}
+    version = 3 if list(D.glob('gate_v3_*.pkl')) else 2
+    res = [pickle.load(open(p, 'rb')) for p in sorted(D.glob(f'gate_v{version}_*.pkl'))]
+    cols = V2_COPY_COLS + (V3_EXTRA_COLS if version == 3 else ())
+    C = {k: j for j, k in enumerate(cols)}; F = {k: j for j, k in enumerate(V2_FRAME_COLS)}
+    print(f'gate v{version}')
     cp = np.concatenate([r['copies'] for r in res]); fr = np.concatenate([r['frames_rows'] for r in res])
     g4 = np.concatenate([r['g4'] for r in res])
     PL = [p for p in (0, 1) if (fr[:, F['plat']] == p).any()]
@@ -721,8 +733,12 @@ def report_v2(a):
         m = g4[:, 0] == p
         print(f"{PLAT_NAME[p]}: {int(m.sum())} frames, off {g4[m, 2].sum():.1f} s, on {g4[m, 3].sum():.1f} s, ratio "
               f"{g4[m, 3].sum() / g4[m, 2].sum():.3f} (median per frame {np.median(g4[m, 3] / g4[m, 2]):.3f})")
-    ratio = g4[:, 3].sum() / g4[:, 2].sum(); verdict['G4'] = ratio <= 1.20
-    print(f"pooled ratio {ratio:.3f} -> G4 {'PASS' if verdict['G4'] else 'FAIL'}")
+    ratio = g4[:, 3].sum() / g4[:, 2].sum()
+    if version == 3:
+        print(f"pooled ratio {ratio:.3f} (v3: reported as cost, not deciding)")
+    else:
+        verdict['G4'] = ratio <= 1.20
+        print(f"pooled ratio {ratio:.3f} -> G4 {'PASS' if verdict['G4'] else 'FAIL'}")
     print('\n== D1: |copy bottom - gate plane| per platform (median <= 0.25 m and > 1 m below 5%) ==')
     d1 = True
     for p in PL:
@@ -731,7 +747,32 @@ def report_v2(a):
         d1 &= bool(med <= 0.25 and big < 0.05)
         print(f"{PLAT_NAME[p]}: median {med:.3f} m, > 0.5 m {np.nanmean(o > 0.5):.1%}, > 1 m {big:.2%}; signed median "
               f"{np.nanmedian(cp[cp[:, C['plat']] == p, C['off_plane']]):+.3f} m")
-    verdict['D1'] = d1; print(f"D1 {'PASS' if d1 else 'FAIL'}")
+    if version == 3:
+        print(f"(v2's D1 against the gate's plane is descriptive in v3: it would read {'PASS' if d1 else 'FAIL'})")
+        print('\n== D1 v3 (deciding): |copy bottom - local reference| among copies with an observed reference, per platform ==')
+        d1v3 = True
+        for p in PL:
+            m = cp[:, C['plat']] == p
+            obs = m & np.isfinite(cp[:, C['d1v3_ref']])
+            dev = np.abs(cp[obs, C['bottom']] - cp[obs, C['d1v3_ref']])
+            med, big = (np.median(dev), np.mean(dev > 1.0)) if obs.any() else (np.nan, np.nan)
+            d1v3 &= bool(med <= 0.25 and big < 0.05)
+            print(f"{PLAT_NAME[p]}: observed {int(obs.sum())} of {int(m.sum())} (ground unobserved {1 - obs.sum() / m.sum():.1%}); "
+                  f"median {med:.3f} m, > 0.5 m {np.mean(dev > 0.5):.1%}, > 1 m {big:.2%}; signed median "
+                  f"{np.median(cp[obs, C['bottom']] - cp[obs, C['d1v3_ref']]):+.3f} m; reference points per copy median "
+                  f"{np.median(cp[m, C['d1v3_n']]):.0f}")
+            for lo, hi in ((0, 20), (20, 40), (40, 50), (50, 60), (60, 75.2)):
+                mm = m & (cp[:, C['r_new']] >= lo) & (cp[:, C['r_new']] < hi)
+                if mm.any():
+                    oo = mm & np.isfinite(cp[:, C['d1v3_ref']])
+                    dd = np.abs(cp[oo, C['bottom']] - cp[oo, C['d1v3_ref']])
+                    print(f"   r' {lo:g}-{hi:g}: copies {int(mm.sum())}, loader fallback {np.mean(cp[mm, C['fallback']] > 0):.1%}, "
+                          f"ground unobserved {1 - oo.sum() / mm.sum():.1%}, |dev| median "
+                          f"{np.median(dd) if len(dd) else np.nan:.3f} m, > 1 m {np.mean(dd > 1.0) if len(dd) else np.nan:.1%}")
+            print(f"   loader fallback (plane) overall {np.mean(cp[m, C['fallback']] > 0):.1%}")
+        verdict['D1v3'] = d1v3; print(f"D1 v3 {'PASS' if d1v3 else 'FAIL'}")
+    else:
+        verdict['D1'] = d1; print(f"D1 {'PASS' if d1 else 'FAIL'}")
     print('\n== D2: copies behind a surface in >= half their columns, per platform (< 10%) ==')
     d2 = True
     for p in PL:
@@ -766,7 +807,8 @@ def report_v2(a):
     verdict['dump'] = dump_ok and same_all
     print(f"target dump {'PASS' if verdict['dump'] else 'FAIL'} (originals bit-identical in all frames and no collision: {same_all})")
     print('\nimages:', [p for r in res for p in r['images']])
-    print('\nVERDICT (database sanity: see the merge outputs):', {k: ('PASS' if v else 'FAIL') for k, v in verdict.items()})
+    print(f'\nVERDICT v{version} (deciding items; database sanity: see the merge outputs):',
+          {k: ('PASS' if v else 'FAIL') for k, v in verdict.items()})
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -783,9 +825,9 @@ def main():
         from pcdet.config import cfg_from_yaml_file
         c = cfg_from_yaml_file(a.cfg, EasyDict())
         v = int(c.DATA_CONFIGS[a.key].DATA_AUGMENTOR.AUG_CONFIG_LIST[0].get('VERSION', 1))
-        run_v2(a) if v == 2 else run(a)
+        run_v2(a) if v >= 2 else run(a)
     else:
-        report_v2(a) if list(Path(a.dir).glob('gate_v2_*.pkl')) else report(a)
+        report_v2(a) if list(Path(a.dir).glob('gate_v[23]_*.pkl')) else report(a)
 
 
 if __name__ == '__main__':

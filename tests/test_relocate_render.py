@@ -728,3 +728,119 @@ def test_rr2_config_differs_from_27471_only_by_rr_v2_and_the_waymo_target(monkey
         assert q0.func.__name__ == 'relocate_render' and q0.keywords['db'].n > 0 and q0.keywords['db']._pts is None
         assert len(pickle.dumps(aug)) < 5e7
     assert 'relocate_render' not in str(rrc.DATA_CONFIG_TAR)
+
+
+# ================================================================================================= RR v3 (§7)
+P3 = dict(P2); P3['VERSION'] = 3
+
+
+def step_ground(z_hi=0.8, y_step=30.0):
+    g = ground()
+    g[:, 2] = np.where(g[:, 1] >= y_step, z_hi, -0.03)
+    return g
+
+
+def test_v3_ground_cells_are_second_lowest_of_cells_with_3_points():
+    pts = np.array([[0.2, 0.2, 0.5], [0.4, 0.1, 0.1], [0.9, 0.9, 0.3], [0.5, 0.5, 0.1],     # cell (0, 0): 0.1, 0.1, ...
+                    [1.5, 0.5, 2.0], [1.6, 0.4, 1.0],                                       # cell (1, 0): 2 points only
+                    [-0.5, -0.5, 0.7], [-0.4, -0.6, 0.2], [-0.3, -0.2, 0.4]])               # cell (-1, -1)
+    c = R.GroundCells(pts)
+    assert c.vals[c.LIM, c.LIM] == 0.1 and np.isnan(c.vals[c.LIM + 1, c.LIM]) and c.vals[c.LIM - 1, c.LIM - 1] == 0.4
+    v = c.local(0.0, 0.0, 1.0)                                       # centres (0.5, 0.5) and (-0.5, -0.5) at 0.71 m
+    assert sorted(v.tolist()) == [0.1, 0.4]
+    assert len(c.local(0.0, 0.0, 0.5)) == 0
+
+
+def test_v3_local_height_on_a_step_toy():
+    cells = R.GroundCells(step_ground())
+    plane = np.array([0.0, 0.0, -0.03])
+    zb, fb = R.local_bottom(cells, 0.0, 40.0, plane)                  # all local cells on the upper step
+    assert not fb and zb == pytest.approx(0.8, abs=1e-9)
+    zb, fb = R.local_bottom(cells, 0.0, 20.0, plane)                  # all on the lower level
+    assert not fb and zb == pytest.approx(-0.03, abs=1e-9)
+    v = cells.local(0.0, 30.2, 5.0)                                   # straddling the step: both levels present
+    zb, fb = R.local_bottom(cells, 0.0, 30.2, plane)
+    assert not fb and zb == pytest.approx(np.percentile(v, 20)) and (v > 0.5).any() and (v < 0).any()
+
+
+def test_v3_fallback_below_three_cells():
+    rng = np.random.default_rng(4)
+    dense = np.c_[rng.uniform(-30, 30, (200000, 2)), np.zeros(200000)]
+    sparse = np.array([[40.2, 0.3, 0.5], [40.4, 0.5, 0.6], [40.6, 0.7, 0.7],               # one cell with 3 points
+                       [42.5, 1.5, 0.9], [42.6, 1.6, 1.0]])                                  # one cell with 2 points
+    cells = R.GroundCells(np.concatenate([dense, sparse]))
+    plane = np.array([0.01, 0.0, -0.02])
+    zb, fb = R.local_bottom(cells, 41.0, 0.5, plane)
+    assert fb and zb == pytest.approx(R.plane_z(plane, 41.0, 0.5))
+    zb, fb = R.local_bottom(cells, 5.0, 5.0, plane)
+    assert not fb and abs(zb) < 1e-9
+
+
+def test_v3_scene_bottom_on_the_local_step_and_fallback_flag(tmp_path):
+    db = make_db(tmp_path, [(CAR_LOCAL, SIZE, [0.0])])
+    # a 0.25 m step: below the visibility rule's 0.3 m above the plane, so the step face does not hide the copy (a 0.8 m
+    # step does, and the copy is then placed elsewhere)
+    d = frame(np.zeros((0, 7)), [], step_ground(0.25))
+    out, rec = run2(d, db, RngV2([40.0, np.pi / 2]), VERSION=3, MAX_TRIES=1)
+    assert rec['version'] == 3 and rec['n_placed'] == 1, rec['reject']
+    c = rec['copies'][0]
+    assert c['ground_fallback'] is False and c['bottom'] == pytest.approx(0.25, abs=1e-6)
+    assert c['r_new'] == pytest.approx(40.0)
+    out2, rec2 = run2(frame(np.zeros((0, 7)), [], step_ground(0.25)), db, RngV2([40.0, np.pi / 2]), MAX_TRIES=1)  # v2
+    assert rec2['version'] == 2 and rec2['copies'][0]['ground_fallback'] is None
+    assert abs(rec2['copies'][0]['bottom'] - R.plane_z(rec2['plane'], 0.0, 40.0)) < 1e-9
+    far = ground(); far = far[np.hypot(far[:, 0], far[:, 1]) < 45]                                   # nothing near 60 m
+    out3, rec3 = run2(frame(np.zeros((0, 7)), [], far), db, RngV2([60.0, np.pi / 2]), VERSION=3, MAX_TRIES=1)
+    assert rec3['n_placed'] == 1 and rec3['copies'][0]['ground_fallback'] is True
+    assert rec3['copies'][0]['bottom'] == pytest.approx(R.plane_z(rec3['plane'], 0.0, 60.0), abs=1e-9)
+
+
+def test_v3_footprint_distance_and_ground_reference_toy():
+    b = np.array([10.0, 5.0, 1.0, 4.0, 2.0, 1.5, 0.7])
+    pts = R.from_box_frame(np.array([[3.0, 0, 0], [0, 2.0, 0], [3.0, 2.0, 0], [0.5, 0.2, 0]]), b)
+    np.testing.assert_allclose(R.footprint_distance(pts[:, :2], b), [1.0, 1.0, np.hypot(1.0, 1.0), 0.0], atol=1e-9)
+    rng = np.random.default_rng(9)
+    ring = R.from_box_frame(np.c_[rng.uniform(-4.5, 4.5, (4000, 2)), np.zeros(4000)], b)
+    d = R.footprint_distance(ring[:, :2], b)
+    ring = ring[(d > 0.5) & (d <= 3.0)]
+    ring[:, 2] = 0.42 + rng.normal(0, 0.01, len(ring))
+    clutter = ring[:200].copy(); clutter[:, 2] += 2.0                                   # a hedge above the ground
+    inside = R.from_box_frame(np.c_[rng.uniform(-1.8, 1.8, 500), rng.uniform(-0.9, 0.9, 500), rng.uniform(-0.7, 0.7, 500)], b)
+    ref, n = R.ground_reference(np.concatenate([ring, clutter, inside]), b)
+    assert n == len(ring) + len(clutter) and abs(ref - 0.42) < 0.03
+    ref, n = R.ground_reference(ring[:9], b)
+    assert np.isnan(ref) and n == 9
+
+
+def test_v3_hook_counts_copies_and_fallbacks(tmp_path):
+    from pcdet.datasets.augmentor.data_augmentor import DataAugmentor
+    db = make_db(tmp_path, [(CAR_LOCAL, SIZE, [0.0])])
+    cfg = EasyDict(dict(P3, NAME='relocate_render', DB_POINTS=db.points_path, DB_INDEX=db.index_path))
+    aug = DataAugmentor(None, EasyDict(AUG_CONFIG_LIST=[cfg], DISABLE_AUG_LIST=[]), ['Car'])
+    aug = pickle.loads(pickle.dumps(aug))
+    np.random.seed(1)
+    out = aug.forward(frame(np.zeros((0, 7)), [], step_ground()))
+    st = aug._rr_stats
+    assert st[0] == 1 and st[1] == len(out['gt_boxes']) and 0 <= st[2] <= st[1]
+
+
+def test_rr3_config_is_rr2_plus_the_v3_keys(monkeypatch):
+    from pcdet.config import cfg_from_yaml_file
+    monkeypatch.chdir(ROOT / 'tools')
+    load = lambda n: cfg_from_yaml_file('cfgs/da-ieee-access/' + n, EasyDict())
+    r3 = load('centerpoint-gblobs-accum-legaldepth-rr3-nuscenes2waymo.yaml')
+    r2 = load('centerpoint-gblobs-accum-legaldepth-rr2-nuscenes2waymo.yaml')
+    v1 = load('centerpoint-gblobs-accum-legaldepth-rr-nuscenes2waymo.yaml')
+    for key in ('NUSCENES_N008', 'NUSCENES_N015'):
+        e3 = r3.DATA_CONFIGS[key].DATA_AUGMENTOR.AUG_CONFIG_LIST
+        e2 = r2.DATA_CONFIGS[key].DATA_AUGMENTOR.AUG_CONFIG_LIST
+        assert e3[1:] == e2[1:] and e2[0].VERSION == 2 and e3[0].VERSION == 3
+        assert {k: v for k, v in e3[0].items() if k != 'VERSION' and not k.startswith('GROUND_')} == \
+            {k: v for k, v in e2[0].items() if k != 'VERSION'}
+        assert {k: e3[0][k] for k in e3[0] if k.startswith('GROUND_')} == dict(
+            GROUND_CELL=1.0, GROUND_CELL_MIN_PTS=3, GROUND_RADIUS=5.0, GROUND_MIN_CELLS=3, GROUND_PCT=20.0)
+        assert not any(k.startswith('GROUND_') for k in e2[0]) and 'VERSION' not in v1.DATA_CONFIGS[key].DATA_AUGMENTOR.AUG_CONFIG_LIST[0]
+        strip = lambda c: {k: v for k, v in c.items() if k != 'DATA_AUGMENTOR'}
+        assert strip(r3.DATA_CONFIGS[key]) == strip(r2.DATA_CONFIGS[key])
+    for k in ('MODEL', 'OPTIMIZATION', 'CLASS_NAMES', 'DATA_CONFIG_TAR'):
+        assert r3[k] == r2[k]
