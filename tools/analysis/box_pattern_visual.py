@@ -521,7 +521,8 @@ def elev(a):
     boxes, tops = [], []
     for fid in fids:
         an = by_fid[fid]['annos']; names = np.asarray(an['name'])
-        gv = np.asarray(an['gt_boxes_lidar'], np.float64).reshape(len(names), -1)[:, :7][names == 'Vehicle']
+        gv = np.asarray(an['gt_boxes_lidar'], np.float64).reshape(len(names), -1)[:, :7][names == 'Vehicle'] \
+            if len(names) else np.zeros((0, 7))
         boxes.append(gv)
         tops.append(np.repeat(np.asarray(calib[by_fid[fid]['point_cloud']['lidar_sequence']]['extrinsic'])[:3, 3][None],
                               len(gv), 0))
