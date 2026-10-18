@@ -21,8 +21,8 @@
 # on the same input (stage 1 at rule G, stage 2): D >= +2 adds; |D| < 2 level; D <= -2 hurts; within 1.5 of a bar a second seed is
 # proposed. 27704 / 28563 are reported beside it, never chosen between on Waymo val.
 #
-# Launch (2 GPUs, 150G, seed 666):
-#   EST_H=44 scripts/submit.sh --mem=150G --time=40:00:00 scripts/run_sourceonly_2gpu.sh \
+# Launch (2 GPUs, 150G, seed 666; exact command in 20261017_09 §7.3):
+#   EST_H=32 scripts/submit.sh --mem=150G --time=30:00:00 scripts/run_sourceonly_2gpu.sh \
 #       cfgs/da-ieee-access/centerpoint-accum-procdepth-st3d-nuscenes2waymo.yaml <tag> <run> \
 #       --pretrained_model <stage-1 ep20> --pretrained_model_teacher <stage-1 ep20>
 _BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-accum-procdepth-nuscenes2waymo.yaml
@@ -35,8 +35,10 @@ DATA_CONFIG_TAR:
 
 SELF_TRAIN:
     EPOCH_FOLLOWS: source
-    SCORE_THRESH: [1.01, 1.01, 1.01]   # PLACEHOLDER until stage 2 (rule B, then raised to NEG where below it)
-    NEG_THRESH: [1.01, 1.01, 1.01]     # PLACEHOLDER until stage 2 (rule A on Waymo TRAIN)
+    # Stage 2 (job 29375, /home/koyama/data/pseudo_labels/a4procdepth_ep20_cuts.json, a4_final_cuts.py output; 20261017_09 §4.2):
+    # rule B (source-val precision) 0.17 / 0.34 / 0.33; rule A (Waymo TRAIN plateau) 0.142 / 0.175 / 0.133; nothing raised.
+    SCORE_THRESH: [0.17, 0.34, 0.33]
+    NEG_THRESH: [0.142, 0.175, 0.133]
     UPDATE_PSEUDO_LABEL: [0]
     UPDATE_PSEUDO_LABEL_INTERVAL: 2
     FROZEN_TEACHER_SINGLE_PASS: True
