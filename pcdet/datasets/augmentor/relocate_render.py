@@ -635,9 +635,9 @@ def db_from_config(cfg):
 
 def place_instance(local, size, r, phi, alpha, plane, bottom_fn=None):
     """Box (7,) and loader-frame points of a database instance at range r, azimuth phi, heading phi + alpha, the box's
-    bottom on the plane at its BEV centre (v2), or at bottom_fn(x, y) (v3)."""
+    bottom on the plane at its BEV centre (v2), or at bottom_fn(x, y, heading) (v3, v4)."""
     x, y = r * np.cos(phi), r * np.sin(phi)
-    zb = float(plane_z(plane, x, y)) if bottom_fn is None else float(bottom_fn(x, y))
+    zb = float(plane_z(plane, x, y)) if bottom_fn is None else float(bottom_fn(x, y, phi + alpha))
     box = np.array([x, y, zb + size[2] / 2, size[0], size[1], size[2], phi + alpha])
     return box, from_box_frame(local, box)
 
@@ -712,7 +712,7 @@ def _randint(rng, n):
 
 
 def _params_v2(cfg):
-    p = dict(DEFAULTS); p.update(DEFAULTS_V2); p.update(DEFAULTS_V3); p['VERSION'] = 2
+    p = dict(DEFAULTS); p.update(DEFAULTS_V2); p.update(DEFAULTS_V3); p.update(DEFAULTS_V4); p['VERSION'] = 2
     if cfg is not None:
         for k in cfg:
             if k in p:
@@ -729,7 +729,7 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
         db = db_from_config(p)
     thetas, n_cols, height = lat['thetas'], lat['n_cols'], lat['height']
     rec = dict(version=2, n_boxes=0, plane=None, n_attempted=0, n_placed=0, n_no_place=0, n_zero=0,
-               reject=dict(range=0, overlap=0, scene=0, empty=0, visibility=0, rc=0), copies=[],
+               reject=dict(range=0, overlap=0, scene=0, empty=0, visibility=0, rc=0, zrange=0), copies=[],
                removed_orig=np.zeros(0, np.int64))
     pts = data_dict.get('points', None)
     boxes = data_dict.get('gt_boxes', None)
@@ -744,20 +744,29 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
     if plane is None:
         return data_dict, rec
     rec['plane'] = np.asarray(plane, np.float64)
-    v3 = int(p['VERSION']) == 3
-    rec['version'] = 3 if v3 else 2
-    if v3:                                          # §7: ground cells of the cloud RR receives, built once per frame
+    version = int(p['VERSION'])
+    v3 = version in (3, 4)
+    rec['version'] = version if v3 else 2
+    grid = _BevGrid(xyz)
+    last_fb = [False]
+    size_now = [None]
+    if version == 3:                                # §7: ground cells of the cloud RR receives, built once per frame
         cells = GroundCells(xyz, p['GROUND_CELL'], int(p['GROUND_CELL_MIN_PTS']))
-        last_fb = [False]
 
-        def bottom_fn(x, y):
+        def bottom_fn(x, y, yaw):
             zb, fb = local_bottom(cells, x, y, plane, p['GROUND_RADIUS'], int(p['GROUND_MIN_CELLS']), p['GROUND_PCT'])
+            last_fb[0] = fb
+            return zb
+    elif version == 4:                              # §8: nearby points of the cloud RR receives (never copies' points)
+        def bottom_fn(x, y, yaw):
+            s_ = size_now[0]
+            zb, fb = nearby_bottom(xyz, grid, np.array([x, y, 0.0, s_[0], s_[1], s_[2], yaw]), plane, p['NEAR_D_LO'],
+                                   p['NEAR_D_HI'], int(p['NEAR_MIN_POINTS']), p['NEAR_PCT'])
             last_fb[0] = fb
             return zb
     else:
         bottom_fn = None
     pcr = np.asarray(p['POINT_CLOUD_RANGE'], np.float64)
-    grid = _BevGrid(xyz)
     colidx = None
     alive = np.ones(len(pts), bool)
     add_pts = np.zeros((0, pts.shape[1]), pts.dtype); add_id = np.zeros(0, np.int64)
@@ -771,6 +780,7 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
         rec['n_attempted'] += 1
         inst = _randint(rng, db.n)
         local = db.points(inst); size = db.size[inst]; alphas = db.alphas(inst)
+        size_now[0] = size
         lxyz = local[:, :3]
         tries, fresh, acc = 0, True, None
         r = phi = alpha = None
@@ -783,6 +793,8 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
                 r = rng.uniform(r, p['R_MAX'])
             fresh = True
             cb, q = place_instance(lxyz, size, r, phi, alpha, plane, bottom_fn)
+            if version == 4 and (cb[2] - cb[5] / 2 < pcr[2] or cb[2] + cb[5] / 2 > pcr[5]):   # §8: inside the z range
+                rec['reject']['zrange'] += 1; continue
             # v1 free-space check
             g = bev_corners(cb[None], p['BEV_MARGIN'])[0]
             if (g[:, 0] < pcr[0]).any() or (g[:, 0] > pcr[3]).any() or (g[:, 1] < pcr[1]).any() or \
@@ -1030,3 +1042,23 @@ def ground_reference(scene_xyz, box, d_lo=0.5, d_hi=3.0, min_points=10, pct=5.0)
     m = (d > d_lo) & (d <= d_hi)
     n = int(m.sum())
     return (float(np.percentile(p[m, 2], pct)) if n >= min_points else np.nan), n
+
+
+# =========================================================================================================== RR v4
+# experiments_md 20261018_02 §8 (design fixed in T05 §5, experiments_md aa3962e): v3 with the copy's bottom at the 10th
+# percentile of z of the nearby points (BEV distance to the footprint in (0.5, 3] m, >= 10 points; the plane otherwise),
+# and the box kept inside the z range. Reached only by VERSION: 4.
+DEFAULTS_V4 = dict(NEAR_D_LO=0.5, NEAR_D_HI=3.0, NEAR_MIN_POINTS=10, NEAR_PCT=10.0)
+
+
+def nearby_bottom(xyz, grid, box, plane, d_lo=0.5, d_hi=3.0, min_points=10, pct=10.0):
+    """(bottom z, fallback?): the pct-th percentile of z of the points of xyz whose BEV distance to the box's rectangle lies
+    in (d_lo, d_hi], if there are >= min_points of them; else the plane at the box centre. grid: _BevGrid of xyz."""
+    b = np.asarray(box, np.float64)
+    c = grid.query(bev_corners(b[None], d_hi + 0.05)[0]) if len(xyz) else np.zeros(0, np.int64)
+    if len(c):
+        d = footprint_distance(np.asarray(xyz[c, :2], np.float64), b)
+        z = np.asarray(xyz[c, 2], np.float64)[(d > d_lo) & (d <= d_hi)]
+        if len(z) >= min_points:
+            return float(np.percentile(z, pct)), False
+    return float(plane_z(plane, b[0], b[1])), True

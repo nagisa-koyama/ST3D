@@ -511,6 +511,7 @@ V2_COPY_COLS = ('plat', 'frame', 'moving', 'r_new', 'phi', 'sector', 'tries', 'r
                 'n_rendered', 'n_visible', 'p_keep', 'n_kept', 'n_final', 'rc_g1', 'ppp_g1', 'visrows_g1', 'n_phantom',
                 'n_final_g3', 'off_plane', 'd2_v2', 'd2_v1', 'n_pts_grid', 'n_vox', 'n_layers', 'ppv', 'instance')
 V3_EXTRA_COLS = ('fallback', 'bottom', 'd1v3_ref', 'd1v3_n')
+V4_EXTRA_COLS = V3_EXTRA_COLS + ('d1v4_ref',)
 V2_FRAME_COLS = ('plat', 'frame', 'moving', 'n_boxes', 'has_plane', 'n_attempted', 'n_placed', 'n_no_place', 'n_zero',
                  'rej_range', 'rej_overlap', 'rej_scene', 'rej_empty', 'rej_vis', 'rej_rc', 'same', 'coll', 'emptied',
                  'lost', 'pts_before', 'pts_after', 'scene_t', 'copy_t', 'gp_sx', 'gp_sy', 'gp_z0', 'rr_sx', 'rr_sy')
@@ -531,7 +532,7 @@ def run_v2(a):
     assert getattr(q0, 'func', None) is not None and q0.func.__name__ == 'relocate_render', 'RR is not first'
     rr_cfg = q0.keywords['config']; lat = q0.keywords['lattice']; db = q0.keywords['db']
     version = int(rr_cfg.VERSION)
-    assert version in (2, 3) and db is not None
+    assert version in (2, 3, 4) and db is not None
     assert list(rr_cfg.POINT_CLOUD_RANGE) == list(dcfg.POINT_CLOUD_RANGE), 'RR range != the dataset range'
     print(f"[rr_gate v2] {a.key}: {len(ds)} infos; database {db.n} instances ({db.points_path}); lattice "
           f"{lat['n_segments']} train segments; queue {[getattr(f, 'func', f).__name__ for f in aug.data_augmentor_queue]}",
@@ -590,7 +591,8 @@ def run_v2(a):
                       float(B['points'][:, tcol].max()) if B['points'].shape[1] > tcol else np.nan,
                       float(np.abs(copy_t).max()) if len(copy_t) else 0.0,
                       float(np.degrees(np.arctan(pl[0]))), float(np.degrees(np.arctan(pl[1]))), float(pl[2]),
-                      float(np.degrees(np.arctan(rp[0]))), float(np.degrees(np.arctan(rp[1])))])
+                      float(np.degrees(np.arctan(rp[0]))), float(np.degrees(np.arctan(rp[1])))]
+                     + ([rj['zrange']] if version == 4 else []))
         if k:
             sec = sector_of(cb[:, :2], fv)
             iscopy = np.zeros(len(P), bool)
@@ -599,7 +601,9 @@ def run_v2(a):
             scene = P[~iscopy, :3].astype(np.float64)
             scene_lat = to_lattice(scene, h, th, nc)
             scene_hz = scene[:, 2] - (pl[0] * scene[:, 0] + pl[1] * scene[:, 1] + pl[2])
-            stree = cKDTree(scene[:, :2]) if version == 3 else None
+            stree = cKDTree(scene[:, :2]) if version >= 3 else None
+            gcells = rr.GroundCells(B['points'][:, :3], rr_cfg.GROUND_CELL, int(rr_cfg.GROUND_CELL_MIN_PTS)) \
+                if version == 4 else None
             for j, c in enumerate(rec['copies']):
                 ru = c['rendered_unsparsified']
                 cloud = np.concatenate([scene, ru]); idx = [np.arange(len(scene), len(scene) + len(ru))]
@@ -614,10 +618,13 @@ def run_v2(a):
                        c['vis_share_loader'], c['n_db'], c['n_rendered'], c['n_visible'], c['p_keep'],
                        c['n_kept'], c['n_final'], cov[0], cov[1], cov[2], int((dmin > PHANTOM_M).sum()), len(fp),
                        off, d2v2, d2v1, dsc[0], dsc[1], dsc[2], dsc[3], c['instance']]
-                if version == 3:                     # D1 v3: the independent local reference (§7.2)
+                if version >= 3:                     # D1 v3: the independent local reference (§7.2)
                     near = np.asarray(stree.query_ball_point(bx[:2], float(np.hypot(bx[3], bx[4]) / 2 + 3.1)), np.int64)
                     ref, nref = rr.ground_reference(scene[near], bx)
                     row += [float(c['ground_fallback']), c['bottom'], ref, nref]
+                if version == 4:                     # D1 v4: v3's ground-cell height as the reference (§8.2)
+                    v = gcells.local(bx[0], bx[1], rr_cfg.GROUND_RADIUS)
+                    row += [float(np.percentile(v, rr_cfg.GROUND_PCT)) if len(v) >= int(rr_cfg.GROUND_MIN_CELLS) else np.nan]
                 copies.append(row)
         if k and len(dumps) < a.dump:
             dumps.append(dump_frame_v2(d, CAP, rec, head, side, cell, cfg, i))
@@ -639,10 +646,10 @@ def run_v2(a):
         aug.data_augmentor_queue = queue_rr
         np.random.seed(seed); t0 = time.perf_counter(); ds[i]; t_on = time.perf_counter() - t0
         g4.append([plat, i, t_off, t_on])
-    ncol = len(V2_COPY_COLS) + (len(V3_EXTRA_COLS) if version == 3 else 0)
+    ncol = len(V2_COPY_COLS) + {2: 0, 3: len(V3_EXTRA_COLS), 4: len(V4_EXTRA_COLS)}[version]
     res = dict(version=version, key=a.key, plat=plat, n_infos=N, frames=frames,
                copies=np.array(copies, np.float64).reshape(-1, ncol),
-               frames_rows=np.array(frows, np.float64).reshape(-1, len(V2_FRAME_COLS)),
+               frames_rows=np.array(frows, np.float64).reshape(-1, len(V2_FRAME_COLS) + (1 if version == 4 else 0)),
                g4=np.array(g4, np.float64).reshape(-1, 4), dumps=dumps, images=imgs, db_n=db.n,
                db_points=db.points_path, node=os.uname().nodename)
     pickle.dump(res, open(out / f'gate_v{version}_{a.key}.pkl', 'wb'))
@@ -658,10 +665,11 @@ def dump_frame_v2(d, CAP, rec, head, side, cell, cfg, i):
 
 def report_v2(a):
     D = Path(a.dir)
-    version = 3 if list(D.glob('gate_v3_*.pkl')) else 2
+    version = max(v for v in (2, 3, 4) if list(D.glob(f'gate_v{v}_*.pkl')))
     res = [pickle.load(open(p, 'rb')) for p in sorted(D.glob(f'gate_v{version}_*.pkl'))]
-    cols = V2_COPY_COLS + (V3_EXTRA_COLS if version == 3 else ())
-    C = {k: j for j, k in enumerate(cols)}; F = {k: j for j, k in enumerate(V2_FRAME_COLS)}
+    cols = V2_COPY_COLS + {2: (), 3: V3_EXTRA_COLS, 4: V4_EXTRA_COLS}[version]
+    C = {k: j for j, k in enumerate(cols)}
+    F = {k: j for j, k in enumerate(V2_FRAME_COLS + (('rej_zrange',) if version == 4 else ()))}
     print(f'gate v{version}')
     cp = np.concatenate([r['copies'] for r in res]); fr = np.concatenate([r['frames_rows'] for r in res])
     g4 = np.concatenate([r['g4'] for r in res])
@@ -734,8 +742,8 @@ def report_v2(a):
         print(f"{PLAT_NAME[p]}: {int(m.sum())} frames, off {g4[m, 2].sum():.1f} s, on {g4[m, 3].sum():.1f} s, ratio "
               f"{g4[m, 3].sum() / g4[m, 2].sum():.3f} (median per frame {np.median(g4[m, 3] / g4[m, 2]):.3f})")
     ratio = g4[:, 3].sum() / g4[:, 2].sum()
-    if version == 3:
-        print(f"pooled ratio {ratio:.3f} (v3: reported as cost, not deciding)")
+    if version >= 3:
+        print(f"pooled ratio {ratio:.3f} (v{version}: reported as cost, not deciding)")
     else:
         verdict['G4'] = ratio <= 1.20
         print(f"pooled ratio {ratio:.3f} -> G4 {'PASS' if verdict['G4'] else 'FAIL'}")
@@ -747,7 +755,39 @@ def report_v2(a):
         d1 &= bool(med <= 0.25 and big < 0.05)
         print(f"{PLAT_NAME[p]}: median {med:.3f} m, > 0.5 m {np.nanmean(o > 0.5):.1%}, > 1 m {big:.2%}; signed median "
               f"{np.nanmedian(cp[cp[:, C['plat']] == p, C['off_plane']]):+.3f} m")
-    if version == 3:
+    if version == 4:
+        print(f"(v2's D1 against the gate's plane is descriptive in v4: it would read {'PASS' if d1 else 'FAIL'})")
+        print('\n== D1 v4 (deciding): |copy bottom - ground-cell reference| among non-fallback copies with a reference ==')
+        d1v4 = True
+        for p in PL:
+            m = cp[:, C['plat']] == p
+            pop = m & (cp[:, C['fallback']] == 0) & np.isfinite(cp[:, C['d1v4_ref']])
+            dev = np.abs(cp[pop, C['bottom']] - cp[pop, C['d1v4_ref']])
+            med, big = (np.median(dev), np.mean(dev > 1.0)) if pop.any() else (np.nan, np.nan)
+            d1v4 &= bool(med <= 0.25 and big < 0.05)
+            zr = int(fr[fr[:, F['plat']] == p, F['rej_zrange']].sum())
+            print(f"{PLAT_NAME[p]}: population {int(pop.sum())} of {int(m.sum())} copies; median {med:.3f} m, > 0.5 m "
+                  f"{np.mean(dev > 0.5):.1%}, > 1 m {big:.2%}; signed median "
+                  f"{np.median(cp[pop, C['bottom']] - cp[pop, C['d1v4_ref']]):+.3f} m; loader fallback "
+                  f"{np.mean(cp[m, C['fallback']] > 0):.1%}, reference missing {np.mean(~np.isfinite(cp[m, C['d1v4_ref']])):.1%}; "
+                  f"z-range rejected tries {zr}; bottom range {cp[m, C['bottom']].min():.2f} .. {cp[m, C['bottom']].max():.2f} m")
+            print('| ring | copies | loader fallback | reference missing | |dev| median | > 0.5 m | > 1 m | D1 v3 (5th pct ring) |dev| median, > 1 m |')
+            print('|---|---|---|---|---|---|---|---|')
+            for lo, hi in ((0, 20), (20, 40), (40, 50), (50, 60), (60, 75.2)):
+                mm = m & (cp[:, C['r_new']] >= lo) & (cp[:, C['r_new']] < hi)
+                if not mm.any():
+                    continue
+                pp = mm & (cp[:, C['fallback']] == 0) & np.isfinite(cp[:, C['d1v4_ref']])
+                dd = np.abs(cp[pp, C['bottom']] - cp[pp, C['d1v4_ref']])
+                o3 = mm & np.isfinite(cp[:, C['d1v3_ref']])
+                d3 = np.abs(cp[o3, C['bottom']] - cp[o3, C['d1v3_ref']])
+                f = lambda a, fn: fn(a) if len(a) else np.nan
+                print(f"| {lo:g}-{hi:g} m | {int(mm.sum())} | {np.mean(cp[mm, C['fallback']] > 0):.1%} | "
+                      f"{np.mean(~np.isfinite(cp[mm, C['d1v4_ref']])):.1%} | {f(dd, np.median):.3f} m | "
+                      f"{f(dd, lambda a: np.mean(a > 0.5)):.1%} | {f(dd, lambda a: np.mean(a > 1.0)):.1%} | "
+                      f"{f(d3, np.median):.3f} m, {f(d3, lambda a: np.mean(a > 1.0)):.1%} |")
+        verdict['D1v4'] = d1v4; print(f"D1 v4 {'PASS' if d1v4 else 'FAIL'}")
+    elif version == 3:
         print(f"(v2's D1 against the gate's plane is descriptive in v3: it would read {'PASS' if d1 else 'FAIL'})")
         print('\n== D1 v3 (deciding): |copy bottom - local reference| among copies with an observed reference, per platform ==')
         d1v3 = True

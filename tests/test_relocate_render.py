@@ -844,3 +844,101 @@ def test_rr3_config_is_rr2_plus_the_v3_keys(monkeypatch):
         assert strip(r3.DATA_CONFIGS[key]) == strip(r2.DATA_CONFIGS[key])
     for k in ('MODEL', 'OPTIMIZATION', 'CLASS_NAMES', 'DATA_CONFIG_TAR'):
         assert r3[k] == r2[k]
+
+
+# ================================================================================================= RR v4 (§8)
+def ring_points(box, z, n, d_lo=0.6, d_hi=2.9, seed=0):
+    """n points at BEV distance in [d_lo, d_hi] from the box's rectangle, at heights z (scalar or array)."""
+    rng = np.random.default_rng(seed)
+    out = []
+    while len(out) < n:
+        q = R.from_box_frame(np.c_[rng.uniform(-6, 6, (1, 2)), np.zeros(1)], box)
+        d = R.footprint_distance(q[:, :2], box)[0]
+        if d_lo <= d <= d_hi:
+            out.append(q[0])
+    out = np.array(out); out[:, 2] = z
+    return out
+
+
+def test_v4_nearby_height_with_one_low_outlier_among_12():
+    b = np.array([20.0, 5.0, 0.0, 4.2, 1.8, 1.5, 0.4])
+    z = np.r_[-5.0, np.full(11, 0.3)]
+    pts = np.concatenate([ring_points(b, z, 12),
+                          R.from_box_frame(np.array([[0.0, 0, -7.0], [1.0, 0.2, -7.0]]), b),          # inside: ignored
+                          R.from_box_frame(np.array([[2.1 + 3.5, 0, -7.0], [0, 0.9 + 3.2, -7.0]]), b),  # > 3 m: ignored
+                          R.from_box_frame(np.array([[2.1 + 0.3, 0, -7.0]]), b)])                     # < 0.5 m: ignored
+    grid = R._BevGrid(pts)
+    plane = np.array([0.0, 0.0, -0.4])
+    zb, fb = R.nearby_bottom(pts, grid, b, plane)
+    assert not fb and zb == pytest.approx(np.percentile(z, 10)) and zb == pytest.approx(0.3)
+    assert np.percentile(z, 5) < -2                                                   # v3's reference quantile would not be
+    zb, fb = R.nearby_bottom(pts[:9], R._BevGrid(pts[:9]), b, plane)                 # 9 nearby points: the plane
+    assert fb and zb == pytest.approx(-0.4)
+    zb, fb = R.nearby_bottom(pts[:10], R._BevGrid(pts[:10]), b, plane)               # exactly 10: used
+    assert not fb and zb == pytest.approx(np.percentile(pts[:10, 2], 10))
+
+
+def test_v4_z_range_rule_replaces_the_attempt(tmp_path):
+    db = make_db(tmp_path, [(CAR_LOCAL, SIZE, [0.0])])
+    g = ground()
+    on = (np.abs(g[:, 0]) < 8) & (np.abs(g[:, 1] - 40) < 8)
+    g[on, 2] = 3.5                                                                    # a platform 3.5 m up around (0, 40)
+    pit = (np.abs(g[:, 0] - 40) < 8) & (np.abs(g[:, 1]) < 8)
+    g[pit, 2] = -3.0                                                                  # a pit around (40, 0)
+    d = frame(np.zeros((0, 7)), [], g)
+    rng = RngV2([40.0, np.pi / 2, 40.0, 0.0, 25.0, np.pi])
+    out, rec = run2(d, db, rng, VERSION=4, MAX_TRIES=3)
+    assert rec['version'] == 4 and rec['reject']['zrange'] == 2 and rec['n_placed'] == 1, rec['reject']
+    c = rec['copies'][0]
+    assert c['r_new'] == pytest.approx(25.0) and c['ground_fallback'] is False
+    assert abs(c['bottom'] - (-0.03)) < 1e-6 and c['bottom'] >= -2 and c['bottom'] + SIZE[2] <= 4
+    out, rec = run2(frame(np.zeros((0, 7)), [], g), db, RngV2([40.0, np.pi / 2]), VERSION=3, MAX_TRIES=1)
+    assert rec['reject']['zrange'] == 0                                               # v3 has no such rule
+
+
+def test_v4_copy_bottom_matches_the_ground_cell_reference_on_flat_ground(tmp_path):
+    db = make_db(tmp_path, [(CAR_LOCAL, SIZE, [0.0])])
+    g = ground()
+    d = frame(np.zeros((0, 7)), [], g)
+    out, rec = run2(d, db, RngV2([30.0, 1.0]), VERSION=4, MAX_TRIES=1)
+    c = rec['copies'][0]
+    ref, fb = R.local_bottom(R.GroundCells(g.astype(np.float32)), c['box'][0], c['box'][1], rec['plane'])
+    assert not fb and abs(c['bottom'] - ref) < 1e-6 and c['ground_fallback'] is False
+    far = g[np.hypot(g[:, 0], g[:, 1]) < 45]
+    out, rec = run2(frame(np.zeros((0, 7)), [], far), db, RngV2([60.0, np.pi / 2]), VERSION=4, MAX_TRIES=1)
+    assert rec['copies'][0]['ground_fallback'] is True
+    assert rec['copies'][0]['bottom'] == pytest.approx(R.plane_z(rec['plane'], 0.0, 60.0), abs=1e-9)
+
+
+def test_rr4_config_is_rr3_plus_the_v4_keys_and_v1_to_v3_unchanged(monkeypatch):
+    from pcdet.config import cfg_from_yaml_file
+    monkeypatch.chdir(ROOT / 'tools')
+    load = lambda n: cfg_from_yaml_file('cfgs/da-ieee-access/' + n, EasyDict())
+    r4 = load('centerpoint-gblobs-accum-legaldepth-rr4-nuscenes2waymo.yaml')
+    r3 = load('centerpoint-gblobs-accum-legaldepth-rr3-nuscenes2waymo.yaml')
+    r2 = load('centerpoint-gblobs-accum-legaldepth-rr2-nuscenes2waymo.yaml')
+    v1 = load('centerpoint-gblobs-accum-legaldepth-rr-nuscenes2waymo.yaml')
+    for key in ('NUSCENES_N008', 'NUSCENES_N015'):
+        e4, e3 = (c.DATA_CONFIGS[key].DATA_AUGMENTOR.AUG_CONFIG_LIST for c in (r4, r3))
+        assert e4[1:] == e3[1:] and e4[0].VERSION == 4 and e3[0].VERSION == 3
+        assert r2.DATA_CONFIGS[key].DATA_AUGMENTOR.AUG_CONFIG_LIST[0].VERSION == 2
+        assert {k: v for k, v in e4[0].items() if k != "VERSION" and not k.startswith("NEAR_")} == \
+            {k: v for k, v in e3[0].items() if k != 'VERSION'}
+        assert {k: e4[0][k] for k in e4[0] if k.startswith('NEAR_')} == dict(NEAR_D_LO=0.5, NEAR_D_HI=3.0,
+                                                                             NEAR_MIN_POINTS=10, NEAR_PCT=10.0)
+        for c in (r3, r2, v1):
+            assert not any(k.startswith('NEAR_') for k in c.DATA_CONFIGS[key].DATA_AUGMENTOR.AUG_CONFIG_LIST[0])
+        strip = lambda c: {k: v for k, v in c.items() if k != 'DATA_AUGMENTOR'}
+        assert strip(r4.DATA_CONFIGS[key]) == strip(r3.DATA_CONFIGS[key])
+    for k in ('MODEL', 'OPTIMIZATION', 'CLASS_NAMES', 'DATA_CONFIG_TAR'):
+        assert r4[k] == r3[k]
+
+
+def test_v4_hook_counts(tmp_path):
+    from pcdet.datasets.augmentor.data_augmentor import DataAugmentor
+    db = make_db(tmp_path, [(CAR_LOCAL, SIZE, [0.0])])
+    cfg = EasyDict(dict(P2, VERSION=4, NAME='relocate_render', DB_POINTS=db.points_path, DB_INDEX=db.index_path))
+    aug = pickle.loads(pickle.dumps(DataAugmentor(None, EasyDict(AUG_CONFIG_LIST=[cfg], DISABLE_AUG_LIST=[]), ['Car'])))
+    np.random.seed(3)
+    out = aug.forward(frame(np.zeros((0, 7)), [], ground()))
+    assert aug._rr_stats[0] == 1 and aug._rr_stats[1] == len(out['gt_boxes'])
