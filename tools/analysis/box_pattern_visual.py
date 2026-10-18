@@ -488,11 +488,11 @@ def az_of_col(col, conv, yaw=0.0, n_cols=W_TOP):
     return (2.0 * (n_cols - j) / n_cols - 1.0) * np.pi - yaw
 
 
-def silhouette_pixels(box, pose, inc_desc, conv, n_cols=W_TOP, margin=0.02):
+def silhouette_pixels(box, pose, inc_desc, conv, n_cols=W_TOP, margin=0.02, full=False):
     """Lattice pixels whose ray from the sensor hits the box: (pixel ids row * n_cols + col, entry range). Rows index
     `inc_desc` (descending inclinations, row 0 = highest, as lattice_pixels / top_beam_ids). The box is taken into the
     sensor's axes (pose rot: sensor -> frame) and tested with the slab method; candidates are the rows / columns within
-    `margin` rad of the corners' angles."""
+    `margin` rad of the corners' angles. full=True also returns the exit range and the entry point in the frame."""
     inc = np.asarray(inc_desc, np.float64)
     R = np.eye(3) if pose['rot'] is None else np.asarray(pose['rot'], np.float64)
     yaw = np.radians(pose['yaw_deg']) if conv == 'waymo' else 0.0
@@ -507,6 +507,8 @@ def silhouette_pixels(box, pose, inc_desc, conv, n_cols=W_TOP, margin=0.02):
     rows = np.nonzero((inc >= el.min() - margin) & (inc <= el.max() + margin))[0]
     step = np.pi / n_cols / 2
     if not len(rows) or daz.max() - daz.min() > np.pi / 2:
+        if full:
+            return np.zeros(0, np.int64), np.zeros(0), np.zeros(0), np.zeros((0, 3))
         return np.zeros(0, np.int64), np.zeros(0)
     cols = np.unique(col_of_az(az0 + np.arange(daz.min() - margin, daz.max() + margin + step, step), conv, yaw, n_cols))
     Rr, Cc = np.meshgrid(rows, cols, indexing='ij'); Rr, Cc = Rr.ravel(), Cc.ravel()
@@ -518,7 +520,66 @@ def silhouette_pixels(box, pose, inc_desc, conv, n_cols=W_TOP, margin=0.02):
     t1 = np.where(np.isfinite(t1), t1, -np.inf); t2 = np.where(np.isfinite(t2), t2, np.inf)
     tmin = np.minimum(t1, t2).max(1); tmax = np.maximum(t1, t2).min(1)
     hit = tmax >= np.maximum(tmin, 0)
-    return Rr[hit] * n_cols + Cc[hit], np.maximum(tmin[hit], 0)
+    t_in = np.maximum(tmin[hit], 0)
+    if full:
+        ent = (d[hit] * t_in[:, None]) @ R.T + pose['origin']
+        return Rr[hit] * n_cols + Cc[hit], t_in, tmax[hit], ent
+    return Rr[hit] * n_cols + Cc[hit], t_in
+
+
+def visible_mask(sil, tin, npp, inbox, occl=OCCL_M):
+    """True for silhouette pixels NOT occluded: occluded = the pixel's nearest return is not the object's and lies more
+    than occl in front of the box entry. A pixel without any return is visible (RR's / G1's rule)."""
+    up, uidx, urng = npp
+    vis = np.ones(len(sil), bool)
+    if len(up) and len(sil):
+        pos = np.clip(np.searchsorted(up, sil), 0, len(up) - 1)
+        has = up[pos] == sil
+        vis = ~(has & ~inbox[uidx[pos]] & (urng[pos] < tin - occl))
+    return vis
+
+
+BANDS4 = (0.0, 0.25, 0.5, 0.75)
+ROW_COLS = ('row', 'n_vis', 'n_hit', 'relh', 'n_pts', 'mean_val', 'n_none', 'n_behind', 'n_near')
+
+
+def row_records(sil, tin, tout, ent, vis, obj_pix, obj_val, npp, box, n_cols=W_TOP, behind_m=OCCL_M):
+    """Per row (beam) of the visible silhouette (20261018_03 §8.1), columns ROW_COLS:
+    n_vis visible pixels; n_hit of them holding >= 1 object point; relh = median over its visible pixels of the ray's entry
+    point height above the box bottom / box height (clipped to [0, 1]; a ray entering through the roof reads 1); n_pts
+    object points in that row; mean_val = mean obj_val of those points (nan if none); and the row's visible pixels WITHOUT
+    an object point, by the pixel's own nearest return: n_none (no return at all), n_behind (beyond the box exit +
+    behind_m: seen through the box), n_near (any other return)."""
+    vp, ve, vto = sil[vis], ent[vis], tout[vis]
+    if not len(vp):
+        return np.zeros((0, len(ROW_COLS)))
+    b = np.asarray(box, np.float64)
+    relh = np.clip((ve[:, 2] - (b[2] - b[5] / 2)) / b[5], 0.0, 1.0)
+    hit = np.isin(vp, obj_pix)
+    up, _, urng = npp
+    if len(up):
+        pos = np.clip(np.searchsorted(up, vp), 0, len(up) - 1)
+        has = up[pos] == vp
+        rng = np.where(has, urng[pos], np.nan)
+    else:
+        has = np.zeros(len(vp), bool); rng = np.full(len(vp), np.nan)
+    with np.errstate(invalid='ignore'):
+        far = has & (rng > vto + behind_m)
+    none, behind, near = ~hit & ~has, ~hit & far, ~hit & has & ~far
+    rows = vp // n_cols
+    ur, inv = np.unique(rows, return_inverse=True)
+    k = len(ur)
+    o = np.argsort(inv, kind='stable'); starts = np.r_[0, np.cumsum(np.bincount(inv, minlength=k))[:-1]]
+    relh_med = np.array([np.median(relh[o[s:s + n]]) for s, n in zip(starts, np.bincount(inv, minlength=k))])
+    op = np.asarray(obj_pix, np.int64); ov = np.asarray(obj_val, np.float64)
+    prow = op // n_cols; m = np.isin(prow, ur); pk = np.searchsorted(ur, prow[m])
+    n_pts = np.bincount(pk, minlength=k).astype(np.float64)
+    sv = np.bincount(pk, weights=ov[m], minlength=k)
+    with np.errstate(invalid='ignore', divide='ignore'):
+        mean_val = np.where(n_pts > 0, sv / np.maximum(n_pts, 1), np.nan)
+    return np.c_[ur, np.bincount(inv, minlength=k), np.bincount(inv, weights=hit, minlength=k), relh_med, n_pts, mean_val,
+                 np.bincount(inv, weights=none, minlength=k), np.bincount(inv, weights=behind, minlength=k),
+                 np.bincount(inv, weights=near, minlength=k)]
 
 
 def nearest_per_pixel(pix, rng):
@@ -536,12 +597,7 @@ def fill_stats(sil, tin, obj_pix_sets, npp, inbox, n_cols=W_TOP, occl=OCCL_M):
     the box entry (RR's / G1's definition). Per object point set (pixel ids): (fill = distinct visible pixels holding a
     point / visible pixels, row coverage = rows of those / rows of the visible silhouette). Returns (n_sil, n_vis,
     [(fill, rc, n_filled)] per set)."""
-    up, uidx, urng = npp
-    vis = np.ones(len(sil), bool)
-    if len(up) and len(sil):
-        pos = np.clip(np.searchsorted(up, sil), 0, len(up) - 1)
-        has = up[pos] == sil
-        vis = ~(has & ~inbox[uidx[pos]] & (urng[pos] < tin - occl))
+    vis = visible_mask(sil, tin, npp, inbox, occl)
     vp = np.unique(sil[vis])
     out = []
     for op in obj_pix_sets:
@@ -576,7 +632,7 @@ def fill_b(a):
     th, nc, h = lat['thetas'], lat['n_cols'], lat['height']
     inc_desc = np.sort(th)[::-1]
     pose = sensor_pose('rr', height=h)
-    rows, n_mismatch = [], 0
+    rows, n_mismatch, row_recs = [], 0, []
     t0 = time.time()
     for n_done, i in enumerate(g['frames']):
         CAP.clear()
@@ -603,9 +659,15 @@ def fill_b(a):
             allpix = np.r_[spix, rpix]; allrng = np.r_[srng, rrng]
             inbox = np.r_[np.zeros(len(spix), bool), np.ones(len(rpix), bool)]
             npp = nearest_per_pixel(allpix, allrng)
-            sil, tin = silhouette_pixels(c['box'], pose, inc_desc, 'rr', nc)
+            sil, tin, tout, ent = silhouette_pixels(c['box'], pose, inc_desc, 'rr', nc, full=True)
             n_sil, n_vis, ((f_r, rc_r, nf_r), (f_k, rc_k, nf_k)) = fill_stats(sil, tin, [rpix[rpix >= 0], kpix[kpix >= 0]],
                                                                               npp, inbox, nc)
+            if a.rows:                               # §8: per-row records of the render (0) and the kept points (1)
+                vis = visible_mask(sil, tin, npp, inbox)
+                for which, op in ((0, rpix[rpix >= 0]), (1, kpix[kpix >= 0])):
+                    rr_ = row_records(sil, tin, tout, ent, vis, op, np.zeros(len(op)), npp, c['box'], nc)
+                    row_recs.append(np.c_[np.tile([plat, i, j, which, c['r_new'], n_vis / max(n_sil, 1),
+                                                   float(c['box'][3])], (len(rr_), 1)), rr_])
             insil = float(np.isin(rpix, sil).mean()) if len(rpix) else np.nan            # self-check: ~1
             rows.append([plat, i, j, c['r_new'], c['p_keep'], len(ru), len(kp), n_sil, n_vis, f_r, rc_r, nf_r, f_k, rc_k,
                          nf_k, float(c['box'][3]), insil])
@@ -615,6 +677,12 @@ def fill_b(a):
     cols = ('plat', 'frame', 'j', 'r', 'p_keep', 'n_render', 'n_kept', 'n_sil', 'n_vis', 'fill_render', 'rc_render',
             'nfill_render', 'fill_kept', 'rc_kept', 'nfill_kept', 'length', 'render_in_sil')
     rows = np.array(rows, np.float64).reshape(-1, len(cols))
+    if a.rows:
+        rcols = ('plat', 'frame', 'j', 'which', 'r', 'unocc', 'length') + ROW_COLS
+        np.savez(Path(a.out) / f'rows_B_{key}.npz', rows=np.concatenate(row_recs).astype(np.float32),
+                 cols=np.array(rcols), n_mismatch=n_mismatch)
+        print(f'[fill_b] rows: {sum(len(x) for x in row_recs)} row records -> rows_B_{key}.npz', flush=True)
+        return
     np.savez(Path(a.out) / f'fill_B_{key}.npz', rows=rows, cols=np.array(cols), n_mismatch=n_mismatch, n_gate=len(gcp))
     print(f'[fill_b] self-check: rendered pixels in the silhouette, p5 / p50 '
           f'{np.round(np.nanpercentile(rows[:, -1], (5, 50)), 3).tolist()}', flush=True)
@@ -709,6 +777,336 @@ def fill_cd(a):
     np.savez(Path(a.out) / 'fill_CD.npz', rows=rows, cols=np.array(cols), miss=miss,
              n_pts_grid=wc[gi, S['n_pts']], n_vox=wc[gi, S['n_vox']])
     print(f'[fill_cd] {len(rows)} GT ({int(miss.sum())} misses) in {time.time() - t0:.0f} s', flush=True)
+
+
+def _rows_cd_frame(fi):
+    """§8: per-row records, per-box records and per-point records of one Waymo val frame (TOP first returns; the stored
+    file's RAW intensity, column 3; WaymoDataset.get_lidar applies tanh to it on load)."""
+    import torch
+    from scipy.spatial import cKDTree
+    from pcdet.datasets.waymo.waymo_rings import top_beam_ids
+    from source_coverage import in_box_indices
+    torch.set_num_threads(1)
+    f = G['frames'][fi]
+    sel = f['sel']
+    if not len(sel):
+        return fi, None
+    raw = np.load(G['data_path'] / f['seq'] / ('%04d.npy' % f['idx']))
+    n_top = int(f['counts'][0])
+    cal = G['calib'][f['seq']]
+    beam, colf, _, inc_desc, _ = top_beam_ids(raw[:n_top, :3], cal['extrinsic'], cal['inclinations'])
+    pix_all = beam * W_TOP + (np.floor(colf).astype(np.int64) % W_TOP)
+    pose = sensor_pose('waymo', extrinsic=cal['extrinsic'])
+    top = raw[:n_top, :3].astype(np.float64)
+    rng_all = np.linalg.norm(top - pose['origin'], axis=1)
+    keep = raw[:n_top, 5] == -1
+    npp = nearest_per_pixel(pix_all, rng_all)
+    P = np.ascontiguousarray(top[keep], np.float32); pk = pix_all[keep]; kidx = np.nonzero(keep)[0]
+    inten = raw[:n_top, 3][keep].astype(np.float64)
+    tree = cKDTree(P[:, :2]) if len(P) else None
+    boxes = f['gv'][sel]
+    idx = in_box_indices(P, boxes, tree)
+    R, B, Pt = [], [], []
+    for k, g in enumerate(sel):
+        gid = G['g0'][fi] + g
+        bx = boxes[k]
+        inbox = np.zeros(n_top, bool); inbox[kidx[idx[k]]] = True
+        sil, tin, tout, ent = silhouette_pixels(bx, pose, inc_desc, 'waymo', W_TOP, full=True)
+        vis = visible_mask(sil, tin, npp, inbox)
+        op, oi = pk[idx[k]], inten[idx[k]]
+        med = float(np.median(oi)) if len(oi) else np.nan
+        ov = oi / med if med > 0 else np.full(len(oi), np.nan)
+        rr_ = row_records(sil, tin, tout, ent, vis, op, ov, npp, bx, W_TOP)
+        vp = np.unique(sil[vis])
+        nf = len(np.intersect1d(np.unique(op), vp))
+        R.append(np.c_[np.full(len(rr_), gid), rr_])
+        B.append([gid, float(np.hypot(*bx[:2])), len(np.unique(sil)), len(vp), nf / len(vp) if len(vp) else np.nan, med,
+                  len(op), len(np.unique(op))])
+        zb = bx[2] - bx[5] / 2
+        Pt.append(np.c_[np.full(len(op), gid), np.clip((P[idx[k], 2] - zb) / bx[5], 0, 1), ov, oi])
+    return fi, (np.concatenate(R), np.array(B, np.float64), np.concatenate(Pt))
+
+
+def rows_cd(a):
+    """§8 over all Waymo val Vehicle GT of columns C / D in the range bins (the §7 population and geometry)."""
+    from multiprocessing import Pool
+    S = {k: j for j, k in enumerate(SC_COLS)}
+    p = pickle.load(open(PASS_PKL, 'rb'))
+    infos = pickle.load(open(TOOLS.parent / 'data/waymo/waymo_infos_val.pkl', 'rb'))
+    by_fid = {}
+    for inf in infos:
+        fid = inf['frame_id'] if 'frame_id' in inf else \
+            inf['point_cloud']['lidar_sequence'] + '_%03d' % inf['point_cloud']['sample_idx']
+        by_fid[fid] = inf
+    res = pickle.load(open(p['runs'][0][1], 'rb'))
+    fids = [r_['frame_id'] for r_ in res][:p['n_frames']]
+    del res
+    w = np.load(SC_DIR / 'waymo_val.npz'); wc = w['car']
+    ok = (wc[:, S['n_pts']] >= 1) & (wc[:, S['length']] < LONG_M) & (_bin_of(wc[:, S['r']]) >= 0)
+    frames, g0, n = [], [], 0
+    for fid in fids:
+        inf = by_fid[fid]; an = inf['annos']; names = np.asarray(an['name'])
+        gv = np.asarray(an['gt_boxes_lidar'], np.float64).reshape(len(names), -1)[:, :7][names == 'Vehicle'] \
+            if len(names) else np.zeros((0, 7))
+        frames.append(dict(seq=inf['point_cloud']['lidar_sequence'], idx=int(inf['point_cloud']['sample_idx']), gv=gv,
+                           sel=np.nonzero(ok[n:n + len(gv)])[0],
+                           counts=np.asarray(inf['num_points_of_each_lidar'], np.int64)))
+        g0.append(n); n += len(gv)
+    assert n == len(wc)
+    del infos, by_fid
+    G.update(frames=frames, g0=g0, data_path=TOOLS.parent / 'data/waymo/waymo_processed_data',
+             calib=pickle.load(open(TOP_CALIB, 'rb')))
+    tasks = [k for k in range(len(frames)) if len(frames[k]['sel'])][:a.max_frames or None]
+    R, B, Pt = [], [], []; t0 = time.time()
+    with Pool(a.workers) as pool:
+        for k, (fi, out) in enumerate(pool.imap_unordered(_rows_cd_frame, tasks, chunksize=4)):
+            if out is not None:
+                R.append(out[0].astype(np.float32)); B.append(out[1]); Pt.append(out[2].astype(np.float32))
+            if k % 1000 == 0:
+                print(f'[rows_cd] {k + 1}/{len(tasks)} frames, {time.time() - t0:.0f} s', flush=True)
+    B = np.concatenate(B); B = B[np.argsort(B[:, 0])]
+    gi = B[:, 0].astype(np.int64)
+    miss = (w['oracle_found5'].astype(bool) & ~w['ours27596_found5'].astype(bool))[gi]
+    np.savez(Path(a.out) / 'rows_CD.npz', rows=np.concatenate(R), row_cols=np.array(('gid',) + ROW_COLS), boxes=B,
+             box_cols=np.array(('gid', 'r', 'n_sil', 'n_vis', 'fill', 'med_int', 'n_pts', 'n_pix')), miss=miss,
+             points=np.concatenate(Pt), point_cols=np.array(('gid', 'relh', 'rel_int', 'int_raw')))
+    print(f'[rows_cd] {len(B)} boxes, {sum(len(x) for x in R)} rows, {sum(len(x) for x in Pt)} points, '
+          f'{time.time() - t0:.0f} s', flush=True)
+
+
+def holes_train(a):
+    """§8 label-free per-beam check on Waymo TRAIN clouds: a pixel of beam b is a hole if it holds no TOP return while
+    beams b-1 and b+1 in the same column both return within 1 m of each other in range. Frames: one random frame from each
+    of a.n_frames random TRAIN segments (numpy default_rng(SEED)). Range bin = mean horizontal range of the two neighbours
+    about the TOP. No label is read."""
+    import glob
+    from pcdet.datasets.waymo.waymo_rings import top_beam_ids
+    dp = TOOLS.parent / 'data/waymo/waymo_processed_data'
+    train = [ln.strip().replace('.tfrecord', '') for ln in open(TOOLS.parent / 'data/waymo/ImageSets/train.txt')
+             if ln.strip()]
+    rng = np.random.default_rng(SEED)
+    segs = rng.choice(len(train), a.n_frames, replace=False)
+    calib = pickle.load(open(TOP_CALIB, 'rb'))
+    cand = np.zeros((64, len(BINS))); hole = np.zeros((64, len(BINS))); dup, used = [], []
+    t0 = time.time()
+    for n_done, s in enumerate(segs):
+        seq = train[s]
+        infos = pickle.load(open(glob.glob(str(dp / seq / '*.pkl'))[0], 'rb'))
+        inf = infos[int(rng.integers(len(infos)))]
+        sidx = int(inf['point_cloud']['sample_idx'])
+        raw = np.load(dp / seq / ('%04d.npy' % sidx))
+        n_top = int(inf['num_points_of_each_lidar'][0]); cal = calib[seq]
+        beam, colf, _, inc_desc, diag = top_beam_ids(raw[:n_top, :3], cal['extrinsic'], cal['inclinations'])
+        col = np.floor(colf).astype(np.int64) % W_TOP
+        d = raw[:n_top, :3].astype(np.float64) - np.asarray(cal['extrinsic'])[:3, 3]
+        r3, rh = np.linalg.norm(d, axis=1), np.hypot(d[:, 0], d[:, 1])
+        img = np.full((64, W_TOP), np.inf); himg = np.full((64, W_TOP), np.nan)
+        o = np.argsort(-r3)                                       # the nearest return of a pixel is written last
+        img[beam[o], col[o]] = r3[o]; himg[beam[o], col[o]] = rh[o]
+        dup.append(1.0 - np.isfinite(img).sum() / max(n_top, 1))
+        up, mid, dn = img[:-2], img[1:-1], img[2:]
+        okn = np.isfinite(up) & np.isfinite(dn) & (np.abs(up - dn) < 1.0)
+        hl = okn & ~np.isfinite(mid)
+        rb = _bin_of(0.5 * (himg[:-2] + himg[2:]).ravel()).reshape(okn.shape)
+        for b in range(len(BINS)):
+            cand[1:63, b] += (okn & (rb == b)).sum(1); hole[1:63, b] += (hl & (rb == b)).sum(1)
+        used.append([s, sidx, diag['rows'], diag['max_resid_deg']])
+        if n_done % 50 == 0:
+            print(f'[holes_train] {n_done + 1}/{len(segs)} frames, {time.time() - t0:.0f} s', flush=True)
+    np.savez(Path(a.out) / 'holes_train.npz', cand=cand, hole=hole, dup=np.array(dup), used=np.array(used, np.float64))
+    print(f'[holes_train] {len(segs)} frames; pixels sharing a cell (duplicates) p50 {np.median(dup):.4f}', flush=True)
+
+
+def donor_bands(a):
+    """§8 donor side (H4), descriptive: per RR v2 donor instance (box frame, centred, 0.02 m centroid voxels), points per
+    m^2 of box surface and intensity by relative height band (side faces split in four; the roof added to the top band;
+    and ten bins). nuScenes intensity as stored in the database (0-255, voxel-averaged); relative = point / the instance's
+    median (instances with median 0 skipped for the relative value)."""
+    out = {}
+    for key in NUS_KEYS:
+        pts = np.load(DB_DIR / f'db_{key}_points.npy', mmap_mode='r')
+        ix = np.load(DB_DIR / f'db_{key}_index.npz')
+        off, cnt, size = ix['offset'], ix['count'], ix['size']
+        dens, rel, ab, d10 = [], [], [], []
+        n_skip = 0
+        for i in range(len(off)):
+            q = np.asarray(pts[off[i]:off[i] + cnt[i]], np.float64)
+            dx, dy, dz = size[i]
+            h = np.clip((q[:, 2] + dz / 2) / dz, 0, 1)
+            band = np.minimum((h * 4).astype(np.int64), 3); b10 = np.minimum((h * 10).astype(np.int64), 9)
+            area = np.full(4, 2 * (dx + dy) * dz / 4); area[3] += dx * dy
+            a10 = np.full(10, 2 * (dx + dy) * dz / 10); a10[9] += dx * dy
+            dens.append(np.bincount(band, minlength=4) / area); d10.append(np.bincount(b10, minlength=10) / a10)
+            med = np.median(q[:, 3])
+            ab.append([np.median(q[band == k, 3]) if (band == k).any() else np.nan for k in range(4)])
+            if med > 0:
+                rv = q[:, 3] / med
+                rel.append([np.median(rv[band == k]) if (band == k).any() else np.nan for k in range(4)])
+            else:
+                n_skip += 1
+        dens, d10, rel, ab = map(np.array, (dens, d10, rel, ab))
+        out[key] = dict(n=len(off), n_rel_skipped=n_skip,
+                        pts_per_m2_band_p25_50_75=np.nanpercentile(dens, (25, 50, 75), axis=0).round(0).T.tolist(),
+                        pts_per_m2_10bins_p50=np.nanmedian(d10, 0).round(0).tolist(),
+                        rel_int_band_p25_50_75=np.nanpercentile(rel, (25, 50, 75), axis=0).round(3).T.tolist(),
+                        abs_int_band_p50=np.nanmedian(ab, 0).round(2).tolist())
+        print(f'[donor_bands] {key}: {out[key]}', flush=True)
+    json.dump(out, open(Path(a.out) / 'donor_bands.json', 'w'), indent=1)
+
+
+def _spear(x, y):
+    from scipy.stats import spearmanr
+    x, y = np.asarray(x, np.float64), np.asarray(y, np.float64)
+    m = np.isfinite(x) & np.isfinite(y)
+    if m.sum() < 10:
+        return [np.nan, int(m.sum())]
+    return [round(float(spearmanr(x[m], y[m])[0]), 3), int(m.sum())]
+
+
+def _band_of(h, n=4):
+    return np.minimum((np.asarray(h, np.float64) * n).astype(np.int64), n - 1)
+
+
+def rows_report(a):
+    """§8 tables (rows.json): per range bin and population (C unoccluded = visible fraction >= 0.9, primary; C all;
+    D all; D unoccluded)."""
+    out = Path(a.out)
+    z = np.load(out / 'rows_CD.npz')
+    Rw = z['rows'].astype(np.float64); Bx = z['boxes']; miss = z['miss']; Pt = z['points'].astype(np.float64)
+    RC = {k: j for j, k in enumerate(z['row_cols'])}; BC = {k: j for j, k in enumerate(z['box_cols'])}
+    pos = np.searchsorted(Bx[:, 0], Rw[:, RC['gid']]); ppos = np.searchsorted(Bx[:, 0], Pt[:, 0])
+    assert np.array_equal(Bx[pos, 0], Rw[:, RC['gid']]) and np.array_equal(Bx[ppos, 0], Pt[:, 0])
+    unocc = Bx[:, BC['n_vis']] / np.maximum(Bx[:, BC['n_sil']], 1)
+    bbin = _bin_of(Bx[:, BC['r']])
+    pops = {'C unoccluded': unocc >= 0.9, 'C all': np.ones(len(Bx), bool), 'D all': miss, 'D unoccluded': miss & (unocc >= 0.9)}
+    hr = Rw[:, RC['n_hit']] / np.maximum(Rw[:, RC['n_vis']], 1)
+    lost = Rw[:, RC['n_hit']] == 0
+    band = _band_of(Rw[:, RC['relh']]); band10 = _band_of(Rw[:, RC['relh']], 10)
+    pband = _band_of(Pt[:, 1])
+    beam = Rw[:, RC['row']].astype(np.int64)
+    res = {}
+    dupl = 1 - Bx[:, BC['n_pix']] / np.maximum(Bx[:, BC['n_pts']], 1)
+    res['check_points_sharing_a_pixel_p50_p95'] = np.round(np.percentile(dupl[Bx[:, BC['n_pts']] > 0], (50, 95)), 4).tolist()
+    for pname, pm in pops.items():
+        res[pname] = {}
+        for b, (lo, hi) in enumerate(BINS):
+            name = f'{lo:g}-{hi:g}'
+            bm = pm & (bbin == b)
+            rm = bm[pos]; pmk = bm[ppos]
+            d = dict(n_cars=int(bm.sum()), n_rows=int(rm.sum()))
+            tb = []
+            for k in range(4):
+                m = rm & (band == k); mp = pmk & (pband == k)
+                lm = m & lost
+                e = Rw[lm][:, [RC['n_none'], RC['n_behind'], RC['n_near']]].sum(0)
+                tb.append(dict(band=f"{BANDS4[k]:.2f}-{BANDS4[k] + 0.25:.2f}", n_rows=int(m.sum()),
+                               hit_pix=round(float(Rw[m, RC['n_hit']].sum() / max(Rw[m, RC['n_vis']].sum(), 1)), 3),
+                               row_hit_mean=round(float(hr[m].mean()), 3) if m.any() else np.nan,
+                               lost=round(float(lost[m].mean()), 3) if m.any() else np.nan,
+                               row_rel_int_p50=round(float(np.nanmedian(Rw[m, RC['mean_val']])), 3) if m.any() else np.nan,
+                               point_rel_int_p50=round(float(np.nanmedian(Pt[mp, 2])), 3) if mp.any() else np.nan,
+                               point_raw_int_p50=round(float(np.nanmedian(Pt[mp, 3])), 4) if mp.any() else np.nan,
+                               lost_px_none_behind_near=np.round(e / max(e.sum(), 1), 3).tolist()))
+            d['bands'] = tb
+            d['bins10_hit_pix'] = [round(float(Rw[rm & (band10 == k), RC['n_hit']].sum() /
+                                               max(Rw[rm & (band10 == k), RC['n_vis']].sum(), 1)), 3) for k in range(10)]
+            d['bins10_lost'] = [round(float(lost[rm & (band10 == k)].mean()), 3) if (rm & (band10 == k)).any() else np.nan
+                                for k in range(10)]
+            # beams
+            bt = []
+            for bb in range(64):
+                m = rm & (beam == bb)
+                if m.sum() >= 100:
+                    bt.append([bb, int(m.sum()), Rw[m, RC['n_hit']].sum() / Rw[m, RC['n_vis']].sum(), lost[m].mean()])
+            bt = np.array(bt).reshape(-1, 4)
+            if len(bt):
+                o = np.argsort(bt[:, 2])
+                d['beams'] = dict(n_beams=len(bt), hit_pix_min_p10_p50_p90_max=np.round(
+                    [bt[:, 2].min(), *np.percentile(bt[:, 2], (10, 50, 90)), bt[:, 2].max()], 3).tolist(),
+                    worst3=[[int(bt[i, 0]), round(bt[i, 2], 3), int(bt[i, 1])] for i in o[:3]],
+                    best3=[[int(bt[i, 0]), round(bt[i, 2], 3), int(bt[i, 1])] for i in o[::-1][:3]])
+            wb = {}
+            means = {}
+            for k in range(4):
+                m = rm & (band == k)
+                rows_ = []
+                for bb in np.unique(beam[m]):
+                    mm = m & (beam == bb)
+                    if mm.sum() >= 50:
+                        v = hr[mm]; rows_.append([bb, len(v), v.mean(), v.std(ddof=1) / np.sqrt(len(v))])
+                rows_ = np.array(rows_).reshape(-1, 4)
+                if len(rows_) >= 3:
+                    mu = hr[m].mean(); zz = (rows_[:, 2] - mu) / np.maximum(rows_[:, 3], 1e-9)
+                    wb[tb[k]['band']] = dict(n_beams=len(rows_), beam_mean_p10_p90=np.round(
+                        np.percentile(rows_[:, 2], (10, 90)), 3).tolist(), share_abs_z_gt3=round(float(np.mean(np.abs(zz) > 3)), 3),
+                        worst=[int(rows_[np.argmin(rows_[:, 2]), 0]), round(float(rows_[:, 2].min()), 3)],
+                        best=[int(rows_[np.argmax(rows_[:, 2]), 0]), round(float(rows_[:, 2].max()), 3)])
+                    means[k] = dict(zip(rows_[:, 0].astype(int), rows_[:, 2]))
+            cross = {}
+            for k1, k2 in ((0, 1), (1, 2), (2, 3)):
+                if k1 in means and k2 in means:
+                    cb = sorted(set(means[k1]) & set(means[k2]))
+                    cross[f'{k1}-{k2}'] = _spear([means[k1][x] for x in cb], [means[k2][x] for x in cb])
+            d['beams_within_band'] = wb; d['beam_means_spearman_between_bands'] = cross
+            # intensity
+            m = rm & (Rw[:, RC['n_pts']] >= 1)
+            d['rho_row_relint_vs_hit'] = _spear(Rw[m, RC['mean_val']], hr[m])
+            d['rho_row_relint_vs_hit_within_band'] = [_spear(Rw[m & (band == k), RC['mean_val']], hr[m & (band == k)])
+                                                      for k in range(4)]
+            fi_, mi_ = Bx[bm, BC['fill']], Bx[bm, BC['med_int']]
+            d['rho_car_fill_vs_median_int'] = _spear(mi_, fi_)
+            okq = np.isfinite(mi_) & np.isfinite(fi_)
+            if okq.sum() >= 40:
+                qe = np.percentile(mi_[okq], (25, 50, 75)); qi = np.searchsorted(qe, mi_[okq])
+                d['car_fill_p50_by_int_quartile'] = [round(float(np.median(fi_[okq][qi == k])), 3) for k in range(4)]
+                d['int_quartile_edges'] = np.round(qe, 4).tolist()
+            res[pname][name] = d
+    # B rows
+    res['B'] = {}
+    for key in NUS_KEYS:
+        f = out / f'rows_B_{key}.npz'
+        if f.exists():
+            zb = np.load(f); res.setdefault('_B_rows', []).append(zb['rows'].astype(np.float64)); bcols = list(zb['cols'])
+    if '_B_rows' in res:
+        Bc = {k: j for j, k in enumerate(bcols)}
+        br = np.concatenate(res.pop('_B_rows'))
+        bbn = _bin_of(br[:, Bc['r']]); bband = _band_of(br[:, Bc['relh']])
+        for b, (lo, hi) in enumerate(BINS):
+            name = f'{lo:g}-{hi:g}'
+            res['B'][name] = {}
+            for which, lab in ((0, 'render'), (1, 'kept')):
+                m0 = (bbn == b) & (br[:, Bc['which']] == which) & (br[:, Bc['length']] < LONG_M)
+                res['B'][name][lab] = [dict(n_rows=int((m0 & (bband == k)).sum()),
+                                            hit_pix=round(float(br[m0 & (bband == k), Bc['n_hit']].sum() /
+                                                                max(br[m0 & (bband == k), Bc['n_vis']].sum(), 1)), 3),
+                                            lost=round(float((br[m0 & (bband == k), Bc['n_hit']] == 0).mean()), 3)
+                                            if (m0 & (bband == k)).any() else np.nan) for k in range(4)]
+    # train holes
+    f = out / 'holes_train.npz'
+    if f.exists():
+        h = np.load(f); cand, hole = h['cand'], h['hole']
+        res['holes_train'] = {'frames': int(len(h['used'])), 'dup_p50': round(float(np.median(h['dup'])), 4)}
+        rates = {}
+        for b, (lo, hi) in enumerate(BINS):
+            name = f'{lo:g}-{hi:g}'
+            ok = cand[:, b] >= 500
+            rt = np.where(ok, hole[:, b] / np.maximum(cand[:, b], 1), np.nan)
+            rates[b] = rt
+            o = np.argsort(np.where(ok, rt, -1))[::-1]
+            top5 = o[:5]
+            res['holes_train'][name] = dict(
+                candidates=int(cand[:, b].sum()), hole_rate=round(float(hole[:, b].sum() / max(cand[:, b].sum(), 1)), 4),
+                beams=int(ok.sum()), beam_rate_p10_p50_p90_max=np.round(np.nanpercentile(rt, (10, 50, 90, 100)), 4).tolist(),
+                top5=[[int(i), round(float(rt[i]), 4)] for i in top5],
+                top5_share_of_holes=round(float(hole[top5, b].sum() / max(hole[:, b].sum(), 1)), 3),
+                top5_share_of_candidates=round(float(cand[top5, b].sum() / max(cand[:, b].sum(), 1)), 3))
+        res['holes_train']['beam_rate_spearman_40-50_vs_60-75'] = _spear(rates[2], rates[4])
+        res['holes_train']['beam_rate_spearman_15-25_vs_50-60'] = _spear(rates[0], rates[3])
+    f = out / 'donor_bands.json'
+    if f.exists():
+        res['donors'] = json.load(open(f))
+    json.dump(res, open(out / 'rows.json', 'w'), indent=1, default=float)
+    print(json.dumps(res, indent=1, default=float)[:20000], flush=True)
 
 
 def fill_report(a):
@@ -1092,12 +1490,15 @@ def _csv_row(e):
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('mode', choices=['select', 'extract_a', 'extract_b', 'extract_cd', 'elev', 'plot', 'fill_b', 'fill_cd',
-                                     'fill_report'])
+                                     'fill_report', 'rows_cd', 'holes_train', 'donor_bands', 'rows_report'])
     ap.add_argument('--out', required=True)
     ap.add_argument('--key', default='NUSCENES_N008'); ap.add_argument('--workers', type=int, default=8)
     ap.add_argument('--max_frames', type=int, default=0)
+    ap.add_argument('--rows', action='store_true', help='fill_b: write the §8 per-row records instead of the §7 table')
+    ap.add_argument('--n_frames', type=int, default=200)
     a = ap.parse_args()
     t0 = time.time()
     {'select': select, 'extract_a': extract_a, 'extract_b': extract_b, 'extract_cd': extract_cd, 'elev': elev,
-     'plot': plot, 'fill_b': fill_b, 'fill_cd': fill_cd, 'fill_report': fill_report}[a.mode](a)
+     'plot': plot, 'fill_b': fill_b, 'fill_cd': fill_cd, 'fill_report': fill_report, 'rows_cd': rows_cd,
+     'holes_train': holes_train, 'donor_bands': donor_bands, 'rows_report': rows_report}[a.mode](a)
     print(f'[{a.mode}] done in {time.time() - t0:.0f} s', flush=True)

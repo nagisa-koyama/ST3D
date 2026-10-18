@@ -163,6 +163,36 @@ def test_fill_stats_occlusion_and_fill():
     assert (n_sil, n_vis, nf) == (10, 9, 3) and np.isclose(f, 3 / 9) and rc == 1.0
 
 
+def test_row_records_rows_height_and_empty_pixel_classes():
+    inc_desc = np.radians(np.linspace(2.3, -17.6, 64)); h = 2.184
+    pose = V.sensor_pose('rr', height=h)
+    b = np.array([40.0, 0.0, 0.8, 4.5, 1.9, 1.6, np.pi / 2])        # broadside, bottom on z = 0
+    sil, tin, tout, ent = V.silhouette_pixels(b, pose, inc_desc, 'rr', full=True)
+    p2, t2 = V.silhouette_pixels(b, pose, inc_desc, 'rr')
+    assert np.array_equal(sil, p2) and np.allclose(tin, t2) and np.all(tout >= tin)
+    # entry points lie on the box surface, inside its height
+    assert np.all(ent[:, 2] >= b[2] - b[5] / 2 - 1e-6) and np.all(ent[:, 2] <= b[2] + b[5] / 2 + 1e-6)
+    rows = np.unique(sil // 2650)
+    top, bot = rows.min(), rows.max()                            # highest and lowest beam crossing the car
+    obj = sil[(sil // 2650) == top]                              # the top row fully hit, others empty
+    obj_val = np.full(len(obj), 2.0)
+    # one empty pixel of the bottom row has a return far behind the box, one a return just at the box
+    bp = sil[(sil // 2650) == bot]
+    i_b = int(np.nonzero(sil == bp[0])[0][0]); i_n = int(np.nonzero(sil == bp[1])[0][0])
+    pix = np.r_[obj, bp[0], bp[1]]; rng = np.r_[np.full(len(obj), 40.0), tout[i_b] + 5.0, tin[i_n] + 0.2]
+    npp = V.nearest_per_pixel(pix, rng)
+    inbox = np.r_[np.ones(len(obj), bool), False, False]
+    vis = V.visible_mask(sil, tin, npp, inbox)
+    assert vis.all()
+    R = V.row_records(sil, tin, tout, ent, vis, obj, obj_val, npp, b)
+    C = {k: j for j, k in enumerate(V.ROW_COLS)}
+    rt = R[R[:, C['row']] == top][0]; rb = R[R[:, C['row']] == bot][0]
+    assert rt[C['n_hit']] == rt[C['n_vis']] == len(obj) and rt[C['mean_val']] == 2.0
+    assert rb[C['n_hit']] == 0 and np.isnan(rb[C['mean_val']])
+    assert (rb[C['n_behind']], rb[C['n_near']], rb[C['n_none']]) == (1, 1, rb[C['n_vis']] - 2)
+    assert rt[C['relh']] > rb[C['relh']] and 0 <= rb[C['relh']] <= 0.3
+
+
 def test_block_index_footprint_and_rows():
     k = np.array([[0, 3], [0, 3], [0, 7], [1, 7], [1, 7], [1, 7]])
     assert V.block_index(k).tolist() == [0, 1, 0, 0, 1, 2]
