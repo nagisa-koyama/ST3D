@@ -462,6 +462,91 @@ def extract_cd(a):
     print(f'[extract_cd] {len(out)} boxes, {sum(e["match"] for e in out)} match waymo_val.npz', flush=True)
 
 
+# ---------------------------------------------------------------------------------------------------------- elev
+def bottom_elevation_offset(bottom_z, r, sensor_h):
+    """Elevation of a box bottom about a sensor sensor_h above the frame's z = 0, minus the elevation it would have on
+    flat ground z = 0 at the same range (degrees). > 0: the box sits higher in the sensor's rows than on flat ground."""
+    b, r = np.asarray(bottom_z, np.float64), np.asarray(r, np.float64)
+    return np.degrees(np.arctan2(b - sensor_h, r) - np.arctan2(-sensor_h, r))
+
+
+def _q(v):
+    v = np.asarray(v, np.float64); v = v[np.isfinite(v)]
+    return [round(float(x), 2) for x in np.percentile(v, (10, 50, 90))] if len(v) else [np.nan] * 3
+
+
+def elev(a):
+    """Population check of what the panels' line 4 shows (descriptive): where the box bottoms sit in their sensor's
+    elevation, against flat ground, per range bin, for ALL RR v2 copies of the gate (bottom = the gate's own row
+    `off_plane` + the gate's least-squares plane; RR's virtual TOP at 2.184 m of the pitched nuScenes LIDAR_TOP frame,
+    +y = forward) and ALL Waymo val Vehicle GT of column C / D (bottom from the infos, TOP at its extrinsic position);
+    and how many of each copy's kept points the grid's z cut removes."""
+    from rr_gate import V2_COPY_COLS, V2_FRAME_COLS
+    C = {k: j for j, k in enumerate(V2_COPY_COLS)}; F = {k: j for j, k in enumerate(V2_FRAME_COLS)}
+    S = {k: j for j, k in enumerate(SC_COLS)}
+    out = dict(B={}, C={}, D={})
+    cps = []
+    for key in NUS_KEYS:
+        g = pickle.load(open(GATE_DIR / f'gate_v2_{key}.pkl', 'rb'))
+        cp, fr = g['copies'], g['frames_rows']
+        row_of = {int(f[F['frame']]): f for f in fr}
+        pl = np.array([row_of[int(f)] for f in cp[:, C['frame']]])
+        x, y = cp[:, C['r_new']] * np.cos(cp[:, C['phi']]), cp[:, C['r_new']] * np.sin(cp[:, C['phi']])
+        zb = cp[:, C['off_plane']] + np.tan(np.radians(pl[:, F['gp_sx']])) * x + \
+            np.tan(np.radians(pl[:, F['gp_sy']])) * y + pl[:, F['gp_z0']]
+        cps.append(np.c_[cp[:, C['plat']], cp[:, C['r_new']], y, zb, cp[:, C['n_final_g3']], cp[:, C['n_pts_grid']]])
+    cp = np.concatenate(cps)
+    dB = bottom_elevation_offset(cp[:, 3], cp[:, 1], 2.184)
+    for b, (lo, hi) in enumerate(BINS):
+        name = f'{lo:g}-{hi:g}'
+        m = (cp[:, 1] >= lo) & (cp[:, 1] < hi) & (cp[:, 4] >= 1)
+        cut = cp[m, 4] - cp[m, 5]
+        out['B'][name] = dict(
+            n=int(m.sum()), d_el_p10_50_90=_q(dB[m]), ahead=_q(dB[m & (cp[:, 2] > 0)]), behind=_q(dB[m & (cp[:, 2] < 0)]),
+            boston=_q(dB[m & (cp[:, 0] == 0)]), singapore=_q(dB[m & (cp[:, 0] == 1)]),
+            bottom_z_p10_50_90=_q(cp[m, 3]), share_copies_cut=round(float(np.mean(cut > 0)), 3),
+            share_points_cut=round(float(cut.sum() / max(cp[m, 4].sum(), 1)), 3))
+    # Waymo val GT bottoms in pass.pkl order (the frames of 20261018_01 P3)
+    p = pickle.load(open(PASS_PKL, 'rb'))
+    infos = pickle.load(open(TOOLS.parent / 'data/waymo/waymo_infos_val.pkl', 'rb'))
+    by_fid = {}
+    for inf in infos:
+        fid = inf['frame_id'] if 'frame_id' in inf else \
+            inf['point_cloud']['lidar_sequence'] + '_%03d' % inf['point_cloud']['sample_idx']
+        by_fid[fid] = inf
+    res = pickle.load(open(p['runs'][0][1], 'rb'))
+    fids = [r_['frame_id'] for r_ in res][:p['n_frames']]
+    del res
+    calib = pickle.load(open(TOP_CALIB, 'rb'))
+    boxes, tops = [], []
+    for fid in fids:
+        an = by_fid[fid]['annos']; names = np.asarray(an['name'])
+        gv = np.asarray(an['gt_boxes_lidar'], np.float64).reshape(len(names), -1)[:, :7][names == 'Vehicle']
+        boxes.append(gv)
+        tops.append(np.repeat(np.asarray(calib[by_fid[fid]['point_cloud']['lidar_sequence']]['extrinsic'])[:3, 3][None],
+                              len(gv), 0))
+    del infos, by_fid
+    bx, tp = np.concatenate(boxes), np.concatenate(tops)
+    w = np.load(SC_DIR / 'waymo_val.npz'); wc = w['car']
+    assert len(bx) == len(wc) and np.allclose(np.hypot(bx[:, 0], bx[:, 1]), wc[:, S['r']], atol=1e-3)
+    zb = bx[:, 2] - bx[:, 5] / 2 - tp[:, 2]                    # bottom relative to the TOP's height
+    rt = np.hypot(bx[:, 0] - tp[:, 0], bx[:, 1] - tp[:, 1])
+    dW = np.degrees(np.arctan2(zb, rt) - np.arctan2(-tp[:, 2], rt))
+    okC = (wc[:, S['n_pts']] >= 1) & (wc[:, S['length']] < LONG_M)
+    miss = w['oracle_found5'].astype(bool) & ~w['ours27596_found5'].astype(bool)
+    for b, (lo, hi) in enumerate(BINS):
+        name = f'{lo:g}-{hi:g}'
+        m = okC & (wc[:, S['r']] >= lo) & (wc[:, S['r']] < hi)
+        out['C'][name] = dict(n=int(m.sum()), d_el_p10_50_90=_q(dW[m]),
+                              bottom_z_p10_50_90=_q(bx[m, 2] - bx[m, 5] / 2))
+        out['D'][name] = dict(n=int((m & miss).sum()), d_el_p10_50_90=_q(dW[m & miss]),
+                              bottom_z_p10_50_90=_q(bx[m & miss, 2] - bx[m & miss, 5] / 2))
+    json.dump(out, open(Path(a.out) / 'elev.json', 'w'), indent=1)
+    for col in ('B', 'C', 'D'):
+        for name, v in out[col].items():
+            print(f'[elev] {col} {name} m: {v}', flush=True)
+
+
 # ---------------------------------------------------------------------------------------------------------- plot
 SURF, INK, INK2, MUTED = '#fcfcfb', '#0b0b0b', '#52514e', '#b4b2ab'
 C_CTX, C_ROW, C_HDL = '#d9d8d2', '#c3d3ea', '#f0a582'
@@ -529,16 +614,15 @@ def _title(e, m):
     l1 = f"{q} · {e['platform']} · {_short_frame(e)}"
     l2 = f"r {r:.1f} m · α {e['alpha']:+.0f}° · n_pts {int(n)} · n_vox {int(nv)} · n_layers {int(nl)} · ppv {ppv:.2f}"
     if e['col'] == 'A':
-        l3 = f"keyframe {m['n_key']} pts on {m['rings_key']} rings · {m['n_lags']} sweep times"
-        if m['n_key'] > m['n_key_distinct']:
-            l3 += f" · keyframe repeated ({m['n_key_distinct']} distinct)"
+        dup = f" ({m['n_key_distinct']} distinct)" if m['n_key'] > m['n_key_distinct'] else ''
+        l3 = f"keyframe {m['n_key']} pts{dup} on {m['rings_key']} rings · {m['n_lags']} sweep times"
     elif e['col'] == 'B':
         l3 = f"p {e['p_keep']:.2f} · kept {int(n)} of {m['n_unsp']} rendered · rows {m['rows_kept']} of {m['rows_unsp']}"
     else:
         l3 = f"TOP {m['n_top']} pts on {m['rows_top']} rows · other lidars {m['n_other']}"
-    l4 = f"bottom z {m['bottom_z']:+.2f} m at {m['bottom_el']:+.2f}° (flat ground {m['flat_el']:+.2f}°)"
+    l4 = f"bottom z {m['bottom_z']:+.2f} m, {m['bottom_el']:+.2f}° (flat {m['flat_el']:+.2f}°)"
     if m['n_cut']:
-        l4 += f" · {m['n_cut']} cut by the grid's z range"
+        l4 += f" · {m['n_cut']} cut by z"
     if not e.get('match', True):
         l3 += ' · NOT REPRODUCED'
     return f'{l1}\n{l2}\n{l3}\n{l4}'
@@ -621,7 +705,7 @@ def plot(a):
     for b, (lo_r, hi_r) in enumerate(BINS):
         W, H = sheet_window(lo_r)
         axh = AXW * H / W
-        top_in, title_in, xl_in, leg_in = 1.95, 1.05, 0.45, 1.0
+        top_in, title_in, xl_in, leg_in = 2.2, 1.05, 0.45, 1.0
         FH = top_in + 3 * (title_in + axh + xl_in) + leg_in
         fig = plt.figure(figsize=(FW, FH), facecolor=SURF)
         fig.text(0.5, 1 - 0.22 / FH, f'{lo_r:g}-{hi_r:g} m: one box per panel, seen from its own sensor '
@@ -632,8 +716,10 @@ def plot(a):
                  f'p25 / p50 / p75 of in-box points in a fixed-seed pool. Filled dots: in-box points on 27471\'s grid; '
                  f'open rings: in-box points the grid\'s z cut (-2 to 4 m) removes.\n'
                  f'Faint lines: Waymo TOP rows (A, B: the TRAIN-median lattice RR renders with; C, D: the segment\'s own '
-                 f'inclinations). Dashed (A): nuScenes HDL-32E rings. Grey dots: scene within {CTX_M:g} m of the box.',
-                 ha='center', va='top', fontsize=10.5, color=INK2, linespacing=1.4)
+                 f'inclinations). Dashed (A): nuScenes HDL-32E rings. Grey dots: scene within {CTX_M:g} m of the box.\n'
+                 f'Title line 4: the box bottom\'s height in its frame and its elevation; "flat" = the elevation it would '
+                 f'have on flat ground under the sensor (1.75 m for A, 2.184 m for B-D); "cut by z" = in-box points the '
+                 f'grid\'s z cut removes.', ha='center', va='top', fontsize=10.5, color=INK2, linespacing=1.4)
         x0_in, colw_in = 0.75, 4.85
         for ci, col in enumerate(COLUMNS):
             fig.text((x0_in + ci * colw_in + AXW / 2) / FW, 1 - (top_in - 0.12) / FH, COL_HEAD[col], ha='center',
@@ -711,9 +797,10 @@ def _csv_row(e):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
-    ap.add_argument('mode', choices=['select', 'extract_a', 'extract_b', 'extract_cd', 'plot'])
+    ap.add_argument('mode', choices=['select', 'extract_a', 'extract_b', 'extract_cd', 'elev', 'plot'])
     ap.add_argument('--out', required=True)
     a = ap.parse_args()
     t0 = time.time()
-    {'select': select, 'extract_a': extract_a, 'extract_b': extract_b, 'extract_cd': extract_cd, 'plot': plot}[a.mode](a)
+    {'select': select, 'extract_a': extract_a, 'extract_b': extract_b, 'extract_cd': extract_cd, 'elev': elev,
+     'plot': plot}[a.mode](a)
     print(f'[{a.mode}] done in {time.time() - t0:.0f} s', flush=True)

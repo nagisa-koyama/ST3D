@@ -110,6 +110,14 @@ def test_inbox_split_equals_the_cropped_model_input():
     assert np.array_equal(np.sort(Pxy[idx[ing]], 0), np.sort(crop(P)[ref], 0))
 
 
+def test_bottom_elevation_offset():
+    assert np.allclose(V.bottom_elevation_offset([0.0, 0.0], [20.0, 60.0], 2.184), 0.0)
+    # a bottom 60 m out, 2.6 m below flat ground (Boston's +2.29 deg pitch, behind the ego) sits ~2.5 deg lower
+    d = V.bottom_elevation_offset(-60 * np.tan(np.radians(2.29)), 60.0, 2.184)
+    assert -2.6 < d < -2.2
+    assert np.isclose(V.bottom_elevation_offset(2.184, 30.0, 2.184), np.degrees(np.arctan2(2.184, 30.0)))
+
+
 def test_block_index_footprint_and_rows():
     k = np.array([[0, 3], [0, 3], [0, 7], [1, 7], [1, 7], [1, 7]])
     assert V.block_index(k).tolist() == [0, 1, 0, 0, 1, 2]
