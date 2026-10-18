@@ -1130,3 +1130,133 @@ def test_rr5_configs_are_rr4_plus_the_v5_keys_and_v1_to_v4_unchanged(monkeypatch
             assert not any(k in e4[0] for k in new - {'VERSION'})
         for k in ('MODEL', 'OPTIMIZATION', 'CLASS_NAMES', 'DATA_CONFIG_TAR'):
             assert r5[k] == r4[k]
+
+
+# ================================================================================================= RR v6 (§10)
+def test_v6_nearby_radius_10m_outside_the_grown_footprint():
+    b = np.array([30.0, 0.0, 0.0, 4.2, 1.8, 1.5, 0.0])
+    ang = np.linspace(0, 2 * np.pi, 40, endpoint=False)
+    ring8 = np.c_[30 + 8.0 * np.cos(ang), 8.0 * np.sin(ang), np.full(40, 0.2)]       # within 10 m: used
+    ring11 = np.c_[30 + 11.0 * np.cos(ang), 11.0 * np.sin(ang), np.full(40, -3.0)]   # beyond 10 m: ignored
+    inner = np.c_[np.full(20, 30 + 2.1 + 0.3), np.linspace(-0.5, 0.5, 20), np.full(20, -3.0)]   # within 0.5 m of it: ignored
+    pts = np.concatenate([ring8, ring11, inner])
+    plane = np.array([0.0, 0.0, -1.0])
+    zb, fb = R.nearby_bottom(pts, R._BevGrid(pts), b, plane, 0.5, 3.0, 10, 10.0, radius=10.0)
+    assert not fb and zb == pytest.approx(0.2)
+    zb3, fb3 = R.nearby_bottom(pts, R._BevGrid(pts), b, plane, 0.5, 3.0, 10, 10.0)        # v4 / v5 rule: none within 3 m
+    assert fb3 and zb3 == pytest.approx(-1.0)
+    zb9, fb9 = R.nearby_bottom(ring8[:9], R._BevGrid(ring8[:9]), b, plane, 0.5, 3.0, 10, 10.0, radius=10.0)
+    assert fb9
+
+
+def test_v6_plane_over_75m_equals_ground_tilt_with_that_range():
+    import ground_tilt as GT
+    rng = np.random.default_rng(13)
+    g = rng.uniform(-80, 80, (120000, 2))
+    z = 0.03 * g[:, 1] + rng.normal(0, 0.03, len(g))
+    z[::5] += rng.uniform(0.5, 4, len(z[::5]))
+    pts = np.c_[g, z]
+    np.testing.assert_array_equal(R.lowest_per_cell(pts, 75.2), GT.lowest_per_cell(pts, rmax=75.2))
+    np.testing.assert_allclose(R.ground_plane(pts, 75.2),
+                               GT.fit_plane(GT.lowest_per_cell(pts, rmax=75.2), rng=np.random.default_rng(0))[0])
+    np.testing.assert_array_equal(R.lowest_per_cell(pts), GT.lowest_per_cell(pts))            # the 40 m default unchanged
+
+
+def test_v6_patch_shapes_flips_and_rank_transform():
+    r_ = R.intensity_rank(np.array([5.0, 1.0, 1.0, 9.0]))
+    np.testing.assert_allclose(r_, [0.75, 0.375, 0.375, 1.0])
+    v = np.random.default_rng(0).uniform(0.01, 5, 200)                 # tanh saturates to 1.0 (ties) above ~19
+    np.testing.assert_array_equal(R.intensity_rank(np.tanh(v)), R.intensity_rank(v))           # monotone-invariant
+    np.testing.assert_array_equal(R.intensity_rank(np.log(v / np.median(v))), R.intensity_rank(v))
+    sr = np.repeat(np.arange(10, 15), 8); sc = np.tile(np.arange(2646, 2654) % 2650, 5)      # wraps at the seam
+    vis = np.ones(len(sr), bool); vis[:8] = False
+    rr_, rc_ = np.array([12, 14]), np.array([2649, 1])
+    out = R.build_patch(sr, sc, vis, rr_, rc_, np.array([0.3, -0.2]), np.array([0.5, 1.0]), np.array([0.2, 0.9]),
+                        np.log(60 / 50), 2650, fixed=True)
+    X, (ri, rj), (si, sj) = out
+    assert X.shape == (6, 48, 96) and X[4].sum() == 32 and X[3].sum() == 8 and np.allclose(X[5], np.log(1.2))
+    assert (ri.tolist(), rj.tolist()) == ([2, 4], [3, 5])
+    assert X[0, 2, 3] == np.float32(0.3) and X[1, 4, 5] == 1.0 and X[2, 2, 3] == np.float32(0.2)
+    Xf, (rif, rjf), _ = R.build_patch(sr, sc, vis, rr_, rc_, np.zeros(2), np.ones(2), np.ones(2), 0.0, 2650,
+                                      flip_rows=True, flip_cols=True, fixed=True)
+    assert (rif.tolist(), rjf.tolist()) == ([2, 0], [4, 2])
+    big = R.build_patch(np.repeat(np.arange(60), 100), np.tile(np.arange(100), 60), np.ones(6000, bool), rr_, rc_,
+                        np.zeros(2), np.ones(2), np.ones(2), 0.0, 2650, fixed=True)
+    assert big is None
+    Xv, _, _ = R.build_patch(np.repeat(np.arange(61), 101), np.tile(np.arange(101), 61), np.ones(6161, bool), rr_, rc_,
+                             np.zeros(2), np.ones(2), np.ones(2), 0.0, 2650, fixed=False)
+    assert Xv.shape == (6, 64, 104)
+
+
+def test_v6_label_construction_on_a_toy_track_frame():
+    import rr_v6_unet as UN
+    sil = np.array([10 * 2650 + 5, 10 * 2650 + 6, 11 * 2650 + 5, 11 * 2650 + 6, 12 * 2650 + 5])
+    vis = np.array([True, True, True, False, True])
+    real = np.array([10 * 2650 + 6, 11 * 2650 + 6, 99])                                 # one hidden pixel has a return
+    si, sj = np.array([0, 0, 1, 1, 2]), np.array([0, 1, 0, 1, 0])
+    Y, lab = UN.patch_labels(sil, vis, real, si, sj)
+    assert Y.shape == (48, 96) and Y.sum() == 1 and Y[0, 1] == 1 and Y[1, 1] == 0 and lab.tolist() == [0, 1, 0, 1, 0]
+    occ = (np.array([5, 6]), np.array([20.0, 20.0]), np.radians(np.array([1.0, -3.0])))
+    e = UN.envelope_e(np.array([5, 6, 7, 9]), np.array([40.0, 40.0, 40.0, 40.0]), occ)
+    np.testing.assert_allclose(e[:3], np.radians([1.0, 1.0, -3.0])); assert e[3] == -np.inf
+    e2 = UN.envelope_e(np.array([5]), np.array([20.3]), occ)                           # within the 0.5 m margin: no
+    assert e2[0] == -np.inf
+
+
+def test_v6_cnn_keep_prob_bounds_no_weight_pickling_and_sentinels(tmp_path):
+    import torch
+    from pcdet.datasets.augmentor.data_augmentor import DataAugmentor
+    torch.manual_seed(0)
+    net = R._unet_class()()
+    wp = tmp_path / 'unet.pt'; torch.save(net.state_dict(), wp)
+    db = make_db_v5(tmp_path, [(np.c_[CAR_LOCAL, np.random.default_rng(0).uniform(1, 50, len(CAR_LOCAL))], SIZE, [np.pi / 2])])
+    sb = np.array([0.0, 40.0, 0.72, 4.0, 2.0, 1.5, 0.0])
+    d = scene_v2([car_surface(sb)], [sb], ['Car'], gt_classes=np.array([common_utils.IGNORE_CLASS_LABEL], np.int32),
+                 gt_scores=np.ones(1, np.float32))
+    b0 = d['gt_boxes'].copy()
+    base = dict(VERSION=6, RETURN_MODEL='cnn', CNN_WEIGHTS=str(wp), MAX_TRIES=3, PLANE_RMAX=75.2, NEAR_RADIUS=10.0)
+    out, rec = run2(d, db, RngV2([40.0, np.pi / 2] * 3), **base)
+    assert rec['n_placed'] == 0 and rec['reject']['overlap'] == 3
+    np.testing.assert_array_equal(out['gt_boxes'], b0)
+    out, rec = run2(d, db, RngV2([40.0, 3 * np.pi / 2], arr=0.0), **base)                 # u = 0 < p: every visible pixel kept
+    assert rec['n_placed'] == 1 and rec['version'] == 6, rec['reject']
+    c = rec['copies'][0]
+    assert 0 < c['p_keep'] < 1 and 0 < c['n_kept'] <= c['n_visible']     # rendered pixels outside the patch get p = 0
+    np.testing.assert_array_equal(out['gt_boxes'][0], b0[0])
+    b, xyz, rows, cols, kept = _copy_render(30.0, 1.0, 0.0)
+    sil = R.silhouette(b, TH, NC, H)
+    env = R.envelope_visibility(xyz, rows, cols, sil, TH, NC, R.Occluders(np.zeros((0, 3)), np.zeros(3), H, NC))
+    loc = np.c_[CAR_LOCAL, np.linspace(1, 9, len(CAR_LOCAL))]
+    p = R.cnn_keep_prob(loc, kept, xyz, rows, cols, b, sil, env, TH, NC, H, str(wp))
+    sp_, sr_, _ = sil
+    inbox = (rows >= sr_.min()) & (rows <= sr_.max()) & np.isin(cols, np.unique(sp_ % NC))
+    assert p.shape == (len(kept),) and np.all((p[inbox] > 0) & (p[inbox] < 1)) and np.all(p[~inbox] == 0)
+    cfg = EasyDict(dict(P2, VERSION=6, RETURN_MODEL='cnn', CNN_WEIGHTS=str(wp), NAME='relocate_render',
+                        DB_POINTS=db.points_path, DB_INDEX=db.index_path, DB_NORMALS=db.normals_path))
+    aug = DataAugmentor(None, EasyDict(AUG_CONFIG_LIST=[cfg], DISABLE_AUG_LIST=[]), ['Car'])
+    s = pickle.dumps(aug)
+    assert len(s) < 20000 and b'state_dict' not in s and wp.stat().st_size > 100000   # weights never pickled
+    assert R._load_cnn.cache_info().currsize >= 1                                      # loaded lazily in this process
+
+
+def test_rr6_configs_are_rr5a_plus_the_v6_keys_and_v1_to_v5_unchanged(monkeypatch):
+    from pcdet.config import cfg_from_yaml_file
+    monkeypatch.chdir(ROOT / 'tools')
+    load = lambda n: cfg_from_yaml_file('cfgs/da-ieee-access/' + n, EasyDict())
+    r5 = load('centerpoint-gblobs-accum-legaldepth-rr5a-nuscenes2waymo.yaml')
+    for arm in ('a', 'b'):
+        r6 = load(f'centerpoint-gblobs-accum-legaldepth-rr6{arm}-nuscenes2waymo.yaml')
+        for key in ('NUSCENES_N008', 'NUSCENES_N015'):
+            e6, e5 = (c.DATA_CONFIGS[key].DATA_AUGMENTOR.AUG_CONFIG_LIST for c in (r6, r5))
+            assert e6[1:] == e5[1:] and e6[0].VERSION == 6 and e5[0].VERSION == 5
+            assert (e6[0].PLANE_RMAX, e6[0].NEAR_RADIUS, e6[0].NEAR_D_LO, e6[0].NEAR_MIN_POINTS, e6[0].NEAR_PCT) == \
+                (75.2, 10.0, 0.5, 10, 10.0)
+            assert 'PLANE_RMAX' not in e5[0] and 'NEAR_RADIUS' not in e5[0] and e5[0].NEAR_D_HI == 3.0
+            if arm == 'a':
+                assert e6[0].RETURN_MODEL == 'physics' and e6[0].RETURN_PARAMS.endswith('v6/fit_a.npz')
+            else:
+                assert e6[0].RETURN_MODEL == 'cnn' and e6[0].CNN_WEIGHTS.endswith('v6/unet_b.pt') and 'RETURN_PARAMS' not in e6[0]
+            same = {'VERSION', 'PLANE_RMAX', 'NEAR_RADIUS', 'RETURN_MODEL', 'RETURN_PARAMS', 'CNN_WEIGHTS'}
+            assert {k: v for k, v in e6[0].items() if k not in same} == {k: v for k, v in e5[0].items() if k not in same}
+        for k in ('MODEL', 'OPTIMIZATION', 'CLASS_NAMES', 'DATA_CONFIG_TAR'):
+            assert r6[k] == r5[k]

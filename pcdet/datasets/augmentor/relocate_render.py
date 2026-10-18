@@ -478,16 +478,17 @@ GP_RMIN, GP_RMAX, GP_CELL, GP_MIN_PTS, GP_ITERS, GP_THR, GP_REFIT, GP_MAX_SLOPE,
     4.0, 40.0, 1.0, 3, 300, 0.12, 0.08, 0.2, 30
 
 
-def lowest_per_cell(pts):
+def lowest_per_cell(pts, rmax=GP_RMAX):
     """ground_tilt.lowest_per_cell(pts) (4-40 m, 1 m cells, >= 3 points, the SECOND-lowest return per cell), in the same
-    output order (cells by (floor x, floor y)), with a radix sort instead of a lexsort."""
+    output order (cells by (floor x, floor y)), with a radix sort instead of a lexsort. rmax: the outer horizontal range
+    (v6: 75.2 m, §10.1)."""
     p = np.asarray(pts)
     r = np.hypot(p[:, 0], p[:, 1])
-    p = p[(r >= GP_RMIN) & (r <= GP_RMAX)]
+    p = p[(r >= GP_RMIN) & (r <= rmax)]
     if len(p) == 0:
         return np.zeros((0, 3))
     ij = np.floor(p[:, :2] / GP_CELL).astype(np.int64)
-    off = int(np.ceil(GP_RMAX / GP_CELL)) + 1; w = 2 * off + 1
+    off = int(np.ceil(rmax / GP_CELL)) + 1; w = 2 * off + 1
     key = ((ij[:, 0] + off) * w + (ij[:, 1] + off)).astype(np.uint16 if w * w < 65536 else np.int64)
     order = np.argsort(key, kind='stable')
     k = key[order]; z = np.asarray(p[order, 2], np.float64)
@@ -543,9 +544,9 @@ def fit_plane(g, rng=None):
     return best
 
 
-def ground_plane(xyz):
+def ground_plane(xyz, rmax=GP_RMAX):
     """The frame's ground plane (a, b, c), RANSAC as ground_tilt.py, numpy default_rng(0) per frame; None if none."""
-    return fit_plane(lowest_per_cell(xyz), np.random.default_rng(0))
+    return fit_plane(lowest_per_cell(xyz, rmax), np.random.default_rng(0))
 
 
 def plane_z(plane, x, y):
@@ -723,6 +724,7 @@ def _randint(rng, n):
 
 def _params_v2(cfg):
     p = dict(DEFAULTS); p.update(DEFAULTS_V2); p.update(DEFAULTS_V3); p.update(DEFAULTS_V4); p.update(DEFAULTS_V5)
+    p.update(DEFAULTS_V6)
     p['VERSION'] = 2
     if cfg is not None:
         for k in cfg:
@@ -751,12 +753,12 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
         boxes = boxes.reshape(-1, 7)
     n_box = len(boxes); rec['n_boxes'] = n_box
     xyz = pts[:, :3]
-    plane = ground_plane(xyz)
+    plane = ground_plane(xyz, float(p['PLANE_RMAX']))
     if plane is None:
         return data_dict, rec
     rec['plane'] = np.asarray(plane, np.float64)
     version = int(p['VERSION'])
-    v3 = version in (3, 4, 5)
+    v3 = version >= 3
     rec['version'] = version if v3 else 2
     grid = _BevGrid(xyz)
     last_fb = [False]
@@ -768,11 +770,11 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
             zb, fb = local_bottom(cells, x, y, plane, p['GROUND_RADIUS'], int(p['GROUND_MIN_CELLS']), p['GROUND_PCT'])
             last_fb[0] = fb
             return zb
-    elif version in (4, 5):                         # §8: nearby points of the cloud RR receives (never copies' points)
+    elif version >= 4:                              # §8: nearby points of the cloud RR receives (never copies' points)
         def bottom_fn(x, y, yaw):
             s_ = size_now[0]
             zb, fb = nearby_bottom(xyz, grid, np.array([x, y, 0.0, s_[0], s_[1], s_[2], yaw]), plane, p['NEAR_D_LO'],
-                                   p['NEAR_D_HI'], int(p['NEAR_MIN_POINTS']), p['NEAR_PCT'])
+                                   p['NEAR_D_HI'], int(p['NEAR_MIN_POINTS']), p['NEAR_PCT'], p['NEAR_RADIUS'])
             last_fb[0] = fb
             return zb
     else:
@@ -850,7 +852,7 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
                 return sc_, r_, c_, g_, v_, x_
             ucol, inv = np.unique(rcol, return_inverse=True)
             sc, srow, scol, srng, sval, sxyz = scene_in(ucol)
-            if version == 5:                        # §9.1: the occlusion envelope replaces the visibility rule
+            if version >= 5:                        # §9.1: the occlusion envelope replaces the visibility rule
                 if occ is None:
                     occ = Occluders(xyz, plane, height, n_cols, p['OCC_H_LO'], p['OCC_H_HI'])
                 sil = silhouette(cb, thetas, n_cols, height)
@@ -928,12 +930,17 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
         ash = (ahit & (add_rng > rs[apos])) if len(add_pts) else ahit
         add_alive &= ~ash
         vis = np.zeros(len(cpix), bool); vis[order[keep_sorted]] = True        # after the 0.5 m occlusion drop
-        if version == 5:                            # §9.1: envelope removal, then the learned return model
+        if version >= 5:                            # §9.1: envelope removal, then the learned return model
             vis &= env['rend_vis']
             feats = return_features(local, kept, rxyz, cb, height, db.normals(inst), p['I_REL_CLIP'], p['COS_MIN'])
             if p['RETURN_OFF']:
                 pk, pp_ = 1.0, np.ones(len(cpix))
                 keep = vis.copy()
+            elif p['RETURN_MODEL'] == 'cnn':        # §10.3: arm (b'), the per-box U-Net
+                pp_ = cnn_keep_prob(local, kept, rxyz, rrow, rcol, cb, sil, env, thetas, n_cols, height, p['CNN_WEIGHTS'])
+                u = np.asarray(rng.uniform(0.0, 1.0, len(cpix)), np.float64)
+                keep = vis & (u < pp_)
+                pk = float(pp_[vis].mean()) if vis.any() else 0.0
             else:
                 kind, par = return_model(p['RETURN_MODEL'], p['RETURN_PARAMS'])
                 eps = float(rng.normal()) if hasattr(rng, 'normal') else 0.0
@@ -972,7 +979,7 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
                     ground_fallback=bool(last_fb[0]) if v3 else None, bottom=float(cb[2] - cb[5] / 2))
         if keep_points:
             crec['placed'] = q.copy(); crec['rendered_unsparsified'] = rxyz[vis].copy(); crec['rendered'] = rxyz[keep]
-        if version == 5:
+        if version >= 5:
             crec['vis_frac'] = env['vis_frac']; crec['n_sil'] = env['n_sil']; crec['n_sil_vis'] = env['n_sil_vis']
             if keep_points:
                 crec['sil_vis_pix'] = env['sil_vis_pix']; crec['sil_vis_relh'] = env_relh(env, sil, cb, thetas, n_cols, height)
@@ -1098,14 +1105,22 @@ def ground_reference(scene_xyz, box, d_lo=0.5, d_hi=3.0, min_points=10, pct=5.0)
 DEFAULTS_V4 = dict(NEAR_D_LO=0.5, NEAR_D_HI=3.0, NEAR_MIN_POINTS=10, NEAR_PCT=10.0)
 
 
-def nearby_bottom(xyz, grid, box, plane, d_lo=0.5, d_hi=3.0, min_points=10, pct=10.0):
-    """(bottom z, fallback?): the pct-th percentile of z of the points of xyz whose BEV distance to the box's rectangle lies
-    in (d_lo, d_hi], if there are >= min_points of them; else the plane at the box centre. grid: _BevGrid of xyz."""
+def nearby_bottom(xyz, grid, box, plane, d_lo=0.5, d_hi=3.0, min_points=10, pct=10.0, radius=None):
+    """(bottom z, fallback?): the pct-th percentile of z of the nearby points of xyz, if there are >= min_points of them;
+    else the plane at the box centre. grid: _BevGrid of xyz. Nearby: BEV distance to the box's rectangle in (d_lo, d_hi]
+    (v4 / v5), or, with `radius` (v6, §10.1 amended), within `radius` of the box's BEV centre and farther than d_lo from
+    its rectangle."""
     b = np.asarray(box, np.float64)
-    c = grid.query(bev_corners(b[None], d_hi + 0.05)[0]) if len(xyz) else np.zeros(0, np.int64)
+    if radius is None:
+        c = grid.query(bev_corners(b[None], d_hi + 0.05)[0]) if len(xyz) else np.zeros(0, np.int64)
+    else:
+        sq = np.array([[b[0] - radius, b[1] - radius], [b[0] + radius, b[1] + radius]])
+        c = grid.query(sq) if len(xyz) else np.zeros(0, np.int64)
     if len(c):
-        d = footprint_distance(np.asarray(xyz[c, :2], np.float64), b)
-        z = np.asarray(xyz[c, 2], np.float64)[(d > d_lo) & (d <= d_hi)]
+        xy = np.asarray(xyz[c, :2], np.float64)
+        d = footprint_distance(xy, b)
+        m = (d > d_lo) & ((d <= d_hi) if radius is None else (np.hypot(xy[:, 0] - b[0], xy[:, 1] - b[1]) <= radius))
+        z = np.asarray(xyz[c, 2], np.float64)[m]
         if len(z) >= min_points:
             return float(np.percentile(z, pct)), False
     return float(plane_z(plane, b[0], b[1])), True
@@ -1257,3 +1272,128 @@ def return_model(kind, path):
     if path is None:
         raise ValueError('RETURN_PARAMS is required unless RETURN_OFF')
     return kind, _load_return_model(str(path))
+
+
+# =========================================================================================================== RR v6
+# experiments_md 20261018_02 §10 (design fixed in T05 §5, experiments_md 32726f8): v5 with the nearby points to 6 m
+# (NEAR_D_HI) and the plane over 4-75.2 m (PLANE_RMAX), arm (a) refitted, arm (b') a per-box U-Net (RETURN_MODEL: cnn).
+# Reached only by VERSION: 6 (PLANE_RMAX absent = 40 m: v2-v5 unchanged).
+DEFAULTS_V6 = dict(PLANE_RMAX=GP_RMAX, CNN_WEIGHTS=None, NEAR_RADIUS=None)
+PATCH_H, PATCH_W = 48, 96
+
+
+def intensity_rank(vals):
+    """Ranks 1..n / n of vals (ties averaged): in (0, 1]."""
+    from scipy.stats import rankdata
+    v = np.asarray(vals, np.float64)
+    return rankdata(v, method='average') / max(len(v), 1) if len(v) else np.zeros(0)
+
+
+def unwrap_cols(cols, n_cols):
+    """Columns made contiguous across the 0 / n_cols seam (relative to their circular centre)."""
+    c = np.asarray(cols, np.int64)
+    if not len(c):
+        return c
+    ref = int(c[0])
+    rel = (c - ref + n_cols // 2) % n_cols - n_cols // 2
+    return rel - rel.min()
+
+
+def build_patch(sil_rows, sil_cols, sil_vis, rend_rows, rend_cols, rend_depth, rend_irank, rend_hrel, log_r,
+                n_cols, flip_rows=False, flip_cols=False, fixed=True):
+    """The (6, H, W) input patch of §10.3 and the patch positions of the rendered pixels (-1 if outside) and of the
+    silhouette pixels. Rows / columns are taken relative to the silhouette's bounding box; flip_rows / flip_cols orient an
+    ascending-row / increasing-azimuth lattice (RR) like the Waymo range image (highest row first, decreasing azimuth).
+    fixed: pad to 48 x 96 (None if larger); else pad up to multiples of 4."""
+    sr = np.asarray(sil_rows, np.int64); scol = np.asarray(sil_cols, np.int64)
+    allc = np.r_[scol, np.asarray(rend_cols, np.int64)]
+    uc = unwrap_cols(allc, n_cols)
+    suc, ruc = uc[:len(scol)], uc[len(scol):]
+    r0, r1 = int(sr.min()), int(sr.max()); c0, c1 = int(suc.min()), int(suc.max())
+    H, W = r1 - r0 + 1, c1 - c0 + 1
+    if fixed:
+        if H > PATCH_H or W > PATCH_W:
+            return None
+        Hp, Wp = PATCH_H, PATCH_W
+    else:
+        Hp, Wp = max(4, -(-H // 4) * 4), max(4, -(-W // 4) * 4)
+    def pos(rows, ucols):
+        i = np.asarray(rows, np.int64) - r0; j = np.asarray(ucols, np.int64) - c0
+        if flip_rows:
+            i = (H - 1) - i
+        if flip_cols:
+            j = (W - 1) - j
+        ok = (i >= 0) & (i < H) & (j >= 0) & (j < W)
+        return np.where(ok, i, -1), np.where(ok, j, -1)
+    si, sj = pos(sr, suc)
+    ri, rj = pos(rend_rows, ruc)
+    X = np.zeros((6, Hp, Wp), np.float32)
+    rk = ri >= 0
+    X[0, ri[rk], rj[rk]] = np.asarray(rend_depth)[rk]
+    X[1, ri[rk], rj[rk]] = np.asarray(rend_irank)[rk]
+    X[2, ri[rk], rj[rk]] = np.asarray(rend_hrel)[rk]
+    vis = np.asarray(sil_vis, bool)
+    X[3, si[~vis], sj[~vis]] = 1.0
+    X[4, si[vis], sj[vis]] = 1.0
+    X[5] = np.float32(log_r)
+    return X, (ri, rj), (si, sj)
+
+
+def _unet_class():
+    import torch
+    import torch.nn as nn
+
+    def block(i, o):
+        return nn.Sequential(nn.Conv2d(i, o, 3, padding=1), nn.ReLU(inplace=True), nn.Conv2d(o, o, 3, padding=1),
+                             nn.ReLU(inplace=True))
+
+    class UNet3(nn.Module):
+        """3-level U-Net, 32-64-128 (§10.3): per-pixel logit."""
+
+        def __init__(self, cin=6):
+            super().__init__()
+            self.e1, self.e2, self.b = block(cin, 32), block(32, 64), block(64, 128)
+            self.u2, self.d2 = nn.ConvTranspose2d(128, 64, 2, stride=2), block(128, 64)
+            self.u1, self.d1 = nn.ConvTranspose2d(64, 32, 2, stride=2), block(64, 32)
+            self.out = nn.Conv2d(32, 1, 1)
+            self.pool = nn.MaxPool2d(2)
+
+        def forward(self, x):
+            e1 = self.e1(x); e2 = self.e2(self.pool(e1)); b = self.b(self.pool(e2))
+            d2 = self.d2(torch.cat([self.u2(b), e2], 1)); d1 = self.d1(torch.cat([self.u1(d2), e1], 1))
+            return self.out(d1)[:, 0]
+    return UNet3
+
+
+@functools.lru_cache(maxsize=2)
+def _load_cnn(path):
+    """The U-Net with its weights, loaded once per process (never pickled: only the path is in the config)."""
+    import torch
+    net = _unet_class()()
+    net.load_state_dict(torch.load(path, map_location='cpu'))
+    net.eval()
+    return net
+
+
+def cnn_keep_prob(local, kept, rxyz, rrow, rcol, box, sil, env, thetas, n_cols, height, weights):
+    """§10.3: keep probability of each rendered pixel of a copy from the U-Net on its RR-lattice patch."""
+    import torch
+    loc = np.asarray(local, np.float64); b = np.asarray(box, np.float64)
+    o = np.array([0.0, 0.0, height])
+    depth = np.linalg.norm(np.asarray(rxyz, np.float64) - o, axis=1) - float(np.linalg.norm(b[:3] - o))
+    irank = intensity_rank(loc[:, 3])[kept] if loc.shape[1] > 3 else np.ones(len(kept))
+    hrel = np.clip((loc[kept, 2] + b[5] / 2) / b[5], 0.0, 1.0)
+    sp, srow, _ = sil
+    if not len(sp):
+        return np.zeros(len(kept))
+    out = build_patch(srow, sp % n_cols, env['sil_vis'], rrow, rcol, depth, irank, hrel,
+                      np.log(np.hypot(b[0], b[1]) / R_REF_M), n_cols, flip_rows=True, flip_cols=True, fixed=False)
+    X, (ri, rj), _ = out
+    net = _load_cnn(str(weights))
+    with torch.no_grad():
+        lg = net(torch.from_numpy(X[None]))[0].numpy()
+    pr = 1.0 / (1.0 + np.exp(-lg))
+    p = np.zeros(len(kept))
+    m = ri >= 0
+    p[m] = pr[ri[m], rj[m]]
+    return p

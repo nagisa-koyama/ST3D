@@ -164,7 +164,7 @@ def copies(a):
     cfg, dcfg, ds = rr_gate.build(a.cfg, a.key)
     aug = ds.data_augmentor; q0 = aug.data_augmentor_queue[0]
     rr_cfg = q0.keywords['config']; lat = q0.keywords['lattice']; db = q0.keywords['db']
-    assert int(rr_cfg.VERSION) == 5
+    assert int(rr_cfg.VERSION) >= 5
     rr_cfg['RETURN_OFF'] = True                               # §9.2: fitting copies with the return model off
     nc = lat['n_cols']
     CAP = {}
@@ -325,23 +325,34 @@ class Model:
                     log_sigma=float(self.log_sigma.detach()))
 
 
-def fit_model(cd, tgt, arm, steps=2000, seed=0, log_every=200):
-    """Fit one arm (§9.2). tgt = (hit (B x 4), lost (B x 4), fill quantiles (B x 3)) of the fit targets."""
+def fit_model(cd, tgt, arm, steps=2000, seed=0, log_every=200, converge=None, verbose=False):
+    """Fit one arm (§9.2). tgt = (hit (B x 4), lost (B x 4), fill quantiles (B x 3)) of the fit targets.
+    converge = (window, rel): stop at the first step t >= window with L(t - window) - L(t) < rel * L(t - window) (§10.2),
+    `steps` being the cap. Returns (model, [(step, loss)] every log_every and at the end); model.stop_step is set."""
     import torch
     torch.manual_seed(seed)
     m = Model(arm, seed)
     opt = torch.optim.Adam(m.params)
     th, tl, tf = (torch.as_tensor(x, dtype=torch.float64) for x in tgt)
     qs = torch.tensor([0.25, 0.5, 0.75], dtype=torch.float64)
-    hist = []
+    hist, L = [], []
+    t0 = time.time()
     for it in range(steps + 1):
         opt.zero_grad()
         loss = fit_loss(cd, m, th, tl, tf, qs)
-        if it % log_every == 0 or it == steps:
-            hist.append((it, float(loss)))
-        if it == steps:
+        L.append(float(loss))
+        stop = it == steps
+        if converge is not None and it >= converge[0] and L[it - converge[0]] - L[it] < converge[1] * L[it - converge[0]]:
+            stop = True
+        if it % log_every == 0 or stop:
+            hist.append((it, L[-1]))
+            if verbose:
+                print(f'[fit] step {it}: loss {L[-1]:.5f} ({time.time() - t0:.0f} s)', flush=True)
+        if stop:
+            m.stop_step = it
             break
         loss.backward(); opt.step()
+    m.losses = L
     return m, hist
 
 
@@ -365,7 +376,7 @@ def fit_loss(cd, m, th, tl, tf, qs):
 
 def fit(a):
     D = Path(a.dir)
-    z = np.load(D / 'targets.npz')
+    z = np.load(Path(a.targets) if a.targets else D / 'targets.npz')
     T, cols, n_fit = z['T'], [str(c) for c in z['cols']], int(z['n_fit_segments'])
     sel = (T[:, 2] >= UNOCC) & (T[:, 0] < n_fit)
     th, tl, tf, tn = target_stats(T, cols, sel)
@@ -373,12 +384,14 @@ def fit(a):
     print(f'[fit] arm {a.arm}: {int(sel.sum())} fit targets, {cd.n_copies} fitting copies, {int(cd.s_has.sum())} visible '
           f'rendered pixels in {len(cd.s_row)} visible silhouette pixels; targets per bin x band\n{tn}', flush=True)
     t0 = time.time()
-    m, hist = fit_model(cd, (th, tl, tf), a.arm, a.steps)
+    conv = (500, 0.01) if a.converge else None
+    m, hist = fit_model(cd, (th, tl, tf), a.arm, a.steps, converge=conv, verbose=True)
     par = m.export()
     np.savez(D / f'fit_{a.arm}.npz', **{k: np.asarray(v, np.float64) for k, v in par.items()})
-    np.save(D / f'fit_{a.arm}_loss.npy', np.array(hist))
-    print(f'[fit] arm {a.arm}: loss {hist[0][1]:.5f} -> {hist[-1][1]:.5f} after {a.steps} steps ({time.time() - t0:.0f} s); '
-          f'trajectory {[(i, round(l, 5)) for i, l in hist]}', flush=True)
+    np.save(D / f'fit_{a.arm}_loss.npy', np.array(m.losses))
+    print(f'[fit] arm {a.arm}: loss {hist[0][1]:.5f} -> {hist[-1][1]:.5f}, stopped at step {m.stop_step} '
+          f'({"converged: < 1% over the last 500 steps" if a.converge and m.stop_step < a.steps else "step cap"}; '
+          f'{time.time() - t0:.0f} s); trajectory {[(i, round(l, 5)) for i, l in hist]}', flush=True)
     if a.arm == 'a':
         print('[fit] arm a parameters: ' + ', '.join(f'{k} {np.round(v, 4).tolist()}' for k, v in par.items()), flush=True)
     else:
@@ -394,6 +407,8 @@ def main():
     c.add_argument('--out', required=True); c.add_argument('--max_frames', type=int, default=None)
     f = sp.add_parser('fit'); f.add_argument('--arm', required=True, choices=('a', 'b')); f.add_argument('--dir', required=True)
     f.add_argument('--steps', type=int, default=2000)
+    f.add_argument('--targets', default=None, help='targets.npz (default: <dir>/targets.npz)')
+    f.add_argument('--converge', action='store_true', help='§10.2: stop when < 1% better over 500 steps (cap --steps)')
     a = ap.parse_args()
     {'targets': targets, 'copies': copies, 'fit': fit}[a.mode](a)
 
