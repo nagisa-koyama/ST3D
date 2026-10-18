@@ -867,7 +867,7 @@ def main():
         v = int(c.DATA_CONFIGS[a.key].DATA_AUGMENTOR.AUG_CONFIG_LIST[0].get('VERSION', 1))
         run_v2(a) if v >= 2 else run(a)
     else:
-        report_v2(a) if list(Path(a.dir).glob('gate_v[23]_*.pkl')) else report(a)
+        report_v2(a) if list(Path(a.dir).glob('gate_v[234]_*.pkl')) else report(a)
 
 
 if __name__ == '__main__':
