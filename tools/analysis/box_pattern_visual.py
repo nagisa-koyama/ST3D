@@ -462,6 +462,290 @@ def extract_cd(a):
     print(f'[extract_cd] {len(out)} boxes, {sum(e["match"] for e in out)} match waymo_val.npz', flush=True)
 
 
+# ---------------------------------------------------------------------------------------------------------- fill
+# Silhouette fill (20261018_03 §7): how many of the lattice pixels whose rays hit a box hold a return of the object.
+OCCL_M = 0.5            # RR's / G1's occlusion margin: a pixel whose nearest return is outside the box and this much in front
+W_TOP = 2650
+
+
+def col_of_az(az_s, conv, yaw=0.0, n_cols=W_TOP):
+    """Lattice column of sensor-frame azimuths. 'rr': floor((az + pi) / 2 pi * n) (rerender_utils.to_lattice);
+    'waymo': the TOP range-image column floor(mod(n - (az_v / pi + 1) n / 2, n)), az_v = az_s + yaw
+    (waymo_rings.top_columns_and_elevations)."""
+    a = np.asarray(az_s, np.float64)
+    if conv == 'rr':
+        aw = np.mod(a + np.pi, 2 * np.pi) - np.pi
+        return np.clip(np.floor((aw + np.pi) / (2 * np.pi) * n_cols).astype(np.int64), 0, n_cols - 1)
+    c = np.mod(n_cols - (a + yaw) / np.pi * n_cols / 2.0 - n_cols / 2.0, n_cols)
+    return np.floor(c).astype(np.int64) % n_cols
+
+
+def az_of_col(col, conv, yaw=0.0, n_cols=W_TOP):
+    """Sensor-frame azimuth of a column's centre (the inverse of col_of_az)."""
+    j = np.asarray(col, np.float64) + 0.5
+    if conv == 'rr':
+        return j / n_cols * 2 * np.pi - np.pi
+    return (2.0 * (n_cols - j) / n_cols - 1.0) * np.pi - yaw
+
+
+def silhouette_pixels(box, pose, inc_desc, conv, n_cols=W_TOP, margin=0.02):
+    """Lattice pixels whose ray from the sensor hits the box: (pixel ids row * n_cols + col, entry range). Rows index
+    `inc_desc` (descending inclinations, row 0 = highest, as lattice_pixels / top_beam_ids). The box is taken into the
+    sensor's axes (pose rot: sensor -> frame) and tested with the slab method; candidates are the rows / columns within
+    `margin` rad of the corners' angles."""
+    inc = np.asarray(inc_desc, np.float64)
+    R = np.eye(3) if pose['rot'] is None else np.asarray(pose['rot'], np.float64)
+    yaw = np.radians(pose['yaw_deg']) if conv == 'waymo' else 0.0
+    b = np.asarray(box, np.float64)
+    c = R.T @ (b[:3] - pose['origin'])
+    ch, sh = np.cos(b[6]), np.sin(b[6])
+    Rb = R.T @ np.array([[ch, -sh, 0.0], [sh, ch, 0.0], [0.0, 0.0, 1.0]])      # box axes in the sensor frame
+    corners = (box_corners(np.r_[0.0, 0.0, 0.0, b[3:6], 0.0]) @ Rb.T) + c
+    el = np.arctan2(corners[:, 2], np.hypot(corners[:, 0], corners[:, 1]))
+    az = np.arctan2(corners[:, 1], corners[:, 0]); az0 = np.arctan2(c[1], c[0])
+    daz = np.radians(wrap_deg(np.degrees(az - az0)))
+    rows = np.nonzero((inc >= el.min() - margin) & (inc <= el.max() + margin))[0]
+    step = np.pi / n_cols / 2
+    if not len(rows) or daz.max() - daz.min() > np.pi / 2:
+        return np.zeros(0, np.int64), np.zeros(0)
+    cols = np.unique(col_of_az(az0 + np.arange(daz.min() - margin, daz.max() + margin + step, step), conv, yaw, n_cols))
+    Rr, Cc = np.meshgrid(rows, cols, indexing='ij'); Rr, Cc = Rr.ravel(), Cc.ravel()
+    phi, th = inc[Rr], az_of_col(Cc, conv, yaw, n_cols)
+    d = np.stack([np.cos(phi) * np.cos(th), np.cos(phi) * np.sin(th), np.sin(phi)], 1)
+    o = Rb.T @ (-c); u = d @ Rb; e = b[3:6] / 2
+    with np.errstate(divide='ignore', invalid='ignore'):
+        t1 = (-e - o) / u; t2 = (e - o) / u
+    t1 = np.where(np.isfinite(t1), t1, -np.inf); t2 = np.where(np.isfinite(t2), t2, np.inf)
+    tmin = np.minimum(t1, t2).max(1); tmax = np.maximum(t1, t2).min(1)
+    hit = tmax >= np.maximum(tmin, 0)
+    return Rr[hit] * n_cols + Cc[hit], np.maximum(tmin[hit], 0)
+
+
+def nearest_per_pixel(pix, rng):
+    """Per occupied pixel (sorted ids): the index and range of its nearest return (pixel < 0 ignored)."""
+    ok = np.nonzero(np.asarray(pix) >= 0)[0]
+    if not len(ok):
+        return np.zeros(0, np.int64), np.zeros(0, np.int64), np.zeros(0)
+    o = ok[np.lexsort((rng[ok], pix[ok]))]
+    first = np.r_[True, pix[o][1:] != pix[o][:-1]]
+    return pix[o[first]], o[first], rng[o[first]]
+
+
+def fill_stats(sil, tin, obj_pix_sets, npp, inbox, n_cols=W_TOP, occl=OCCL_M):
+    """Visible silhouette = silhouette minus pixels whose nearest return is NOT the object's and lies > occl in front of
+    the box entry (RR's / G1's definition). Per object point set (pixel ids): (fill = distinct visible pixels holding a
+    point / visible pixels, row coverage = rows of those / rows of the visible silhouette). Returns (n_sil, n_vis,
+    [(fill, rc, n_filled)] per set)."""
+    up, uidx, urng = npp
+    vis = np.ones(len(sil), bool)
+    if len(up) and len(sil):
+        pos = np.clip(np.searchsorted(up, sil), 0, len(up) - 1)
+        has = up[pos] == sil
+        vis = ~(has & ~inbox[uidx[pos]] & (urng[pos] < tin - occl))
+    vp = np.unique(sil[vis])
+    out = []
+    for op in obj_pix_sets:
+        f = np.intersect1d(np.unique(op), vp)
+        out.append((len(f) / len(vp) if len(vp) else np.nan,
+                    len(np.unique(f // n_cols)) / len(np.unique(vp // n_cols)) if len(vp) else np.nan, len(f)))
+    return len(np.unique(sil)), len(vp), out
+
+
+def fill_b(a):
+    """All gate v2 copies of one platform, re-rendered with the gate's config, seeds and capture (rr_gate.run_v2)."""
+    import pcdet
+    from pcdet.datasets.augmentor import relocate_render as rr
+    from pcdet.datasets.processor.point_sampler import lattice_pixels
+    from rr_gate import build, V2_COPY_COLS, PLAT_ID
+    C = {k: j for j, k in enumerate(V2_COPY_COLS)}
+    print(f'[fill_b] pcdet from {pcdet.__file__}', flush=True)
+    key = a.key; plat = PLAT_ID[key]
+    g = pickle.load(open(GATE_DIR / f'gate_v2_{key}.pkl', 'rb'))
+    gcp = g['copies']
+    cfg, dcfg, ds = build(RR2_CFG, key)
+    aug = ds.data_augmentor; q0 = aug.data_augmentor_queue[0]
+    rr_cfg = q0.keywords['config']; lat = q0.keywords['lattice']; db = q0.keywords['db']
+    assert int(rr_cfg.VERSION) == 2
+    CAP = {}
+
+    def rr_step(data_dict=None):
+        o, rec = rr.relocate_render_scene_v2(data_dict, rr_cfg, lat, db, rng=np.random, keep_points=True)
+        CAP['rec'] = rec; CAP['points'] = np.copy(o['points'])
+        return o
+    aug.data_augmentor_queue = [rr_step] + list(aug.data_augmentor_queue)[1:]
+    th, nc, h = lat['thetas'], lat['n_cols'], lat['height']
+    inc_desc = np.sort(th)[::-1]
+    pose = sensor_pose('rr', height=h)
+    rows, n_mismatch = [], 0
+    t0 = time.time()
+    for n_done, i in enumerate(g['frames']):
+        CAP.clear()
+        np.random.seed((plat * 1000003 + i) % (2 ** 31))
+        ds[i]
+        rec, P = CAP['rec'], CAP['points']
+        grow = gcp[gcp[:, C['frame']] == i]
+        if len(grow) != len(rec['copies']):
+            n_mismatch += 1
+        if not rec['copies']:
+            continue
+        iscopy = np.zeros(len(P), bool)
+        for c in rec['copies']:
+            iscopy[c['point_index']] = True
+        scene = P[~iscopy, :3]
+        spix, _, srng = lattice_pixels(scene, th, nc, h)
+        for j, c in enumerate(rec['copies']):
+            if j < len(grow) and not (abs(grow[j, C['r_new']] - c['r_new']) < 1e-6 and grow[j, C['n_final']] == c['n_final']):
+                n_mismatch += 1
+            ru = np.asarray(c['rendered_unsparsified'], np.float64)
+            kp = P[c['point_index'], :3]
+            rpix, _, rrng = lattice_pixels(ru, th, nc, h)
+            kpix, _, _ = lattice_pixels(kp, th, nc, h)
+            allpix = np.r_[spix, rpix]; allrng = np.r_[srng, rrng]
+            inbox = np.r_[np.zeros(len(spix), bool), np.ones(len(rpix), bool)]
+            npp = nearest_per_pixel(allpix, allrng)
+            sil, tin = silhouette_pixels(c['box'], pose, inc_desc, 'rr', nc)
+            n_sil, n_vis, ((f_r, rc_r, nf_r), (f_k, rc_k, nf_k)) = fill_stats(sil, tin, [rpix[rpix >= 0], kpix[kpix >= 0]],
+                                                                              npp, inbox, nc)
+            insil = float(np.isin(rpix, sil).mean()) if len(rpix) else np.nan            # self-check: ~1
+            rows.append([plat, i, j, c['r_new'], c['p_keep'], len(ru), len(kp), n_sil, n_vis, f_r, rc_r, nf_r, f_k, rc_k,
+                         nf_k, float(c['box'][3]), insil])
+        if n_done % 25 == 0:
+            print(f'[fill_b] {key} {n_done + 1}/{len(g["frames"])} frames, {len(rows)} copies, {time.time() - t0:.0f} s',
+                  flush=True)
+    cols = ('plat', 'frame', 'j', 'r', 'p_keep', 'n_render', 'n_kept', 'n_sil', 'n_vis', 'fill_render', 'rc_render',
+            'nfill_render', 'fill_kept', 'rc_kept', 'nfill_kept', 'length', 'render_in_sil')
+    rows = np.array(rows, np.float64).reshape(-1, len(cols))
+    np.savez(Path(a.out) / f'fill_B_{key}.npz', rows=rows, cols=np.array(cols), n_mismatch=n_mismatch, n_gate=len(gcp))
+    print(f'[fill_b] self-check: rendered pixels in the silhouette, p5 / p50 '
+          f'{np.round(np.nanpercentile(rows[:, -1], (5, 50)), 3).tolist()}', flush=True)
+    print(f'[fill_b] {key}: {len(rows)} copies (gate {len(gcp)}), frames or copies differing from the gate: {n_mismatch}',
+          flush=True)
+
+
+G = {}
+
+
+def _fill_cd_frame(fi):
+    import torch
+    from scipy.spatial import cKDTree
+    from pcdet.datasets.waymo.waymo_rings import top_beam_ids
+    from source_coverage import in_box_indices
+    torch.set_num_threads(1)
+    f = G['frames'][fi]
+    sel = f['sel']
+    if not len(sel):
+        return fi, []
+    raw = np.load(G['data_path'] / f['seq'] / ('%04d.npy' % f['idx']))
+    n_top = int(f['counts'][0])
+    cal = G['calib'][f['seq']]
+    beam, colf, _, inc_desc, _ = top_beam_ids(raw[:n_top, :3], cal['extrinsic'], cal['inclinations'])
+    pix_all = beam * W_TOP + (np.floor(colf).astype(np.int64) % W_TOP)
+    pose = sensor_pose('waymo', extrinsic=cal['extrinsic'])
+    top = raw[:n_top, :3].astype(np.float64)
+    rng_all = np.linalg.norm(top - pose['origin'], axis=1)
+    keep = raw[:n_top, 5] == -1                                # evaluated cloud: no-label-zone points dropped
+    npp = nearest_per_pixel(pix_all, rng_all)                  # occlusion from every TOP return (first returns)
+    P = np.ascontiguousarray(top[keep], np.float32); pk = pix_all[keep]; kidx = np.nonzero(keep)[0]
+    tree = cKDTree(P[:, :2]) if len(P) else None
+    boxes = f['gv'][sel]
+    idx = in_box_indices(P, boxes, tree)
+    out = []
+    for k, g in enumerate(sel):
+        inbox = np.zeros(n_top, bool); inbox[kidx[idx[k]]] = True
+        sil, tin = silhouette_pixels(boxes[k], pose, inc_desc, 'waymo', W_TOP)
+        n_sil, n_vis, ((fl, rc, nf),) = fill_stats(sil, tin, [pk[idx[k]]], npp, inbox, W_TOP)
+        insil = float(np.isin(pk[idx[k]], sil).mean()) if len(idx[k]) else np.nan     # self-check: ~1
+        out.append([G['g0'][fi] + g, float(np.hypot(*boxes[k][:2])), len(idx[k]), n_sil, n_vis, fl, rc, nf, insil])
+    return fi, out
+
+
+def fill_cd(a):
+    """All Waymo val Vehicle GT of columns C / D in the range bins: silhouette from the segment's own inclinations, its
+    TOP extrinsic and the range-image columns; rows of the points from the stored row order (waymo_rings.top_beam_ids);
+    first returns (the processed files hold the first return only)."""
+    from multiprocessing import Pool
+    S = {k: j for j, k in enumerate(SC_COLS)}
+    p = pickle.load(open(PASS_PKL, 'rb'))
+    infos = pickle.load(open(TOOLS.parent / 'data/waymo/waymo_infos_val.pkl', 'rb'))
+    by_fid = {}
+    for inf in infos:
+        fid = inf['frame_id'] if 'frame_id' in inf else \
+            inf['point_cloud']['lidar_sequence'] + '_%03d' % inf['point_cloud']['sample_idx']
+        by_fid[fid] = inf
+    res = pickle.load(open(p['runs'][0][1], 'rb'))
+    fids = [r_['frame_id'] for r_ in res][:p['n_frames']]
+    del res
+    w = np.load(SC_DIR / 'waymo_val.npz'); wc = w['car']
+    rb = _bin_of(wc[:, S['r']])
+    ok = (wc[:, S['n_pts']] >= 1) & (wc[:, S['length']] < LONG_M) & (rb >= 0)
+    frames, g0 = [], []
+    n = 0
+    for fid in fids:
+        inf = by_fid[fid]; an = inf['annos']; names = np.asarray(an['name'])
+        gv = np.asarray(an['gt_boxes_lidar'], np.float64).reshape(len(names), -1)[:, :7][names == 'Vehicle'] \
+            if len(names) else np.zeros((0, 7))
+        sel = np.nonzero(ok[n:n + len(gv)])[0]
+        frames.append(dict(seq=inf['point_cloud']['lidar_sequence'], idx=int(inf['point_cloud']['sample_idx']), gv=gv,
+                           sel=sel, counts=np.asarray(inf['num_points_of_each_lidar'], np.int64)))
+        g0.append(n); n += len(gv)
+    assert n == len(wc)
+    del infos, by_fid
+    G.update(frames=frames, g0=g0, data_path=TOOLS.parent / 'data/waymo/waymo_processed_data',
+             calib=pickle.load(open(TOP_CALIB, 'rb')))
+    tasks = [k for k in range(len(frames)) if len(frames[k]['sel'])][:a.max_frames or None]
+    print(f'[fill_cd] {len(tasks)} frames, {int(ok.sum())} GT in the bins', flush=True)
+    rows = []; t0 = time.time()
+    with Pool(a.workers) as pool:
+        for k, (fi, out) in enumerate(pool.imap_unordered(_fill_cd_frame, tasks, chunksize=4)):
+            rows += out
+            if k % 500 == 0:
+                print(f'[fill_cd] {k + 1}/{len(tasks)} frames, {len(rows)} GT, {time.time() - t0:.0f} s', flush=True)
+    rows = np.array(sorted(rows), np.float64).reshape(-1, 9)
+    gi = rows[:, 0].astype(np.int64)
+    miss = (w['oracle_found5'].astype(bool) & ~w['ours27596_found5'].astype(bool))[gi]
+    cols = ('g', 'r', 'n_top_inbox', 'n_sil', 'n_vis', 'fill', 'rc', 'nfill', 'pts_in_sil')
+    print(f'[fill_cd] self-check: in-box TOP points whose pixel is in the silhouette, p5 / p50 '
+          f'{np.round(np.nanpercentile(rows[:, 8], (5, 50)), 3).tolist()}', flush=True)
+    np.savez(Path(a.out) / 'fill_CD.npz', rows=rows, cols=np.array(cols), miss=miss,
+             n_pts_grid=wc[gi, S['n_pts']], n_vox=wc[gi, S['n_vox']])
+    print(f'[fill_cd] {len(rows)} GT ({int(miss.sum())} misses) in {time.time() - t0:.0f} s', flush=True)
+
+
+def fill_report(a):
+    out = Path(a.out)
+    B = [np.load(out / f'fill_B_{k}.npz') for k in NUS_KEYS]
+    bc = {k: j for j, k in enumerate(B[0]['cols'])}
+    b = np.concatenate([x['rows'] for x in B])
+    for x, k in zip(B, NUS_KEYS):
+        print(f'[fill_report] {k}: {len(x["rows"])} copies of {int(x["n_gate"])} gate rows, mismatches {int(x["n_mismatch"])}')
+    cd = np.load(out / 'fill_CD.npz'); cc = {k: j for j, k in enumerate(cd['cols'])}
+    w = cd['rows']; miss = cd['miss']
+
+    def q(v):
+        v = np.asarray(v, np.float64); v = v[np.isfinite(v)]
+        return [round(float(x), 3) for x in np.percentile(v, (25, 50, 75))] if len(v) else [np.nan] * 3
+    table = {}
+    for lo, hi in BINS:
+        name = f'{lo:g}-{hi:g}'
+        mb = (b[:, bc['r']] >= lo) & (b[:, bc['r']] < hi) & (b[:, bc['n_vis']] > 0) & (b[:, bc['length']] < LONG_M)
+        mw = (w[:, cc['r']] >= lo) & (w[:, cc['r']] < hi) & (w[:, cc['n_vis']] > 0)
+        uf = np.where(w[:, cc['n_sil']] > 0, w[:, cc['n_vis']] / np.maximum(w[:, cc['n_sil']], 1), np.nan)
+        ub = b[:, bc['n_vis']] / np.maximum(b[:, bc['n_sil']], 1)
+        rows = {
+            'B render': dict(n=int(mb.sum()), fill=q(b[mb, bc['fill_render']]), rc=q(b[mb, bc['rc_render']]), unocc=q(ub[mb])),
+            'B kept': dict(n=int(mb.sum()), fill=q(b[mb, bc['fill_kept']]), rc=q(b[mb, bc['rc_kept']]), unocc=q(ub[mb])),
+        }
+        for lab, m in (('C all', mw), ('C unoccluded', mw & (uf >= 0.9)), ('D all', mw & miss),
+                       ('D unoccluded', mw & miss & (uf >= 0.9))):
+            rows[lab] = dict(n=int(m.sum()), fill=q(w[m, cc['fill']]), rc=q(w[m, cc['rc']]), unocc=q(uf[m]))
+        br, cu = rows['B render']['fill'][1], rows['C unoccluded']['fill'][1]
+        rows['ray_drop_1_minus_Cunocc_over_Brender_medians'] = round(1 - cu / br, 3) if br else np.nan
+        table[name] = rows
+        for lab, v in rows.items():
+            print(f'[fill_report] {name} m {lab}: {v}', flush=True)
+    json.dump(table, open(out / 'fill.json', 'w'), indent=1)
+
+
 # ---------------------------------------------------------------------------------------------------------- elev
 def bottom_elevation_offset(bottom_z, r, sensor_h):
     """Elevation of a box bottom about a sensor sensor_h above the frame's z = 0, minus the elevation it would have on
@@ -798,10 +1082,13 @@ def _csv_row(e):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
-    ap.add_argument('mode', choices=['select', 'extract_a', 'extract_b', 'extract_cd', 'elev', 'plot'])
+    ap.add_argument('mode', choices=['select', 'extract_a', 'extract_b', 'extract_cd', 'elev', 'plot', 'fill_b', 'fill_cd',
+                                     'fill_report'])
     ap.add_argument('--out', required=True)
+    ap.add_argument('--key', default='NUSCENES_N008'); ap.add_argument('--workers', type=int, default=8)
+    ap.add_argument('--max_frames', type=int, default=0)
     a = ap.parse_args()
     t0 = time.time()
     {'select': select, 'extract_a': extract_a, 'extract_b': extract_b, 'extract_cd': extract_cd, 'elev': elev,
-     'plot': plot}[a.mode](a)
+     'plot': plot, 'fill_b': fill_b, 'fill_cd': fill_cd, 'fill_report': fill_report}[a.mode](a)
     print(f'[{a.mode}] done in {time.time() - t0:.0f} s', flush=True)

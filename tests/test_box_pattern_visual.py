@@ -118,6 +118,51 @@ def test_bottom_elevation_offset():
     assert np.isclose(V.bottom_elevation_offset(2.184, 30.0, 2.184), np.degrees(np.arctan2(2.184, 30.0)))
 
 
+def test_silhouette_pixels_equal_the_gate_silhouette_on_the_rr_lattice():
+    from lattice_sampler_precheck import silhouette
+    inc_desc = np.radians(np.linspace(2.3, -17.6, 64)); h = 2.184
+    pose = V.sensor_pose('rr', height=h)
+    for b in ([45.0, 12.0, 0.8, 4.6, 1.9, 1.6, 0.4], [-30.0, -20.0, -0.5, 4.2, 1.8, 1.5, 2.9], [0.5, 61.0, 1.2, 4.8, 2.0, 1.7, -1.2]):
+        b = np.array(b)
+        p1, t1 = V.silhouette_pixels(b, pose, inc_desc, 'rr')
+        p2, _, t2 = silhouette(b, inc_desc, hs=h, n_cols=2650)
+        o1, o2 = np.argsort(p1), np.argsort(p2)
+        assert len(p1) > 20 and np.array_equal(p1[o1], p2[o2]) and np.allclose(t1[o1], t2[o2])
+
+
+def test_silhouette_pixels_waymo_convention_matches_the_points_pixel():
+    from pcdet.datasets.waymo.waymo_rings import top_columns_and_elevations
+    E = np.eye(4); E[:3, :3] = _rot(np.radians(148.0), np.radians(0.3)); E[:3, 3] = [1.43, 0.0, 2.184]
+    pose = V.sensor_pose('waymo', extrinsic=E)
+    inc_desc = np.radians(np.linspace(2.3, -17.6, 64))
+    b = np.array([38.0, -14.0, 0.75, 4.5, 1.9, 1.5, 0.7])
+    pix, tin = V.silhouette_pixels(b, pose, inc_desc, 'waymo')
+    assert len(pix) > 20
+    yaw = np.radians(148.0)
+    for k in (0, len(pix) // 2, len(pix) - 1):
+        row, col = divmod(int(pix[k]), 2650)
+        az_s = V.az_of_col(col, 'waymo', yaw); el = inc_desc[row]
+        ds = np.array([np.cos(el) * np.cos(az_s), np.cos(el) * np.sin(az_s), np.sin(el)])
+        pv = (E[:3, :3] @ (ds * (tin[k] + 0.02)) + E[:3, 3])[None]           # just inside the box, on that ray
+        cf, e = top_columns_and_elevations(pv, E)
+        assert int(np.floor(cf[0])) == col and abs(e[0] - el) < 1e-9
+        lb = b.copy(); assert V.footprint_distance(pv[:, :2], lb)[0] == 0.0
+    assert np.array_equal(V.col_of_az(V.az_of_col(np.arange(2650), 'waymo', yaw), 'waymo', yaw), np.arange(2650))
+    assert np.array_equal(V.col_of_az(V.az_of_col(np.arange(2650), 'rr'), 'rr'), np.arange(2650))
+
+
+def test_fill_stats_occlusion_and_fill():
+    W = 100
+    sil = np.array([5 * W + c for c in range(10)]); tin = np.full(10, 40.0)
+    scene_pix = np.array([5 * W + 0, 5 * W + 1, 5 * W + 2]); scene_rng = np.array([39.0, 39.7, 45.0])
+    obj_pix = np.array([5 * W + 1, 5 * W + 2, 5 * W + 3, 5 * W + 3, 6 * W + 0])    # last one outside the silhouette
+    pix = np.r_[scene_pix, obj_pix]; rng = np.r_[scene_rng, np.full(5, 40.2)]
+    inbox = np.r_[np.zeros(3, bool), np.ones(5, bool)]
+    n_sil, n_vis, ((f, rc, nf),) = V.fill_stats(sil, tin, [obj_pix], V.nearest_per_pixel(pix, rng), inbox, W)
+    # pixel 0 occluded (39.0 < 40 - 0.5); pixel 1's scene return is only 0.3 m in front: visible; pixel 2's is behind
+    assert (n_sil, n_vis, nf) == (10, 9, 3) and np.isclose(f, 3 / 9) and rc == 1.0
+
+
 def test_block_index_footprint_and_rows():
     k = np.array([[0, 3], [0, 3], [0, 7], [1, 7], [1, 7], [1, 7]])
     assert V.block_index(k).tolist() == [0, 1, 0, 0, 1, 2]
