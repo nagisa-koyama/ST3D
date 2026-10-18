@@ -731,15 +731,24 @@ def fill_report(a):
         mw = (w[:, cc['r']] >= lo) & (w[:, cc['r']] < hi) & (w[:, cc['n_vis']] > 0)
         uf = np.where(w[:, cc['n_sil']] > 0, w[:, cc['n_vis']] / np.maximum(w[:, cc['n_sil']], 1), np.nan)
         ub = b[:, bc['n_vis']] / np.maximum(b[:, bc['n_sil']], 1)
-        rows = {
-            'B render': dict(n=int(mb.sum()), fill=q(b[mb, bc['fill_render']]), rc=q(b[mb, bc['rc_render']]), unocc=q(ub[mb])),
-            'B kept': dict(n=int(mb.sum()), fill=q(b[mb, bc['fill_kept']]), rc=q(b[mb, bc['rc_kept']]), unocc=q(ub[mb])),
+        bs = np.maximum(b[:, bc['n_sil']], 1); ws = np.maximum(w[:, cc['n_sil']], 1)
+        rows = {      # full = distinct filled visible pixels / ALL silhouette pixels (occlusion included)
+            'B render': dict(n=int(mb.sum()), fill=q(b[mb, bc['fill_render']]), rc=q(b[mb, bc['rc_render']]), unocc=q(ub[mb]),
+                             full=q(b[mb, bc['nfill_render']] / bs[mb])),
+            'B kept': dict(n=int(mb.sum()), fill=q(b[mb, bc['fill_kept']]), rc=q(b[mb, bc['rc_kept']]), unocc=q(ub[mb]),
+                           full=q(b[mb, bc['nfill_kept']] / bs[mb])),
         }
         for lab, m in (('C all', mw), ('C unoccluded', mw & (uf >= 0.9)), ('D all', mw & miss),
                        ('D unoccluded', mw & miss & (uf >= 0.9))):
-            rows[lab] = dict(n=int(m.sum()), fill=q(w[m, cc['fill']]), rc=q(w[m, cc['rc']]), unocc=q(uf[m]))
+            rows[lab] = dict(n=int(m.sum()), fill=q(w[m, cc['fill']]), rc=q(w[m, cc['rc']]), unocc=q(uf[m]),
+                             full=q(w[m, cc['nfill']] / ws[m]))
         br, cu = rows['B render']['fill'][1], rows['C unoccluded']['fill'][1]
         rows['ray_drop_1_minus_Cunocc_over_Brender_medians'] = round(1 - cu / br, 3) if br else np.nan
+        fr, fu, fa = rows['B render']['full'][1], rows['C unoccluded']['full'][1], rows['C all']['full'][1]
+        rows['full_chain_medians'] = dict(
+            ray_drop=round(1 - fu / fr, 3), occlusion_partiality=round(1 - fa / fu, 3),
+            sparsifier=round(1 - rows['B kept']['full'][1] / fr, 3), B_kept_over_C_all=round(rows['B kept']['full'][1] / fa, 3),
+            share_C_unoccluded=round(rows['C unoccluded']['n'] / max(rows['C all']['n'], 1), 3))
         table[name] = rows
         for lab, v in rows.items():
             print(f'[fill_report] {name} m {lab}: {v}', flush=True)
