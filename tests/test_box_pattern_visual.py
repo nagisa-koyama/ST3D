@@ -97,6 +97,19 @@ def test_pick_quantile_boxes_fixed_seed_nearest_distinct():
     assert n3 == 2 and len(i3) == 2
 
 
+def test_inbox_split_equals_the_cropped_model_input():
+    from source_coverage import crop, in_box_indices
+    rng = np.random.default_rng(3)
+    P = np.c_[rng.uniform(60, 70, 4000), rng.uniform(-5, 5, 4000), rng.uniform(-3.5, 0.5, 4000)].astype(np.float32)
+    P[:5, 0] = 80.0                                            # outside the range in x
+    box = np.array([65.0, 0.0, -1.8, 4.5, 2.0, 1.6, 0.3])     # straddles the grid's z floor at -2 m
+    Pxy = np.ascontiguousarray(P[V.xy_mask(P)], np.float32)
+    idx, ing = V._inbox_split(Pxy, box)
+    ref = in_box_indices(crop(P), box[None])[0]
+    assert (~ing).sum() > 0 and ing.sum() == len(ref)
+    assert np.array_equal(np.sort(Pxy[idx[ing]], 0), np.sort(crop(P)[ref], 0))
+
+
 def test_block_index_footprint_and_rows():
     k = np.array([[0, 3], [0, 3], [0, 7], [1, 7], [1, 7], [1, 7]])
     assert V.block_index(k).tolist() == [0, 1, 0, 0, 1, 2]

@@ -274,13 +274,34 @@ def _context(P, box, exclude):
     return np.ascontiguousarray(P[m, :3], np.float32)
 
 
+def xy_mask(xyz):
+    """The range mask in x, y only (the grid's z cut is applied separately, so in-box points it removes can be shown)."""
+    from source_coverage import PCR
+    x = np.asarray(xyz)
+    return (x[:, 0] >= PCR[0]) & (x[:, 0] < PCR[3]) & (x[:, 1] >= PCR[1]) & (x[:, 1] < PCR[4])
+
+
+def z_in_grid(xyz):
+    from source_coverage import PCR
+    z = np.asarray(xyz)[:, 2]
+    return (z >= PCR[2]) & (z < PCR[5])
+
+
+def _inbox_split(P3xy, box):
+    """In-box points of the x, y-masked cloud and which of them pass the grid's z cut. The in-box test is per point, so
+    the in-grid subset equals the in-box points of the fully cropped cloud (the model input)."""
+    from source_coverage import in_box_indices
+    idx = in_box_indices(P3xy, np.asarray(box)[None])[0]
+    return idx, z_in_grid(P3xy[idx])
+
+
 # ------------------------------------------------------------------------------------------------------ extract A
 def extract_a(a):
     import pcdet
     from easydict import EasyDict
     from pcdet.config import cfg_from_yaml_file
     from pcdet.datasets.point_calibration import _augmentation_off
-    from source_coverage import _build, car_boxes, grid_mask, in_box_indices, descriptors
+    from source_coverage import _build, car_boxes, descriptors
     print(f'[extract_a] pcdet from {pcdet.__file__}', flush=True)
     sel = _load_sel(a, ('A',))
     cfg = EasyDict(); cfg_from_yaml_file(NUS_CFG, cfg)
@@ -311,12 +332,13 @@ def extract_a(a):
             pts = CAP['points']
             cars = car_boxes(d.get('gt_boxes'))
             box = cars[e['j']]
-            P = pts[grid_mask(pts[:, :3])]
+            P = pts[xy_mask(pts[:, :3])]
             P3 = np.ascontiguousarray(P[:, :3], np.float32)
-            idx = in_box_indices(P3, box[None])[0]
-            dsc = descriptors(P3[idx])
+            idx, ing = _inbox_split(P3, box)
+            dsc = descriptors(P3[idx[ing]])
             info = ds.infos[i]
-            e.update(box=box, pose=pose, pts=P3[idx], lag=P[idx, tcol].astype(np.float32), ctx=_context(P3, box, idx),
+            e.update(box=box, pose=pose, pts=P3[idx], ingrid=ing, lag=P[idx, tcol].astype(np.float32),
+                     ctx=_context(P3, box, idx),
                      desc=list(dsc), match=_desc_match(dsc, e['row']) and abs(np.hypot(*box[:2]) - e['row'][0]) < 1e-3,
                      alpha=relative_view_angle_deg(box, pose['origin']), platform=PLAT_NAME[plat],
                      frame_id=str(info['lidar_path']), token=str(info.get('token', '')),
@@ -367,6 +389,8 @@ def extract_b(a):
             row = e['row']
             kept = np.ascontiguousarray(P[c['point_index'], :3], np.float32)
             g = crop(kept); dsc = descriptors(g)
+            ing = xy_mask(kept) & z_in_grid(kept)
+            assert ing.sum() == len(g)
             same = (abs(c['r_new'] - row[C['r_new']]) < 1e-6 and abs(c['p_keep'] - row[C['p_keep']]) < 1e-9 and
                     c['n_kept'] == row[C['n_kept']] and c['n_final'] == row[C['n_final']] and
                     c['instance'] == row[C['instance']] and
@@ -376,7 +400,7 @@ def extract_b(a):
                 iscopy[cc['point_index']] = True
             scene = np.ascontiguousarray(P[~iscopy, :3], np.float32)
             box = np.asarray(c['box'], np.float64)
-            e.update(box=box, pose=pose, pts=g, unsp=np.asarray(c['rendered_unsparsified'], np.float32),
+            e.update(box=box, pose=pose, pts=kept, ingrid=ing, unsp=np.asarray(c['rendered_unsparsified'], np.float32),
                      ctx=_context(scene, box, np.zeros(0, np.int64)), desc=list(dsc), match=bool(same),
                      alpha=relative_view_angle_deg(box, pose['origin']), alpha_rr=float(np.degrees(c['alpha'])),
                      platform=PLAT_NAME[plat], frame_id=f'train info {i}', instance=int(c['instance']),
@@ -394,7 +418,7 @@ def extract_b(a):
 
 # ----------------------------------------------------------------------------------------------------- extract CD
 def extract_cd(a):
-    from source_coverage import grid_mask, in_box_indices, descriptors
+    from source_coverage import descriptors
     sel = _load_sel(a, ('C', 'D'))
     p = pickle.load(open(PASS_PKL, 'rb'))
     infos = pickle.load(open(TOOLS.parent / 'data/waymo/waymo_infos_val.pkl', 'rb'))
@@ -421,13 +445,13 @@ def extract_cd(a):
         lid = np.repeat(np.arange(len(counts)), counts)
         keep = raw[:, 5] == -1                                   # WaymoDataset.get_lidar: no-label-zone points dropped
         pts, lid = raw[keep, :3], lid[keep]
-        m = grid_mask(pts)
+        m = xy_mask(pts)
         P3 = np.ascontiguousarray(pts[m], np.float32); L = lid[m]
-        idx = in_box_indices(P3, box[None])[0]
-        dsc = descriptors(P3[idx])
+        idx, ing = _inbox_split(P3, box)
+        dsc = descriptors(P3[idx[ing]])
         cal = calib[seq]
         pose = sensor_pose('waymo', extrinsic=cal['extrinsic'])
-        e.update(box=box, pose=pose, pts=P3[idx], lidar=L[idx].astype(np.int8), ctx=_context(P3, box, idx),
+        e.update(box=box, pose=pose, pts=P3[idx], ingrid=ing, lidar=L[idx].astype(np.int8), ctx=_context(P3, box, idx),
                  desc=list(dsc), match=_desc_match(dsc, e['row']) and abs(np.hypot(*box[:2]) - e['row'][0]) < 1e-3,
                  alpha=relative_view_angle_deg(box, pose['origin']), platform='Waymo', frame_id=f'{seq} {sidx:03d}',
                  segment=seq, sample_idx=sidx, incl_deg=np.sort(np.degrees(np.asarray(cal['inclinations'], np.float64))))
@@ -445,35 +469,45 @@ C_KEY, C_LAG = '#eb6834', ('#1f5fae', '#5b95da', '#a9c8ef')
 C_KEPT, C_UNSP = '#2a78d6', '#c2c0b8'
 C_TOP, C_OTHER = '#2a78d6', '#1baf7a'
 COL_HEAD = {
-    'A': 'A. Source: nuScenes train car, 27471 loader (Boston 15 / Singapore 10 sweeps)',
-    'B': 'B. Source + RR v2: a relocated, re-rendered copy',
-    'C': 'C. Target: Waymo val Vehicle (27596 input)',
-    'D': 'D. Target miss: oracle finds it, 27596 does not',
+    'A': 'A. Source: nuScenes train car\n27471 loader, Boston 15 / Singapore 10 sweeps',
+    'B': 'B. Source + RR v2\na relocated, re-rendered copy (gate v2 frames)',
+    'C': 'C. Target: Waymo val Vehicle\n27596\'s input cloud',
+    'D': 'D. Target miss (labelled analysis)\nthe oracle finds it at IoU 0.5, 27596 does not',
 }
-MARK = {0: 3.0, 1: 7.0, 2: 9.0, 3: 11.0, 4: 13.0}
+MARK = {0: 4.0, 1: 7.0, 2: 9.0, 3: 11.0, 4: 13.0}
+
+
+SENSOR_H = {'A': 1.75, 'B': 2.184, 'C': 2.184, 'D': 2.184}     # sensor height above the frame's z = 0 (flat ground)
 
 
 def _metrics(e):
-    """Row statistics of the in-box points against the panel's own lattice (reported in titles and the CSV)."""
+    """Row statistics of the in-box points on the model grid against the panel's own lattice, the in-box points the
+    grid's z cut removes, and where the box bottom sits in elevation (reported in titles and the CSV)."""
+    g = np.asarray(e['ingrid'], bool)
     az, el = view_angles(e['pts'], e['pose'])
-    m = {}
+    r = float(np.hypot(*e['box'][:2]))
+    zb = float(e['box'][2] - e['box'][5] / 2)
+    _, elb = view_angles(np.array([[e['box'][0], e['box'][1], zb]]), e['pose'])
+    m = dict(n_cut=int((~g).sum()), bottom_z=zb, bottom_el=float(elb[0]),
+             flat_el=float(np.degrees(np.arctan2(-SENSOR_H[e['col']], r))))
     if e['col'] == 'A':
-        key = e['lag'] <= 1e-6
+        key = (e['lag'] <= 1e-6) & g
         k, res = nearest_row(el, HDL32E_DEG)
-        m.update(n_key=int(key.sum()), rings_key=int(len(np.unique(k[key]))),
+        m.update(n_key=int(key.sum()), n_key_distinct=int(len(np.unique(np.round(e['pts'][key], 4), axis=0))),
+                 rings_key=int(len(np.unique(k[key]))), rings_all=int(len(np.unique(k[g]))),
                  resid_key=float(np.median(res[key])) if key.any() else np.nan,
-                 resid_old=float(np.median(res[~key])) if (~key).any() else np.nan,
-                 n_lags=int(len(np.unique(np.round(e['lag'], 4)))))
+                 resid_old=float(np.median(res[~key & g])) if (~key & g).any() else np.nan,
+                 n_lags=int(len(np.unique(np.round(e['lag'][g], 4)))))
     elif e['col'] == 'B':
         th = e['thetas_deg']
         _, elu = view_angles(e['unsp'], e['pose'])
-        kk, res = nearest_row(el, th); ku, _ = nearest_row(elu, th)
+        kk, res = nearest_row(el[g], th); ku, _ = nearest_row(elu, th)
         m.update(rows_kept=int(len(np.unique(kk))), rows_unsp=int(len(np.unique(ku))), n_unsp=int(len(e['unsp'])),
                  resid_kept=float(np.median(res)) if len(res) else np.nan)
     else:
-        top = e['lidar'] == 0
+        top = (e['lidar'] == 0) & g
         k, res = nearest_row(el, e['incl_deg'])
-        m.update(n_top=int(top.sum()), n_other=int((~top).sum()), rows_top=int(len(np.unique(k[top]))),
+        m.update(n_top=int(top.sum()), n_other=int(((e['lidar'] != 0) & g).sum()), rows_top=int(len(np.unique(k[top]))),
                  resid_top=float(np.median(res[top])) if top.any() else np.nan)
     return m
 
@@ -496,13 +530,18 @@ def _title(e, m):
     l2 = f"r {r:.1f} m · α {e['alpha']:+.0f}° · n_pts {int(n)} · n_vox {int(nv)} · n_layers {int(nl)} · ppv {ppv:.2f}"
     if e['col'] == 'A':
         l3 = f"keyframe {m['n_key']} pts on {m['rings_key']} rings · {m['n_lags']} sweep times"
+        if m['n_key'] > m['n_key_distinct']:
+            l3 += f" · keyframe repeated ({m['n_key_distinct']} distinct)"
     elif e['col'] == 'B':
-        l3 = f"p {e['p_keep']:.2f} · kept {int(n)} of {m['n_unsp']} · rows {m['rows_kept']} of {m['rows_unsp']}"
+        l3 = f"p {e['p_keep']:.2f} · kept {int(n)} of {m['n_unsp']} rendered · rows {m['rows_kept']} of {m['rows_unsp']}"
     else:
         l3 = f"TOP {m['n_top']} pts on {m['rows_top']} rows · other lidars {m['n_other']}"
+    l4 = f"bottom z {m['bottom_z']:+.2f} m at {m['bottom_el']:+.2f}° (flat ground {m['flat_el']:+.2f}°)"
+    if m['n_cut']:
+        l4 += f" · {m['n_cut']} cut by the grid's z range"
     if not e.get('match', True):
         l3 += ' · NOT REPRODUCED'
-    return f'{l1}\n{l2}\n{l3}'
+    return f'{l1}\n{l2}\n{l3}\n{l4}'
 
 
 def _panel(ax, e, W, H, b):
@@ -519,7 +558,7 @@ def _panel(ax, e, W, H, b):
         rows = e['_train_rows']
     for rr_ in rows:
         if lo <= rr_ <= hi:
-            ax.axhline(rr_, color=C_ROW, lw=0.7, zorder=0)
+            ax.axhline(rr_, color=C_ROW, lw=0.8, zorder=0)
     if e['col'] == 'A':
         for rr_ in HDL32E_DEG:
             if lo <= rr_ <= hi:
@@ -529,21 +568,28 @@ def _panel(ax, e, W, H, b):
         caz, cel_ = view_angles(e['ctx'], pose)
         ax.scatter(X(caz), cel_, s=s * 0.35, c=C_CTX, lw=0, zorder=1, rasterized=True)
     az, el = view_angles(e['pts'], pose)
+    g = np.asarray(e['ingrid'], bool)
+
+    def dots(mask, colour, z, scale=1.0):
+        """Points on the model grid filled; in-box points the grid's z cut removes as open rings."""
+        ax.scatter(X(az[mask & g]), el[mask & g], s=s * scale, c=colour, lw=0, zorder=z, rasterized=True)
+        if (mask & ~g).any():
+            ax.scatter(X(az[mask & ~g]), el[mask & ~g], s=s * scale * 1.3, facecolors='none', edgecolors=colour,
+                       linewidths=0.7, zorder=z, rasterized=True)
     if e['col'] == 'A':
         lag = e['lag']; key = lag <= 1e-6
         cls = np.digitize(lag, LAG_EDGES, right=True)
         for k in (2, 1, 0):
-            mk = ~key & (cls == k)
-            ax.scatter(X(az[mk]), el[mk], s=s, c=C_LAG[k], lw=0, zorder=2, rasterized=True)
-        ax.scatter(X(az[key]), el[key], s=s * 1.2, c=C_KEY, lw=0, zorder=3, rasterized=True)
+            dots(~key & (cls == k), C_LAG[k], 2)
+        dots(key, C_KEY, 3, 1.2)
     elif e['col'] == 'B':
         uaz, uel = view_angles(e['unsp'], pose)
         ax.scatter(X(uaz), uel, s=s * 1.3, c=C_UNSP, lw=0, zorder=2, rasterized=True)
-        ax.scatter(X(az), el, s=s, c=C_KEPT, lw=0, zorder=3, rasterized=True)
+        dots(np.ones(len(az), bool), C_KEPT, 3)
     else:
         top = e['lidar'] == 0
-        ax.scatter(X(az[~top]), el[~top], s=s, c=C_OTHER, lw=0, zorder=2, rasterized=True)
-        ax.scatter(X(az[top]), el[top], s=s, c=C_TOP, lw=0, zorder=3, rasterized=True)
+        dots(~top, C_OTHER, 2)
+        dots(top, C_TOP, 3)
     for pl in box_edge_polylines(box):
         paz, pel = view_angles(pl, pose)
         ax.plot(X(paz), pel, color=INK2, lw=0.8, alpha=0.85, zorder=4)
@@ -575,21 +621,23 @@ def plot(a):
     for b, (lo_r, hi_r) in enumerate(BINS):
         W, H = sheet_window(lo_r)
         axh = AXW * H / W
-        top_in, title_in, xl_in, leg_in = 1.15, 0.95, 0.45, 0.95
+        top_in, title_in, xl_in, leg_in = 1.95, 1.05, 0.45, 1.0
         FH = top_in + 3 * (title_in + axh + xl_in) + leg_in
         fig = plt.figure(figsize=(FW, FH), facecolor=SURF)
-        fig.text(0.5, 1 - 0.30 / FH, f'{lo_r:g}-{hi_r:g} m: one box per panel, seen from its own sensor '
+        fig.text(0.5, 1 - 0.22 / FH, f'{lo_r:g}-{hi_r:g} m: one box per panel, seen from its own sensor '
                  f'(azimuth x elevation about that cloud\'s sensor)', ha='center', va='top', fontsize=17, color=INK,
                  weight='bold')
-        fig.text(0.5, 1 - 0.68 / FH, f'Every panel: {W:.1f} x {H:.1f} deg, {W / AXW:.2f} deg per inch on both axes. '
+        fig.text(0.5, 1 - 0.62 / FH,
+                 f'Every panel {W:.1f} x {H:.1f} deg, {W / AXW:.2f} deg per inch on both axes. Rows: the boxes nearest the '
+                 f'p25 / p50 / p75 of in-box points in a fixed-seed pool. Filled dots: in-box points on 27471\'s grid; '
+                 f'open rings: in-box points the grid\'s z cut (-2 to 4 m) removes.\n'
                  f'Faint lines: Waymo TOP rows (A, B: the TRAIN-median lattice RR renders with; C, D: the segment\'s own '
-                 f'inclinations). Dashed (A): nuScenes HDL-32E rings. Grey dots: scene within {CTX_M:g} m of the box. '
-                 f'Rows: boxes nearest the p25 / p50 / p75 of in-box points.', ha='center', va='top', fontsize=10.5,
-                 color=INK2, wrap=True)
+                 f'inclinations). Dashed (A): nuScenes HDL-32E rings. Grey dots: scene within {CTX_M:g} m of the box.',
+                 ha='center', va='top', fontsize=10.5, color=INK2, linespacing=1.4)
         x0_in, colw_in = 0.75, 4.85
         for ci, col in enumerate(COLUMNS):
             fig.text((x0_in + ci * colw_in + AXW / 2) / FW, 1 - (top_in - 0.12) / FH, COL_HEAD[col], ha='center',
-                     va='bottom', fontsize=11.5, color=INK, weight='bold')
+                     va='bottom', fontsize=12, color=INK, weight='bold', linespacing=1.3)
             for qi, q in enumerate(QS):
                 ybot = FH - top_in - qi * (title_in + axh + xl_in) - title_in - axh
                 ax = fig.add_axes([(x0_in + ci * colw_in) / FW, ybot / FH, AXW / FW, axh / FH])
@@ -608,34 +656,37 @@ def plot(a):
                 if ci == 0:
                     ax.set_ylabel('elevation (deg)', fontsize=9.5, color=INK2)
                 rows_csv.append(_csv_row(e))
+        cut = Line2D([], [], ls='', marker='o', markerfacecolor='none', color=INK2, label='cut by the grid\'s z range')
         handles = {
             'A': [Line2D([], [], ls='', marker='o', color=C_KEY, label='keyframe (lag 0)'),
                   Line2D([], [], ls='', marker='o', color=C_LAG[0], label=f'sweeps, lag <= {LAG_EDGES[0]:g} s'),
-                  Line2D([], [], ls='', marker='o', color=C_LAG[1], label=f'{LAG_EDGES[0]:g}-{LAG_EDGES[1]:g} s'),
-                  Line2D([], [], ls='', marker='o', color=C_LAG[2], label=f'> {LAG_EDGES[1]:g} s'),
-                  Line2D([], [], color=C_HDL, ls=(0, (4, 3)), label='HDL-32E ring')],
+                  Line2D([], [], ls='', marker='o', color=C_LAG[1], label=f'lag {LAG_EDGES[0]:g}-{LAG_EDGES[1]:g} s'),
+                  Line2D([], [], ls='', marker='o', color=C_LAG[2], label=f'lag > {LAG_EDGES[1]:g} s'),
+                  Line2D([], [], color=C_HDL, ls=(0, (4, 3)), label='HDL-32E ring'), cut],
             'B': [Line2D([], [], ls='', marker='o', color=C_KEPT, label='kept after the sparsifier (p)'),
                   Line2D([], [], ls='', marker='o', color=C_UNSP, label='rendered, before the sparsifier'),
-                  Line2D([], [], color=C_ROW, label='Waymo TOP row (TRAIN median)')],
+                  Line2D([], [], color=C_ROW, lw=1.5, label='Waymo TOP row (TRAIN median)'), cut],
             'C': [Line2D([], [], ls='', marker='o', color=C_TOP, label='TOP lidar'),
                   Line2D([], [], ls='', marker='o', color=C_OTHER, label='other four lidars'),
-                  Line2D([], [], color=C_ROW, label='TOP row (segment\'s inclinations)')],
+                  Line2D([], [], color=C_ROW, lw=1.5, label='TOP row (segment\'s inclinations)')],
             'D': [Line2D([], [], ls='', marker='o', color=C_TOP, label='TOP lidar'),
                   Line2D([], [], ls='', marker='o', color=C_OTHER, label='other four lidars'),
-                  Line2D([], [], color=INK2, label='box outline')],
+                  Line2D([], [], color=INK2, label='box outline (projected)')],
         }
         for ci, col in enumerate(COLUMNS):
-            lax = fig.add_axes([(x0_in + ci * colw_in) / FW, 0.05 / FH, AXW / FW, (leg_in - 0.25) / FH])
+            lax = fig.add_axes([(x0_in + ci * colw_in) / FW, 0.05 / FH, AXW / FW, (leg_in - 0.2) / FH])
             lax.axis('off')
-            lax.legend(handles=handles[col], loc='upper left', ncol=2, fontsize=9.5, frameon=False, labelcolor=INK2,
-                       handletextpad=0.4, columnspacing=1.0, borderaxespad=0.0)
+            lax.legend(handles=handles[col], loc='upper left', ncol=2 if col == 'A' else 1, fontsize=10,
+                       frameon=False, labelcolor=INK2, handletextpad=0.4, columnspacing=1.2, borderaxespad=0.0)
         name = f'sheet_{lo_r:g}-{hi_r:g}m.png'
         fig.savefig(out / name, dpi=100, facecolor=SURF)
         plt.close(fig)
         print(f'[plot] {out / name}', flush=True)
-    keys = list(rows_csv[0].keys()) if rows_csv else []
+    keys = []
+    for r_ in rows_csv:
+        keys += [k for k in r_ if k not in keys]
     with open(out / 'chosen_boxes.csv', 'w', newline='') as f:
-        wr = csv.DictWriter(f, fieldnames=keys); wr.writeheader(); wr.writerows(rows_csv)
+        wr = csv.DictWriter(f, fieldnames=keys, restval=''); wr.writeheader(); wr.writerows(rows_csv)
     json.dump([dict(col=r['column'], bin=r['bin'], q=r['quantile'], **{k: r[k] for k in r if k.startswith('m_')})
                for r in rows_csv], open(out / 'metrics.json', 'w'), indent=1)
     print(f'[plot] {len(rows_csv)} panels; CSV {out / "chosen_boxes.csv"}', flush=True)
@@ -650,7 +701,7 @@ def _csv_row(e):
                n_layers=int(e['desc'][2]), ppv=round(float(e['desc'][3]), 3), length_m=round(float(e['box'][3]), 2),
                height_m=round(float(e['box'][5]), 2), reproduced=e.get('match', ''),
                p_keep=round(e['p_keep'], 3) if e['col'] == 'B' else '',
-               instance=e.get('instance', ''),
+               instance=e.get('instance', ''), n_final_in_cloud=e.get('n_final', ''),
                sensor=('nuScenes LIDAR_TOP at SHIFT_COOR' if e['col'] == 'A' else
                        'virtual TOP (0, 0, 2.184)' if e['col'] == 'B' else 'Waymo TOP extrinsic'),
                sensor_origin=' '.join(f'{v:.3f}' for v in e['pose']['origin']))
