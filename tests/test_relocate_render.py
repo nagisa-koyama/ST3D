@@ -1260,3 +1260,212 @@ def test_rr6_configs_are_rr5a_plus_the_v6_keys_and_v1_to_v5_unchanged(monkeypatc
             assert {k: v for k, v in e6[0].items() if k not in same} == {k: v for k, v in e5[0].items() if k not in same}
         for k in ('MODEL', 'OPTIMIZATION', 'CLASS_NAMES', 'DATA_CONFIG_TAR'):
             assert r6[k] == r5[k]
+
+
+# ================================================================================================= RR v7 (§12)
+def _v7_cloud(seed=0, hole=(35.0, -35.0, 12.0)):
+    """A tilted noisy ground over +-60 m with a square hole (no points within `hole[2]` of (hole[0], hole[1])) and a wall."""
+    rng = np.random.default_rng(seed)
+    g = rng.uniform(-60, 60, (90000, 2))
+    g = g[np.abs(g - np.array(hole[:2])).max(1) > hole[2]]
+    z = 0.01 * g[:, 0] - 0.02 * g[:, 1] + rng.normal(0, 0.02, len(g))
+    wy, wz = np.meshgrid(np.linspace(-8, 8, 120), np.linspace(0.2, 3.0, 20))
+    wall = np.c_[np.full(wy.size, -20.0), wy.ravel(), wz.ravel()]
+    return np.concatenate([np.c_[g, z], wall])
+
+
+def _v7_box(x, y, bottom, yaw=0.3):
+    return np.array([x, y, bottom + 0.75, 4.5, 1.9, 1.5, yaw])
+
+
+def test_v7_e5a_and_its_fallback_equal_the_analysis():
+    import rr_ground_explore as GE
+    P = _v7_cloud()
+    pl = R.ground_plane(P, 40.0)
+    grid = R._BevGrid(P)
+    rng = np.random.default_rng(3)
+    cars = np.stack([_v7_box(x, y, R.plane_z(pl, x, y) + rng.normal(0, 0.2)) for x, y in rng.uniform(-55, 55, (12, 2))])
+    kinds = []
+    for t in range(40):
+        x, y = rng.uniform(-55, 55, 2) if t < 36 else (35.0 + (t - 36), -35.0)        # the last ones sit in the hole
+        b = _v7_box(x, y, 0.0, rng.uniform(-np.pi, np.pi))
+        oth = cars[rng.random(len(cars)) < 0.5] if t % 3 else np.zeros((0, 7))
+        z, kind = R.e5a_bottom(P, grid, b, pl, oth)
+        est = GE.estimate_car(P, b, oth, pl, pl)
+        if not est['E5a'][1]:
+            assert kind == 0 and np.isclose(z, est['E5a'][0]), t
+        else:
+            zc, fb = est['E2-cell-p5']
+            assert kind == (2 if fb else 1) and np.isclose(z, zc), t
+        kinds.append(kind)
+    assert {0, 1, 2} <= set(kinds)                                     # every path exercised
+
+
+def test_v7_e5a_radius_boundary_and_the_median_residual():
+    pl = np.array([0.01, 0.0, -0.1])
+    b = _v7_box(10.0, 0.0, 0.0)
+    near = [_v7_box(10.0, 30.0, R.plane_z(pl, 10.0, 30.0) + 0.3), _v7_box(40.0, 0.0, R.plane_z(pl, 40.0, 0.0) + 0.1),
+            _v7_box(10.0, -12.0, R.plane_z(pl, 10.0, -12.0) - 0.2)]
+    z, kind = R.e5a_bottom(np.zeros((0, 3)), None, b, pl, np.stack(near))           # 30.0 m away is included
+    assert kind == 0 and np.isclose(z, R.plane_z(pl, 10.0, 0.0) + 0.1)
+    far = _v7_box(10.0, 30.5, 5.0)
+    z, kind = R.e5a_bottom(np.zeros((0, 3)), None, b, pl, far[None])               # 30.5 m: none -> no cloud -> plane
+    assert kind == 2 and np.isclose(z, R.plane_z(pl, 10.0, 0.0))
+    few = np.array([[15.0, 0.0, 0.0]] * 3 + [[17.5, 0.5, 0.1]] * 3)                 # 2 cells: < 3 -> the plane
+    z, kind = R.e5a_bottom(few, R._BevGrid(few), b, pl, np.zeros((0, 7)))
+    assert kind == 2
+    cells = np.array([[x + 0.5, 0.5, zz] for x in (15.0, 16.0, 17.0, 18.0) for zz in (0.3, 0.1, 0.2)])
+    z, kind = R.e5a_bottom(cells, R._BevGrid(cells), b, pl, np.zeros((0, 7)))      # 4 cells, second-lowest 0.2 each
+    assert kind == 1 and np.isclose(z, 0.2)
+
+
+def test_v7_gt_car_mask_sentinels():
+    d = dict(gt_boxes=np.zeros((7, 7), np.float32), gt_names=np.array(['Car', 'Car', 'Car', 'Car', 'Truck', 'Car', 'car']),
+             gt_boxes_mask=np.array([1, 0, 1, 1, 1, 1, 1], bool), gt_boxes_ignore_mask=np.array([0, 0, 1, 0, 0, 0, 0], bool),
+             gt_classes=np.array([1, 1, 1, -1, 1, common_utils.IGNORE_CLASS_LABEL, 1], np.int32))
+    assert R.gt_car_mask(d).tolist() == [True, False, False, False, False, False, False]
+    assert R.gt_car_mask(dict(gt_boxes=np.zeros((0, 7)), gt_names=np.array([]))).tolist() == []
+
+
+def test_v7_scene_bottom_from_frame_gt_cars_not_copies_nor_sentinels(tmp_path):
+    db = make_db(tmp_path, [(CAR_LOCAL, SIZE, [np.pi / 2])])
+    gt = _v7_box(0.0, -52.0, -0.03 + 0.25, 0.0)
+    bad = _v7_box(12.0, -40.0, -0.03 + 1.5, 0.0)                                    # a sentinel: never an E5a car
+    d = scene_v2([], [gt, bad], ['Car', 'Car'], gt_classes=np.array([1, -1], np.int32), gt_scores=np.ones(2, np.float32))
+    base = dict(VERSION=7, RETURN_OFF=True, RETURN_MODEL='physics', MAX_TRIES=3, PLANE_RMAX=75.2, N_COPIES=2)
+    out, rec = run2(d, db, RngV2([40.0, 3 * np.pi / 2, 40.0, 3 * np.pi / 2 + 0.6]), **base)
+    assert rec['version'] == 7 and rec['n_placed'] == 2, rec['reject']
+    pl40 = rec['plane40']
+    np.testing.assert_allclose(pl40, R.ground_plane(d['points'][:, :3], 40.0))
+    for c in rec['copies']:
+        bx = c['box']
+        want = R.plane_z(pl40, bx[0], bx[1]) + (gt[2] - 0.75 - R.plane_z(pl40, gt[0], gt[1]))
+        if np.hypot(bx[0] - gt[0], bx[1] - gt[1]) <= 30.0:
+            assert c['ground_kind'] == 0 and np.isclose(c['bottom'], want, atol=1e-5)
+    assert out['gt_classes'].tolist() == [1, -1, 1, 1]
+    out, rec = run2(scene_v2(), db, RngV2([40.0, 1.0]), **dict(base, N_COPIES=1))       # no GT car: the cell fallback
+    c = rec['copies'][0]
+    assert c['ground_kind'] == 1 and c['ground_fallback'] and abs(c['bottom'] + 0.03) < 0.02
+
+
+def test_v7_d1v5_rows_on_a_toy():
+    import rr_gate as RG
+    pts = ground(0.0)
+    cars = [_v7_box(20.0, 0.0, -0.03), _v7_box(30.0, 5.0, -0.03), _v7_box(-35.0, 20.0, -0.03), _v7_box(-30.0, 0.0, -0.03)]
+    pts = np.concatenate([pts] + [car_surface(b) for b in cars])
+    B = frame(np.stack(cars), ['Car', 'Car', 'Car', 'Pedestrian'], pts)
+    cfg = EasyDict(dict(R.DEFAULTS_V7, DONOR_CLASS='Car', NEAR_D_LO=0.5, GROUND_CELL=1.0, GROUND_CELL_MIN_PTS=3))
+    pl40 = R.ground_plane(B['points'][:, :3], 40.0)
+    rows, dropped = RG.d1v5_rows(B['points'], B, cfg, pl40, 0, 7)
+    assert dropped == 0 and len(rows) == 3                                          # the pedestrian is not a car
+    rw = np.array(rows)
+    c = {k: j for j, k in enumerate(RG.D1V5_COLS)}
+    assert rw[:, c['kind_loo']].tolist() == [0, 0, 1]                    # the third car has no other car within 30 m
+    assert np.all(np.abs(rw[:, c['est_loo']] - rw[:, c['gt_bottom']]) < 0.05)
+    assert np.all(np.abs(rw[:, c['est_frame']] - rw[:, c['gt_bottom']]) < 0.05)
+    n, med, sgn, g05, g1, ks = RG.d1v5_summary(rw, 0.0, 75.2)
+    assert n == 3 and med < 0.05 and g1 == 0.0 and np.isclose(sum(ks), 1.0)
+
+
+def test_v7_g2_skips_copies_with_undefined_ppp():
+    import rr_gate as RG
+    assert RG.g2_cell_median([1.0, np.nan, 1.0, 1.05], skip_undefined=True) == (1.0, 1)
+    med, n = RG.g2_cell_median([1.0, np.nan, 1.0], skip_undefined=False)
+    assert np.isnan(med) and n == 0                                                 # v6's reading: a nan cell fails
+    assert RG.g2_cell_median([], skip_undefined=True)[1] == 0
+
+
+def test_v7_cnn_logit_calibration_bounds_and_no_weight_pickling(tmp_path):
+    import torch
+    from pcdet.datasets.augmentor.data_augmentor import DataAugmentor
+    torch.manual_seed(1)
+    net = R._unet_class()()
+    wp = tmp_path / 'unet_b2.pt'; torch.save(net.state_dict(), wp)
+    par = dict(a=0.4, b_band=np.array([-0.5, 0.0, -1.0, -2.0]), c=-1.5, log_sigma=np.log(0.7))
+    cp_ = tmp_path / 'cal_b2.npz'; np.savez(cp_, **{k: np.asarray(v, float) for k, v in par.items()})
+    b, xyz, rows, cols, kept = _copy_render(30.0, 1.0, 0.0)
+    sil = R.silhouette(b, TH, NC, H)
+    env = R.envelope_visibility(xyz, rows, cols, sil, TH, NC, R.Occluders(np.zeros((0, 3)), np.zeros(3), H, NC))
+    loc = np.c_[CAR_LOCAL, np.linspace(1, 9, len(CAR_LOCAL))]
+    u = R.cnn_logit(loc, kept, xyz, rows, cols, b, sil, env, TH, NC, H, str(wp))
+    pv6 = R.cnn_keep_prob(loc, kept, xyz, rows, cols, b, sil, env, TH, NC, H, str(wp))
+    f = np.isfinite(u)
+    assert f.any() and (~f).any() and np.all(pv6[~f] == 0)
+    np.testing.assert_allclose(pv6[f], 1 / (1 + np.exp(-u[f])), rtol=1e-5)          # v6's p is the sigmoid of the logit
+    hrel = np.clip((loc[kept, 2] + b[5] / 2) / b[5], 0, 1)
+    q = R.cal_params(str(cp_))
+    p = R.calibrated_prob(u, hrel, float(np.hypot(b[0], b[1])), q, eps=0.8)
+    want = 1 / (1 + np.exp(-(u + 0.4 + par['b_band'][R.band_of(hrel)] - 1.5 * np.log(np.hypot(b[0], b[1]) / 50) + 0.7 * 0.8)))
+    assert np.all((p[f] > 0) & (p[f] < 1)) and np.all(p[~f] == 0)
+    np.testing.assert_allclose(p[f], want[f], rtol=1e-9)
+    big = R.calibrated_prob(np.array([200.0, -200.0, -np.inf]), np.array([0.3, 0.3, 0.3]), 50.0, q)
+    assert 0 < big[1] < big[0] < 1 and big[2] == 0
+    db = make_db_v5(tmp_path, [(np.c_[CAR_LOCAL, np.random.default_rng(0).uniform(1, 50, len(CAR_LOCAL))], SIZE, [np.pi / 2])])
+    base = dict(VERSION=7, RETURN_MODEL='cnn_cal', CNN_WEIGHTS=str(wp), RETURN_PARAMS=str(cp_), MAX_TRIES=3, PLANE_RMAX=75.2)
+    out, rec = run2(scene_v2(), db, RngV2([40.0, 3 * np.pi / 2], arr=0.0), **base)
+    c = rec['copies'][0]
+    assert 0 < c['p_keep'] < 1 and 0 < c['n_kept'] <= c['n_visible'] and len(c['vis_ulogit']) == c['n_visible']
+    out, rec = run2(scene_v2(), db, RngV2([40.0, 3 * np.pi / 2]), **dict(base, RETURN_OFF=True))
+    c = rec['copies'][0]
+    assert c['n_kept'] == c['n_visible'] and len(c['vis_ulogit']) == c['n_visible']   # the fitting copies record U(x)
+    cfg = EasyDict(dict(P2, **base, NAME='relocate_render', DB_POINTS=db.points_path, DB_INDEX=db.index_path,
+                        DB_NORMALS=db.normals_path))
+    aug = DataAugmentor(None, EasyDict(AUG_CONFIG_LIST=[cfg], DISABLE_AUG_LIST=[]), ['Car'])
+    s = pickle.dumps(aug)
+    assert len(s) < 20000 and b'state_dict' not in s and R._load_cnn.cache_info().currsize >= 1
+
+
+def test_v7_defaults_are_new_keys_only_so_v1_to_v6_are_unchanged():
+    earlier = set(R.DEFAULTS) | set(R.DEFAULTS_V2) | set(R.DEFAULTS_V3) | set(R.DEFAULTS_V4) | set(R.DEFAULTS_V5) | \
+        set(R.DEFAULTS_V6)
+    assert not set(R.DEFAULTS_V7) & earlier
+    p6 = R._params_v2(dict(VERSION=6, PLANE_RMAX=75.2, NEAR_RADIUS=10.0))
+    assert p6['VERSION'] == 6 and p6['NEAR_RADIUS'] == 10.0 and p6['E5A_RADIUS'] == 30.0     # present, unread below v7
+
+
+def test_v7_fit_arm_c_logit_and_the_auc_helpers():
+    import torch
+    import rr_v5_fit as FT
+    m = FT.Model('c', 0)
+    F = torch.tensor([[1.0, 0.3, 40.0, 1.0, 0.7, 40.0], [1.0, 0.9, 40.0, 1.0, -np.inf, 60.0]], dtype=torch.float64)
+    lg = m.logit(F)
+    assert float(lg[0]) == 0.7 and float(lg[1]) == -1e4                               # zero calibration = U; outside -> p 0
+    with torch.no_grad():
+        m.theta[:] = torch.tensor([0.5, -1.0, -2.0, -3.0, 2.0], dtype=torch.float64)
+    lg = m.logit(F)
+    assert np.isclose(float(lg[0]), 0.7 + 0.5 + 0.0 + 2.0 * np.log(40 / 50))          # band 1 (0.3) is the reference
+    e = m.export()
+    assert set(e) == {'a', 'b_band', 'c', 'log_sigma'} and e['b_band'][1] == 0.0 and e['b_band'][3] == -3.0
+    X = np.zeros((2, 6, 2, 2)); X[:, 2] = 0.8; X[:, 5] = np.log(60 / 50)
+    U = np.array([[[0.0, 1.0], [2.0, 3.0]], [[-1.0, 0.0], [1.0, 2.0]]])
+    L = FT.cal_logits(U, X, dict(a=1.0, b_band=np.array([0, 0, 0, -0.5]), c=2.0))
+    np.testing.assert_allclose(L, U + 1.0 - 0.5 + 2.0 * np.log(1.2))
+    s = np.array([0.1, 0.9, 0.2, 0.8, 0.5, 0.6]); y = np.array([0, 1, 0, 1, 1, 1.0]); pid = np.array([0, 0, 1, 1, 2, 2])
+    pooled, within, nw = FT.auc_pooled_within(s, y, pid)
+    assert nw == 2 and within == 1.0 and 0 < pooled <= 1
+
+
+def test_rr7_configs_are_rr6a_plus_the_v7_keys_and_v1_to_v6_unchanged(monkeypatch):
+    from pcdet.config import cfg_from_yaml_file
+    monkeypatch.chdir(ROOT / 'tools')
+    load = lambda n: cfg_from_yaml_file('cfgs/da-ieee-access/' + n, EasyDict())
+    r6 = load('centerpoint-gblobs-accum-legaldepth-rr6a-nuscenes2waymo.yaml')
+    for arm in ('a', 'b'):
+        r7 = load(f'centerpoint-gblobs-accum-legaldepth-rr7{arm}-nuscenes2waymo.yaml')
+        for key in ('NUSCENES_N008', 'NUSCENES_N015'):
+            e7, e6 = (c.DATA_CONFIGS[key].DATA_AUGMENTOR.AUG_CONFIG_LIST for c in (r7, r6))
+            assert e7[1:] == e6[1:] and e7[0].VERSION == 7 and e6[0].VERSION == 6
+            assert (e7[0].E5A_PLANE_RMAX, e7[0].E5A_RADIUS, e7[0].E5A_FB_RADIUS, e7[0].E5A_FB_PCT, e7[0].E5A_FB_MIN_CELLS,
+                    e7[0].NEAR_D_LO, e7[0].PLANE_RMAX, e7[0].GROUND_CELL, e7[0].GROUND_CELL_MIN_PTS) == \
+                (40.0, 30.0, 10.0, 5.0, 3, 0.5, 75.2, 1.0, 3)
+            assert not any(k in e7[0] for k in ('NEAR_D_HI', 'NEAR_RADIUS', 'NEAR_MIN_POINTS', 'NEAR_PCT'))
+            if arm == 'a':
+                assert e7[0].RETURN_MODEL == 'physics' and e7[0].RETURN_PARAMS.endswith('v6/fit_a.npz') and 'CNN_WEIGHTS' not in e7[0]
+            else:
+                assert e7[0].RETURN_MODEL == 'cnn_cal' and e7[0].CNN_WEIGHTS.endswith('v6/unet_b2.pt') and \
+                    e7[0].RETURN_PARAMS.endswith('v7/cal_b2.npz')
+            drop = {'VERSION', 'RETURN_MODEL', 'RETURN_PARAMS', 'CNN_WEIGHTS', 'NEAR_D_HI', 'NEAR_RADIUS', 'NEAR_MIN_POINTS',
+                    'NEAR_PCT'} | set(R.DEFAULTS_V7)
+            assert {k: v for k, v in e7[0].items() if k not in drop} == {k: v for k, v in e6[0].items() if k not in drop}
+        for k in ('MODEL', 'OPTIMIZATION', 'CLASS_NAMES', 'DATA_CONFIG_TAR'):
+            assert r7[k] == r6[k]

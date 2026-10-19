@@ -513,6 +513,43 @@ V2_COPY_COLS = ('plat', 'frame', 'moving', 'r_new', 'phi', 'sector', 'tries', 'r
 V3_EXTRA_COLS = ('fallback', 'bottom', 'd1v3_ref', 'd1v3_n')
 V4_EXTRA_COLS = V3_EXTRA_COLS + ('d1v4_ref',)
 V5_EXTRA_COLS = V4_EXTRA_COLS + ('vis_frac', 'fill_k') + tuple(f'{n}{b}' for n in ('hit', 'vis', 'rows', 'lost') for b in range(4))
+V7_EXTRA_COLS = V5_EXTRA_COLS + ('ground_kind',)
+D1V5_COLS = ('plat', 'frame', 'r', 'gt_bottom', 'est_loo', 'kind_loo', 'est_frame', 'kind_frame')
+EXTRA_COLS = {2: (), 3: V3_EXTRA_COLS, 4: V4_EXTRA_COLS, 5: V5_EXTRA_COLS, 6: V5_EXTRA_COLS, 7: V7_EXTRA_COLS}
+FRAME_EXTRA = {4: ('rej_zrange',), 5: ('rej_zrange', 'rej_novis'), 6: ('rej_zrange', 'rej_novis'), 7: ('rej_zrange', 'rej_novis')}
+
+
+def d1v5_rows(P, B, rr_cfg, plane40_frame, plat, frame, r_max=75.2):
+    """§12.3 D1 v5: per source GT car of the frame (the §12.1 set, 0 < BEV range < r_max), the loader's E5a estimate on
+    the leave-one-out cloud (the points within 0.5 m (BEV) of its rectangle removed, the 4-40 m plane refitted on it) with
+    the frame's OTHER GT cars; and the same with the loader's per-frame plane on the full cloud. Rows as D1V5_COLS; and
+    the number of cars dropped for a None plane."""
+    from pcdet.datasets.augmentor import relocate_render as rr
+    from rr_ground_explore import leave_one_out
+    P = np.asarray(P, np.float64)[:, :3]
+    boxes = np.asarray(B['gt_boxes'], np.float64)
+    if not len(boxes):
+        return [], 0
+    car = rr.gt_car_mask(B, rr_cfg.DONOR_CLASS)
+    r = np.hypot(boxes[:, 0], boxes[:, 1])
+    ev = np.flatnonzero(car & (r > 0) & (r < r_max))
+    kw = dict(radius=float(rr_cfg.E5A_RADIUS), fb_radius=float(rr_cfg.E5A_FB_RADIUS), d_lo=float(rr_cfg.NEAR_D_LO),
+              fb_pct=float(rr_cfg.E5A_FB_PCT), fb_min_cells=int(rr_cfg.E5A_FB_MIN_CELLS), cell=float(rr_cfg.GROUND_CELL),
+              cell_min_pts=int(rr_cfg.GROUND_CELL_MIN_PTS))
+    gridF = rr._BevGrid(P) if len(ev) else None
+    rows, dropped = [], 0
+    for j in ev:
+        b = boxes[j, :7]
+        oth = boxes[car & (np.arange(len(boxes)) != j), :7]
+        X = P[leave_one_out(P, b, gridF)]
+        pl = rr.ground_plane(X, float(rr_cfg.E5A_PLANE_RMAX))
+        if pl is None:
+            dropped += 1
+            continue
+        e1, k1 = rr.e5a_bottom(X, rr._BevGrid(X), b, pl, oth, **kw)
+        e2, k2 = rr.e5a_bottom(P, gridF, b, plane40_frame, oth, **kw) if plane40_frame is not None else (np.nan, -1)
+        rows.append([plat, frame, r[j], b[2] - b[5] / 2, e1, k1, e2, k2])
+    return rows, dropped
 V2_FRAME_COLS = ('plat', 'frame', 'moving', 'n_boxes', 'has_plane', 'n_attempted', 'n_placed', 'n_no_place', 'n_zero',
                  'rej_range', 'rej_overlap', 'rej_scene', 'rej_empty', 'rej_vis', 'rej_rc', 'same', 'coll', 'emptied',
                  'lost', 'pts_before', 'pts_after', 'scene_t', 'copy_t', 'gp_sx', 'gp_sy', 'gp_z0', 'rr_sx', 'rr_sy')
@@ -533,7 +570,7 @@ def run_v2(a):
     assert getattr(q0, 'func', None) is not None and q0.func.__name__ == 'relocate_render', 'RR is not first'
     rr_cfg = q0.keywords['config']; lat = q0.keywords['lattice']; db = q0.keywords['db']
     version = int(rr_cfg.VERSION)
-    assert version in (2, 3, 4, 5, 6) and db is not None
+    assert version in (2, 3, 4, 5, 6, 7) and db is not None
     assert list(rr_cfg.POINT_CLOUD_RANGE) == list(dcfg.POINT_CLOUD_RANGE), 'RR range != the dataset range'
     print(f"[rr_gate v2] {a.key}: {len(ds)} infos; database {db.n} instances ({db.points_path}); lattice "
           f"{lat['n_segments']} train segments; queue {[getattr(f, 'func', f).__name__ for f in aug.data_augmentor_queue]}",
@@ -560,6 +597,7 @@ def run_v2(a):
     th, nc, h = lat['thetas'], lat['n_cols'], lat['height']
     head, side, cell = head_for(cfg, dcfg)
     copies, frows, dumps, imgs = [], [], [], []
+    d1v5, d1v5_drop = [], 0
     t_start = time.time()
     for n_done, i in enumerate(frames):
         np.random.seed((plat * 1000003 + i) % (2 ** 31))
@@ -594,6 +632,9 @@ def run_v2(a):
                       float(np.degrees(np.arctan(pl[0]))), float(np.degrees(np.arctan(pl[1]))), float(pl[2]),
                       float(np.degrees(np.arctan(rp[0]))), float(np.degrees(np.arctan(rp[1])))]
                      + ([rj['zrange']] if version >= 4 else []) + ([rj['novis']] if version >= 5 else []))
+        if version >= 7:                             # §12.3 D1 v5 on the source GT cars of this frame (before RR)
+            rw, dr = d1v5_rows(B['points'], B, rr_cfg, rec.get('plane40'), plat, i)
+            d1v5 += rw; d1v5_drop += dr
         if k:
             sec = sector_of(cb[:, :2], fv)
             iscopy = np.zeros(len(P), bool)
@@ -635,6 +676,8 @@ def run_v2(a):
                     hs, vs, rs, ls, fl = object_descriptors(vsp // nc, c['sil_vis_relh'], np.isin(vsp, kpix).astype(float)) \
                         if len(vsp) else (np.zeros(4), np.zeros(4), np.zeros(4), np.zeros(4), np.nan)
                     row += [c['vis_frac'], fl] + list(hs) + list(vs) + list(rs) + list(ls)
+                if version >= 7:                     # §12.1: 0 E5a, 1 cell fallback, 2 plane
+                    row += [float(c['ground_kind'])]
                 copies.append(row)
         if k and len(dumps) < a.dump:
             dumps.append(dump_frame_v2(d, CAP, rec, head, side, cell, cfg, i))
@@ -656,10 +699,11 @@ def run_v2(a):
         aug.data_augmentor_queue = queue_rr
         np.random.seed(seed); t0 = time.perf_counter(); ds[i]; t_on = time.perf_counter() - t0
         g4.append([plat, i, t_off, t_on])
-    ncol = len(V2_COPY_COLS) + {2: 0, 3: len(V3_EXTRA_COLS), 4: len(V4_EXTRA_COLS), 5: len(V5_EXTRA_COLS), 6: len(V5_EXTRA_COLS)}[version]
+    ncol = len(V2_COPY_COLS) + len(EXTRA_COLS[version])
     res = dict(version=version, key=a.key, plat=plat, n_infos=N, frames=frames,
                copies=np.array(copies, np.float64).reshape(-1, ncol),
-               frames_rows=np.array(frows, np.float64).reshape(-1, len(V2_FRAME_COLS) + {4: 1, 5: 2, 6: 2}.get(version, 0)),
+               frames_rows=np.array(frows, np.float64).reshape(-1, len(V2_FRAME_COLS) + len(FRAME_EXTRA.get(version, ()))),
+               d1v5=np.array(d1v5, np.float64).reshape(-1, len(D1V5_COLS)), d1v5_dropped=d1v5_drop,
                g4=np.array(g4, np.float64).reshape(-1, 4), dumps=dumps, images=imgs, db_n=db.n,
                db_points=db.points_path, node=os.uname().nodename)
     pickle.dump(res, open(out / f'gate_v{version}_{a.key}.pkl', 'wb'))
@@ -675,11 +719,11 @@ def dump_frame_v2(d, CAP, rec, head, side, cell, cfg, i):
 
 def report_v2(a):
     D = Path(a.dir)
-    version = max(v for v in (2, 3, 4, 5, 6) if list(D.glob(f'gate_v{v}_*.pkl')))
+    version = max(v for v in (2, 3, 4, 5, 6, 7) if list(D.glob(f'gate_v{v}_*.pkl')))
     res = [pickle.load(open(p, 'rb')) for p in sorted(D.glob(f'gate_v{version}_*.pkl'))]
-    cols = V2_COPY_COLS + {2: (), 3: V3_EXTRA_COLS, 4: V4_EXTRA_COLS, 5: V5_EXTRA_COLS, 6: V5_EXTRA_COLS}[version]
+    cols = V2_COPY_COLS + EXTRA_COLS[version]
     C = {k: j for j, k in enumerate(cols)}
-    F = {k: j for j, k in enumerate(V2_FRAME_COLS + {4: ('rej_zrange',), 5: ('rej_zrange', 'rej_novis'), 6: ('rej_zrange', 'rej_novis')}.get(version, ()))}
+    F = {k: j for j, k in enumerate(V2_FRAME_COLS + FRAME_EXTRA.get(version, ()))}
     print(f'gate v{version}')
     cp = np.concatenate([r['copies'] for r in res]); fr = np.concatenate([r['frames_rows'] for r in res])
     g4 = np.concatenate([r['g4'] for r in res])
@@ -717,19 +761,23 @@ def report_v2(a):
     print('\n== G1 (unsparsified renders): median RC, moving-ego frames ==')
     print('| platform | ring | sector | copies | median RC | PPP median |')
     print('|---|---|---|---|---|---|')
-    passed = 0; g2 = True
+    passed = 0; g2 = True; g2_skip = {0: 0, 1: 0}
     for p in (0, 1):
         for lo, hi in G1_RINGS:
             for s_ in range(3):
                 m = ok & (cp[:, C['plat']] == p) & (cp[:, C['moving']] == 1) & (cp[:, C['r_new']] >= lo) & \
                     (cp[:, C['r_new']] < hi) & (cp[:, C['sector']] == s_)
                 med = np.median(cp[m, C['rc_g1']]) if m.any() else np.nan
-                ppp = np.median(cp[m, C['ppp_g1']]) if m.any() else np.nan
+                ppp, nsk = g2_cell_median(cp[m, C['ppp_g1']], skip_undefined=version >= 7)   # §12.3 (v7)
+                g2_skip[p] += nsk
                 passed += int(med >= 0.8); g2 &= bool(1.0 <= ppp <= 1.1)
                 print(f"| {PLAT_NAME[p]} | {lo:g}-{hi:g} | {SECTORS[s_]} | {int(m.sum())} | {med:.3f} | {ppp:.3f} |"
                       + (' < 15' if m.sum() < 15 else ''))
     verdict['G1'] = passed >= 10; verdict['G2'] = g2
     print(f"G1: {passed} of 12 cells >= 0.8 -> {'PASS' if verdict['G1'] else 'FAIL'}; G2 -> {'PASS' if g2 else 'FAIL'}")
+    if version >= 7:
+        print(f"G2 (v7): copies skipped for an undefined PPP (no in-box point on a visible pixel), moving-ego G1 cells: "
+              f"{', '.join(f'{PLAT_NAME[p]} {g2_skip[p]}' for p in PL)}")
     print('RC (G1) per r\' bin, all frames:')
     for p in PL:
         row = []
@@ -767,7 +815,8 @@ def report_v2(a):
               f"{np.nanmedian(cp[cp[:, C['plat']] == p, C['off_plane']]):+.3f} m")
     if version >= 4:
         print(f"(v2's D1 against the gate's plane is descriptive in v{version}: it would read {'PASS' if d1 else 'FAIL'})")
-        print('\n== D1 v4 (deciding): |copy bottom - ground-cell reference| among non-fallback copies with a reference ==')
+        print(f"\n== D1 v4 ({'reported only in v7' if version >= 7 else 'deciding'}): |copy bottom - ground-cell reference| "
+              f"among non-fallback copies with a reference ==")
         d1v4 = True
         for p in PL:
             m = cp[:, C['plat']] == p
@@ -796,7 +845,11 @@ def report_v2(a):
                       f"{np.mean(~np.isfinite(cp[mm, C['d1v4_ref']])):.1%} | {f(dd, np.median):.3f} m | "
                       f"{f(dd, lambda a: np.mean(a > 0.5)):.1%} | {f(dd, lambda a: np.mean(a > 1.0)):.1%} | "
                       f"{f(d3, np.median):.3f} m, {f(d3, lambda a: np.mean(a > 1.0)):.1%} |")
-        verdict['D1v4'] = d1v4; print(f"D1 v4 {'PASS' if d1v4 else 'FAIL'}")
+        if version >= 7:
+            print(f"D1 v4 (v7: reported only) would read {'PASS' if d1v4 else 'FAIL'}")
+            report_d1v5(res, cp, C, PL, verdict)
+        else:
+            verdict['D1v4'] = d1v4; print(f"D1 v4 {'PASS' if d1v4 else 'FAIL'}")
     elif version == 3:
         print(f"(v2's D1 against the gate's plane is descriptive in v3: it would read {'PASS' if d1 else 'FAIL'})")
         print('\n== D1 v3 (deciding): |copy bottom - local reference| among copies with an observed reference, per platform ==')
@@ -865,6 +918,59 @@ def report_v2(a):
           {k: ('PASS' if v else 'FAIL') for k, v in verdict.items()})
 
 
+def g2_cell_median(ppp, skip_undefined=False):
+    """(median PPP of a G1 cell, copies skipped). v7 (§12.3) skips copies whose PPP is undefined (no in-box point on a
+    visible silhouette pixel, 0 / 0); before v7 an undefined PPP made the median nan."""
+    v = np.asarray(ppp, np.float64)
+    if skip_undefined:
+        ok = np.isfinite(v)
+        return (float(np.median(v[ok])) if ok.any() else np.nan), int((~ok).sum())
+    return (float(np.median(v)) if len(v) else np.nan), 0
+
+
+def d1v5_summary(rw, lo=40.0, hi=75.2, est='est_loo', kind='kind_loo'):
+    """(n, median |err|, signed median, share > 0.5 m, share > 1 m, kind shares (E5a, cells, plane)) over rows with
+    lo <= r < hi."""
+    c = {k: j for j, k in enumerate(D1V5_COLS)}
+    m = (rw[:, c['r']] >= lo) & (rw[:, c['r']] < hi) & np.isfinite(rw[:, c[est]])
+    e = rw[m, c[est]] - rw[m, c['gt_bottom']]; a = np.abs(e); k = rw[m, c[kind]]
+    if not m.any():
+        return 0, np.nan, np.nan, np.nan, np.nan, (np.nan, np.nan, np.nan)
+    return (int(m.sum()), float(np.median(a)), float(np.median(e)), float(np.mean(a > 0.5)), float(np.mean(a > 1.0)),
+            tuple(float(np.mean(k == q)) for q in (0, 1, 2)))
+
+
+def report_d1v5(res, cp, C, PL, verdict):
+    """§12.3: D1 v5 (deciding) per platform over 40-75.2 m; per ring and the per-frame-plane variant reported; the
+    copies' ground kinds."""
+    rw = np.concatenate([r['d1v5'] for r in res]) if res else np.zeros((0, len(D1V5_COLS)))
+    print('\n== D1 v5 (deciding): leave-one-out E5a on the gate frames\' source GT cars, |estimate - GT bottom|, 40-75.2 m, '
+          'median <= 0.25 m and > 1 m < 5% in each platform ==')
+    print(f"cars dropped for a None 4-40 m plane: {sum(int(r.get('d1v5_dropped', 0)) for r in res)}")
+    ok = True
+    for p in PL:
+        q = rw[rw[:, 0] == p]
+        n, med, sgn, g05, g1, ks = d1v5_summary(q)
+        good = n > 0 and med <= 0.25 and g1 < 0.05
+        ok &= bool(good)
+        n2, med2, sgn2, g052, g12, ks2 = d1v5_summary(q, est='est_frame', kind='kind_frame')
+        print(f"{PLAT_NAME[p]}: n {n}; median {med:.3f} m, signed {sgn:+.3f} m, > 0.5 m {g05:.1%}, > 1 m {g1:.2%}; kinds E5a / "
+              f"cells / plane {ks[0]:.1%} / {ks[1]:.1%} / {ks[2]:.1%} -> {'PASS' if good else 'FAIL'}; with the loader's "
+              f"per-frame plane (reported): median {med2:.3f} m, > 1 m {g12:.2%}")
+        print('| ring | n | median abs | signed | > 0.5 m | > 1 m | E5a / cells / plane |')
+        print('|---|---|---|---|---|---|---|')
+        for lo, hi in ((0, 20), (20, 40), (40, 50), (50, 60), (60, 75.2)):
+            n, med, sgn, g05, g1, ks = d1v5_summary(q, lo, hi)
+            print(f"| {lo:g}-{hi:g} m | {n} | {med:.3f} | {sgn:+.3f} | {g05:.1%} | {g1:.1%} | "
+                  f"{ks[0]:.1%} / {ks[1]:.1%} / {ks[2]:.1%} |")
+        m = cp[:, C['plat']] == p
+        kk = cp[m, C['ground_kind']]
+        print(f"  copies' ground (reported): E5a {np.mean(kk == 0):.1%}, cell fallback {np.mean(kk == 1):.1%}, plane "
+              f"{np.mean(kk == 2):.1%} of {int(m.sum())}")
+    verdict['D1v5'] = ok
+    print(f"D1 v5 {'PASS' if ok else 'FAIL'}")
+
+
 def report_v5_extra(cp, fr, C, F, PL, verdict, a):
     """§9.3: the held-out fit check (deciding), normals (deciding), the copies' visible fraction, all-copies descriptors and
     the labelled comparison against Waymo val (reported)."""
@@ -920,7 +1026,7 @@ def report_v5_extra(cp, fr, C, F, PL, verdict, a):
     verdict['normals'] = nok
     print(f"normals {'PASS' if nok else 'FAIL'}")
     uj = Path('/home/koyama/data/relocate_render_20261018/v6/unet_b.json')
-    if getattr(a, 'unet_json', None) or (uj.exists() and 'gate_b' in str(a.dir)):
+    if getattr(a, 'unet_json', None) or (uj.exists() and 'gate_b' in str(a.dir) and '/v6/' in str(a.dir)):
         import json as _json
         u = _json.load(open(getattr(a, 'unet_json', None) or uj))
         print(f"\n== arm (b') U-Net (reported): train BCE per epoch {[round(x, 4) for x in u['curve']]}; held-out per-pixel "
@@ -977,7 +1083,7 @@ def main():
         v = int(c.DATA_CONFIGS[a.key].DATA_AUGMENTOR.AUG_CONFIG_LIST[0].get('VERSION', 1))
         run_v2(a) if v >= 2 else run(a)
     else:
-        report_v2(a) if list(Path(a.dir).glob('gate_v[23456]_*.pkl')) else report(a)
+        report_v2(a) if list(Path(a.dir).glob('gate_v[234567]_*.pkl')) else report(a)
 
 
 if __name__ == '__main__':

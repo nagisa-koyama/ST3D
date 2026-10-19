@@ -192,6 +192,8 @@ def copies(a):
             cid = len(C)
             vsp = c['sil_vis_pix']; vrel = c['sil_vis_relh']
             vp, vf = c['vis_pix'], c['vis_feats']
+            if 'vis_ulogit' in c:                                 # §12.2: (b'')'s frozen U-Net logit and the copy's r'
+                vf = np.c_[vf, c['vis_ulogit'], np.full(len(vf), c['r_new'])]
             pos = {int(px): j for j, px in enumerate(vp)}
             fi = np.array([pos.get(int(px), -1) for px in vsp], np.int64)
             C.append([plat, i, c['r_new'], c['vis_frac'], c['instance']])
@@ -206,6 +208,7 @@ def copies(a):
     np.savez(Path(a.out) / f'copies_{a.key}.npz', C=np.array(C, np.float64).reshape(-1, 5),
              s_copy=np.concatenate(S_copy), s_row=np.concatenate(S_row), s_relh=np.concatenate(S_relh),
              s_feat=np.concatenate(S_feat), F=np.concatenate(F) if F else np.zeros((0, 4)), n_all=n_all,
+             version=int(rr_cfg.VERSION),
              frames=np.array(frames), dropped=np.array(dropped))
     print(f'[copies] done {a.key}: {len(C)} unoccluded copies of {n_all}, {fo} visible rendered pixels, {ro} rows, '
           f'{time.time() - t0:.0f} s', flush=True)
@@ -296,6 +299,9 @@ class Model:
         if arm == 'a':
             self.theta = torch.zeros(7, dtype=dt, requires_grad=True)     # c0, c_band0, c_band2, c_band3, beta, gamma, delta
             self.params = [self.theta]
+        elif arm == 'c':                                                   # §12.2: (b'')'s calibration layer
+            self.theta = torch.zeros(5, dtype=dt, requires_grad=True)     # a, b_band0, b_band2, b_band3, c
+            self.params = [self.theta]
         else:
             self.net = torch.nn.Sequential(torch.nn.Linear(4, 32), torch.nn.ReLU(), torch.nn.Linear(32, 32), torch.nn.ReLU(),
                                            torch.nn.Linear(32, 1)).double()
@@ -311,6 +317,13 @@ class Model:
             cb = torch.stack([t[1], torch.zeros((), dtype=t.dtype), t[2], t[3]])
             band = torch.clamp((h_rel * 4).floor().long(), 0, 3)
             return t[0] + cb[band] + t[4] * torch.log(i_rel) + t[5] * torch.log(r / 50.0) + t[6] * torch.log(cos)
+        if self.arm == 'c':
+            t = self.theta
+            u = F[:, 4]
+            u = torch.where(torch.isfinite(u), u, torch.full_like(u, -1e4))     # outside the patch: p = 0
+            cb = torch.stack([t[1], torch.zeros((), dtype=t.dtype), t[2], t[3]])
+            band = torch.clamp((h_rel * 4).floor().long(), 0, 3)
+            return u + t[0] + cb[band] + t[4] * torch.log(F[:, 5] / 50.0)
         x = torch.stack([torch.log(i_rel), h_rel, torch.log(r / 50.0), cos], 1)
         return self.net(x)[:, 0]
 
@@ -319,6 +332,9 @@ class Model:
             t = self.theta.detach().numpy()
             return dict(c0=t[0], c_band=np.array([t[1], 0.0, t[2], t[3]]), beta=t[4], gamma=t[5], delta=t[6],
                         log_sigma=float(self.log_sigma.detach()))
+        if self.arm == 'c':
+            t = self.theta.detach().numpy()
+            return dict(a=t[0], b_band=np.array([t[1], 0.0, t[2], t[3]]), c=t[4], log_sigma=float(self.log_sigma.detach()))
         L = [m for m in self.net if hasattr(m, 'weight')]
         return dict(W1=L[0].weight.detach().numpy().T, b1=L[0].bias.detach().numpy(), W2=L[1].weight.detach().numpy().T,
                     b2=L[1].bias.detach().numpy(), W3=L[2].weight.detach().numpy().T, b3=L[2].bias.detach().numpy(),
@@ -381,21 +397,73 @@ def fit(a):
     sel = (T[:, 2] >= UNOCC) & (T[:, 0] < n_fit)
     th, tl, tf, tn = target_stats(T, cols, sel)
     cd = CopyData([D / f'copies_{k}.npz' for k in PLAT_ID])
+    if a.arm == 'c':
+        assert cd.F.shape[1] >= 6, 'arm c needs the copies\' U-Net logits (a v7 cnn_cal config)'
     print(f'[fit] arm {a.arm}: {int(sel.sum())} fit targets, {cd.n_copies} fitting copies, {int(cd.s_has.sum())} visible '
           f'rendered pixels in {len(cd.s_row)} visible silhouette pixels; targets per bin x band\n{tn}', flush=True)
     t0 = time.time()
     conv = (500, 0.01) if a.converge else None
     m, hist = fit_model(cd, (th, tl, tf), a.arm, a.steps, converge=conv, verbose=True)
     par = m.export()
-    np.savez(D / f'fit_{a.arm}.npz', **{k: np.asarray(v, np.float64) for k, v in par.items()})
-    np.save(D / f'fit_{a.arm}_loss.npy', np.array(m.losses))
+    outp = Path(a.out) if a.out else D / f'fit_{a.arm}.npz'
+    np.savez(outp, **{k: np.asarray(v, np.float64) for k, v in par.items()})
+    np.save(outp.with_name(outp.stem + '_loss.npy'), np.array(m.losses))
     print(f'[fit] arm {a.arm}: loss {hist[0][1]:.5f} -> {hist[-1][1]:.5f}, stopped at step {m.stop_step} '
           f'({"converged: < 1% over the last 500 steps" if a.converge and m.stop_step < a.steps else "step cap"}; '
           f'{time.time() - t0:.0f} s); trajectory {[(i, round(l, 5)) for i, l in hist]}', flush=True)
-    if a.arm == 'a':
-        print('[fit] arm a parameters: ' + ', '.join(f'{k} {np.round(v, 4).tolist()}' for k, v in par.items()), flush=True)
+    if a.arm in ('a', 'c'):
+        print(f'[fit] arm {a.arm} parameters ({outp}): ' + ', '.join(f'{k} {np.round(v, 4).tolist()}' for k, v in par.items()),
+              flush=True)
     else:
         print(f'[fit] arm b: sigma {np.exp(par["log_sigma"]):.4f}', flush=True)
+
+
+def cal_logits(U, X, par):
+    """§12.2: calibrated logits U + a + b_band(h_rel channel) + c log(r / 50 m) (the patch's 6th channel) of a patch stack
+    (n, 6, H, W); the per-copy latent is left out."""
+    from pcdet.datasets.augmentor.relocate_render import band_of
+    b = np.asarray(par['b_band'], np.float64)[band_of(X[:, 2])]
+    return U + par['a'] + b + par['c'] * X[:, 5].astype(np.float64)
+
+
+def auc_pooled_within(score, y, pid):
+    """Pooled AUC, and the mean within-patch AUC over patches holding both classes (with their number)."""
+    from sklearn.metrics import roc_auc_score
+    pooled = float(roc_auc_score(y, score))
+    order = np.argsort(pid, kind='stable'); s, yy, pp = score[order], y[order], pid[order]
+    cut = np.flatnonzero(np.diff(pp)) + 1
+    w = [roc_auc_score(b, a) for a, b in zip(np.split(s, cut), np.split(yy, cut)) if 0 < b.sum() < len(b)]
+    return pooled, float(np.mean(w)) if w else np.nan, len(w)
+
+
+def calauc(a):
+    """§12.2: the held-out (20 % segment) patches' covered visible pixels, AUC of U(x) before and after calibration."""
+    import json
+    import torch
+    from pcdet.datasets.augmentor import relocate_render as rr
+    fs = sorted(Path(a.patches).glob('patches_*.npz'))
+    X = np.concatenate([np.load(f)['X'] for f in fs]); Y = np.concatenate([np.load(f)['Y'] for f in fs])
+    M = np.concatenate([np.load(f)['meta'] for f in fs])
+    ho = M[:, 6] == 0
+    X, Y = X[ho], Y[ho]
+    net = rr._load_cnn(str(a.weights))
+    U = []
+    with torch.no_grad():
+        for s0 in range(0, len(X), 256):
+            U.append(net(torch.from_numpy(X[s0:s0 + 256].astype(np.float32))).numpy())
+    U = np.concatenate(U).astype(np.float64)
+    par = rr.cal_params(a.cal)
+    L = cal_logits(U, X.astype(np.float64), par)
+    cov = (X[:, 1] > 0) & (X[:, 4] > 0)
+    pid = np.broadcast_to(np.arange(len(X))[:, None, None], cov.shape)[cov]
+    y = Y[cov].astype(np.float64)
+    out = dict(n_patches=int(len(X)), n_pixels=int(cov.sum()), positive=float(y.mean()), cal={k: np.asarray(v).tolist() for k, v in par.items()})
+    for name, sc in (('before', U[cov]), ('after', L[cov])):
+        pooled, within, nw = auc_pooled_within(sc, y, pid)
+        out[name] = dict(pooled=pooled, within=within, n_within=nw)
+        print(f'[calauc] {name}: covered visible pixels {int(cov.sum())} of {len(X)} held-out patches (positive {y.mean():.4f}); '
+              f'AUC pooled {pooled:.4f}, within-patch {within:.4f} over {nw} patches', flush=True)
+    json.dump(out, open(a.out, 'w'), indent=1)
 
 
 def main():
@@ -405,12 +473,15 @@ def main():
     t.add_argument('--max_frames', type=int, default=None)
     c = sp.add_parser('copies'); c.add_argument('--cfg', required=True); c.add_argument('--key', required=True)
     c.add_argument('--out', required=True); c.add_argument('--max_frames', type=int, default=None)
-    f = sp.add_parser('fit'); f.add_argument('--arm', required=True, choices=('a', 'b')); f.add_argument('--dir', required=True)
+    f = sp.add_parser('fit'); f.add_argument('--arm', required=True, choices=('a', 'b', 'c')); f.add_argument('--dir', required=True)
+    f.add_argument('--out', default=None, help='the parameters .npz (default: <dir>/fit_<arm>.npz)')
     f.add_argument('--steps', type=int, default=2000)
     f.add_argument('--targets', default=None, help='targets.npz (default: <dir>/targets.npz)')
     f.add_argument('--converge', action='store_true', help='§10.2: stop when < 1% better over 500 steps (cap --steps)')
+    u = sp.add_parser('calauc'); u.add_argument('--weights', required=True); u.add_argument('--cal', required=True)
+    u.add_argument('--patches', default='/home/koyama/data/relocate_render_20261018/v6/patches'); u.add_argument('--out', required=True)
     a = ap.parse_args()
-    {'targets': targets, 'copies': copies, 'fit': fit}[a.mode](a)
+    {'targets': targets, 'copies': copies, 'fit': fit, 'calauc': calauc}[a.mode](a)
 
 
 if __name__ == '__main__':

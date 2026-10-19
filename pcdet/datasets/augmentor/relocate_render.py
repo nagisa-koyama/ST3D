@@ -724,7 +724,7 @@ def _randint(rng, n):
 
 def _params_v2(cfg):
     p = dict(DEFAULTS); p.update(DEFAULTS_V2); p.update(DEFAULTS_V3); p.update(DEFAULTS_V4); p.update(DEFAULTS_V5)
-    p.update(DEFAULTS_V6)
+    p.update(DEFAULTS_V6); p.update(DEFAULTS_V7)
     p['VERSION'] = 2
     if cfg is not None:
         for k in cfg:
@@ -762,8 +762,23 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
     rec['version'] = version if v3 else 2
     grid = _BevGrid(xyz)
     last_fb = [False]
+    last_kind = [None]
     size_now = [None]
-    if version == 3:                                # §7: ground cells of the cloud RR receives, built once per frame
+    if version >= 7:                                # §12.1: E5a on the 4-40 m plane, source GT cars of this frame
+        plane40 = ground_plane(xyz, float(p['E5A_PLANE_RMAX']))
+        if plane40 is None:
+            return data_dict, rec
+        rec['plane40'] = np.asarray(plane40, np.float64)
+        gt_cars = boxes[gt_car_mask(data_dict, p['DONOR_CLASS']), :7].astype(np.float64)   # before any copy
+
+        def bottom_fn(x, y, yaw):
+            s_ = size_now[0]
+            zb, kind = e5a_bottom(xyz, grid, np.array([x, y, 0.0, s_[0], s_[1], s_[2], yaw]), plane40, gt_cars,
+                                  p['E5A_RADIUS'], p['E5A_FB_RADIUS'], p['NEAR_D_LO'], p['E5A_FB_PCT'],
+                                  int(p['E5A_FB_MIN_CELLS']), p['GROUND_CELL'], int(p['GROUND_CELL_MIN_PTS']))
+            last_fb[0] = kind != 0; last_kind[0] = kind
+            return zb
+    elif version == 3:                              # §7: ground cells of the cloud RR receives, built once per frame
         cells = GroundCells(xyz, p['GROUND_CELL'], int(p['GROUND_CELL_MIN_PTS']))
 
         def bottom_fn(x, y, yaw):
@@ -933,9 +948,18 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
         if version >= 5:                            # §9.1: envelope removal, then the learned return model
             vis &= env['rend_vis']
             feats = return_features(local, kept, rxyz, cb, height, db.normals(inst), p['I_REL_CLIP'], p['COS_MIN'])
+            ulog = None
+            if version >= 7 and p['CNN_WEIGHTS'] is not None and (keep_points or p['RETURN_MODEL'] == 'cnn_cal'):
+                ulog = cnn_logit(local, kept, rxyz, rrow, rcol, cb, sil, env, thetas, n_cols, height, p['CNN_WEIGHTS'])
             if p['RETURN_OFF']:
                 pk, pp_ = 1.0, np.ones(len(cpix))
                 keep = vis.copy()
+            elif p['RETURN_MODEL'] == 'cnn_cal':    # §12.1: arm (b''), the U-Net behind the calibration layer
+                eps = float(rng.normal()) if hasattr(rng, 'normal') else 0.0
+                pp_ = calibrated_prob(ulog, feats[1], float(np.hypot(cb[0], cb[1])), cal_params(p['RETURN_PARAMS']), eps)
+                u = np.asarray(rng.uniform(0.0, 1.0, len(cpix)), np.float64)
+                keep = vis & (u < pp_)
+                pk = float(pp_[vis].mean()) if vis.any() else 0.0
             elif p['RETURN_MODEL'] == 'cnn':        # §10.3: arm (b'), the per-box U-Net
                 pp_ = cnn_keep_prob(local, kept, rxyz, rrow, rcol, cb, sil, env, thetas, n_cols, height, p['CNN_WEIGHTS'])
                 u = np.asarray(rng.uniform(0.0, 1.0, len(cpix)), np.float64)
@@ -977,6 +1001,10 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
                     n_rendered=int(len(cpix)), n_visible=int(vis.sum()), p_keep=float(pk), n_kept=int(keep.sum()),
                     n_inbox_removed=int(len(inb) + add_in.sum()), n_shadow_removed=int(len(shadow) + ash.sum()),
                     ground_fallback=bool(last_fb[0]) if v3 else None, bottom=float(cb[2] - cb[5] / 2))
+        if version >= 7:
+            crec['ground_kind'] = last_kind[0]
+            if keep_points and ulog is not None:
+                crec['vis_ulogit'] = ulog[vis]
         if keep_points:
             crec['placed'] = q.copy(); crec['rendered_unsparsified'] = rxyz[vis].copy(); crec['rendered'] = rxyz[keep]
         if version >= 5:
@@ -1375,8 +1403,9 @@ def _load_cnn(path):
     return net
 
 
-def cnn_keep_prob(local, kept, rxyz, rrow, rcol, box, sil, env, thetas, n_cols, height, weights):
-    """§10.3: keep probability of each rendered pixel of a copy from the U-Net on its RR-lattice patch."""
+def _cnn_patch_logits(local, kept, rxyz, rrow, rcol, box, sil, env, n_cols, height, weights):
+    """The U-Net's (H, W) logits on the copy's RR-lattice patch and the rendered pixels' patch positions; None if the
+    silhouette is empty."""
     import torch
     loc = np.asarray(local, np.float64); b = np.asarray(box, np.float64)
     o = np.array([0.0, 0.0, height])
@@ -1385,15 +1414,110 @@ def cnn_keep_prob(local, kept, rxyz, rrow, rcol, box, sil, env, thetas, n_cols, 
     hrel = np.clip((loc[kept, 2] + b[5] / 2) / b[5], 0.0, 1.0)
     sp, srow, _ = sil
     if not len(sp):
-        return np.zeros(len(kept))
+        return None
     out = build_patch(srow, sp % n_cols, env['sil_vis'], rrow, rcol, depth, irank, hrel,
                       np.log(np.hypot(b[0], b[1]) / R_REF_M), n_cols, flip_rows=True, flip_cols=True, fixed=False)
     X, (ri, rj), _ = out
     net = _load_cnn(str(weights))
     with torch.no_grad():
         lg = net(torch.from_numpy(X[None]))[0].numpy()
+    return lg, ri, rj
+
+
+def cnn_keep_prob(local, kept, rxyz, rrow, rcol, box, sil, env, thetas, n_cols, height, weights):
+    """§10.3: keep probability of each rendered pixel of a copy from the U-Net on its RR-lattice patch."""
+    o = _cnn_patch_logits(local, kept, rxyz, rrow, rcol, box, sil, env, n_cols, height, weights)
+    if o is None:
+        return np.zeros(len(kept))
+    lg, ri, rj = o
     pr = 1.0 / (1.0 + np.exp(-lg))
     p = np.zeros(len(kept))
     m = ri >= 0
     p[m] = pr[ri[m], rj[m]]
+    return p
+
+
+# =========================================================================================================== RR v7
+# experiments_md 20261018_02 §12 (design fixed in T05 §5, experiments_md c4a11d5): v6 with the copy's bottom from E5a (the
+# 4-40 m plane shifted by the median residual of the frame's source GT car bottoms within 30 m; fallback E2-cell-p5, then
+# the plane; 20261018_02 §11), arm (a) frozen at v6's fit, arm (b'') the U-Net behind a calibration layer
+# (RETURN_MODEL: cnn_cal). Reached only by VERSION: 7.
+DEFAULTS_V7 = dict(E5A_PLANE_RMAX=40.0, E5A_RADIUS=30.0, E5A_FB_RADIUS=10.0, E5A_FB_PCT=5.0, E5A_FB_MIN_CELLS=3)
+
+
+def gt_car_mask(data_dict, car_class='Car'):
+    """The frame's source GT cars for E5a (§12.1): named car_class, gt_boxes_mask true, not an ignore box
+    (gt_boxes_ignore_mask, or gt_classes <= 0 when present), at any range. Labels are compared, never used as indices."""
+    boxes = np.asarray(data_dict['gt_boxes'])
+    if len(boxes) == 0:
+        return np.zeros(0, bool)
+    m = np.asarray(data_dict['gt_names']) == car_class
+    if 'gt_boxes_mask' in data_dict:
+        m &= np.asarray(data_dict['gt_boxes_mask'], bool)
+    ign = data_dict.get('gt_boxes_ignore_mask', None)
+    if ign is not None:
+        m &= ~np.asarray(ign, bool)
+    cls = data_dict.get('gt_classes', None)
+    if cls is not None:
+        m &= np.asarray(cls) > 0
+    return m
+
+
+def e5a_bottom(xyz, grid, box, plane, gt_cars, radius=30.0, fb_radius=10.0, d_lo=0.5, fb_pct=5.0, fb_min_cells=3,
+               cell=1.0, cell_min_pts=3):
+    """(bottom z, kind) of a box at its BEV centre (§12.1): kind 0 = E5a, the plane plus the median of (GT bottom - plane
+    at the GT centre) over gt_cars (m, >= 7) within `radius`; kind 1 = E2-cell-p5, the fb_pct-th percentile of the
+    second-lowest z of the 1 m cells (>= cell_min_pts points) of the points of xyz within fb_radius of the centre and
+    farther than d_lo from the box's rectangle, needing >= fb_min_cells cells; kind 2 = the plane. grid: _BevGrid of xyz.
+    Equal to tools/analysis/rr_ground_explore.py's E5a / E2-cell-p5 (tested)."""
+    b = np.asarray(box, np.float64); x, y = float(b[0]), float(b[1])
+    z0 = float(plane_z(plane, x, y))
+    g = np.asarray(gt_cars, np.float64).reshape(-1, 7)
+    if len(g):
+        s = np.hypot(g[:, 0] - x, g[:, 1] - y) <= radius
+        if s.any():
+            res = (g[s, 2] - g[s, 5] / 2) - plane_z(plane, g[s, 0], g[s, 1])
+            return z0 + float(np.median(res)), 0
+    if len(xyz):
+        sq = np.array([[x - fb_radius, y - fb_radius], [x + fb_radius, y + fb_radius]])
+        c = np.sort(grid.query(sq))
+        if len(c):
+            xy = np.asarray(xyz[c, :2], np.float64)
+            m = (footprint_distance(xy, b) > d_lo) & (np.hypot(xy[:, 0] - x, xy[:, 1] - y) <= fb_radius)
+            if m.any():
+                v = GroundCells(xyz[c[m]], cell, cell_min_pts).vals
+                v = v[np.isfinite(v)]
+                if len(v) >= fb_min_cells:
+                    return float(np.percentile(v, fb_pct)), 1
+    return z0, 2
+
+
+def cnn_logit(local, kept, rxyz, rrow, rcol, box, sil, env, thetas, n_cols, height, weights):
+    """§12.1: the U-Net's logit U(x) at each rendered pixel's patch position (-inf outside the patch)."""
+    out = np.full(len(kept), -np.inf)
+    o = _cnn_patch_logits(local, kept, rxyz, rrow, rcol, box, sil, env, n_cols, height, weights)
+    if o is None:
+        return out
+    lg, ri, rj = o
+    m = ri >= 0
+    out[m] = lg[ri[m], rj[m]].astype(np.float64)
+    return out
+
+
+def cal_params(path):
+    """(b'')'s calibration (a, b_band (4; body = 0), c, log_sigma) from an .npz, cached per process."""
+    if path is None:
+        raise ValueError("RETURN_PARAMS (the calibration) is required for RETURN_MODEL 'cnn_cal'")
+    return _load_return_model(str(path))
+
+
+def calibrated_prob(ulog, h_rel, r_bev, par, eps=0.0):
+    """§12.1: p = sigmoid(U + a + b_band(h_rel) + c log(r_bev / 50 m) + sigma eps) per rendered pixel; 0 where U = -inf
+    (outside the patch)."""
+    u = np.asarray(ulog, np.float64)
+    lg = (u + par['a'] + np.asarray(par['b_band'], np.float64)[band_of(h_rel)] + par['c'] * np.log(r_bev / R_REF_M)
+          + np.exp(par['log_sigma']) * eps)
+    p = np.zeros(len(u))
+    f = np.isfinite(u)
+    p[f] = 1.0 / (1.0 + np.exp(-np.clip(lg[f], -30.0, 30.0)))           # strictly inside (0, 1)
     return p
