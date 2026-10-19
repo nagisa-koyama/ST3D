@@ -170,6 +170,7 @@ def features(a):
     G.update(calib=pickle.load(open(TOP_CALIB, 'rb')))
     z = np.load(PATCHES)
     M = z['meta']; hidx = np.nonzero(M[:, 6] == 0)[0]
+    ZX, ZY = z['X'], z['Y']                  # read once: indexing the NpzFile re-reads the whole array every time
     keys = {}
     for i in hidx:
         keys.setdefault((int(M[i, 0]), int(M[i, 1]), round(float(M[i, 2]), 4)), []).append(int(i))
@@ -182,7 +183,7 @@ def features(a):
         for n, res in enumerate(pool.imap_unordered(track_features, ho_tracks, chunksize=2)):
             for r in res:
                 cand = [i for i in keys.get(r['key'], []) if not done[pos_of[i]]]
-                match = [i for i in cand if np.array_equal(z['X'][i], r['X']) and np.array_equal(z['Y'][i], r['Y'])]
+                match = [i for i in cand if np.array_equal(ZX[i], r['X']) and np.array_equal(ZY[i], r['Y'])]
                 if not cand:
                     n_unmatched += 1; continue
                 if not match:
