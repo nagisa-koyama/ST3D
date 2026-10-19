@@ -1,0 +1,11 @@
+# B6 R4 (experiments_md T05 §5 B6; 20261017_07 §14): FULL-LENGTH twin of the 15-epoch GBlobs proxy 27472
+# (W&B a6i0knl0; seed-667 twin 27690 c5pfev4i). S3 (spin -> flash) prior-method row: GBlobs voxel encoder, single
+# frame, no correction, source-only.
+# Only the schedule changes against the proxy: NUM_EPOCHS 15 -> 115, the schedule of the S3 method row R2 29327
+# (otxal8b8) and of the control 26389. Everything else is inherited from the proxy file itself (resolved config
+# checked against 27472's W&B config, 20261017_07 §14). Read as D = R2 - R4 in the PandarGT cone, rule A.
+# Run as the proxy did: 1 GPU x 6 (global batch 6), --mem=150G, no staging, seed 666.
+_BASE_CONFIG_: cfgs/da-ieee-access-tier1/centerpoint-gblobs-pandaset-spin2flash-15ep.yaml
+
+OPTIMIZATION:
+    NUM_EPOCHS: 115

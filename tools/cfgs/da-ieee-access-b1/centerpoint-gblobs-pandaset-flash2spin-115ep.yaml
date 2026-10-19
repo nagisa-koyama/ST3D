@@ -1,0 +1,15 @@
+# B6 R5 (experiments_md T05 §5 B6; 20261017_07 §14): S4 (flash -> spin) prior-method row at full length.
+# R1's config (centerpoint-pandaset-flash2spin-115ep, job 29328, W&B tmjprck9; seed-667 twin 29603 ac1rgzvw) with
+# the GBlobs voxel encoder block of 27472 (W&B a6i0knl0, cfgs/da-ieee-access/centerpoint-gblobs-pandaset-spin2flash)
+# substituted, and NOTHING else changed: 115 epochs, single frame, no correction, source-only.
+# Resolved config checked against R1's W&B config (the MODEL.VFE block alone differs) and the VFE block against
+# 27472's (identical), 20261017_07 §14. Read against R1's two-seed mean, rule A, over 360 deg and in the cone.
+# Run as R1 did: 1 GPU x 6 (global batch 6), --mem=150G, no staging, seed 666.
+_BASE_CONFIG_: cfgs/da-ieee-access-b1/centerpoint-pandaset-flash2spin-115ep.yaml
+
+MODEL:
+    VFE:
+        NAME: GBlobsVFE
+        RELATIVE_DISTANCE: True
+        COVARIANCE_ONLY: False
+        COVARIANCE_SCALE: 1.0
