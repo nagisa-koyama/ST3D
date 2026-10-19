@@ -1469,3 +1469,9 @@ def test_rr7_configs_are_rr6a_plus_the_v7_keys_and_v1_to_v6_unchanged(monkeypatc
             assert {k: v for k, v in e7[0].items() if k not in drop} == {k: v for k, v in e6[0].items() if k not in drop}
         for k in ('MODEL', 'OPTIMIZATION', 'CLASS_NAMES', 'DATA_CONFIG_TAR'):
             assert r7[k] == r6[k]
+    r7a, r7a2 = (load(f'centerpoint-gblobs-accum-legaldepth-rr7{x}-nuscenes2waymo.yaml') for x in ('a', 'a2'))
+    for key in ('NUSCENES_N008', 'NUSCENES_N015'):                    # §12.2: the refit config differs only by its fit
+        e, e2 = (c.DATA_CONFIGS[key].DATA_AUGMENTOR.AUG_CONFIG_LIST for c in (r7a, r7a2))
+        assert e2[1:] == e[1:] and e2[0].RETURN_PARAMS.endswith('v7/fit_a.npz')
+        assert {k: v for k, v in e2[0].items() if k != 'RETURN_PARAMS'} == {k: v for k, v in e[0].items() if k != 'RETURN_PARAMS'}
+    assert all(r7a2[k] == r7a[k] for k in ('MODEL', 'OPTIMIZATION', 'CLASS_NAMES', 'DATA_CONFIG_TAR'))
