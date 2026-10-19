@@ -102,6 +102,7 @@ def track_features(tr):
     if len(local) < 50:
         return []
     irank_all = rr.intensity_rank(local[:, 3])
+    agg_int = local[:, 3].astype(np.float64)
     med = float(np.median(local[:, 3]))
     irel_all = np.clip(local[:, 3] / med, *I_CLIP) if med > 0 else np.ones(len(local))
     nrm_all, _ = instance_normals(local[:, :3])
@@ -155,8 +156,11 @@ def track_features(tr):
         m = ri >= 0
         F[0, ri[m], rj[m]] = irel_all[k][m]; F[1, ri[m], rj[m]] = hrel[m]; F[2, ri[m], rj[m]] = rr3[m]
         F[3, ri[m], rj[m]] = cos[m]; F[4, ri[m], rj[m]] = has[m]
+        # §12 (arm (b'')): the aggregate point behind each covered patch pixel, and the track's raw intensities (one array
+        # object shared by the track's patches, so it is pickled once)
         res.append(dict(key=(int(tr['ti']), int(idx), round(float(np.hypot(fb[0], fb[1])), 4)), seq=seq,
-                        X=X.astype(np.float16), Y=Y, F=F))
+                        X=X.astype(np.float16), Y=Y, F=F,
+                        cov=np.c_[ri[m], rj[m], k[m]].astype(np.int32), agg_int=agg_int))
     return res
 
 
