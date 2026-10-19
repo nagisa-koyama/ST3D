@@ -916,6 +916,17 @@ def report_v2(a):
     print('\nimages:', [p for r in res for p in r['images']])
     print(f'\nVERDICT v{version} (deciding items; database sanity: see the merge outputs):',
           {k: ('PASS' if v else 'FAIL') for k, v in verdict.items()})
+    if version >= 7:                             # §12.3 amended: the launch decision from the deciding items only
+        go = launch_decision_v7(verdict)
+        print(f"LAUNCH DECISION v7 ({', '.join(V7_DECIDING)}; D1 v5 and D1 v4 reported only): {'PASS' if go else 'FAIL'}")
+
+
+V7_DECIDING = ('G1', 'G2', 'G3', 'normals', 'dump', 'fit_check')
+
+
+def launch_decision_v7(verdict):
+    """§12.3 as amended 2026-10-19 21:27: the deciding items only (D1 v5 and D1 v4 are reported); a missing item fails."""
+    return all(bool(verdict.get(k, False)) for k in V7_DECIDING)
 
 
 def g2_cell_median(ppp, skip_undefined=False):
@@ -967,8 +978,8 @@ def report_d1v5(res, cp, C, PL, verdict):
         kk = cp[m, C['ground_kind']]
         print(f"  copies' ground (reported): E5a {np.mean(kk == 0):.1%}, cell fallback {np.mean(kk == 1):.1%}, plane "
               f"{np.mean(kk == 2):.1%} of {int(m.sum())}")
-    verdict['D1v5'] = ok
-    print(f"D1 v5 {'PASS' if ok else 'FAIL'}")
+    print(f"D1 v5 (reported only since the amendment of 2026-10-19 21:27, 20261018_02 §12.3; the user accepted the road-surface "
+          f"error) would read {'PASS' if ok else 'FAIL'}")
 
 
 def report_v5_extra(cp, fr, C, F, PL, verdict, a):

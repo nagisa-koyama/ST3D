@@ -1367,6 +1367,14 @@ def test_v7_d1v5_rows_on_a_toy():
     assert n == 3 and med < 0.05 and g1 == 0.0 and np.isclose(sum(ks), 1.0)
 
 
+def test_v7_launch_decision_ignores_d1_after_the_amendment():
+    import rr_gate as RG
+    ok = dict(G1=True, G2=True, G3=True, normals=True, dump=True, fit_check=True)
+    assert RG.launch_decision_v7(dict(ok, D1v5=False, D1v4=False))
+    assert not RG.launch_decision_v7(dict(ok, fit_check=False))
+    assert not RG.launch_decision_v7({k: v for k, v in ok.items() if k != 'normals'})   # a missing item fails
+
+
 def test_v7_g2_skips_copies_with_undefined_ppp():
     import rr_gate as RG
     assert RG.g2_cell_median([1.0, np.nan, 1.0, 1.05], skip_undefined=True) == (1.0, 1)
