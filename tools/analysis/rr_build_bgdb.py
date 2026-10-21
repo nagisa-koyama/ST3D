@@ -15,6 +15,10 @@ database's contributing keyframes), for the size condition.
     python analysis/rr_build_bgdb.py run --cfg <27471 cfg> --key NUSCENES_N008 --car_dir <v2 dir> --shard k --nshards N --out <dir>
     python analysis/rr_build_bgdb.py merge --key NUSCENES_N008 --nshards N --dir <dir> --car_dir <v2 dir>
 Normals: `rr_build_db.py normals / normals_merge --dir <dir>` (the v5 procedure; the files are named as the car database's).
+
+v8b (T05 §5): `run --planar_rule --candidates 300` rejects planar near-horizontal regions inside the sampler (29808's classes:
+smallest PCA eigenvalue < 1% of the total, normal within 30 deg of vertical, on the stored 0.02 m voxels) and draws up to 300
+candidates per keyframe; `merge --kf_frac 0.95` sets the keyframe bar to ceil(0.95 x the car database's).
 """
 import os
 for _v in ('OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS', 'NUMEXPR_NUM_THREADS'):
@@ -39,10 +43,32 @@ GROUND = dict(cell=1.0, min_pts=3, radius=5.0, min_cells=3, pct=20.0)     # the 
 VOXEL = 0.02
 
 
+PLANAR_EIG, PLANAR_TILT = 0.01, 30.0     # v8b (T05 §5): 29808's classes, adopted as a database rule (disclosed)
+
+
+def is_planar_horizontal(q, eig_frac=PLANAR_EIG, tilt_deg=PLANAR_TILT):
+    """v8b's planar near-horizontal test (= 29808 / 30044): smallest PCA eigenvalue < eig_frac of the total and the normal
+    within tilt_deg of vertical."""
+    q = np.asarray(q, np.float64)[:, :3]
+    if len(q) < 3:
+        return False
+    w, V = np.linalg.eigh(np.cov((q - q.mean(0)).T))
+    return bool(w[0] / max(w.sum(), 1e-12) < eig_frac and np.degrees(np.arccos(min(1.0, abs(V[2, 0])))) < tilt_deg)
+
+
+def voxel_donor(xyz, inten, keep, box):
+    """The stored form of a region's kept points: box frame + intensity, 0.02 m centroid voxels."""
+    from pcdet.datasets.augmentor import relocate_render as rr
+    va = rr.VoxelAccumulator(VOXEL, 4)
+    va.add(np.c_[rr.to_box_frame(xyz[keep], box), np.asarray(inten)[keep]])
+    return va.points().astype(np.float32)
+
+
 def sample_regions(xyz, gt7, car_sizes, rng, plane, cells, grid=None, r_lo=R_LO, r_hi=R_HI, max_tries=MAX_TRIES,
-                   max_accept=MAX_ACCEPT, min_pts=MIN_PTS, grow=GROW, clear=CLEAR):
+                   max_accept=MAX_ACCEPT, min_pts=MIN_PTS, grow=GROW, clear=CLEAR, accept=None):
     """Accepted background regions of one keyframe: list of (box (7,), indices of the kept points), and the tries made.
-    xyz (n, 3) the loader cloud; gt7 (m, 7) every annotated box; car_sizes (k, 3) the car donors' (l, w, h)."""
+    xyz (n, 3) the loader cloud; gt7 (m, 7) every annotated box; car_sizes (k, 3) the car donors' (l, w, h).
+    accept(box, keep) -> bool: an extra condition checked last (v8b: not planar near-horizontal)."""
     from pcdet.datasets.augmentor import relocate_render as rr
     grid = grid if grid is not None else rr._BevGrid(xyz)
     gt_c = rr.bev_corners(np.asarray(gt7, np.float64).reshape(-1, 7), grow) if len(gt7) else np.zeros((0, 4, 2))
@@ -67,9 +93,17 @@ def sample_regions(xyz, gt7, car_sizes, rng, plane, cells, grid=None, r_lo=R_LO,
         keep = inb[xyz[inb, 2] > zb + clear]
         if len(keep) < min_pts:
             continue
-        out.append((box, np.sort(keep)))
+        keep = np.sort(keep)
+        if accept is not None and not accept(box, keep):
+            continue
+        out.append((box, keep))
         taken = np.concatenate([taken, c4[None]])
     return out, tries
+
+
+def keyframe_bar(frac, car_frames):
+    """The contributing-keyframe bar: ceil(frac x the car database's contributing keyframes) (v8: 1.0; v8b: 0.95)."""
+    return int(np.ceil(round(frac * car_frames, 9)))
 
 
 def run(a):
@@ -95,7 +129,8 @@ def run(a):
     mine = set(scenes[a.shard::a.nshards])
     idx = [i for i, info in enumerate(ds.infos) if comp.tok2scene[info['token']] in mine][:a.max_frames]
     print(f'[bg_db] {a.key} shard {a.shard}/{a.nshards}: {len(mine)} of {len(scenes)} scenes, {len(idx)} of {len(ds.infos)} '
-          f'keyframes; MAX_SWEEPS {max_sweeps}, SHIFT_COOR {shift.tolist()}; car database {len(car_sizes)} donors', flush=True)
+          f'keyframes; MAX_SWEEPS {max_sweeps}, SHIFT_COOR {shift.tolist()}; car database {len(car_sizes)} donors; '
+          f'candidates {a.candidates}, planar rule {a.planar_rule}', flush=True)
     pts_l, cnt, raw, size, alpha, rng_l, frame_l, tries_l = [], [], [], [], [], [], [], []
     car_frames = 0; no_plane = 0; acc_frames = 0
     t0 = time.time()
@@ -126,12 +161,11 @@ def run(a):
             no_plane += 1; continue
         cells = rr.GroundCells(xyz, GROUND['cell'], GROUND['min_pts'])
         rng = np.random.default_rng([a.seed, i])
-        regs, tries = sample_regions(xyz, gb, car_sizes, rng, plane, cells, grid)
+        acc_fn = (lambda box, keep: not is_planar_horizontal(voxel_donor(xyz, pts[:, 3], keep, box))) if a.planar_rule else None
+        regs, tries = sample_regions(xyz, gb, car_sizes, rng, plane, cells, grid, max_tries=a.candidates, accept=acc_fn)
         acc_frames += int(len(regs) > 0)
         for box, keep in regs:
-            va = rr.VoxelAccumulator(VOXEL, 4)
-            va.add(np.c_[rr.to_box_frame(xyz[keep], box), pts[keep, 3]])
-            p = va.points().astype(np.float32)
+            p = voxel_donor(xyz, pts[:, 3], keep, box)
             pts_l.append(p); cnt.append(len(p)); raw.append(len(keep)); size.append(box[3:6].copy())
             alpha.append(rr.relative_view_angle(box)); rng_l.append(float(np.hypot(box[0], box[1]))); frame_l.append(i)
             tries_l.append(tries)
@@ -165,9 +199,11 @@ def merge(a):
              frame=frame, n_raw=n_raw)
     car = np.load(Path(a.car_dir) / f'db_{a.key}_index.npz')
     nfr = len(np.unique(frame))
-    ok_n, ok_f = n >= len(car['count']), nfr >= int(st[2])
+    kf_bar = keyframe_bar(a.kf_frac, int(st[2]))                 # v8b: ceil(0.95 x the car DB's contributing keyframes)
+    ok_n, ok_f = n >= len(car['count']), nfr >= kf_bar
     print(f'[bg_db] {a.key}: shards {a.nshards}; keyframes processed {st[0]} (no plane {st[3]}); background donors {n} from '
-          f'{nfr} keyframes; car database {len(car["count"])} donors, contributing keyframes {st[2]}; size condition: donors '
+          f'{nfr} keyframes; car database {len(car["count"])} donors, contributing keyframes {st[2]} (bar {kf_bar} = ceil('
+          f'{a.kf_frac:g} x)); size condition: donors '
           f'{"PASS" if ok_n else "FAIL"}, keyframes {"PASS" if ok_f else "FAIL"}')
     if n:
         print(f'[bg_db] kept points per donor p10 / p50 / p90 {np.percentile(n_raw, 10):.0f} / {np.percentile(n_raw, 50):.0f} / '
@@ -194,9 +230,12 @@ def main():
     r.add_argument('--car_dir', required=True)
     r.add_argument('--shard', type=int, required=True); r.add_argument('--nshards', type=int, required=True)
     r.add_argument('--seed', type=int, default=0); r.add_argument('--max_frames', type=int, default=None)
+    r.add_argument('--planar_rule', action='store_true', help='v8b: reject planar near-horizontal regions in the sampler')
+    r.add_argument('--candidates', type=int, default=MAX_TRIES, help='candidate regions per keyframe (v8: 100; v8b: 300)')
     m = sp.add_parser('merge')
     m.add_argument('--key', required=True); m.add_argument('--dir', required=True); m.add_argument('--car_dir', required=True)
     m.add_argument('--nshards', type=int, required=True)
+    m.add_argument('--kf_frac', type=float, default=1.0, help='keyframe bar as a fraction of the car DB\'s (v8b: 0.95)')
     a = ap.parse_args()
     {'run': run, 'merge': merge}[a.mode](a)
 

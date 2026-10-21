@@ -702,7 +702,67 @@ def bg_donor_sheet(path, key, bgdb, n=24, seed=0):
     fig.tight_layout(); fig.savefig(path, dpi=70); plt.close(fig)
 
 
-def report_v8(res, cp, C, PL, verdict):
+def n2_extra_frames(n_infos, gate, n=1400):
+    """§13 v8b (T05 §5): N2's extra frames, E = floor((k + 0.5) N / n) for k < n; a frame already in the gate's set or
+    already taken moves to the next unused index (wrapping)."""
+    used = set(int(g) for g in gate); out = []
+    for k in range(n):
+        f = int(np.floor((k + 0.5) * n_infos / n))
+        while f in used:
+            f = (f + 1) % n_infos
+        used.add(f); out.append(f)
+    return out
+
+
+class _StopAfterRR(Exception):
+    pass
+
+
+def run_n2(a):
+    """§13 v8b: N2's extra 1,400 frames per platform (sharded), recording only the car and background copies' ranges and
+    counts; the pipeline stops after RR (the gate's per-frame seeds)."""
+    from pcdet.datasets.augmentor import relocate_render as rr
+    out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
+    plat = PLAT_ID[a.key]
+    cfg, dcfg, ds = build(a.cfg, a.key)
+    aug = ds.data_augmentor
+    q0 = aug.data_augmentor_queue[0]
+    assert getattr(q0, 'func', None) is not None and q0.func.__name__ == 'relocate_render', 'RR is not first'
+    rr_cfg = q0.keywords['config']; lat = q0.keywords['lattice']; db = q0.keywords['db']
+    assert rr.bg_db_from_config(rr_cfg) is not None, 'the N2 mode is for background-copy configs'
+    CAP = {}
+
+    def rr_step(data_dict=None):
+        o, rec = rr.relocate_render_scene_v2(data_dict, rr_cfg, lat, db, rng=np.random, keep_points=False)
+        CAP['rec'] = rec
+        raise _StopAfterRR
+    aug.data_augmentor_queue = [rr_step] + list(aug.data_augmentor_queue[1:])
+    N = len(ds)
+    frames = n2_extra_frames(N, [k * (N // 200) for k in range(200)])[a.shard::a.nshards][:a.max_frames]
+    car_r, bg_r, rows = [], [], []
+    t0 = time.time()
+    for n, i in enumerate(frames):
+        np.random.seed((plat * 1000003 + i) % (2 ** 31))
+        CAP.clear()
+        try:
+            ds[i]
+        except _StopAfterRR:
+            pass
+        rec = CAP['rec']; b = rec.get('bg', {})
+        cr = [c['r_new'] for c in rec['copies']]; br = [c['r_new'] for c in rec.get('bg_copies', [])]
+        car_r += cr; bg_r += br
+        rows.append([plat, i, len(cr), len(br), b.get('n_attempted', 0), b.get('n_no_place', 0), b.get('n_zero', 0)])
+        if n % 50 == 0:
+            print(f'[rr_gate n2] {n + 1}/{len(frames)} frames, car {len(car_r)}, background {len(bg_r)}, '
+                  f'{time.time() - t0:.0f} s', flush=True)
+    res = dict(key=a.key, plat=plat, frames=frames, car_r=np.array(car_r), bg_r=np.array(bg_r),
+               rows=np.array(rows, np.float64).reshape(-1, 7), node=os.uname().nodename)
+    pickle.dump(res, open(out / f'n2_v7_{a.key}_{a.shard:02d}.pkl', 'wb'))
+    print(f'[rr_gate n2] done {a.key} shard {a.shard}: {len(frames)} frames, car {len(car_r)}, background {len(bg_r)}',
+          flush=True)
+
+
+def report_v8(res, cp, C, PL, verdict, D=None):
     """§13.3: N1-N4 (deciding), the reported items, and the launch decision for v8."""
     import glob
     rows = np.concatenate([r['bg']['rows'] for r in res]); fr = np.concatenate([r['bg']['frames'] for r in res])
@@ -719,15 +779,26 @@ def report_v8(res, cp, C, PL, verdict):
     verdict_v8 = {'N1': n1 == 0}
     print(f"N1: BEV overlaps of background copies (grown 0.5 m) with GT boxes, car copies or other background copies: {n1} "
           f"-> {'PASS' if n1 == 0 else 'FAIL'}")
+    car_all = [cp[:, C['r_new']]]; bg_all = [rows[:, R['r_new']] if len(rows) else np.zeros(0)]
+    car_p = {p: [cp[cp[:, C['plat']] == p, C['r_new']]] for p in PL}
+    bg_p = {p: [rows[rows[:, 0] == p, R['r_new']] if len(rows) else np.zeros(0)] for p in PL}
+    n2 = [pickle.load(open(f, 'rb')) for f in sorted(Path(D).glob('n2_v7_*.pkl'))] if D is not None else []
+    if n2:                                           # §13 v8b: N2 on the gate's 200 + 1,400 extra frames per platform
+        for z in n2:
+            car_all.append(z['car_r']); bg_all.append(z['bg_r'])
+            car_p[z['plat']].append(z['car_r']); bg_p[z['plat']].append(z['bg_r'])
+        nfr = {p: int(sum(len(z['frames']) for z in n2 if z['plat'] == p)) for p in PL}
+        print(f"N2 sample: the gate's 200 frames + extra frames per platform {nfr} ({len(n2)} shard files)")
+    car_all, bg_all = np.concatenate(car_all), np.concatenate(bg_all)
     print('N2: background / car copies per 10 m bin, pooled over both platforms (bar +-10%)')
     print('| bin | car copies | background copies | ratio | |')
     print('|---|---|---|---|---|')
     ok2 = True
-    for lo, hi, nc, nb, ratio, good in bg_rate_table(cp[:, C['r_new']], rows[:, R['r_new']] if len(rows) else []):
+    for lo, hi, nc, nb, ratio, good in bg_rate_table(car_all, bg_all):
         ok2 &= good
         print(f"| {'all' if lo is None else f'{lo:g}-{hi:g} m'} | {nc} | {nb} | {ratio:.3f} | {'pass' if good else 'FAIL'} |")
     for p in PL:
-        t = bg_rate_table(cp[cp[:, C['plat']] == p, C['r_new']], rows[rows[:, 0] == p, R['r_new']])
+        t = bg_rate_table(np.concatenate(car_p[p]), np.concatenate(bg_p[p]))
         print(f"  {PLAT_NAME[p]} (reported): " + ', '.join(f"{'all' if lo is None else f'{lo:g}-{hi:g}'} {ratio:.3f}"
                                                             for lo, hi, nc, nb, ratio, good in t))
     verdict_v8['N2'] = ok2; print(f"N2 {'PASS' if ok2 else 'FAIL'}")
@@ -1179,7 +1250,7 @@ def report_v2(a):
     print(f'\nVERDICT v{version} (deciding items; database sanity: see the merge outputs):',
           {k: ('PASS' if v else 'FAIL') for k, v in verdict.items()})
     if 'bg' in res[0]:                           # §13.3: v8 decides on N1-N4; the car path above is reported
-        report_v8(res, cp, C, PL, verdict)
+        report_v8(res, cp, C, PL, verdict, Path(a.dir))
     elif version >= 7:                           # §12.3 amended: the launch decision from the deciding items only
         go = launch_decision_v7(verdict)
         print(f"LAUNCH DECISION v7 ({', '.join(V7_DECIDING)}; D1 v5 and D1 v4 reported only): {'PASS' if go else 'FAIL'}")
@@ -1349,6 +1420,8 @@ def main():
     r.add_argument('--n', type=int, default=200); r.add_argument('--g4', type=int, default=100)
     r.add_argument('--dump', type=int, default=3); r.add_argument('--images', type=int, default=2)
     r.add_argument('--max_frames', type=int, default=None)
+    r.add_argument('--n2_only', action='store_true', help="§13 v8b: N2's extra frames only (copy ranges and counts)")
+    r.add_argument('--shard', type=int, default=0); r.add_argument('--nshards', type=int, default=1)
     q = sp.add_parser('report'); q.add_argument('--dir', required=True)
     a = ap.parse_args()
     if a.mode == 'run':
@@ -1356,7 +1429,10 @@ def main():
         from pcdet.config import cfg_from_yaml_file
         c = cfg_from_yaml_file(a.cfg, EasyDict())
         v = int(c.DATA_CONFIGS[a.key].DATA_AUGMENTOR.AUG_CONFIG_LIST[0].get('VERSION', 1))
-        run_v2(a) if v >= 2 else run(a)
+        if a.n2_only:
+            run_n2(a)
+        else:
+            run_v2(a) if v >= 2 else run(a)
     else:
         report_v2(a) if list(Path(a.dir).glob('gate_v[234567]_*.pkl')) else report(a)
 

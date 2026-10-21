@@ -1589,3 +1589,105 @@ def test_rr8_config_is_rr7a_plus_the_background_keys(monkeypatch):
         assert all(key in e8[0][k] and '/v8/' in e8[0][k] for k in bgk) and not any(k in e7[0] for k in bgk)
     for k in ('MODEL', 'OPTIMIZATION', 'CLASS_NAMES', 'DATA_CONFIG_TAR'):
         assert r8[k] == r7[k]
+
+
+# ================================================================================================ RR v8b (§13, v8b)
+def test_v8b_tight_donor_recentres_and_keeps_heights_above_ground():
+    size = np.array([4.0, 2.0, 1.5])                                                 # region box; bottom at z = -0.75
+    rng = np.random.default_rng(0)
+    loc = np.c_[rng.uniform(0.5, 1.5, 200), rng.uniform(-0.2, 0.6, 200), rng.uniform(-0.4, 0.5, 200), np.ones(200)]
+    loc_t, dims, gap = R.tight_donor(loc, size)
+    np.testing.assert_allclose(loc_t[:, :3].min(0) + loc_t[:, :3].max(0), 0.0, atol=1e-12)
+    np.testing.assert_allclose(dims, loc[:, :3].max(0) - loc[:, :3].min(0))
+    assert np.isclose(gap, loc[:, 2].min() + 0.75) and gap > 0.3
+    ground = 0.12
+    box, q = R.place_instance(loc_t[:, :3], dims, 30.0, 0.7, 0.4, np.array([0.0, 0.0, ground]),
+                              R._lifted_bottom(None, np.array([0.0, 0.0, ground]), gap))
+    np.testing.assert_allclose(np.sort(q[:, 2] - ground), np.sort(loc[:, 2] + 0.75), atol=1e-9)   # heights kept
+    assert np.isclose(box[2] - box[5] / 2, ground + gap) and np.allclose(box[3:6], dims)
+    flat = np.c_[np.zeros((5, 2)), np.full(5, 0.1), np.ones(5)]
+    assert np.all(R.tight_donor(flat, size)[1] >= R.TIGHT_MIN_DIM)                  # a degenerate extent keeps a finite box
+
+
+def test_v8b_scene_uses_the_tight_box_and_the_background_try_budget(tmp_path):
+    db, bgdb, base, bgk = _v8_setup(tmp_path, c_band=(0.0, 0.0, 0.0, 0.0))
+    p8 = dict(base, **bgk, BG_TIGHT_EXTENT=True)
+    out, rec = R.relocate_render_scene_v2(scene_v2(), p8, LAT, db, rng=RngV2([40.0, 3 * np.pi / 2], arr=0.3),
+                                          keep_points=True, rng_bg=RngV2([40.0, np.pi / 2 + 0.6], arr=0.3))
+    bg = rec['bg_copies'][0]
+    loc = bgdb.points(0)
+    dims = np.maximum(loc[:, :3].max(0) - loc[:, :3].min(0), R.TIGHT_MIN_DIM)
+    np.testing.assert_allclose(bg['box'][3:6], dims, rtol=1e-6)                      # the copy's box is the tight extent
+    gap = float(loc[:, 2].min() + 0.75)
+    assert abs(bg['bottom'] - gap - (-0.03)) < 0.03                                 # ground (flat at -0.03) + the donor's gap
+    # the try budget: every background try lands on a GT box -> overlap, BG_MAX_TRIES times, never MAX_TRIES (3)
+    gt = np.array([0.0, 40.0, 0.72, 6.0, 4.0, 1.5, 0.0])
+    for budget, want in ((None, 3), (7, 7)):
+        d = scene_v2([], [gt], ['Truck'])
+        out, rec = R.relocate_render_scene_v2(d, dict(p8, BG_MAX_TRIES=budget), LAT, db,
+                                              rng=RngV2([40.0, 3 * np.pi / 2], arr=0.3), keep_points=True,
+                                              rng_bg=RngV2([40.0, np.pi / 2] * 10))
+        assert rec['n_placed'] == 1 and rec['bg']['reject']['overlap'] == want and rec['bg']['n_no_place'] == 1
+        assert rec['reject']['overlap'] == 0                                         # the car copies' budget is untouched
+
+
+def test_v8b_planar_rule_and_the_sampler_accept_hook():
+    import rr_build_bgdb as BG
+    rng = np.random.default_rng(0)
+    slab = np.c_[rng.uniform(0, 3, 500), rng.uniform(0, 1.5, 500), 0.5 + rng.normal(0, 0.005, 500)]
+    wall = np.c_[rng.uniform(0, 3, 500), np.full(500, 0.2) + rng.normal(0, 0.005, 500), rng.uniform(0.4, 1.5, 500)]
+    bush = rng.uniform(0, 1.2, (500, 3))
+    tilted = np.c_[slab[:, :2], 0.5 + 0.2 * slab[:, 0]]                              # 11 deg slope: still near-horizontal
+    assert BG.is_planar_horizontal(slab) and BG.is_planar_horizontal(tilted)
+    assert not BG.is_planar_horizontal(wall) and not BG.is_planar_horizontal(bush)
+    # a raised slab next to a bush: with the rule, no accepted region is the slab alone
+    g = rng.uniform(-40, 40, (60000, 2)); P = np.c_[g, rng.normal(0, 0.01, len(g))]
+    sl = np.c_[rng.uniform(-18, -14, 6000), rng.uniform(-2, 2, 6000), 0.5 + rng.normal(0, 0.005, 6000)]
+    bu = np.c_[rng.uniform(14, 18, 4000), rng.uniform(-2, 2, 4000), rng.uniform(0.0, 1.6, 4000)]
+    P = np.concatenate([P, sl, bu])
+    plane = R.ground_plane(P, 40.0); cells = R.GroundCells(P, 1.0, 3)
+    inten = np.ones(len(P))
+    acc = lambda box, keep: not BG.is_planar_horizontal(BG.voxel_donor(P, inten, keep, box))
+    sizes = np.array([[4.0, 1.8, 1.5]])
+    seen_slab = seen_slab_rule = 0
+    for seed in range(30):
+        for rule in (False, True):
+            regs, _ = BG.sample_regions(P, np.zeros((0, 7)), sizes, np.random.default_rng(seed), plane, cells,
+                                        max_tries=300, accept=acc if rule else None)
+            for box, keep in regs:
+                on_slab = box[0] < 0
+                if rule:
+                    seen_slab_rule += on_slab
+                    assert not BG.is_planar_horizontal(BG.voxel_donor(P, inten, keep, box))
+                else:
+                    seen_slab += on_slab
+    assert seen_slab > 0 and seen_slab_rule == 0
+    assert BG.keyframe_bar(0.95, 15638) == 14857 and BG.keyframe_bar(0.95, 11558) == 10981 and BG.keyframe_bar(1.0, 7) == 7
+
+
+def test_v8b_n2_extra_frames_are_disjoint_unique_and_fixed():
+    import rr_gate as RG
+    for N in (15695, 12435):
+        gate = [k * (N // 200) for k in range(200)]
+        e = RG.n2_extra_frames(N, gate)
+        assert len(e) == 1400 and len(set(e)) == 1400 and not set(e) & set(gate) and all(0 <= f < N for f in e)
+        assert e == RG.n2_extra_frames(N, gate)
+        base = [int(np.floor((k + 0.5) * N / 1400)) for k in range(1400)]
+        assert sum(a != b for a, b in zip(e, base)) <= len(set(base) & set(gate)) + 5   # only collisions move
+
+
+def test_rr8b_config_is_rr8_plus_the_v8b_keys(monkeypatch):
+    from pcdet.config import cfg_from_yaml_file
+    monkeypatch.chdir(ROOT / 'tools')
+    load = lambda n: cfg_from_yaml_file('cfgs/da-ieee-access/' + n, EasyDict())
+    r8, r8b = (load(f'centerpoint-gblobs-accum-legaldepth-rr{x}-nuscenes2waymo.yaml') for x in ('8', '8b'))
+    for key in ('NUSCENES_N008', 'NUSCENES_N015'):
+        e8, e8b = (c.DATA_CONFIGS[key].DATA_AUGMENTOR.AUG_CONFIG_LIST for c in (r8, r8b))
+        assert e8b[1:] == e8[1:] and e8b[0].BG_TIGHT_EXTENT is True and e8b[0].BG_MAX_TRIES == 100
+        assert 'BG_TIGHT_EXTENT' not in e8[0] and 'BG_MAX_TRIES' not in e8[0]
+        for k in ('BG_DB_POINTS', 'BG_DB_INDEX', 'BG_DB_NORMALS'):
+            assert e8b[0][k] == e8[0][k].replace('/v8/', '/v8b/')
+        skip = {'BG_DB_POINTS', 'BG_DB_INDEX', 'BG_DB_NORMALS', 'BG_TIGHT_EXTENT', 'BG_MAX_TRIES'}
+        assert {k: v for k, v in e8b[0].items() if k not in skip} == {k: v for k, v in e8[0].items() if k not in skip}
+    for k in ('MODEL', 'OPTIMIZATION', 'CLASS_NAMES', 'DATA_CONFIG_TAR'):
+        assert r8b[k] == r8[k]

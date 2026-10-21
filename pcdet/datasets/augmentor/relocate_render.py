@@ -824,11 +824,16 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
             cnt['n_attempted'] += 1
             inst = _randint(rngx, dbx.n)
             local = dbx.points(inst); size = dbx.size[inst]; alphas = dbx.alphas(inst)
+            bfn = bottom_fn
+            if not car and p['BG_TIGHT_EXTENT']:          # §13 v8b: the donor's own extent; the region frame's height kept
+                local, size, gap = tight_donor(local, size)
+                bfn = _lifted_bottom(bottom_fn, plane, gap)
             size_now[0] = size
             lxyz = local[:, :3]
             tries, fresh, acc = 0, True, None
             r = phi = alpha = None
-            while tries < int(p['MAX_TRIES']):
+            max_tries = int(p['BG_MAX_TRIES']) if (not car and p['BG_MAX_TRIES']) else int(p['MAX_TRIES'])
+            while tries < max_tries:
                 tries += 1
                 if fresh:
                     r = rngx.uniform(p['R_MIN'], p['R_MAX']); phi = rngx.uniform(0.0, 2 * np.pi)
@@ -836,7 +841,7 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
                 else:
                     r = rngx.uniform(r, p['R_MAX'])
                 fresh = True
-                cb, q = place_instance(lxyz, size, r, phi, alpha, plane, bottom_fn)
+                cb, q = place_instance(lxyz, size, r, phi, alpha, plane, bfn)
                 if version >= 4 and (cb[2] - cb[5] / 2 < pcr[2] or cb[2] + cb[5] / 2 > pcr[5]):   # §8: inside the z range
                     rj['zrange'] += 1; continue
                 # v1 free-space check
@@ -1469,7 +1474,7 @@ def cnn_keep_prob(local, kept, rxyz, rrow, rcol, box, sil, env, thetas, n_cols, 
 # the plane; 20261018_02 §11), arm (a) frozen at v6's fit, arm (b'') the U-Net behind a calibration layer
 # (RETURN_MODEL: cnn_cal). Reached only by VERSION: 7.
 DEFAULTS_V7 = dict(E5A_PLANE_RMAX=40.0, E5A_RADIUS=30.0, E5A_FB_RADIUS=10.0, E5A_FB_PCT=5.0, E5A_FB_MIN_CELLS=3,
-                   BG_DB_POINTS=None, BG_DB_INDEX=None, BG_DB_NORMALS=None)
+                   BG_DB_POINTS=None, BG_DB_INDEX=None, BG_DB_NORMALS=None, BG_TIGHT_EXTENT=None, BG_MAX_TRIES=None)
 
 
 def gt_car_mask(data_dict, car_class='Car'):
@@ -1580,4 +1585,30 @@ def reference_band(feats):
     """Return-model features with every pixel in the reference (body) band, so c_band = 0 (§13.2)."""
     i_rel, h_rel, r, cos = feats
     return i_rel, np.full(len(h_rel), 0.375), r, cos
+
+
+# ---------------------------------------------------------------------------------------------------------- RR v8b
+# experiments_md 20261018_02 §13 (v8b, T05 §5): the background donor's own extent and its own try budget, behind
+# BG_TIGHT_EXTENT / BG_MAX_TRIES (absent by default: v8 unchanged).
+TIGHT_MIN_DIM = 0.02                    # one database voxel: a zero-thickness extent (a planar wall) keeps a finite box
+
+
+def tight_donor(local, size):
+    """A background donor re-centred on the axis-aligned box of its own points in the region frame: (points, tight
+    (l, w, h), gap). gap = the tight box's bottom above the region's bottom, so that placing the tight box's bottom at
+    ground + gap keeps every point's height above ground as in the source."""
+    loc = np.array(local, np.float64, copy=True)
+    lo, hi = loc[:, :3].min(0), loc[:, :3].max(0)
+    c = (lo + hi) / 2.0
+    loc[:, :3] -= c
+    dims = np.maximum(hi - lo, TIGHT_MIN_DIM)
+    gap = float(lo[2] + np.asarray(size, np.float64)[2] / 2.0)
+    return loc, dims, gap
+
+
+def _lifted_bottom(bottom_fn, plane, gap):
+    """The ground at the (tight) footprint, raised by the donor's gap."""
+    if bottom_fn is None:
+        return lambda x, y, yaw: float(plane_z(plane, x, y)) + gap
+    return lambda x, y, yaw: float(bottom_fn(x, y, yaw)) + gap
 
