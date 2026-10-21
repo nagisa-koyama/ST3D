@@ -176,8 +176,9 @@ def merge(a):
         q = P[:, :3].astype(np.float64)
         rep = np.repeat(np.arange(n), count)
         s = size[rep]
-        inside = (np.abs(q[:, 0]) <= s[:, 0] / 2 + 1e-4) & (np.abs(q[:, 1]) <= s[:, 1] / 2 + 1e-4) & \
-            (q[:, 2] <= s[:, 2] / 2 + 1e-4) & (q[:, 2] > -s[:, 2] / 2 + CLEAR - 0.02)
+        tol = 0.02                              # the in-box kernel's 1 cm BEV margin and the voxel centroid
+        inside = (np.abs(q[:, 0]) <= s[:, 0] / 2 + tol) & (np.abs(q[:, 1]) <= s[:, 1] / 2 + tol) & \
+            (q[:, 2] <= s[:, 2] / 2 + tol) & (q[:, 2] > -s[:, 2] / 2 + CLEAR - tol)
         print(f'[bg_db] SANITY: {int(inside.sum())} of {len(q)} stored points inside the region and above the 0.3 m clearance '
               f'(0.02 m voxel tolerance) = {inside.mean():.4%} -> {"PASS" if inside.mean() >= 0.999 else "FAIL"}')
     print(f'[bg_db] files: {pp} {os.path.getsize(pp) / 1e6:.1f} MB, {ip} {os.path.getsize(ip) / 1e6:.2f} MB')
