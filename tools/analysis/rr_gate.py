@@ -555,6 +555,227 @@ V2_FRAME_COLS = ('plat', 'frame', 'moving', 'n_boxes', 'has_plane', 'n_attempted
                  'lost', 'pts_before', 'pts_after', 'scene_t', 'copy_t', 'gp_sx', 'gp_sy', 'gp_z0', 'rr_sx', 'rr_sy')
 
 
+# ------------------------------------------------------------------------------------------------- RR v8 (§13.3)
+BG_ROW_COLS = ('plat', 'frame', 'r_new', 'n_rendered', 'n_visible', 'n_kept', 'n_final', 'bottom', 'low_share', 'ground_kind',
+               'n1_viol', 'tries')
+BG_FRAME_COLS = ('plat', 'frame', 'n_car', 'n_bg', 'bg_attempted', 'bg_no_place', 'bg_zero', 'same_car_boxes',
+                 'same_final_gt', 'hm_equal', 'centres_in_bg', 'orig_emptied_on', 'orig_emptied_off', 'car_emptied_by_bg',
+                 'car_points_lost', 'n_car_off')
+
+
+def bg_overlap_violations(bg, gt, car, grow=0.5):
+    """§13.3 N1: per background box, the number of GT boxes, car copies and OTHER background boxes its BEV rectangle grown by
+    `grow` overlaps (the loader's free-space test, recomputed)."""
+    from pcdet.datasets.augmentor import relocate_render as rr
+    bg = np.asarray(bg, np.float64).reshape(-1, 7)
+    others = [np.asarray(gt, np.float64).reshape(-1, 7)[:, :7], np.asarray(car, np.float64).reshape(-1, 7)]
+    out = np.zeros(len(bg), np.int64)
+    for j in range(len(bg)):
+        g = rr.bev_corners(bg[j][None], grow)[0]
+        rest = np.concatenate(others + [np.delete(bg, j, 0)])
+        if len(rest):
+            out[j] = int(rr.rects_overlap(g, rr.bev_corners(rest)).sum())
+    return out
+
+
+def centres_in_rects(xy, boxes):
+    """How many of the (x, y) centres lie in any of the boxes' BEV rectangles (§13.3 N3: no peak on a background copy)."""
+    from pcdet.datasets.augmentor import relocate_render as rr
+    xy = np.asarray(xy, np.float64).reshape(-1, 2); b = np.asarray(boxes, np.float64).reshape(-1, 7)
+    if not len(xy) or not len(b):
+        return 0
+    return int(np.any(np.stack([rr.points_in_rect(xy, bx, 0.0) for bx in b]), 0).sum())
+
+
+def bg_rate_table(car_r, bg_r, edges=(0, 10, 20, 30, 40, 50, 60, 70, 75.2), tol=0.10):
+    """§13.3 N2: [(lo, hi, n_car, n_bg, ratio, pass)] per bin and overall (lo = hi = None)."""
+    car_r, bg_r = np.asarray(car_r, np.float64), np.asarray(bg_r, np.float64)
+    rows = []
+    for lo, hi in list(zip(edges[:-1], edges[1:])) + [(None, None)]:
+        mc = np.ones(len(car_r), bool) if lo is None else (car_r >= lo) & (car_r < hi)
+        mb = np.ones(len(bg_r), bool) if lo is None else (bg_r >= lo) & (bg_r < hi)
+        nc, nb = int(mc.sum()), int(mb.sum())
+        ratio = nb / nc if nc else np.nan
+        rows.append((lo, hi, nc, nb, ratio, bool(nc > 0 and abs(ratio - 1.0) <= tol + 1e-12)))
+    return rows
+
+
+def bg_frame_checks(a, ds, i, seed_i, d, rec, B, A, P, CAP, BGM, rr_cfg, head, side, plat, bgrows, sheet, n_check_hm=False):
+    """One gate frame of v8: the background copies' rows (N1 violations, points, the low share), then a paired car-only pass
+    of the same frame and seed (N3: the car copies, the final gt_boxes and, on the dump frames, the heatmaps), and the
+    emptied counts. Returns the BG_FRAME_COLS row."""
+    import torch
+    bgc = rec.get('bg_copies', [])
+    car_boxes = np.array([c['box'] for c in rec['copies']], np.float64).reshape(-1, 7)
+    bg_boxes = np.array([c['box'] for c in bgc], np.float64).reshape(-1, 7)
+    viol = bg_overlap_violations(bg_boxes, B['gt_boxes'][:, :7], car_boxes, float(rr_cfg.BEV_MARGIN))
+    for j, c in enumerate(bgc):
+        fp = np.asarray(P[c['point_index'], :3], np.float64)
+        low = float(np.mean(fp[:, 2] <= c['bottom'] + float(rr_cfg.CLEARANCE))) if len(fp) else np.nan
+        bgrows.append([plat, i, c['r_new'], c['n_rendered'], c['n_visible'], c['n_kept'], c['n_final'], c['bottom'], low,
+                       float(c['ground_kind']), int(viol[j]), c['tries']])
+    cin = centres_in_rects(np.concatenate([B['gt_boxes'][:, :2], car_boxes[:, :2]]), bg_boxes)
+    nb0 = len(B['gt_boxes'])
+    cnt_b = in_box_counts(B['points'], B['gt_boxes']); cnt_a = in_box_counts(A['points'], A['gt_boxes'][:nb0])
+    emp_on = int(((cnt_b >= 1) & (cnt_a == 0)).sum())
+    if len(sheet) < 6 and len(bgc):
+        sheet.append(dict(frame=i, points=np.asarray(P[:, :3], np.float32)[::4], car=car_boxes, bg=bg_boxes,
+                          bg_points=[np.asarray(P[c['point_index'], :3], np.float32) for c in bgc]))
+    # the paired car-only pass
+    BGM['off'] = True
+    try:
+        CAP.clear(); np.random.seed(seed_i)
+        d0 = ds[i]
+        rec0, A0 = CAP['rec'], CAP['after']
+    finally:
+        BGM['off'] = False
+    car0 = np.array([c['box'] for c in rec0['copies']], np.float64).reshape(-1, 7)
+    same_car = bool(car0.shape == car_boxes.shape and np.array_equal(car0, car_boxes))
+    same_gt = bool(np.array_equal(d0['gt_boxes'], d['gt_boxes']))
+    hm_eq = np.nan
+    if n_check_hm:
+        t1 = head.assign_targets(torch.from_numpy(d['gt_boxes'][None]).float().clone(), feature_map_size=[side, side])
+        t0 = head.assign_targets(torch.from_numpy(d0['gt_boxes'][None]).float().clone(), feature_map_size=[side, side])
+        hm_eq = float(all(torch.equal(x, y) for x, y in zip(t1['heatmaps'], t0['heatmaps'])))
+    cnt_a0 = in_box_counts(A0['points'], A0['gt_boxes'][:nb0])
+    emp_off = int(((cnt_b >= 1) & (cnt_a0 == 0)).sum())
+    fin_on = np.array([c['n_final'] for c in rec['copies']]); fin_off = np.array([c['n_final'] for c in rec0['copies']])
+    if same_car and len(fin_on):
+        emptied_by_bg = int(((fin_off > 0) & (fin_on == 0)).sum()); lost = int((fin_off - fin_on).sum())
+    else:
+        emptied_by_bg, lost = -1, -1
+    b = rec.get('bg', {})
+    return [plat, i, len(rec['copies']), len(bgc), b.get('n_attempted', 0), b.get('n_no_place', 0), b.get('n_zero', 0),
+            float(same_car), float(same_gt), hm_eq, cin, emp_on, emp_off, emptied_by_bg, lost, len(rec0['copies'])]
+
+
+def bg_sheet(path, key, sheet, lat):
+    """§13.3 N4: per frame, the BEV (scene grey, car copies blue, background copies orange) and an azimuth x inclination view
+    of the background copies' points about the virtual sensor (the lattice rows)."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from pcdet.datasets.augmentor import relocate_render as rr
+    n = max(len(sheet), 1)
+    fig, ax = plt.subplots(n, 2, figsize=(14, 4.6 * n), squeeze=False)
+    for r, f in enumerate(sheet):
+        a0, a1 = ax[r]
+        p = f['points']; m = np.hypot(p[:, 0], p[:, 1]) < 76
+        a0.scatter(p[m, 0], p[m, 1], s=0.05, c='0.6', rasterized=True)
+        for bx, col in [(b, 'tab:blue') for b in f['car']] + [(b, 'tab:orange') for b in f['bg']]:
+            c = rr.bev_corners(bx[None])[0]; c = np.r_[c, c[:1]]
+            a0.plot(c[:, 0], c[:, 1], c=col, lw=1.0)
+        for q in f['bg_points']:
+            a0.scatter(q[:, 0], q[:, 1], s=1.0, c='tab:orange')
+        a0.set_aspect('equal'); a0.set_xlim(-76, 76); a0.set_ylim(-76, 76)
+        a0.set_title(f'{key} info {f["frame"]}: car copies (blue boxes) and background copies (orange, no box in the labels)',
+                     fontsize=8)
+        for q in f['bg_points']:
+            d = q.astype(np.float64) - np.array([0.0, 0.0, lat['height']])
+            az = np.degrees(np.arctan2(d[:, 1], d[:, 0])); inc = np.degrees(np.arctan2(d[:, 2], np.hypot(d[:, 0], d[:, 1])))
+            a1.scatter(az, inc, s=2.0)
+        a1.set_xlabel('azimuth (deg)'); a1.set_ylabel('inclination about the virtual TOP (deg)')
+        a1.set_title('background copies: rendered points (each colour one copy); horizontal stripes = lattice rows', fontsize=8)
+    fig.tight_layout(); fig.savefig(path, dpi=80); plt.close(fig)
+
+
+def bg_donor_sheet(path, key, bgdb, n=24, seed=0):
+    """§13.3 (reported): 24 background donors in their box frame, side (x-z) and top (x-y) views."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    ids = np.sort(np.random.default_rng(seed).choice(bgdb.n, min(n, bgdb.n), replace=False))
+    fig, ax = plt.subplots(len(ids) // 4 + (len(ids) % 4 > 0), 8, figsize=(24, 2.4 * (len(ids) // 4 + 1)), squeeze=False)
+    for k, j in enumerate(ids):
+        q = np.asarray(bgdb.points(int(j)), np.float64); s = bgdb.size[int(j)]
+        r, c = divmod(k, 4)
+        for v, (u, w, lab) in enumerate(((0, 2, 'x-z'), (0, 1, 'x-y'))):
+            a_ = ax[r][2 * c + v]
+            a_.scatter(q[:, u], q[:, w], s=0.3, c=q[:, 3] if q.shape[1] > 3 else 'k', cmap='viridis')
+            a_.set_xlim(-s[0] / 2 - 0.2, s[0] / 2 + 0.2)
+            a_.set_ylim((-s[2] / 2 - 0.1, s[2] / 2 + 0.1) if w == 2 else (-s[1] / 2 - 0.2, s[1] / 2 + 0.2))
+            a_.set_title(f'donor {j} {lab}, {len(q)} pts', fontsize=7)
+    fig.suptitle(f'{key}: background donors (box frame; colour = intensity)', fontsize=10)
+    fig.tight_layout(); fig.savefig(path, dpi=70); plt.close(fig)
+
+
+def report_v8(res, cp, C, PL, verdict):
+    """§13.3: N1-N4 (deciding), the reported items, and the launch decision for v8."""
+    import glob
+    rows = np.concatenate([r['bg']['rows'] for r in res]); fr = np.concatenate([r['bg']['frames'] for r in res])
+    R = {k: j for j, k in enumerate(BG_ROW_COLS)}; F = {k: j for j, k in enumerate(BG_FRAME_COLS)}
+    print('\n== v8 (§13.3): background copies ==')
+    for p in PL:
+        f = fr[fr[:, 0] == p]
+        print(f"{PLAT_NAME[p]}: {len(f)} frames; car copies {int(f[:, F['n_car']].sum())}, background copies "
+              f"{int(f[:, F['n_bg']].sum())} (attempted {int(f[:, F['bg_attempted']].sum())}, no placement "
+              f"{int(f[:, F['bg_no_place']].sum())}, 0 points {int(f[:, F['bg_zero']].sum())})")
+    n1 = int(rows[:, R['n1_viol']].sum()) if len(rows) else 0
+    verdict_v8 = {'N1': n1 == 0}
+    print(f"N1: BEV overlaps of background copies (grown 0.5 m) with GT boxes, car copies or other background copies: {n1} "
+          f"-> {'PASS' if n1 == 0 else 'FAIL'}")
+    print('N2: background / car copies per 10 m bin, pooled over both platforms (bar +-10%)')
+    print('| bin | car copies | background copies | ratio | |')
+    print('|---|---|---|---|---|')
+    ok2 = True
+    for lo, hi, nc, nb, ratio, good in bg_rate_table(cp[:, C['r_new']], rows[:, R['r_new']] if len(rows) else []):
+        ok2 &= good
+        print(f"| {'all' if lo is None else f'{lo:g}-{hi:g} m'} | {nc} | {nb} | {ratio:.3f} | {'pass' if good else 'FAIL'} |")
+    for p in PL:
+        t = bg_rate_table(cp[cp[:, C['plat']] == p, C['r_new']], rows[rows[:, 0] == p, R['r_new']])
+        print(f"  {PLAT_NAME[p]} (reported): " + ', '.join(f"{'all' if lo is None else f'{lo:g}-{hi:g}'} {ratio:.3f}"
+                                                            for lo, hi, nc, nb, ratio, good in t))
+    verdict_v8['N2'] = ok2; print(f"N2 {'PASS' if ok2 else 'FAIL'}")
+    hm = fr[np.isfinite(fr[:, F['hm_equal']]), F['hm_equal']]
+    same_car = bool(fr[:, F['same_car_boxes']].all()); same_gt = bool(fr[:, F['same_final_gt']].all())
+    cin = int(fr[:, F['centres_in_bg']].sum())
+    ok3 = same_car and same_gt and len(hm) > 0 and bool(hm.all()) and cin == 0 and \
+        all(int((fr[:, 0] == p).sum()) and int(np.isfinite(fr[fr[:, 0] == p, F['hm_equal']]).sum()) >= 1 for p in PL)
+    per = ', '.join(f"{PLAT_NAME[p]} {int(np.isfinite(fr[fr[:, 0] == p, F['hm_equal']]).sum())}" for p in PL)
+    print(f"N3: paired car-only pass of every gate frame (same seed): car copies identical in "
+          f"{int(fr[:, F['same_car_boxes']].sum())} / {len(fr)} frames, final gt_boxes identical in "
+          f"{int(fr[:, F['same_final_gt']].sum())} / {len(fr)}; CenterHead heatmaps identical in {int(hm.sum())} / {len(hm)} "
+          f"dump frames ({per}); GT / car-copy centres inside a background rectangle {cin} -> {'PASS' if ok3 else 'FAIL'}")
+    verdict_v8['N3'] = ok3
+    V8 = Path('/home/koyama/data/relocate_render_20261018/v8')
+    ok4 = True; lines = []
+    for k in ('NUSCENES_N008', 'NUSCENES_N015'):
+        fs = sorted(glob.glob(str(V8 / f'merge_{k}_*.txt')))
+        txt = open(fs[-1]).read() if fs else ''
+        san = [ln for ln in txt.splitlines() if 'SANITY' in ln]
+        ok4 &= bool(san) and san[-1].rstrip().endswith('PASS')
+        lines += [f'  {k}: ' + (san[-1] if san else 'no merge output')]
+    print('N4 (database part, deciding): every stored donor point above its local ground + 0.3 m')
+    for ln in lines:
+        print(ln)
+    sheets = [r['bg']['sheet'] for r in res]
+    print(f"N4 (sheet, read by eye): {sheets}; donors (reported): {[r['bg']['donors'] for r in res]}")
+    verdict_v8['N4_db'] = ok4
+    print('\nreported: background vs car copies, points per copy by r\' bin (median rendered / visible / kept / final; n)')
+    for lo, hi in ((0, 20), (20, 40), (40, 50), (50, 60), (60, 75.2)):
+        mb = (rows[:, R['r_new']] >= lo) & (rows[:, R['r_new']] < hi) if len(rows) else np.zeros(0, bool)
+        mc = (cp[:, C['r_new']] >= lo) & (cp[:, C['r_new']] < hi)
+        med = lambda x: float(np.median(x)) if len(x) else np.nan
+        print(f"  {lo:g}-{hi:g} m: background {med(rows[mb, R['n_rendered']]):.0f} / {med(rows[mb, R['n_visible']]):.0f} / "
+              f"{med(rows[mb, R['n_kept']]):.0f} / {med(rows[mb, R['n_final']]):.0f} ({int(mb.sum())}); car "
+              f"{med(cp[mc, C['n_rendered']]):.0f} / {med(cp[mc, C['n_visible']]):.0f} / {med(cp[mc, C['n_kept']]):.0f} / "
+              f"{med(cp[mc, C['n_final']]):.0f} ({int(mc.sum())})")
+    if len(rows):
+        print(f"reported: background points within 0.3 m of their copy's bottom (ray snap): mean share "
+              f"{np.nanmean(rows[:, R['low_share']]):.3%}, copies with any {np.mean(rows[:, R['low_share']] > 0):.1%}; ground "
+              f"E5a / cells / plane {np.mean(rows[:, R['ground_kind']] == 0):.1%} / {np.mean(rows[:, R['ground_kind']] == 1):.1%}"
+              f" / {np.mean(rows[:, R['ground_kind']] == 2):.1%}")
+    for p in PL:
+        f = fr[fr[:, 0] == p]
+        print(f"reported, {PLAT_NAME[p]}: originals emptied by RR, v8 {int(f[:, F['orig_emptied_on']].sum())} against car copies "
+              f"only {int(f[:, F['orig_emptied_off']].sum())}; car copies emptied by background copies "
+              f"{int(f[f[:, F['car_emptied_by_bg']] >= 0, F['car_emptied_by_bg']].sum())}, car-copy points lost to them "
+              f"{int(f[f[:, F['car_points_lost']] >= 0, F['car_points_lost']].sum())}")
+    go = all(verdict_v8.values())
+    print(f"\nLAUNCH DECISION v8 (N1, N2, N3, N4 database; the N4 sheet is read by eye): "
+          f"{ {k: ('PASS' if v else 'FAIL') for k, v in verdict_v8.items()} } -> {'PASS' if go else 'FAIL'}")
+
+
 def run_v2(a):
     import torch
     from scipy.spatial import cKDTree
@@ -577,9 +798,19 @@ def run_v2(a):
           flush=True)
     CAP = {}
 
+    bg_on = rr.bg_db_from_config(rr_cfg) is not None          # §13.3: v8, background copies
+    rr_cfg_nobg = None
+    if bg_on:
+        from easydict import EasyDict as _ED
+        rr_cfg_nobg = _ED(dict(rr_cfg))
+        for _k in ('BG_DB_POINTS', 'BG_DB_INDEX', 'BG_DB_NORMALS'):
+            rr_cfg_nobg[_k] = None
+    BGM = {'off': False}
+
     def rr_step(data_dict=None):
         CAP['before'] = {k: np.copy(data_dict[k]) for k in ('points', 'gt_boxes', 'gt_names', 'gt_boxes_mask')}
-        o, rec = rr.relocate_render_scene_v2(data_dict, rr_cfg, lat, db, rng=np.random, keep_points=True)
+        o, rec = rr.relocate_render_scene_v2(data_dict, rr_cfg_nobg if BGM['off'] else rr_cfg, lat, db, rng=np.random,
+                                             keep_points=True)
         CAP['rec'] = rec
         CAP['after'] = {k: np.copy(o[k]) for k in ('points', 'gt_boxes', 'gt_names', 'gt_boxes_mask')}
         return o
@@ -598,9 +829,11 @@ def run_v2(a):
     head, side, cell = head_for(cfg, dcfg)
     copies, frows, dumps, imgs = [], [], [], []
     d1v5, d1v5_drop = [], 0
+    bgrows, bgframes, sheet = [], [], []
     t_start = time.time()
     for n_done, i in enumerate(frames):
-        np.random.seed((plat * 1000003 + i) % (2 ** 31))
+        seed_i = (plat * 1000003 + i) % (2 ** 31)
+        np.random.seed(seed_i)
         CAP.clear()
         d = ds[i]
         rec, B, A = CAP['rec'], CAP['before'], CAP['after']
@@ -679,6 +912,9 @@ def run_v2(a):
                 if version >= 7:                     # §12.1: 0 E5a, 1 cell fallback, 2 plane
                     row += [float(c['ground_kind'])]
                 copies.append(row)
+        if bg_on:                                    # §13.3 N1-N4, with a paired car-only pass of the same frame and seed
+            bgframes.append(bg_frame_checks(a, ds, i, seed_i, d, rec, B, A, P, CAP, BGM, rr_cfg, head, side, plat, bgrows,
+                                            sheet, n_check_hm=len(dumps) < a.dump and k > 0))
         if k and len(dumps) < a.dump:
             dumps.append(dump_frame_v2(d, CAP, rec, head, side, cell, cfg, i))
         if k >= 2 and len(imgs) < a.images:
@@ -691,6 +927,10 @@ def run_v2(a):
                   flush=True)
     aug.forward = fwd0
     g4 = []
+    q_nobg = None
+    if bg_on:                                        # §13.3: the car-only configuration (29690's) for G4
+        import functools as _ft
+        q_nobg = _ft.partial(q0.func, config=rr_cfg_nobg, lattice=lat, db=db)
     for i in frames[::2][:a.g4]:
         seed = (plat * 1000003 + i) % (2 ** 31)
         aug.data_augmentor_queue = queue_rr[1:]
@@ -698,14 +938,26 @@ def run_v2(a):
         np.random.seed(seed); t0 = time.perf_counter(); ds[i]; t_off = time.perf_counter() - t0
         aug.data_augmentor_queue = queue_rr
         np.random.seed(seed); t0 = time.perf_counter(); ds[i]; t_on = time.perf_counter() - t0
-        g4.append([plat, i, t_off, t_on])
+        row = [plat, i, t_off, t_on]
+        if bg_on:
+            aug.data_augmentor_queue = [q_nobg] + queue_rr[1:]
+            np.random.seed(seed); t0 = time.perf_counter(); ds[i]; row.append(time.perf_counter() - t0)
+            aug.data_augmentor_queue = queue_rr
+        g4.append(row)
     ncol = len(V2_COPY_COLS) + len(EXTRA_COLS[version])
     res = dict(version=version, key=a.key, plat=plat, n_infos=N, frames=frames,
                copies=np.array(copies, np.float64).reshape(-1, ncol),
                frames_rows=np.array(frows, np.float64).reshape(-1, len(V2_FRAME_COLS) + len(FRAME_EXTRA.get(version, ()))),
                d1v5=np.array(d1v5, np.float64).reshape(-1, len(D1V5_COLS)), d1v5_dropped=d1v5_drop,
-               g4=np.array(g4, np.float64).reshape(-1, 4), dumps=dumps, images=imgs, db_n=db.n,
+               g4=np.array(g4, np.float64).reshape(-1, 5 if bg_on else 4), dumps=dumps, images=imgs, db_n=db.n,
                db_points=db.points_path, node=os.uname().nodename)
+    if bg_on:
+        sp = out / f'bg_sheet_{a.key}.png'
+        bg_sheet(sp, a.key, sheet, lat)
+        dp = out / f'bg_donors_{a.key}.png'
+        bg_donor_sheet(dp, a.key, rr.bg_db_from_config(rr_cfg))
+        res['bg'] = dict(rows=np.array(bgrows, np.float64).reshape(-1, len(BG_ROW_COLS)),
+                         frames=np.array(bgframes, np.float64).reshape(-1, len(BG_FRAME_COLS)), sheet=str(sp), donors=str(dp))
     pickle.dump(res, open(out / f'gate_v{version}_{a.key}.pkl', 'wb'))
     print(f'[rr_gate v{version}] done {a.key}: {len(frames)} frames, {len(copies)} copies, images {imgs}', flush=True)
 
@@ -800,6 +1052,11 @@ def report_v2(a):
         print(f"{PLAT_NAME[p]}: {int(m.sum())} frames, off {g4[m, 2].sum():.1f} s, on {g4[m, 3].sum():.1f} s, ratio "
               f"{g4[m, 3].sum() / g4[m, 2].sum():.3f} (median per frame {np.median(g4[m, 3] / g4[m, 2]):.3f})")
     ratio = g4[:, 3].sum() / g4[:, 2].sum()
+    if g4.shape[1] >= 5:                             # §13.3: v8 against the car-only configuration (29690's)
+        for p in PL:
+            m = g4[:, 0] == p
+            print(f"{PLAT_NAME[p]}: car copies only {g4[m, 4].sum():.1f} s; v8 / car-only {g4[m, 3].sum() / g4[m, 4].sum():.3f}")
+        print(f"pooled v8 / car-only {g4[:, 3].sum() / g4[:, 4].sum():.3f}; car-only / RR off {g4[:, 4].sum() / g4[:, 2].sum():.3f}")
     if version >= 3:
         print(f"pooled ratio {ratio:.3f} (v{version}: reported as cost, not deciding)")
     else:
@@ -916,7 +1173,9 @@ def report_v2(a):
     print('\nimages:', [p for r in res for p in r['images']])
     print(f'\nVERDICT v{version} (deciding items; database sanity: see the merge outputs):',
           {k: ('PASS' if v else 'FAIL') for k, v in verdict.items()})
-    if version >= 7:                             # §12.3 amended: the launch decision from the deciding items only
+    if 'bg' in res[0]:                           # §13.3: v8 decides on N1-N4; the car path above is reported
+        report_v8(res, cp, C, PL, verdict)
+    elif version >= 7:                           # §12.3 amended: the launch decision from the deciding items only
         go = launch_decision_v7(verdict)
         print(f"LAUNCH DECISION v7 ({', '.join(V7_DECIDING)}; D1 v5 and D1 v4 reported only): {'PASS' if go else 'FAIL'}")
 

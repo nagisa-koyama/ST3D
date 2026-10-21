@@ -13,6 +13,8 @@
 # 3. Found: prints the row's AP lines and runs R2 (analysis, no selection) against 27596: waymo_target_residual.py (per
 #    range ring and stored-points bin) and waymo_ranking_loss_fp_taxonomy.py --official (recall / ranking split, FP
 #    taxonomy, background FPs above the TP median). Outputs under /home/koyama/data/relocate_render_20261018/r2_<row>/.
+#    RR_EXTRA_RUNS (optional, space-separated <label>=<result.pkl>) adds rows to both analyses after the reference, e.g.
+#    RR_EXTRA_RUNS=rr7a_29690=<29690's result.pkl> for v8 (experiments_md 20261018_02 §13.4).
 set -u
 JOB=${1:?usage: rr_after_row.sh <row jobid> <cfg> [rescored]}
 CFG=${2:?usage: rr_after_row.sh <row jobid> <cfg> [rescored]}
@@ -55,9 +57,9 @@ echo "== row $JOB AP lines (Car, Waymo val) =="
 tr '\r' '\n' < "$LOG" | /usr/bin/grep -A 3 "Car AP_R40@0.70, 0.70, 0.70\|Car AP_R40@0.70, 0.50, 0.50" | head -40
 ln -sf "$RES" "$OUT/result_row.pkl"
 OMP_NUM_THREADS=1 singularity exec --bind /home/koyama/data/:/storage "$SIF" \
-    python3 analysis/waymo_target_residual.py ref27596="$REF" rr="$RES" > "$OUT/residual.txt" 2>&1
+    python3 analysis/waymo_target_residual.py ref27596="$REF" ${RR_EXTRA_RUNS:-} rr="$RES" > "$OUT/residual.txt" 2>&1
 echo "residual rc=$? -> $OUT/residual.txt"
 OMP_NUM_THREADS=1 singularity exec --bind /home/koyama/data/:/storage "$SIF" \
     python3 analysis/waymo_ranking_loss_fp_taxonomy.py --out "$OUT/taxonomy" --workers 8 --official \
-    ref27596="$REF" rr="$RES" > "$OUT/taxonomy.txt" 2>&1
+    ref27596="$REF" ${RR_EXTRA_RUNS:-} rr="$RES" > "$OUT/taxonomy.txt" 2>&1
 echo "taxonomy rc=$? -> $OUT/taxonomy.txt"

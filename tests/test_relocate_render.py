@@ -1483,3 +1483,109 @@ def test_rr7_configs_are_rr6a_plus_the_v7_keys_and_v1_to_v6_unchanged(monkeypatc
         assert e2[1:] == e[1:] and e2[0].RETURN_PARAMS.endswith('v7/fit_a.npz')
         assert {k: v for k, v in e2[0].items() if k != 'RETURN_PARAMS'} == {k: v for k, v in e[0].items() if k != 'RETURN_PARAMS'}
     assert all(r7a2[k] == r7a[k] for k in ('MODEL', 'OPTIMIZATION', 'CLASS_NAMES', 'DATA_CONFIG_TAR'))
+
+
+# ================================================================================================= RR v8 (§13)
+def _bush_local(n=600, seed=1, size=(3.0, 2.0, 1.5)):
+    rng = np.random.default_rng(seed)
+    l, w, h = size
+    return np.c_[rng.uniform(-l / 2, l / 2, n), rng.uniform(-w / 2, w / 2, n), rng.uniform(-h / 2 + 0.35, h / 2, n),
+                 rng.uniform(1, 9, n)]
+
+
+def _v8_setup(tmp_path, c_band=(-30.0, 0.0, -30.0, -30.0)):
+    db = make_db_v5(tmp_path, [(CAR_LOCAL, SIZE, [np.pi / 2])])
+    sub = tmp_path / 'bg'; sub.mkdir(exist_ok=True)
+    bgdb = make_db_v5(sub, [(_bush_local(), np.array([3.0, 2.0, 1.5]), [0.3])])
+    par = dict(c0=0.0, c_band=np.asarray(c_band), beta=0.0, gamma=0.0, delta=0.0, log_sigma=np.log(1e-6))
+    pp = tmp_path / 'fit_a.npz'; np.savez(pp, **{k: np.asarray(v, float) for k, v in par.items()})
+    base = dict(P2, VERSION=7, RETURN_MODEL='physics', RETURN_PARAMS=str(pp), MAX_TRIES=3, PLANE_RMAX=75.2, N_COPIES=1)
+    bgk = dict(BG_DB_POINTS=str(bgdb.points_path), BG_DB_INDEX=str(bgdb.index_path), BG_DB_NORMALS=str(bgdb.normals_path))
+    return db, bgdb, base, bgk
+
+
+def test_v8_background_copies_add_no_label_keep_the_car_copies_and_use_the_reference_band(tmp_path):
+    import rr_gate as RG
+    db, bgdb, base, bgk = _v8_setup(tmp_path)
+    sb = np.array([30.0, 0.0, 0.72, 4.0, 2.0, 1.5, 0.0])                            # a sentinel GT row, never a label to touch
+    mk = lambda: scene_v2([car_surface(sb)], [sb], ['Car'], gt_classes=np.array([-1], np.int32),
+                          gt_scores=np.ones(1, np.float32), num_points_in_gt=np.array([5], np.int32))
+    out0, rec0 = R.relocate_render_scene_v2(mk(), base, LAT, db, rng=RngV2([40.0, 3 * np.pi / 2], arr=0.3), keep_points=True)
+    assert 'bg_copies' not in rec0 and rec0['n_placed'] == 1
+    out1, rec1 = R.relocate_render_scene_v2(mk(), dict(base, **bgk), LAT, db, rng=RngV2([40.0, 3 * np.pi / 2], arr=0.3),
+                                            keep_points=True, rng_bg=RngV2([40.0, np.pi / 2 + 0.6], arr=0.3))
+    assert rec1['n_placed'] == 1 and len(rec1['bg_copies']) == 1, rec1['bg']
+    for k in ('gt_boxes', 'gt_names', 'gt_boxes_mask', 'gt_classes', 'gt_scores', 'num_points_in_gt'):
+        np.testing.assert_array_equal(out1[k], out0[k])                             # no box, no label, no count is added
+    np.testing.assert_array_equal(rec1['copies'][0]['box'], rec0['copies'][0]['box'])
+    bg, car = rec1['bg_copies'][0], rec1['copies'][0]
+    assert bg['bg'] and 0 < bg['n_kept'] == bg['n_visible']                          # reference band: p = 0.5 > u = 0.3 everywhere
+    assert car['n_kept'] < car['n_visible']                                         # the car keeps only its body band
+    fp = out1['points'][bg['point_index'], :3].astype(np.float64)
+    assert len(fp) == bg['n_final'] > 0
+    assert not R.points_in_box(fp, out1['gt_boxes'][0]).any() and not R.points_in_box(fp, out1['gt_boxes'][1]).any()
+    assert np.all(fp[:, 2] > bg['bottom'] + 0.2)                                   # no ground patch (0.35 m donor floor, ray snap)
+    viol = RG.bg_overlap_violations(np.array([bg['box']]), out1['gt_boxes'][:1, :7], np.array([car['box']]), 0.5)
+    assert viol.tolist() == [0]
+    # the background copy occludes physically: what it shadows or holds leaves the cloud, its own points join it
+    n_rm = bg['n_inbox_removed'] + bg['n_shadow_removed']
+    assert n_rm > 0 and len(out0['points']) - n_rm + bg['n_final'] <= len(out1['points']) <= len(out0['points']) + bg['n_final']
+
+
+def test_v8_global_rng_untouched_and_car_copies_identical_with_np_random(tmp_path):
+    db, bgdb, base, bgk = _v8_setup(tmp_path, c_band=(0.0, 0.0, 0.0, 0.0))
+    p0 = dict(base, N_COPIES=4); p1 = dict(p0, **bgk)
+    np.random.seed(7); out0, rec0 = R.relocate_render_scene_v2(scene_v2(), p0, LAT, db, rng=np.random, keep_points=True)
+    n0 = np.random.rand(3)
+    np.random.seed(7); out1, rec1 = R.relocate_render_scene_v2(scene_v2(), p1, LAT, db, rng=np.random, keep_points=True)
+    n1 = np.random.rand(3)
+    np.testing.assert_array_equal(n0, n1)                                           # the global stream is not advanced
+    assert rec0['n_placed'] == rec1['n_placed'] >= 1
+    np.testing.assert_array_equal(out0['gt_boxes'], out1['gt_boxes'])
+    assert 1 <= len(rec1['bg_copies']) <= rec1['n_placed']
+    st = np.random.get_state()[1].copy()
+    g1 = R.bg_generator(np.random); g2 = R.bg_generator(np.random)
+    assert np.array_equal(st, np.random.get_state()[1]) and g1.uniform() == g2.uniform()
+
+
+def test_v8_background_needs_physics_and_its_database_is_never_pickled(tmp_path):
+    from pcdet.datasets.augmentor.data_augmentor import DataAugmentor
+    db, bgdb, base, bgk = _v8_setup(tmp_path)
+    with pytest.raises(ValueError):
+        R.relocate_render_scene_v2(scene_v2(), dict(base, RETURN_MODEL='cnn_cal', **bgk), LAT, db,
+                                   rng=RngV2([40.0, 1.0]), keep_points=True)
+    cfg = EasyDict(dict(base, **bgk, NAME='relocate_render', DB_POINTS=db.points_path, DB_INDEX=db.index_path,
+                        DB_NORMALS=db.normals_path))
+    aug = DataAugmentor(None, EasyDict(AUG_CONFIG_LIST=[cfg], DISABLE_AUG_LIST=[]), ['Car'])
+    d = aug.forward(dict(scene_v2(), gt_boxes_mask=np.zeros(0, bool)))
+    assert R._bg_db.cache_info().currsize >= 1
+    s = pickle.dumps(aug)
+    assert len(s) < 20000 and np.load(bgdb.points_path).tobytes()[:64] not in s
+    assert R.bg_db_from_config(dict(base)) is None                                  # absent keys: no background path
+
+
+def test_v8_gate_helpers_on_toys():
+    import rr_gate as RG
+    bg = np.array([[0.0, 0.0, 0.5, 4.0, 2.0, 1.5, 0.0], [10.0, 0.0, 0.5, 4.0, 2.0, 1.5, 0.0]])
+    gt = np.array([[2.0 + 2.0 + 0.4, 0.0, 0.5, 4.0, 2.0, 1.5, 0.0]])                # 0.4 m from the first: inside the 0.5 m margin
+    car = np.array([[30.0, 0.0, 0.5, 4.0, 2.0, 1.5, 0.0]])
+    assert RG.bg_overlap_violations(bg, gt, car, 0.5).tolist() == [1, 0]
+    assert RG.bg_overlap_violations(bg, gt, car, 0.3).tolist() == [0, 0]
+    assert RG.centres_in_rects(np.array([[0.5, 0.2], [5.0, 3.0], [10.0, 0.9]]), bg) == 2
+    t = RG.bg_rate_table([5, 15, 15, 45], [6, 14, 16, 44])
+    assert t[-1][2:5] == (4, 4, 1.0) and t[-1][5] and t[1][2:4] == (2, 2) and not t[3][5]   # 30-40: no car copy -> not a pass
+
+
+def test_rr8_config_is_rr7a_plus_the_background_keys(monkeypatch):
+    from pcdet.config import cfg_from_yaml_file
+    monkeypatch.chdir(ROOT / 'tools')
+    load = lambda n: cfg_from_yaml_file('cfgs/da-ieee-access/' + n, EasyDict())
+    r7, r8 = (load(f'centerpoint-gblobs-accum-legaldepth-rr{x}-nuscenes2waymo.yaml') for x in ('7a', '8'))
+    for key in ('NUSCENES_N008', 'NUSCENES_N015'):
+        e7, e8 = (c.DATA_CONFIGS[key].DATA_AUGMENTOR.AUG_CONFIG_LIST for c in (r7, r8))
+        assert e8[1:] == e7[1:]
+        bgk = {'BG_DB_POINTS', 'BG_DB_INDEX', 'BG_DB_NORMALS'}
+        assert {k: v for k, v in e8[0].items() if k not in bgk} == dict(e7[0])
+        assert all(key in e8[0][k] and '/v8/' in e8[0][k] for k in bgk) and not any(k in e7[0] for k in bgk)
+    for k in ('MODEL', 'OPTIMIZATION', 'CLASS_NAMES', 'DATA_CONFIG_TAR'):
+        assert r8[k] == r7[k]

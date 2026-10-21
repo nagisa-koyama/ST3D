@@ -171,13 +171,16 @@ class DataAugmentor(object):
         if version >= 2:
             data_dict, rec = rr.relocate_render_scene_v2(data_dict, config, lattice, db)
             if version >= 3:
-                st = self.__dict__.setdefault('_rr_stats', [0, 0, 0])
+                st = self.__dict__.setdefault('_rr_stats', [0, 0, 0, 0])
                 st[0] += 1; st[1] += rec['n_placed']; st[2] += sum(bool(c['ground_fallback']) for c in rec['copies'])
+                st[3] += len(rec.get('bg_copies', ()))
                 if st[0] % 500 == 0:
                     import os
                     import sys
                     print('[RR v%d stats] pid %d: frames %d, copies %d (%.2f per frame), height fallbacks %d'
-                          % (version, os.getpid(), st[0], st[1], st[1] / st[0], st[2]), file=sys.stderr, flush=True)
+                          % (version, os.getpid(), st[0], st[1], st[1] / st[0], st[2])
+                          + ('; background copies %d (%.2f per frame)' % (st[3], st[3] / st[0]) if 'bg_copies' in rec else ''),
+                          file=sys.stderr, flush=True)
         else:
             data_dict, _ = rr.relocate_render_scene(data_dict, config, lattice)
         return data_dict

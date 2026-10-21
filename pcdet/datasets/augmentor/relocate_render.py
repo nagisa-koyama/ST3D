@@ -733,7 +733,7 @@ def _params_v2(cfg):
     return p
 
 
-def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.random, keep_points=False):
+def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.random, keep_points=False, rng_bg=None):
     """RR v2 (experiments_md 20261018_02 §6). See the module's v2 block; v1 helpers are reused unchanged."""
     p = _params_v2(params)
     if lat is None:
@@ -805,215 +805,238 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
     removed_orig = []
     vis_h = float(p['VIS_HEIGHT'])
 
-    for _ in range(int(p['N_COPIES'])):
-        rec['n_attempted'] += 1
-        inst = _randint(rng, db.n)
-        local = db.points(inst); size = db.size[inst]; alphas = db.alphas(inst)
-        size_now[0] = size
-        lxyz = local[:, :3]
-        tries, fresh, acc = 0, True, None
-        r = phi = alpha = None
-        while tries < int(p['MAX_TRIES']):
-            tries += 1
-            if fresh:
-                r = rng.uniform(p['R_MIN'], p['R_MAX']); phi = rng.uniform(0.0, 2 * np.pi)
-                alpha = float(alphas[_randint(rng, len(alphas))])
-            else:
-                r = rng.uniform(r, p['R_MAX'])
-            fresh = True
-            cb, q = place_instance(lxyz, size, r, phi, alpha, plane, bottom_fn)
-            if version >= 4 and (cb[2] - cb[5] / 2 < pcr[2] or cb[2] + cb[5] / 2 > pcr[5]):   # §8: inside the z range
-                rec['reject']['zrange'] += 1; continue
-            # v1 free-space check
-            g = bev_corners(cb[None], p['BEV_MARGIN'])[0]
-            if (g[:, 0] < pcr[0]).any() or (g[:, 0] > pcr[3]).any() or (g[:, 1] < pcr[1]).any() or \
-                    (g[:, 1] > pcr[4]).any():
-                rec['reject']['range'] += 1; continue
-            if len(occ_corners) and rects_overlap(g, occ_corners).any():
-                rec['reject']['overlap'] += 1; continue
-            zb = cb[2] - cb[5] / 2 + p['CLEARANCE']
-            c = grid.query(g)
-            c = c[alive[c] & (xyz[c, 2] > zb)]
-            n_sc = int(points_in_rect(xyz[c, :2], cb, p['BEV_MARGIN']).sum())
-            if len(add_pts):
-                a = add_alive & (add_pts[:, 2] > zb)
-                n_sc += int(points_in_rect(add_pts[a, :2], cb, p['BEV_MARGIN']).sum())
-            if n_sc > p['MAX_SCENE_POINTS']:
-                rec['reject']['scene'] += 1; continue
-            # render
-            rxyz, rrow, rcol, kept, rr = _render(q, thetas, n_cols, height)
-            if not len(kept):
-                rec['reject']['empty'] += 1; continue
-            cpix = rrow * n_cols + rcol
-            if colidx is None:
-                colidx = _ColIndex(xyz[:, :2], n_cols)
-            am_all = add_alive & ~points_in_box(add_pts[:, :3], cb) if len(add_pts) else np.zeros(0, bool)
-
-            def scene_in(cols):
-                """Scene points in these lattice columns: alive originals and alive copies, none inside the copy's box
-                (they are removed on acceptance). Returns (original ids, row, col, range, valid, xyz)."""
-                sc_ = colidx.query(cols)
-                sc_ = sc_[alive[sc_]]
-                sc_ = sc_[~points_in_box(xyz[sc_], cb)] if len(sc_) else sc_
-                r_, c_, g_, v_ = to_lattice(xyz[sc_], height, thetas, n_cols)
-                x_ = np.asarray(xyz[sc_], np.float64)
-                if len(add_pts):
-                    am = am_all & np.isin(add_pix % n_cols, cols)
-                    if am.any():
-                        ap = add_pts[am, :3].astype(np.float64)
-                        ar, ac, ag, av = to_lattice(ap, height, thetas, n_cols)
-                        r_, c_, g_, v_ = np.r_[r_, ar], np.r_[c_, ac], np.r_[g_, ag], np.r_[v_, av]
-                        x_ = np.concatenate([x_, ap])
-                return sc_, r_, c_, g_, v_, x_
-            ucol, inv = np.unique(rcol, return_inverse=True)
-            sc, srow, scol, srng, sval, sxyz = scene_in(ucol)
-            if version >= 5:                        # §9.1: the occlusion envelope replaces the visibility rule
-                if occ is None:
-                    occ = Occluders(xyz, plane, height, n_cols, p['OCC_H_LO'], p['OCC_H_HI'])
-                sil = silhouette(cb, thetas, n_cols, height)
-                ext = occ.extra(add_pts[add_alive, :3]) if len(add_pts) and add_alive.any() else None
-                env = envelope_visibility(rxyz, rrow, rcol, sil, thetas, n_cols, occ, ext, p['OCC_MARGIN'],
-                                          int(p['OCC_NEIGHBOUR_COLS']))
-                if not env['rend_vis'].any():
-                    rec['reject']['novis'] += 1; continue
-                rc = env['rc']
-                if not (rc >= p['RC_MIN']):
-                    rec['reject']['rc'] += 1; fresh = False; continue
-                spix = np.where(sval, srow * n_cols + scol, -1)
-                acc = (cb, q, rxyz, rrow, rcol, kept, rr, cpix, sc, srng, sval, spix, rc, np.nan, env, sil)
-                break
-            # visibility: columns with a nearer scene point > VIS_HEIGHT above the plane inside the copy's row span
-            rmin = np.full(len(ucol), np.inf); np.minimum.at(rmin, inv, rr)
-            hz = sxyz[:, 2] - plane_z(plane, sxyz[:, 0], sxyz[:, 1]) if len(sxyz) else np.zeros(0)
-            vm = sval & (srow >= rrow.min()) & (srow <= rrow.max()) & (hz > vis_h) & np.isin(scol, ucol)
-            blocked = np.zeros(len(ucol), bool)
-            if vm.any():
-                near = np.full(len(ucol), np.inf)
-                np.minimum.at(near, np.searchsorted(ucol, scol[vm]), srng[vm])
-                blocked = near < rmin
-            vshare = float(blocked.mean())
-            if vshare >= p['VIS_MAX_SHARE']:
-                rec['reject']['visibility'] += 1; continue
-            # row coverage of the render in this scene: the scene of the silhouette's extra columns is added
-            sil = silhouette(cb, thetas, n_cols, height)
-            extra = np.setdiff1d(sil[0] % n_cols, ucol)
-            if len(extra):
-                e = scene_in(extra)
-                n_o = len(sc); n_a = len(srow) - n_o; n_eo = len(e[0])
-                # keep originals first, then copies, in both parts (the shadow step below indexes the originals)
-                srow = np.r_[srow[:n_o], e[1][:n_eo], srow[n_o:], e[1][n_eo:]]
-                scol = np.r_[scol[:n_o], e[2][:n_eo], scol[n_o:], e[2][n_eo:]]
-                srng = np.r_[srng[:n_o], e[3][:n_eo], srng[n_o:], e[3][n_eo:]]
-                sval = np.r_[sval[:n_o], e[4][:n_eo], sval[n_o:], e[4][n_eo:]]
-                sc = np.r_[sc, e[0]]
-            spix = np.where(sval, srow * n_cols + scol, -1)
-            rc, _ = row_coverage(cb, cpix, rr, spix, srng, thetas, n_cols, height, p['RC_OCCL_M'], sil=sil)
-            if not (rc >= p['RC_MIN']):
-                rec['reject']['rc'] += 1; fresh = False; continue
-            acc = (cb, q, rxyz, rrow, rcol, kept, rr, cpix, sc, srng, sval, spix, rc, vshare, None, None)
+    bgdb = bg_db_from_config(p)                    # §13.2: v8 background copies; None when the BG_* keys are absent
+    if bgdb is not None:
+        if p['RETURN_MODEL'] != 'physics' or p['RETURN_OFF']:
+            raise ValueError("background copies (BG_DB_*) are defined for RETURN_MODEL 'physics' only (v8)")
+        rec['bg_copies'] = []
+        rec['bg'] = dict(n_attempted=0, n_no_place=0, n_zero=0,
+                         reject=dict(range=0, overlap=0, scene=0, empty=0, visibility=0, rc=0, zrange=0, novis=0))
+    for phase in ('car', 'bg'):
+        if phase == 'bg' and (bgdb is None or not placed_boxes):
             break
-        if acc is None:
-            rec['n_no_place'] += 1
-            continue
-        cb, q, rxyz, rrow, rcol, kept, rr, cpix, sc, srng, sval, spix, rc, vshare, env, sil = acc
-        # v1 occlusion: (1) scene points inside the box
-        cc = grid.query(bev_corners(cb[None], 0.02)[0]); cc = cc[alive[cc]]
-        inb = cc[points_in_box(xyz[cc], cb)]
-        alive[inb] = False
-        add_in = np.zeros(len(add_pts), bool)
-        if len(add_pts):
-            add_in = add_alive & points_in_box(add_pts[:, :3], cb)
-            add_alive &= ~add_in
-        # (3)/(4) on the original scene candidates of the copy's columns, and on the alive copies
-        order = np.argsort(cpix); cs = cpix[order]; rs = rr[order]
-        n_orig = len(sc)
-        osp, osr = spix[:n_orig], srng[:n_orig]
-        pos = np.clip(np.searchsorted(cs, osp), 0, len(cs) - 1); hit = (osp >= 0) & (cs[pos] == osp)
-        apos = np.zeros(0, np.int64); ahit = np.zeros(len(add_pts), bool)
-        if len(add_pts):
-            apos = np.clip(np.searchsorted(cs, add_pix), 0, len(cs) - 1)
-            ahit = add_alive & (add_pix >= 0) & (cs[apos] == add_pix)
-        nearest = np.full(len(cs), np.inf)
-        if hit.any():
-            np.minimum.at(nearest, pos[hit], osr[hit])
-        if ahit.any():
-            np.minimum.at(nearest, apos[ahit], add_rng[ahit])
-        keep_sorted = ~(nearest < rs - p['OCCLUSION_M'])
-        sh = hit & (osr > rs[pos])
-        shadow = sc[sh]
-        alive[shadow] = False
-        ash = (ahit & (add_rng > rs[apos])) if len(add_pts) else ahit
-        add_alive &= ~ash
-        vis = np.zeros(len(cpix), bool); vis[order[keep_sorted]] = True        # after the 0.5 m occlusion drop
-        if version >= 5:                            # §9.1: envelope removal, then the learned return model
-            vis &= env['rend_vis']
-            feats = return_features(local, kept, rxyz, cb, height, db.normals(inst), p['I_REL_CLIP'], p['COS_MIN'])
-            ulog = None
-            if version >= 7 and p['CNN_WEIGHTS'] is not None and (keep_points or p['RETURN_MODEL'] == 'cnn_cal'):
-                ulog = cnn_logit(local, kept, rxyz, rrow, rcol, cb, sil, env, thetas, n_cols, height, p['CNN_WEIGHTS'])
-            if p['RETURN_OFF']:
-                pk, pp_ = 1.0, np.ones(len(cpix))
-                keep = vis.copy()
-            elif p['RETURN_MODEL'] == 'cnn_cal':    # §12.1: arm (b''), the U-Net behind the calibration layer
-                eps = float(rng.normal()) if hasattr(rng, 'normal') else 0.0
-                pp_ = calibrated_prob(ulog, feats[1], float(np.hypot(cb[0], cb[1])), cal_params(p['RETURN_PARAMS']), eps)
-                u = np.asarray(rng.uniform(0.0, 1.0, len(cpix)), np.float64)
-                keep = vis & (u < pp_)
-                pk = float(pp_[vis].mean()) if vis.any() else 0.0
-            elif p['RETURN_MODEL'] == 'cnn':        # §10.3: arm (b'), the per-box U-Net
-                pp_ = cnn_keep_prob(local, kept, rxyz, rrow, rcol, cb, sil, env, thetas, n_cols, height, p['CNN_WEIGHTS'])
-                u = np.asarray(rng.uniform(0.0, 1.0, len(cpix)), np.float64)
-                keep = vis & (u < pp_)
-                pk = float(pp_[vis].mean()) if vis.any() else 0.0
-            else:
-                kind, par = return_model(p['RETURN_MODEL'], p['RETURN_PARAMS'])
-                eps = float(rng.normal()) if hasattr(rng, 'normal') else 0.0
-                pp_ = 1.0 / (1.0 + np.exp(-(return_logit(feats, kind, par) + np.exp(par['log_sigma']) * eps)))
-                u = np.asarray(rng.uniform(0.0, 1.0, len(cpix)), np.float64)
-                keep = vis & (u < pp_)
-                pk = float(pp_[vis].mean()) if vis.any() else 0.0
-        else:
-            # sparsifier: p ~ U(0, 1], each remaining rendered point kept with p
-            pk = 1.0 - rng.uniform(0.0, 1.0)
-            u = np.asarray(rng.uniform(0.0, 1.0, len(cpix)), np.float64)
-            keep = vis & (u < pk)
-        if not keep.any():
-            alive[inb] = True; alive[shadow] = True
+        car = phase == 'car'                        # car copies first, exactly as v7; then one background copy per car copy
+        dbx = db if car else bgdb
+        rngx = rng if car else (rng_bg if rng_bg is not None else bg_generator(rng))
+        cnt = rec if car else rec['bg']
+        rj = rec['reject'] if car else rec['bg']['reject']
+        for _ in range(int(p['N_COPIES']) if car else len(placed_boxes)):
+            cnt['n_attempted'] += 1
+            inst = _randint(rngx, dbx.n)
+            local = dbx.points(inst); size = dbx.size[inst]; alphas = dbx.alphas(inst)
+            size_now[0] = size
+            lxyz = local[:, :3]
+            tries, fresh, acc = 0, True, None
+            r = phi = alpha = None
+            while tries < int(p['MAX_TRIES']):
+                tries += 1
+                if fresh:
+                    r = rngx.uniform(p['R_MIN'], p['R_MAX']); phi = rngx.uniform(0.0, 2 * np.pi)
+                    alpha = float(alphas[_randint(rngx, len(alphas))])
+                else:
+                    r = rngx.uniform(r, p['R_MAX'])
+                fresh = True
+                cb, q = place_instance(lxyz, size, r, phi, alpha, plane, bottom_fn)
+                if version >= 4 and (cb[2] - cb[5] / 2 < pcr[2] or cb[2] + cb[5] / 2 > pcr[5]):   # §8: inside the z range
+                    rj['zrange'] += 1; continue
+                # v1 free-space check
+                g = bev_corners(cb[None], p['BEV_MARGIN'])[0]
+                if (g[:, 0] < pcr[0]).any() or (g[:, 0] > pcr[3]).any() or (g[:, 1] < pcr[1]).any() or \
+                        (g[:, 1] > pcr[4]).any():
+                    rj['range'] += 1; continue
+                if len(occ_corners) and rects_overlap(g, occ_corners).any():
+                    rj['overlap'] += 1; continue
+                zb = cb[2] - cb[5] / 2 + p['CLEARANCE']
+                c = grid.query(g)
+                c = c[alive[c] & (xyz[c, 2] > zb)]
+                n_sc = int(points_in_rect(xyz[c, :2], cb, p['BEV_MARGIN']).sum())
+                if len(add_pts):
+                    a = add_alive & (add_pts[:, 2] > zb)
+                    n_sc += int(points_in_rect(add_pts[a, :2], cb, p['BEV_MARGIN']).sum())
+                if n_sc > p['MAX_SCENE_POINTS']:
+                    rj['scene'] += 1; continue
+                # render
+                rxyz, rrow, rcol, kept, rr = _render(q, thetas, n_cols, height)
+                if not len(kept):
+                    rj['empty'] += 1; continue
+                cpix = rrow * n_cols + rcol
+                if colidx is None:
+                    colidx = _ColIndex(xyz[:, :2], n_cols)
+                am_all = add_alive & ~points_in_box(add_pts[:, :3], cb) if len(add_pts) else np.zeros(0, bool)
+
+                def scene_in(cols):
+                    """Scene points in these lattice columns: alive originals and alive copies, none inside the copy's box
+                    (they are removed on acceptance). Returns (original ids, row, col, range, valid, xyz)."""
+                    sc_ = colidx.query(cols)
+                    sc_ = sc_[alive[sc_]]
+                    sc_ = sc_[~points_in_box(xyz[sc_], cb)] if len(sc_) else sc_
+                    r_, c_, g_, v_ = to_lattice(xyz[sc_], height, thetas, n_cols)
+                    x_ = np.asarray(xyz[sc_], np.float64)
+                    if len(add_pts):
+                        am = am_all & np.isin(add_pix % n_cols, cols)
+                        if am.any():
+                            ap = add_pts[am, :3].astype(np.float64)
+                            ar, ac, ag, av = to_lattice(ap, height, thetas, n_cols)
+                            r_, c_, g_, v_ = np.r_[r_, ar], np.r_[c_, ac], np.r_[g_, ag], np.r_[v_, av]
+                            x_ = np.concatenate([x_, ap])
+                    return sc_, r_, c_, g_, v_, x_
+                ucol, inv = np.unique(rcol, return_inverse=True)
+                sc, srow, scol, srng, sval, sxyz = scene_in(ucol)
+                if version >= 5:                        # §9.1: the occlusion envelope replaces the visibility rule
+                    if occ is None:
+                        occ = Occluders(xyz, plane, height, n_cols, p['OCC_H_LO'], p['OCC_H_HI'])
+                    sil = silhouette(cb, thetas, n_cols, height)
+                    ext = occ.extra(add_pts[add_alive, :3]) if len(add_pts) and add_alive.any() else None
+                    env = envelope_visibility(rxyz, rrow, rcol, sil, thetas, n_cols, occ, ext, p['OCC_MARGIN'],
+                                              int(p['OCC_NEIGHBOUR_COLS']))
+                    if not env['rend_vis'].any():
+                        rj['novis'] += 1; continue
+                    rc = env['rc']
+                    if not (rc >= p['RC_MIN']):
+                        rj['rc'] += 1; fresh = False; continue
+                    spix = np.where(sval, srow * n_cols + scol, -1)
+                    acc = (cb, q, rxyz, rrow, rcol, kept, rr, cpix, sc, srng, sval, spix, rc, np.nan, env, sil)
+                    break
+                # visibility: columns with a nearer scene point > VIS_HEIGHT above the plane inside the copy's row span
+                rmin = np.full(len(ucol), np.inf); np.minimum.at(rmin, inv, rr)
+                hz = sxyz[:, 2] - plane_z(plane, sxyz[:, 0], sxyz[:, 1]) if len(sxyz) else np.zeros(0)
+                vm = sval & (srow >= rrow.min()) & (srow <= rrow.max()) & (hz > vis_h) & np.isin(scol, ucol)
+                blocked = np.zeros(len(ucol), bool)
+                if vm.any():
+                    near = np.full(len(ucol), np.inf)
+                    np.minimum.at(near, np.searchsorted(ucol, scol[vm]), srng[vm])
+                    blocked = near < rmin
+                vshare = float(blocked.mean())
+                if vshare >= p['VIS_MAX_SHARE']:
+                    rj['visibility'] += 1; continue
+                # row coverage of the render in this scene: the scene of the silhouette's extra columns is added
+                sil = silhouette(cb, thetas, n_cols, height)
+                extra = np.setdiff1d(sil[0] % n_cols, ucol)
+                if len(extra):
+                    e = scene_in(extra)
+                    n_o = len(sc); n_a = len(srow) - n_o; n_eo = len(e[0])
+                    # keep originals first, then copies, in both parts (the shadow step below indexes the originals)
+                    srow = np.r_[srow[:n_o], e[1][:n_eo], srow[n_o:], e[1][n_eo:]]
+                    scol = np.r_[scol[:n_o], e[2][:n_eo], scol[n_o:], e[2][n_eo:]]
+                    srng = np.r_[srng[:n_o], e[3][:n_eo], srng[n_o:], e[3][n_eo:]]
+                    sval = np.r_[sval[:n_o], e[4][:n_eo], sval[n_o:], e[4][n_eo:]]
+                    sc = np.r_[sc, e[0]]
+                spix = np.where(sval, srow * n_cols + scol, -1)
+                rc, _ = row_coverage(cb, cpix, rr, spix, srng, thetas, n_cols, height, p['RC_OCCL_M'], sil=sil)
+                if not (rc >= p['RC_MIN']):
+                    rj['rc'] += 1; fresh = False; continue
+                acc = (cb, q, rxyz, rrow, rcol, kept, rr, cpix, sc, srng, sval, spix, rc, vshare, None, None)
+                break
+            if acc is None:
+                cnt['n_no_place'] += 1
+                continue
+            cb, q, rxyz, rrow, rcol, kept, rr, cpix, sc, srng, sval, spix, rc, vshare, env, sil = acc
+            # v1 occlusion: (1) scene points inside the box
+            cc = grid.query(bev_corners(cb[None], 0.02)[0]); cc = cc[alive[cc]]
+            inb = cc[points_in_box(xyz[cc], cb)]
+            alive[inb] = False
+            add_in = np.zeros(len(add_pts), bool)
             if len(add_pts):
-                add_alive |= add_in | ash
-            rec['n_zero'] += 1
-            continue
-        removed_orig.extend([inb, shadow])
-        cid = len(placed_boxes)
-        newp = np.zeros((int(keep.sum()), pts.shape[1]), pts.dtype)
-        newp[:, :3] = rxyz[keep]
-        if pts.shape[1] > 3 and local.shape[1] > 3:
-            newp[:, 3] = local[kept[keep], 3]
-        add_pts = np.concatenate([add_pts, newp]); add_id = np.concatenate([add_id, np.full(len(newp), cid)])
-        add_rng = np.concatenate([add_rng, rr[keep]]); add_pix = np.concatenate([add_pix, cpix[keep]])
-        add_alive = np.concatenate([add_alive, np.ones(len(newp), bool)])
-        cb_store = np.zeros(boxes.shape[1]) if boxes.ndim == 2 else np.zeros(7)
-        cb_store[:7] = cb
-        placed_boxes.append(cb_store.astype(boxes.dtype))
-        occ_corners = np.concatenate([occ_corners, bev_corners(placed_boxes[-1][None, :7].astype(np.float64))])
-        crec = dict(instance=inst, box=cb.copy(), r_new=float(np.hypot(cb[0], cb[1])), phi_new=float(phi), alpha=alpha,
-                    tries=tries, rc_loader=float(rc), vis_share_loader=vshare, n_db=int(len(local)),
-                    n_rendered=int(len(cpix)), n_visible=int(vis.sum()), p_keep=float(pk), n_kept=int(keep.sum()),
-                    n_inbox_removed=int(len(inb) + add_in.sum()), n_shadow_removed=int(len(shadow) + ash.sum()),
-                    ground_fallback=bool(last_fb[0]) if v3 else None, bottom=float(cb[2] - cb[5] / 2))
-        if version >= 7:
-            crec['ground_kind'] = last_kind[0]
-            if keep_points and ulog is not None:
-                crec['vis_ulogit'] = ulog[vis]
-        if keep_points:
-            crec['placed'] = q.copy(); crec['rendered_unsparsified'] = rxyz[vis].copy(); crec['rendered'] = rxyz[keep]
-        if version >= 5:
-            crec['vis_frac'] = env['vis_frac']; crec['n_sil'] = env['n_sil']; crec['n_sil_vis'] = env['n_sil_vis']
+                add_in = add_alive & points_in_box(add_pts[:, :3], cb)
+                add_alive &= ~add_in
+            # (3)/(4) on the original scene candidates of the copy's columns, and on the alive copies
+            order = np.argsort(cpix); cs = cpix[order]; rs = rr[order]
+            n_orig = len(sc)
+            osp, osr = spix[:n_orig], srng[:n_orig]
+            pos = np.clip(np.searchsorted(cs, osp), 0, len(cs) - 1); hit = (osp >= 0) & (cs[pos] == osp)
+            apos = np.zeros(0, np.int64); ahit = np.zeros(len(add_pts), bool)
+            if len(add_pts):
+                apos = np.clip(np.searchsorted(cs, add_pix), 0, len(cs) - 1)
+                ahit = add_alive & (add_pix >= 0) & (cs[apos] == add_pix)
+            nearest = np.full(len(cs), np.inf)
+            if hit.any():
+                np.minimum.at(nearest, pos[hit], osr[hit])
+            if ahit.any():
+                np.minimum.at(nearest, apos[ahit], add_rng[ahit])
+            keep_sorted = ~(nearest < rs - p['OCCLUSION_M'])
+            sh = hit & (osr > rs[pos])
+            shadow = sc[sh]
+            alive[shadow] = False
+            ash = (ahit & (add_rng > rs[apos])) if len(add_pts) else ahit
+            add_alive &= ~ash
+            vis = np.zeros(len(cpix), bool); vis[order[keep_sorted]] = True        # after the 0.5 m occlusion drop
+            if version >= 5:                            # §9.1: envelope removal, then the learned return model
+                vis &= env['rend_vis']
+                feats = return_features(local, kept, rxyz, cb, height, dbx.normals(inst), p['I_REL_CLIP'], p['COS_MIN'])
+                ulog = None
+                if version >= 7 and p['CNN_WEIGHTS'] is not None and (keep_points or p['RETURN_MODEL'] == 'cnn_cal'):
+                    ulog = cnn_logit(local, kept, rxyz, rrow, rcol, cb, sil, env, thetas, n_cols, height, p['CNN_WEIGHTS'])
+                if p['RETURN_OFF']:
+                    pk, pp_ = 1.0, np.ones(len(cpix))
+                    keep = vis.copy()
+                elif p['RETURN_MODEL'] == 'cnn_cal':    # §12.1: arm (b''), the U-Net behind the calibration layer
+                    eps = float(rngx.normal()) if hasattr(rngx, 'normal') else 0.0
+                    pp_ = calibrated_prob(ulog, feats[1], float(np.hypot(cb[0], cb[1])), cal_params(p['RETURN_PARAMS']), eps)
+                    u = np.asarray(rngx.uniform(0.0, 1.0, len(cpix)), np.float64)
+                    keep = vis & (u < pp_)
+                    pk = float(pp_[vis].mean()) if vis.any() else 0.0
+                elif p['RETURN_MODEL'] == 'cnn':        # §10.3: arm (b'), the per-box U-Net
+                    pp_ = cnn_keep_prob(local, kept, rxyz, rrow, rcol, cb, sil, env, thetas, n_cols, height, p['CNN_WEIGHTS'])
+                    u = np.asarray(rngx.uniform(0.0, 1.0, len(cpix)), np.float64)
+                    keep = vis & (u < pp_)
+                    pk = float(pp_[vis].mean()) if vis.any() else 0.0
+                else:
+                    kind, par = return_model(p['RETURN_MODEL'], p['RETURN_PARAMS'])
+                    eps = float(rngx.normal()) if hasattr(rngx, 'normal') else 0.0
+                    fr_ = feats if car else reference_band(feats)       # §13.2: background pixels take c_band = 0
+                    pp_ = 1.0 / (1.0 + np.exp(-(return_logit(fr_, kind, par) + np.exp(par['log_sigma']) * eps)))
+                    u = np.asarray(rngx.uniform(0.0, 1.0, len(cpix)), np.float64)
+                    keep = vis & (u < pp_)
+                    pk = float(pp_[vis].mean()) if vis.any() else 0.0
+            else:
+                # sparsifier: p ~ U(0, 1], each remaining rendered point kept with p
+                pk = 1.0 - rngx.uniform(0.0, 1.0)
+                u = np.asarray(rngx.uniform(0.0, 1.0, len(cpix)), np.float64)
+                keep = vis & (u < pk)
+            if not keep.any():
+                alive[inb] = True; alive[shadow] = True
+                if len(add_pts):
+                    add_alive |= add_in | ash
+                cnt['n_zero'] += 1
+                continue
+            removed_orig.extend([inb, shadow])
+            cid = len(placed_boxes) if car else -1 - len(rec['bg_copies'])     # background points: negative ids
+            newp = np.zeros((int(keep.sum()), pts.shape[1]), pts.dtype)
+            newp[:, :3] = rxyz[keep]
+            if pts.shape[1] > 3 and local.shape[1] > 3:
+                newp[:, 3] = local[kept[keep], 3]
+            add_pts = np.concatenate([add_pts, newp]); add_id = np.concatenate([add_id, np.full(len(newp), cid)])
+            add_rng = np.concatenate([add_rng, rr[keep]]); add_pix = np.concatenate([add_pix, cpix[keep]])
+            add_alive = np.concatenate([add_alive, np.ones(len(newp), bool)])
+            if car:
+                cb_store = np.zeros(boxes.shape[1]) if boxes.ndim == 2 else np.zeros(7)
+                cb_store[:7] = cb
+                placed_boxes.append(cb_store.astype(boxes.dtype))
+                occ_corners = np.concatenate([occ_corners, bev_corners(placed_boxes[-1][None, :7].astype(np.float64))])
+            else:                                       # §13.2: an obstacle for later copies, never a box or a label
+                occ_corners = np.concatenate([occ_corners, bev_corners(np.asarray(cb, np.float64)[None, :7])])
+            crec = dict(instance=inst, box=cb.copy(), r_new=float(np.hypot(cb[0], cb[1])), phi_new=float(phi), alpha=alpha,
+                        tries=tries, rc_loader=float(rc), vis_share_loader=vshare, n_db=int(len(local)),
+                        n_rendered=int(len(cpix)), n_visible=int(vis.sum()), p_keep=float(pk), n_kept=int(keep.sum()),
+                        n_inbox_removed=int(len(inb) + add_in.sum()), n_shadow_removed=int(len(shadow) + ash.sum()),
+                        ground_fallback=bool(last_fb[0]) if v3 else None, bottom=float(cb[2] - cb[5] / 2))
+            if version >= 7:
+                crec['ground_kind'] = last_kind[0]
+                if keep_points and ulog is not None:
+                    crec['vis_ulogit'] = ulog[vis]
             if keep_points:
-                crec['sil_vis_pix'] = env['sil_vis_pix']; crec['sil_vis_relh'] = env_relh(env, sil, cb, thetas, n_cols, height)
-                crec['vis_pix'] = cpix[vis]; crec['vis_feats'] = np.stack([f[vis] for f in feats], 1)
-                crec['vis_p'] = pp_[vis] if not p['RETURN_OFF'] else np.ones(int(vis.sum()))
-        rec['copies'].append(crec)
+                crec['placed'] = q.copy(); crec['rendered_unsparsified'] = rxyz[vis].copy(); crec['rendered'] = rxyz[keep]
+            if version >= 5:
+                crec['vis_frac'] = env['vis_frac']; crec['n_sil'] = env['n_sil']; crec['n_sil_vis'] = env['n_sil_vis']
+                if keep_points:
+                    crec['sil_vis_pix'] = env['sil_vis_pix']; crec['sil_vis_relh'] = env_relh(env, sil, cb, thetas, n_cols, height)
+                    crec['vis_pix'] = cpix[vis]; crec['vis_feats'] = np.stack([f[vis] for f in feats], 1)
+                    crec['vis_p'] = pp_[vis] if not p['RETURN_OFF'] else np.ones(int(vis.sum()))
+            if car:
+                rec['copies'].append(crec)
+            else:
+                crec['bg'] = True
+                rec['bg_copies'].append(crec)
 
     if not placed_boxes:
         return data_dict, rec
@@ -1022,6 +1045,9 @@ def relocate_render_scene_v2(data_dict, params=None, lat=None, db=None, rng=np.r
     n_alive = int(alive.sum()); ids = add_id[add_alive]
     for cid, crec in enumerate(rec['copies']):
         crec['point_index'] = n_alive + np.nonzero(ids == cid)[0]
+        crec['n_final'] = int(len(crec['point_index']))
+    for j, crec in enumerate(rec.get('bg_copies', [])):
+        crec['point_index'] = n_alive + np.nonzero(ids == -1 - j)[0]
         crec['n_final'] = int(len(crec['point_index']))
     data_dict['gt_boxes'] = np.concatenate([boxes, np.stack(placed_boxes)]).astype(boxes.dtype, copy=False)
     data_dict['gt_names'] = np.concatenate([np.asarray(data_dict['gt_names']), np.array([p['DONOR_CLASS']] * k)])
@@ -1442,7 +1468,8 @@ def cnn_keep_prob(local, kept, rxyz, rrow, rcol, box, sil, env, thetas, n_cols, 
 # 4-40 m plane shifted by the median residual of the frame's source GT car bottoms within 30 m; fallback E2-cell-p5, then
 # the plane; 20261018_02 §11), arm (a) frozen at v6's fit, arm (b'') the U-Net behind a calibration layer
 # (RETURN_MODEL: cnn_cal). Reached only by VERSION: 7.
-DEFAULTS_V7 = dict(E5A_PLANE_RMAX=40.0, E5A_RADIUS=30.0, E5A_FB_RADIUS=10.0, E5A_FB_PCT=5.0, E5A_FB_MIN_CELLS=3)
+DEFAULTS_V7 = dict(E5A_PLANE_RMAX=40.0, E5A_RADIUS=30.0, E5A_FB_RADIUS=10.0, E5A_FB_PCT=5.0, E5A_FB_MIN_CELLS=3,
+                   BG_DB_POINTS=None, BG_DB_INDEX=None, BG_DB_NORMALS=None)
 
 
 def gt_car_mask(data_dict, car_class='Car'):
@@ -1521,3 +1548,36 @@ def calibrated_prob(ulog, h_rel, r_bev, par, eps=0.0):
     f = np.isfinite(u)
     p[f] = 1.0 / (1.0 + np.exp(-np.clip(lg[f], -30.0, 30.0)))           # strictly inside (0, 1)
     return p
+
+
+# =========================================================================================================== RR v8
+# experiments_md 20261018_02 §13 (design fixed in T05 §5, experiments_md ae0cb00, amended feea0be): v7 arm (a) (29690's
+# configuration) plus one BACKGROUND copy per placed car copy, from a database of unannotated source clutter (rr_build_bgdb.py),
+# placed after the car copies by the car rules, rendered alike with the reference band, adding no box and no label. Reached only
+# when BG_DB_POINTS / BG_DB_INDEX are set (absent by default: v1-v7 unchanged).
+@functools.lru_cache(maxsize=4)
+def _bg_db(points, index, normals):
+    """The background database, opened once per process (never pickled: only the paths are in the config)."""
+    return DonorDB(points, index, normals)
+
+
+def bg_db_from_config(p):
+    if not p.get('BG_DB_POINTS') or not p.get('BG_DB_INDEX'):
+        return None
+    return _bg_db(str(p['BG_DB_POINTS']), str(p['BG_DB_INDEX']), str(p['BG_DB_NORMALS']) if p.get('BG_DB_NORMALS') else None)
+
+
+def bg_generator(rng):
+    """§13.2: the background copies' generator, seeded from the global numpy state WITHOUT advancing it, so the car copies and
+    every later draw of the frame are what they are without background copies. Other generators (tests) get a fixed seed."""
+    if hasattr(rng, 'get_state'):
+        st = rng.get_state()
+        return np.random.default_rng(np.r_[np.asarray(st[1], np.uint64), np.uint64(st[2])])
+    return np.random.default_rng(0)
+
+
+def reference_band(feats):
+    """Return-model features with every pixel in the reference (body) band, so c_band = 0 (§13.2)."""
+    i_rel, h_rel, r, cos = feats
+    return i_rel, np.full(len(h_rel), 0.375), r, cos
+
