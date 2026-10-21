@@ -813,7 +813,7 @@ def report_v8(res, cp, C, PL, verdict, D=None):
           f"{int(fr[:, F['same_final_gt']].sum())} / {len(fr)}; CenterHead heatmaps identical in {int(hm.sum())} / {len(hm)} "
           f"dump frames ({per}); GT / car-copy centres inside a background rectangle {cin} -> {'PASS' if ok3 else 'FAIL'}")
     verdict_v8['N3'] = ok3
-    V8 = Path('/home/koyama/data/relocate_render_20261018/v8')
+    V8 = Path(res[0]['bg'].get('db_dir', '/home/koyama/data/relocate_render_20261018/v8'))   # the gated config's database
     ok4 = True; lines = []
     for k in ('NUSCENES_N008', 'NUSCENES_N015'):
         fs = sorted(glob.glob(str(V8 / f'merge_{k}_*.txt')))
@@ -1033,7 +1033,8 @@ def run_v2(a):
         dp = out / f'bg_donors_{a.key}.png'
         bg_donor_sheet(dp, a.key, rr.bg_db_from_config(rr_cfg))
         res['bg'] = dict(rows=np.array(bgrows, np.float64).reshape(-1, len(BG_ROW_COLS)),
-                         frames=np.array(bgframes, np.float64).reshape(-1, len(BG_FRAME_COLS)), sheet=str(sp), donors=str(dp))
+                         frames=np.array(bgframes, np.float64).reshape(-1, len(BG_FRAME_COLS)), sheet=str(sp), donors=str(dp),
+                         db_dir=str(Path(str(rr_cfg.BG_DB_POINTS)).parent))
     pickle.dump(res, open(out / f'gate_v{version}_{a.key}.pkl', 'wb'))
     print(f'[rr_gate v{version}] done {a.key}: {len(frames)} frames, {len(copies)} copies, images {imgs}', flush=True)
 
