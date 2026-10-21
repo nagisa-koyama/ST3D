@@ -523,3 +523,17 @@ def test_no_other_config_sets_row_extrusion():
     hits = [p for p in (ROOT / 'tools' / 'cfgs').rglob('*.yaml') if 'ROW_EXTRUSION' in p.read_text(errors='replace')]
     assert sorted(p.name for p in hits) == sorted(f'centerpoint-gblobs-accum-legaldepth-rx-{t}-nuscenes2waymo.yaml'
                                                   for t in ('hg0', 'hg1', 'lg0', 'wg0'))
+
+
+def test_candidate_record_is_consistent_with_the_output():
+    """keep_record's per-candidate detail (analysis only, 20261021_02 §6): the generated set is the ok candidates, every
+    seed is an object pixel's return, and seeds inside a box name a box that contains them."""
+    pts, boxes, car = toy()
+    for arm in ('H', 'W', 'L'):
+        out, rec = run(arm)
+        c = rec['cand']
+        assert int(c['ok'].sum()) == rec['n_new'] and np.array_equal(np.sort(c['pix'][c['ok']]), np.sort(rec['new_pix']))
+        sb = c['seed_box']
+        for k in np.nonzero(sb >= 0)[0][:50]:
+            assert rr.points_in_box(pts[c['seed'][k]:c['seed'][k] + 1, :3], boxes[sb[k]])[0]
+        assert np.allclose(c['dth'][c['ok'] & ~c['seed_in']], 0, atol=np.radians(RX.ELEV_TOL_DEG) + 1e-9) or arm == 'L'

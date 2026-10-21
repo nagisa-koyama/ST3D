@@ -206,7 +206,7 @@ def tasks_for(ps, fids, seg_id, n_fit, mode):
     for fi, f in enumerate(fids):
         seq = f.rsplit('_', 1)[0]
         is_fit = seg_id[seq] < n_fit
-        if is_fit != (mode == 'library'):
+        if is_fit != (mode in ('library', 'reference_fit')):
             continue
         if f not in meta:
             missing += 1
@@ -214,7 +214,8 @@ def tasks_for(ps, fids, seg_id, n_fit, mode):
         d = ps[f]
         gb = np.asarray(d['gt_boxes'], np.float64).reshape(-1, 9)
         tasks.append((fi, meta[f][0], meta[f][1], meta[f][2], gb[:, :7].copy(), np.asarray(d['teacher_classes']).copy(),
-                      np.asarray(d['cls_scores'], np.float64).copy(), seg_id[seq], mode))
+                      np.asarray(d['cls_scores'], np.float64).copy(), seg_id[seq],
+                      'reference' if mode == 'reference_fit' else mode))
     return tasks, missing
 
 
@@ -272,7 +273,8 @@ def run(a, mode):
         print('[rx library] q per bin: ' + ', '.join(
             f'{lo:g}-{hi:g} m {q[k]:.4f} ({int(qn[k])} / {int(qd[k])})' for k, (lo, hi) in enumerate(RX.Q_BINS)), flush=True)
     else:
-        np.savez(out / 'reference.npz', cars=C, rows=Rw, x3=x3, n_noplane=n_noplane, **meta)
+        np.savez(out / ('reference_fit.npz' if mode == 'reference_fit' else 'reference.npz'), cars=C, rows=Rw, x3=x3,
+                 n_noplane=n_noplane, **meta)
         print(f'[rx reference] {len(C)} held-out cars with a visible silhouette; frames without a plane {n_noplane}; '
               f'X3 object pixels inside / outside per bin: '
               + ', '.join(f'{int(x3[b, 0].sum())} / {int(x3[b, 1].sum())}' for b in range(3)), flush=True)
@@ -281,7 +283,8 @@ def run(a, mode):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('mode', choices=('library', 'reference'))
+    ap.add_argument('mode', choices=('library', 'reference', 'reference_fit'),
+                    help='reference_fit: the reference measurements on the FIT-set segments (experiments_md 20261021_02 §6)')
     ap.add_argument('--out', required=True)
     ap.add_argument('--workers', type=int, default=8)
     ap.add_argument('--max_frames', type=int, default=0)

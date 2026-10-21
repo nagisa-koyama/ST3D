@@ -374,6 +374,18 @@ def row_extrusion(points, gt_boxes, car_mask, arm='H', ground='G0', lat=None, li
         ok &= ~occupied | (rim[ci, cc] > rng_new + SHADOW_M)
         sel = np.nonzero(ok)[0]
         shadow_idx = held[sel][occupied[sel]]
+        if keep_record:                                # per-candidate detail for analyses (experiments_md 20261021_02 §6)
+            cand = dict(pix=ci * nc + cc, seed=sp, dth=th[ci] - el_s[uinv], z_new=z_new, s_at=s_at, seed_in=seed_in,
+                        rng_new=rng_new, held=held, rim=rim[ci, cc], ok=ok)
+            if len(rule_boxes):
+                cand['seed_box'] = np.where(seed_in, rule_ix[np.argmax(in_s[uinv], axis=1)], -1)
+                zz = z_in_boxes(z_new, rule_boxes)
+                cand['new_in_seed_box'] = (zz & in_s[uinv]).any(1)
+                cand['new_in_any_box'] = (zz & bev_s[uinv]).any(1)
+            else:
+                cand['seed_box'] = np.full(len(ci), -1, np.int64)
+                cand['new_in_seed_box'] = np.zeros(len(ci), bool); cand['new_in_any_box'] = np.zeros(len(ci), bool)
+            rec['cand'] = cand
         new_xyz = np.c_[s_xyz[uinv[sel], 0], s_xyz[uinv[sel], 1], z_new[sel]]
         new_src = sp[sel]; new_row = ci[sel]; new_pix = ci[sel] * nc + cc[sel]
         new_box = box_of[sel]

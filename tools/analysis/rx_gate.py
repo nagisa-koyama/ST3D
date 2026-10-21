@@ -531,6 +531,492 @@ def report(a):
     print(f'[rx_gate] report written to {fn}', flush=True)
 
 
+# ------------------------------------------------------------------------------------ phase 1 analysis (v2 step 1)
+# experiments_md 20261021_02 §6 (ANALYSIS; sets no value by itself): the X2 hit deficit of H-G0 and W-G0 decomposed per
+# visible pixel, the source lines' horizontal fill, neighbouring returns along a lattice row, and an extent x drop sweep of
+# the common rule already decided for v2 (T05 §5, 4fed06b) on NON-gate frames.
+D_COLS = ('plat', 'frame', 'j', 'arm', 'r', 'side', 'n_full', 'n_vis') + \
+    tuple(f'{n}{b}' for n in ('vis', 'hit', 'i', 'ii', 'iiiext', 'iiioth', 'iiiocc', 'rvis', 'rhit', 'kfhit', 'kfrvis',
+                               'kfrhit', 'i_in') for b in range(4))
+SW_E = (0.0, 0.15, 0.25, 0.35, 0.45, 0.55, 0.665)
+SW_P = (1.0, 0.95, 0.9, 0.8, 0.7, 0.6, 0.5)
+SW_CAR_E = (0.665, 0.45, 0.25)
+SW_CAR_P = (1.0, 0.8, 0.6)
+PAIR_G = 21                       # column gaps 0..20, last = >= 20
+PAIR_DR = (0.0, 0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 5.0, np.inf)
+PAIR_RB = (0.0, 20.0, 40.0, 75.2)
+
+
+def _capture_ds(a):
+    """The H-G0 row dataset with its hook replaced by a capture of the slot input (RX off for the rest of the pipeline)."""
+    import rr_gate
+    from pcdet.datasets.augmentor import row_extrusion as RX
+    cfg, dcfg, ds = rr_gate.build(a.cfg, a.key)
+    rx_cfg = dcfg.ROW_EXTRUSION
+    CAP = {}
+
+    def hook(data_dict, cfg_):
+        CAP['state'] = np.random.get_state()
+        CAP['in'] = {k: np.copy(data_dict[k]) for k in ('points', 'gt_boxes', 'gt_names', 'gt_boxes_mask')}
+        return data_dict
+    RX.apply_in_loader = hook
+    return cfg, dcfg, ds, rx_cfg, CAP
+
+
+def _arm_out(Pin, I, car, arm, lat, lib, state):
+    """v1's operator (arm H or W, G0) with v1's exact draws for that frame, and its record with candidate detail."""
+    from pcdet.datasets.augmentor import relocate_render as rr
+    from pcdet.datasets.augmentor import row_extrusion as RX
+    st = np.random.get_state(); np.random.set_state(state)
+    rng = rr.bg_generator(np.random)
+    np.random.set_state(st)
+    return RX.row_extrusion(Pin, I['gt_boxes'], car, arm, 'G0', lat, lib, rng, keep_record=True)
+
+
+def _band_rows(rows_desc, relh):
+    """Per visible pixel its row's band (row_records' rule: the band of the row's median relh)."""
+    from box_pattern_visual import _band_of
+    ur, inv = np.unique(rows_desc, return_inverse=True)
+    med = np.array([np.median(relh[inv == k]) for k in range(len(ur))])
+    return _band_of(med)[inv], inv, ur
+
+
+def decomp_box(box, j, Pout, npp_out, pix_out, lat, in_obj_cols, kf_mask, gen, cand_map, cand, Pin, arm):
+    """One source Car box on one arm's slot output: per relh band the visible pixels split into hit / (i) / (ii) /
+    (iii: extent, other seed, occupied); row-conditional hits; keyframe hits (arm 'off'); (i) inside the seed-column span."""
+    import box_pattern_visual as BV
+    from pcdet.datasets.augmentor import relocate_render as rr
+    nc = lat['n_cols']; R = len(lat['thetas'])
+    pose = BV.sensor_pose('rr', height=lat['height'])
+    sil, tin, tout, ent = BV.silhouette_pixels(box, pose, np.asarray(lat['thetas'])[::-1], 'rr', nc, full=True)
+    n_full = len(np.unique(sil))
+    if not n_full:
+        return None
+    xyz = Pout[:, :3]
+    rad = float(np.hypot(box[3], box[4]) / 2 + 0.1)
+    cnd = np.nonzero((np.abs(xyz[:, 0] - box[0]) <= rad) & (np.abs(xyz[:, 1] - box[1]) <= rad))[0]
+    inb = cnd[rr.points_in_box(xyz[cnd], box)]
+    inbox = np.zeros(len(xyz), bool); inbox[inb] = True
+    vis = BV.visible_mask(sil, tin, npp_out, inbox)
+    vp, first = np.unique(sil[vis], return_index=True)
+    if not len(vp):
+        return None
+    relh = np.clip((ent[vis][first][:, 2] - (box[2] - box[5] / 2)) / box[5], 0, 1)
+    band, rinv, ur = _band_rows(vp // nc, relh)
+    op = pix_out[inb]; hit = np.isin(vp, op[op >= 0])
+    kf = np.zeros(len(vp), bool)
+    if kf_mask is not None:
+        k_ = inb[kf_mask[inb]]; ok_ = pix_out[k_]; kf = np.isin(vp, ok_[ok_ >= 0])
+    col = vp % nc
+    asc = (R - 1 - vp // nc) * nc + col                        # ascending-row pixel ids (the operator's)
+    cat = np.zeros(len(vp), np.int64)                          # 0 hit, 1 (i), 2 (ii), 3 iii-ext, 4 iii-other, 5 iii-occ
+    if arm != 'off':
+        gpix, gin, gkept = gen
+        drop_pix = gpix[gin & ~gkept]
+        has_seed_col = np.isin(col, in_obj_cols)
+        for k in np.nonzero(~hit)[0]:
+            if asc[k] in drop_pix:
+                cat[k] = 2
+            elif not has_seed_col[k]:
+                cat[k] = 1
+            else:
+                c = cand_map.get(int(asc[k]), -1)
+                if c < 0:
+                    cat[k] = 4
+                else:
+                    s_in_b = rr.points_in_box(Pin[cand['seed'][c]:cand['seed'][c] + 1, :3], box)[0]
+                    if not s_in_b:
+                        cat[k] = 4
+                    elif cand['held'][c] >= 0 and not (cand['rim'][c] > cand['rng_new'][c] + 0.5):
+                        cat[k] = 5
+                    else:
+                        cat[k] = 3
+    else:
+        cat[~hit] = 1                                         # unmodified: every miss lacks a point (not split)
+    # (i) inside the box's seed-column span (between its leftmost and rightmost seed columns), columns unwrapped
+    i_in = np.zeros(len(vp), bool)
+    if arm != 'off' and len(in_obj_cols):
+        c0 = int(np.median(col))
+        uw = lambda c: (np.asarray(c) - c0 + nc // 2) % nc
+        lo, hi = uw(in_obj_cols).min(), uw(in_obj_cols).max()
+        i_in = (cat == 1) & (uw(col) >= lo) & (uw(col) <= hi)
+    out = {}
+    for b in range(4):
+        m = band == b
+        rows_b = np.unique(rinv[m])
+        rh = np.array([hit[rinv == q].any() for q in rows_b], bool) if len(rows_b) else np.zeros(0, bool)
+        rk = np.array([kf[rinv == q].any() for q in rows_b], bool) if len(rows_b) else np.zeros(0, bool)
+        mrh = m & np.isin(rinv, rows_b[rh]); mrk = m & np.isin(rinv, rows_b[rk])
+        out[b] = [m.sum(), (hit & m).sum(), ((cat == 1) & m).sum(), ((cat == 2) & m).sum(), ((cat == 3) & m).sum(),
+                  ((cat == 4) & m).sum(), ((cat == 5) & m).sum(), mrh.sum(), (hit & mrh).sum(), (kf & m).sum(),
+                  mrk.sum(), (kf & mrk).sum(), (i_in & m).sum()]
+    flat = [out[b][q] for q in range(13) for b in range(4)]
+    return n_full, len(vp), flat
+
+
+def row_pairs(idx, rim, xyz, boxes, lat):
+    """Neighbouring returns along each lattice row of the INPUT image (consecutive occupied pixels, only empty pixels
+    between): histogram (range bin of the mean horizontal range, class 0 same box / 1 both outside / 2 one in a box or
+    different boxes, column gap 0..20+, |d range| bin)."""
+    from pcdet.datasets.augmentor import row_extrusion as RX
+    R, C = idx.shape
+    H = np.zeros((len(PAIR_RB) - 1, 3, PAIR_G, len(PAIR_DR) - 1), np.int64)
+    occ = idx >= 0
+    pts = xyz[np.maximum(idx, 0)]
+    bid = np.full(idx.shape, -1, np.int64)
+    if len(boxes):
+        m = RX.points_in_boxes(pts[occ], boxes)
+        f = np.where(m.any(1), np.argmax(m, 1), -1); bid[occ] = f
+    for r in range(R):
+        cs = np.nonzero(occ[r])[0]
+        if len(cs) < 2:
+            continue
+        c1, c2 = cs[:-1], cs[1:]
+        g = np.minimum(c2 - c1 - 1, PAIR_G - 1)
+        dr = np.abs(rim[r, c1] - rim[r, c2])
+        rho = (np.hypot(pts[r, c1, 0], pts[r, c1, 1]) + np.hypot(pts[r, c2, 0], pts[r, c2, 1])) / 2
+        b1, b2 = bid[r, c1], bid[r, c2]
+        cls = np.where((b1 >= 0) & (b1 == b2), 0, np.where((b1 < 0) & (b2 < 0), 1, 2))
+        rb = np.searchsorted(PAIR_RB, rho, side='right') - 1
+        db = np.minimum(np.searchsorted(PAIR_DR, dr, side='right') - 1, len(PAIR_DR) - 2)
+        ok = (rb >= 0) & (rb < len(PAIR_RB) - 1)
+        np.add.at(H, (rb[ok], cls[ok], g[ok], db[ok]), 1)
+    return H
+
+
+def decomp(a):
+    import box_pattern_visual as BV
+    from pcdet.datasets.augmentor import relocate_render as rr
+    from pcdet.datasets.augmentor import row_extrusion as RX
+    out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
+    plat = PLAT_ID[a.key]
+    cfg, dcfg, ds, rx_cfg, CAP = _capture_ds(a)
+    lat = RX.lattice(); lib = RX.load_library(str(rx_cfg.LIBRARY)); nc = lat['n_cols']
+    tcol = dcfg.POINT_FEATURE_ENCODING.src_feature_list.index('timestamp')
+    N = len(ds); step = N // a.n
+    frames = [k * step + a.offset for k in range(a.n)][:a.max_frames]
+    rows, pairs = [], np.zeros((len(PAIR_RB) - 1, 3, PAIR_G, len(PAIR_DR) - 1), np.int64)
+    t0 = time.time()
+    for n_done, i in enumerate(frames):
+        np.random.seed((plat * 1000003 + i) % (2 ** 31)); CAP.clear()
+        ds[i]
+        I = CAP['in']; Pin = I['points']; boxes = I['gt_boxes'][:, :7].astype(np.float64)
+        car = rr.gt_car_mask(I)
+        xin = np.asarray(Pin[:, :3], np.float64)
+        idx, rim, _ = RX.range_image(xin, lat)
+        pairs += row_pairs(idx, rim, xin, boxes, lat)
+        kf_in = Pin[:, tcol] == 0
+        sel = [j for j in np.nonzero(car)[0] if 40.0 <= np.hypot(*boxes[j, :2]) < 75.0]
+        if not sel:
+            continue
+        for arm in ('off', 'H', 'W'):
+            if arm == 'off':
+                Pout, rec, kf = Pin, None, kf_in
+            else:
+                Pout, rec = _arm_out(Pin, I, car, arm, lat, lib, CAP['state']); kf = None
+            pix, rng = source_pixels(np.asarray(Pout[:, :3], np.float64), lat)
+            npp = BV.nearest_per_pixel(pix, rng)
+            cand, cand_map, gen, S = None, {}, None, None
+            if rec is not None and 'cand' in rec:
+                cand = rec['cand']; cand_map = {int(p_): k for k, p_ in enumerate(cand['pix'])}
+                S = RX.Surface(rec['plane'], np.zeros((0, 7)) if arm == 'W' else boxes[car])
+                occ = idx >= 0
+                hp = xin[idx[occ]]
+                obj_held = np.full(idx.shape, -1, np.int64)
+                isobj = hp[:, 2] > S(hp[:, 0], hp[:, 1]) + RX.GROUND_TOL
+                obj_held[occ] = np.where(isobj, idx[occ], -1)
+            for j in sel:
+                b = boxes[j]
+                in_obj_cols = np.zeros(0, np.int64)
+                if cand is not None:
+                    oc = np.nonzero(obj_held >= 0)
+                    hold = obj_held[oc]
+                    near = (np.abs(xin[hold, 0] - b[0]) <= 4) & (np.abs(xin[hold, 1] - b[1]) <= 4)
+                    inb = rr.points_in_box(xin[hold[near]], b)
+                    in_obj_cols = np.unique(oc[1][near][inb])
+                    gp = rec['new_pix']; gx = rec['new_xyz']
+                    gin = rr.points_in_box(gx, b) if len(gx) else np.zeros(0, bool)
+                    gen = (gp, gin, rec['new_kept'])
+                res = decomp_box(b, j, Pout, npp, pix, lat, in_obj_cols, kf, gen, cand_map, cand, Pin, arm)
+                if res is None:
+                    continue
+                n_full, n_vis, flat = res
+                rows.append([plat, i, j, {'off': 0, 'H': 1, 'W': 2}[arm], float(np.hypot(*b[:2])),
+                             float(RX.aspect_side(rr.relative_view_angle(b))), n_full, n_vis] + flat)
+        if n_done % 10 == 0:
+            print(f'[rx decomp] {a.key} {n_done + 1}/{len(frames)} frames, {len(rows)} box rows, {time.time() - t0:.0f} s',
+                  flush=True)
+    pickle.dump(dict(key=a.key, plat=plat, frames=frames, rows=np.array(rows, np.float64).reshape(-1, len(D_COLS)),
+                     cols=D_COLS, pairs=pairs, offset=a.offset), open(out / f'decomp_{a.key}.pkl', 'wb'))
+    print(f'[rx decomp] done {a.key}: {len(frames)} frames, {time.time() - t0:.0f} s', flush=True)
+
+
+def sweep(a):
+    """Extent E (deg about the seed's elevation, every seed) x independent keep p (every new point) under the common rule
+    already decided for v2 (boxes only clip: an in-box seed's point stays in its box, an outside seed's enters no box;
+    z >= S; the shadow never removes a return inside any box), from v1 H's candidates. Run-length histograms (X3) for the
+    whole grid; RC and band hits (X1 / X2) of the Car boxes at 40-75 m for a 3 x 3 subset."""
+    from pcdet.datasets.augmentor import relocate_render as rr
+    from pcdet.datasets.augmentor import row_extrusion as RX
+    from rx_build_library import x3_hist
+    out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
+    plat = PLAT_ID[a.key]
+    cfg, dcfg, ds, rx_cfg, CAP = _capture_ds(a)
+    lat = RX.lattice(); lib = RX.load_library(str(rx_cfg.LIBRARY)); nc = lat['n_cols']
+    N = len(ds); step = N // a.n
+    frames = [k * step + a.offset for k in range(a.n)][:a.max_frames]
+    X3 = np.zeros((len(SW_E), len(SW_P), 3, 2, 65), np.int64)
+    NEW = np.zeros((len(SW_E), len(SW_P), 2))          # kept new points, input points
+    CARS = {(e, p_): [] for e in SW_CAR_E for p_ in SW_CAR_P}
+    t0 = time.time()
+    for n_done, i in enumerate(frames):
+        np.random.seed((plat * 1000003 + i) % (2 ** 31)); CAP.clear()
+        ds[i]
+        I = CAP['in']; Pin = I['points']; boxes = I['gt_boxes'][:, :7].astype(np.float64)
+        car = rr.gt_car_mask(I)
+        xin = np.asarray(Pin[:, :3], np.float64)
+        _, rec = _arm_out(Pin, I, car, 'H', lat, lib, CAP['state'])
+        if rec.get('no_plane') or 'cand' not in rec:
+            continue
+        c = rec['cand']
+        S = RX.Surface(rec['plane'], boxes[car])
+        idx, rim, _ = RX.range_image(xin, lat)
+        R, C = idx.shape
+        occ = idx >= 0
+        hp = xin[np.maximum(idx, 0)]
+        rho_in = np.hypot(hp[..., 0], hp[..., 1])
+        s_in = np.full(idx.shape, np.nan); s_in[occ] = S(hp[occ][:, 0], hp[occ][:, 1])
+        with np.errstate(invalid='ignore'):
+            obj_in = occ & (hp[..., 2] > s_in + RX.GROUND_TOL)
+        incar_in = np.zeros(idx.shape, bool); grown_in = np.zeros(idx.shape, bool); inany_in = np.zeros(idx.shape, bool)
+        if car.any():
+            incar_in[occ] = RX.points_in_boxes(hp[occ], boxes[car]).any(1)
+        if len(boxes):
+            inany_in[occ] = RX.points_in_boxes(hp[occ], boxes).any(1)
+        for b in boxes:
+            grown_in[occ] |= rr.points_in_rect(hp[occ][:, :2], b, 0.5)
+        sx = xin[c['seed']]
+        held_inbox = np.zeros(len(c['pix']), bool)
+        h_ok = c['held'] >= 0
+        held_inbox[h_ok] = inany_in.ravel()[c['pix'][h_ok]]
+        new_incar = RX.points_in_boxes(np.c_[sx[:, :2], c['z_new']], boxes[car]).any(1) if car.any() \
+            else np.zeros(len(sx), bool)
+        new_grown = np.zeros(len(sx), bool)
+        for b in boxes:
+            new_grown |= rr.points_in_rect(sx[:, :2], b, 0.5)
+        clip = np.where(c['seed_in'], c['new_in_seed_box'], ~c['new_in_any_box'])
+        base_ok = clip & (c['z_new'] >= c['s_at']) & ((c['held'] < 0) | ((c['rim'] > c['rng_new'] + 0.5) & ~held_inbox))
+        obj_new = c['z_new'] > c['s_at'] + RX.GROUND_TOL
+        rho_new = np.hypot(sx[:, 0], sx[:, 1])
+        u = np.random.default_rng([plat, i, 7]).random(len(c['pix']))
+        pr, pc = c['pix'] // nc, c['pix'] % nc
+        for ie, E in enumerate(SW_E):
+            okE = base_ok & (np.abs(c['dth']) <= np.radians(E) + 1e-12)
+            for ip, p_ in enumerate(SW_P):
+                k = okE & (u < p_)
+                has = occ.copy(); rng = rim.copy(); obj = obj_in.copy(); inc = incar_in.copy(); gr = grown_in.copy()
+                rho = rho_in.copy()
+                has[pr[k], pc[k]] = True; rng[pr[k], pc[k]] = c['rng_new'][k]; obj[pr[k], pc[k]] = obj_new[k]
+                inc[pr[k], pc[k]] = new_incar[k]; gr[pr[k], pc[k]] = new_grown[k]; rho[pr[k], pc[k]] = rho_new[k]
+                X3[ie, ip] += x3_hist(has, rng, obj, rho, inc, has & ~gr)
+                NEW[ie, ip] += [k.sum(), len(Pin)]
+                if E in SW_CAR_E and p_ in SW_CAR_P:
+                    keep_src = np.ones(len(Pin), bool)
+                    sh = c['held'][k]; keep_src[sh[sh >= 0]] = False
+                    newp = Pin[c['seed'][k]].copy(); newp[:, 2] = c['z_new'][k]
+                    Pout = np.concatenate([Pin[keep_src], newp.astype(Pin.dtype)])
+                    CARS[(E, p_)] += [r_ for r_ in measure_cars(Pout, I['gt_boxes'], car, lat, plat, i)
+                                      if 40.0 <= r_[3] < 75.0]
+        if n_done % 10 == 0:
+            print(f'[rx sweep] {a.key} {n_done + 1}/{len(frames)} frames, {time.time() - t0:.0f} s', flush=True)
+    pickle.dump(dict(key=a.key, plat=plat, frames=frames, E=SW_E, P=SW_P, x3=X3, new=NEW, offset=a.offset,
+                     cars={k: np.array(v, np.float64).reshape(-1, len(CAR_COLS)) for k, v in CARS.items()}),
+                open(out / f'sweep_{a.key}.pkl', 'wb'))
+    print(f'[rx sweep] done {a.key}: {len(frames)} frames, {time.time() - t0:.0f} s', flush=True)
+
+
+def _hshare(h, edges=(1, 2, 3, 4, 5, 6, 7, 8, 11)):
+    """Shares of an integer histogram in [1], [2], ..., [8, 10], [11, ...) (run lengths)."""
+    h = np.asarray(h, np.float64); n = h.sum()
+    if not n:
+        return [np.nan] * len(edges)
+    out, lo = [], edges[0]
+    for k, e in enumerate(edges[1:]):
+        out.append(h[lo:e].sum() / n); lo = e
+    out.append(h[lo:].sum() / n)
+    return out
+
+
+def _hq(h, q):
+    """The q-quantile (0-1) of an integer sample given by its histogram (the smallest v with cumulative share >= q)."""
+    c = np.cumsum(h) / max(np.sum(h), 1)
+    return int(np.searchsorted(c, q - 1e-12))
+
+
+def _ref_rowcond(ref):
+    """Per held-out / fit reference car (vis >= 0.9): per band (n visible pixels, hits) over ALL rows and over rows with
+    >= 1 hit."""
+    from box_pattern_visual import _band_of
+    C, Rw = ref['cars'], ref['rows']
+    out = []
+    for c in C:
+        rows = Rw[int(c[7]):int(c[7]) + int(c[8])].astype(np.float64)
+        b = _band_of(rows[:, 3]); h = rows[:, 2] >= 1
+        rec = [c[2], c[5] / c[4]]
+        for k in range(4):
+            m = b == k
+            rec += [rows[m, 1].sum(), rows[m, 2].sum(), rows[m & h, 1].sum(), rows[m & h, 2].sum()]
+        out.append(rec)
+    return np.array(out).reshape(-1, 18)
+
+
+def phase1_report(a):
+    from pcdet.datasets.augmentor import row_extrusion as RX
+    L = []
+
+    def P(t=''):
+        L.append(t); print(t, flush=True)
+    D = np.concatenate([pickle.load(open(Path(a.dir) / f'decomp_{k}.pkl', 'rb'))['rows'] for k in a.keys])
+    pairs = sum(pickle.load(open(Path(a.dir) / f'decomp_{k}.pkl', 'rb'))['pairs'] for k in a.keys)
+    SW = [pickle.load(open(Path(a.dir) / f'sweep_{k}.pkl', 'rb')) for k in a.keys]
+    G = {k: pickle.load(open(Path(a.gate) / f'gate_{k}.pkl', 'rb')) for k in a.keys}
+    ref = np.load(a.ref, allow_pickle=True); reff = np.load(a.ref_fit, allow_pickle=True)
+    J = {c: i for i, c in enumerate(D_COLS)}
+    col = lambda n, b: D[:, J[f'{n}{b}']]
+    P('RX v2 step 1 (ANALYSIS; experiments_md 20261021_02 §6): v1 gate frames (decomposition) and non-gate frames (sweep)')
+    P(f'  decomposition rows: {len(D)} (box x arm); frames per key: ' + ', '.join(
+        f"{k} {len(pickle.load(open(Path(a.dir) / f'decomp_{k}.pkl', 'rb'))['frames'])}" for k in a.keys))
+    # ---------------------------------------------------------------- 1. X2 decomposition
+    RC = _ref_rowcond(ref); RCF = _ref_rowcond(reff)
+    rbin = _bin(D[:, J['r']], X_BINS); vis = D[:, J['n_vis']] / D[:, J['n_full']]
+    P('')
+    P('1. X2 hit deficit decomposition (X2 population: Car boxes, visible / full >= 0.9; mean over objects of per-band pixel '
+      'shares; Waymo = held-out reference, the gate\'s)')
+    P('   cols: ref hit | arm hit | deficit | arm misses split: (i) no in-box seed in the column [of which inside the seed-column '
+      'span] | (ii) generated, dropped | (iii) extent | (iii) other seed | (iii) occupied, nearer | n arm / ref')
+    for arm, name in ((1, 'H-G0'), (2, 'W-G0')):
+        P(f'  {name}:')
+        for k in range(3):
+            for b in range(4):
+                m = (D[:, J['arm']] == arm) & (rbin == k) & (vis >= 0.9) & (col('vis', b) >= 1)
+                mr = (_bin(RC[:, 0], X_BINS) == k) & (RC[:, 1] >= 0.9) & (RC[:, 2 + 4 * b] >= 1)
+                v = col('vis', b)[m]
+                f = {n: float(np.mean(col(n, b)[m] / v)) if m.any() else np.nan
+                     for n in ('hit', 'i', 'ii', 'iiiext', 'iiioth', 'iiiocc', 'i_in')}
+                rh = float(np.mean(RC[mr, 3 + 4 * b] / RC[mr, 2 + 4 * b])) if mr.any() else np.nan
+                P(f"    {X_BINS[k][0]:g}-{X_BINS[k][1]:g} b{b}: ref {rh:.3f} | {f['hit']:.3f} | {rh - f['hit']:+.3f} | "
+                  f"(i) {f['i']:.3f} [{f['i_in']:.3f}] | (ii) {f['ii']:.3f} | ext {f['iiiext']:.3f} | oth {f['iiioth']:.3f} | "
+                  f"occ {f['iiiocc']:.3f} | n {int(m.sum())} / {int(mr.sum())}")
+    # ---------------------------------------------------------------- 2. row-conditional hit
+    P('')
+    P('2. Hit rate among rows holding >= 1 point (per object: hits / visible pixels over those rows; mean over objects), and '
+      'the keyframe-only source')
+    P('   cols: Waymo held-out | Waymo fit | source accumulated | source keyframe | H-G0 | W-G0 || unconditional: source acc / '
+      'keyframe hit')
+    for k in range(3):
+        for b in range(4):
+            def rcond(arr, kk=k):
+                mm = (_bin(arr[:, 0], X_BINS) == kk) & (arr[:, 1] >= 0.9) & (arr[:, 4 + 4 * b] >= 1)
+                return float(np.mean(arr[mm, 5 + 4 * b] / arr[mm, 4 + 4 * b])) if mm.any() else np.nan
+
+            def scond(arm, n_v='rvis', n_h='rhit'):
+                mm = (D[:, J['arm']] == arm) & (rbin == k) & (vis >= 0.9) & (col(n_v, b) >= 1)
+                return float(np.mean(col(n_h, b)[mm] / col(n_v, b)[mm])) if mm.any() else np.nan, int(mm.sum())
+            m0 = (D[:, J['arm']] == 0) & (rbin == k) & (vis >= 0.9) & (col('vis', b) >= 1)
+            acc_u = float(np.mean(col('hit', b)[m0] / col('vis', b)[m0])) if m0.any() else np.nan
+            kf_u = float(np.mean(col('kfhit', b)[m0] / col('vis', b)[m0])) if m0.any() else np.nan
+            sa, na = scond(0); sk, nk = scond(0, 'kfrvis', 'kfrhit'); sh, nh = scond(1); sw, nw = scond(2)
+            P(f'    {X_BINS[k][0]:g}-{X_BINS[k][1]:g} b{b}: {rcond(RC):.3f} | {rcond(RCF):.3f} | {sa:.3f} (n {na}) | '
+              f'{sk:.3f} (n {nk}) | {sh:.3f} | {sw:.3f} || {acc_u:.3f} / {kf_u:.3f}')
+    # ---------------------------------------------------------------- 3. neighbouring returns along a row
+    P('')
+    P('3. Neighbouring returns along a lattice row of the INPUT image (consecutive occupied pixels; gap = empty columns between)')
+    cls_name = ('same box', 'both outside boxes', 'box edge (one in a box / two boxes)')
+    for rb in range(len(PAIR_RB) - 1):
+        P(f'  mean horizontal range {PAIR_RB[rb]:g}-{PAIR_RB[rb + 1]:g} m:')
+        for cl in range(3):
+            H = pairs[rb, cl]; n = H.sum()
+            g = H.sum(1); dr = H.sum(0)
+            gs = [g[0], g[1], g[2], g[3], g[4:6].sum(), g[6:11].sum(), g[11:].sum()]
+            P(f'    {cls_name[cl]}: n {int(n)}; gap 0 / 1 / 2 / 3 / 4-5 / 6-10 / >10: '
+              + ' / '.join(f'{x / max(n, 1):.3f}' for x in gs)
+              + '; |d range| <= 0.1 / 0.2 / 0.3 / 0.5 / 1 / 2 m: '
+              + ' / '.join(f'{dr[:j].sum() / max(n, 1):.3f}' for j in range(1, 7)))
+            for gg in (1, 2, 3, 4):
+                h = H[gg] if gg < 4 else H[4:6].sum(0)
+                P(f'      gap {gg if gg < 4 else "4-5"}: |d range| <= 0.3 m {h[:3].sum() / max(h.sum(), 1):.3f} of {int(h.sum())}')
+    # ---------------------------------------------------------------- 4. X3 distributions
+    P('')
+    P('4. X3 run-length distributions (object pixels, pixel-weighted): shares of runs 1 / 2 / 3 / 4 / 5 / 6 / 7 / 8-10 / >10; '
+      'p25 / p50 / p75')
+    xb = ('40-50', '50-60', '60-75.2')
+    srcs = [('Waymo held-out', ref['x3']), ('Waymo fit set', reff['x3'])]
+    for m in ('off', 'H-G0', 'W-G0'):
+        for k, g in G.items():
+            srcs.append((f'{m} {PLAT_NAME[g["plat"]]}', g['x3'][m]))
+    for name, h in srcs:
+        for b in range(3):
+            for io, lab in ((0, 'in '), (1, 'out')):
+                hh = h[b, io]
+                P(f'  {name:22s} {xb[b]:8s} {lab}: ' + ' / '.join(f'{x:.3f}' for x in _hshare(hh))
+                  + f'; {_hq(hh, .25)} / {_hq(hh, .5)} / {_hq(hh, .75)} (n {int(hh.sum())})')
+    # ---------------------------------------------------------------- 5. sweep
+    P('')
+    P('5. Extent x drop sweep (common rule, boxes only clip, z >= S, shadow spares boxes; NON-gate frames k x floor(N / 200) + 1; '
+      'pooled platforms): median run in / out per bin; Waymo fit set and held-out beside')
+    SWF = [RX.hist_median(reff['x3'][b, 0]) for b in range(3)], [RX.hist_median(reff['x3'][b, 1]) for b in range(3)]
+    SWH = [RX.hist_median(ref['x3'][b, 0]) for b in range(3)], [RX.hist_median(ref['x3'][b, 1]) for b in range(3)]
+    P(f'  Waymo fit (in / out): ' + '; '.join(f'{xb[b]} {SWF[0][b]:g} / {SWF[1][b]:g}' for b in range(3))
+      + '   held-out: ' + '; '.join(f'{xb[b]} {SWH[0][b]:g} / {SWH[1][b]:g}' for b in range(3)))
+    X3s = sum(s_['x3'] for s_ in SW); NEW = sum(s_['new'] for s_ in SW)
+    E_, P_ = SW[0]['E'], SW[0]['P']
+    hits = []
+    for ie, E in enumerate(E_):
+        for ip, p_ in enumerate(P_):
+            h = X3s[ie, ip]
+            med = [(RX.hist_median(h[b, 0]), RX.hist_median(h[b, 1])) for b in range(3)]
+            Sv = [mi - mo for mi, mo in med]
+            per_plat = []
+            for s_ in SW:
+                hp_ = s_['x3'][ie, ip]
+                per_plat.append(sum(abs((RX.hist_median(hp_[b, 0]) - RX.hist_median(hp_[b, 1]))
+                                        - (RX.hist_median(ref['x3'][b, 0]) - RX.hist_median(ref['x3'][b, 1]))) <= 1
+                                    for b in range(3)))
+            match = all(med[b] == (SWF[0][b], SWF[1][b]) for b in range(3))
+            if match:
+                hits.append((E, p_))
+            P(f'  E {E:5.3f} deg, p {p_:.2f}: ' + '; '.join(f'{xb[b]} {med[b][0]:g} / {med[b][1]:g} (S {Sv[b]:+g})'
+                                                            for b in range(3))
+              + f' | X3-like cells vs held-out {sum(per_plat)} / 6 | new points / input {NEW[ie, ip, 0] / max(NEW[ie, ip, 1], 1):.3f}'
+              + (' | = Waymo fit medians' if match else ''))
+    P('  grid points reproducing the Waymo fit-set medians (in / out) in all three bins: ' + (', '.join(
+        f'E {e:g} p {q:g}' for e, q in hits) or 'none'))
+    P('  car-level subset (Car boxes at 40-75 m on the non-gate frames): X1-like cells within 0.10 of the held-out reference '
+      'median, and body-band (b1) hit per bin vs the reference')
+    Rr = ref_tables(ref)
+    for E in SW_CAR_E:
+        for p_ in SW_CAR_P:
+            cars = np.concatenate([s_['cars'][(E, p_)] for s_ in SW])
+            T_ = src_tables(cars); sb = _bin(T_['r'], X_BINS); rb_ = _bin(Rr['r'], X_BINS)
+            n_ok = 0
+            for p0 in (0, 1):
+                for k in range(3):
+                    for sd in (0, 1):
+                        mm = (T_['plat'] == p0) & (sb == k) & (T_['side'] == bool(sd)) & np.isfinite(T_['rc'])
+                        mr = (rb_ == k) & (Rr['side'] == bool(sd)) & np.isfinite(Rr['rc'])
+                        if mm.any() and abs(np.median(T_['rc'][mm]) - np.median(Rr['rc'][mr])) <= 0.10 + 1e-12:
+                            n_ok += 1
+            b1 = []
+            for k in range(3):
+                sm = band_means(T_['D'], (sb == k) & (T_['vis'] >= 0.9))[1]
+                rm = band_means(Rr['D'], (rb_ == k) & (Rr['vis'] >= 0.9))[1]
+                b1.append(f'{sm[1]:.3f}/{rm[1]:.3f}')
+            P(f'    E {E:g} p {p_:g}: X1-like {n_ok} / 12; b1 hit ' + ', '.join(f'{xb[k]} {b1[k]}' for k in range(3)))
+    fn = Path(a.dir) / f"phase1_{os.environ.get('SLURM_JOB_ID', 'local')}.txt"
+    open(fn, 'w').write('\n'.join(L) + '\n')
+    print(f'[rx phase1] written to {fn}', flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     sp = ap.add_subparsers(dest='cmd', required=True)
@@ -544,11 +1030,25 @@ def main():
     p.add_argument('--dir', required=True); p.add_argument('--ref', required=True); p.add_argument('--lib', required=True)
     p.add_argument('--targets', default='/home/koyama/data/relocate_render_20261018/v5/targets.npz')
     p.add_argument('--keys', nargs='*', default=['NUSCENES_N008', 'NUSCENES_N015'])
+    for name in ('decomp', 'sweep'):
+        q = sp.add_parser(name)
+        q.add_argument('--cfg', required=True); q.add_argument('--key', required=True); q.add_argument('--out', required=True)
+        q.add_argument('--n', type=int, default=200); q.add_argument('--max_frames', type=int, default=None)
+        q.add_argument('--offset', type=int, default=0 if name == 'decomp' else 1)
+    q = sp.add_parser('phase1')
+    q.add_argument('--dir', required=True); q.add_argument('--gate', required=True); q.add_argument('--ref', required=True)
+    q.add_argument('--ref_fit', required=True); q.add_argument('--keys', nargs='*', default=['NUSCENES_N008', 'NUSCENES_N015'])
     a = ap.parse_args()
     if a.cmd == 'run':
         run(a)
-    else:
+    elif a.cmd == 'report':
         report(a)
+    elif a.cmd == 'decomp':
+        decomp(a)
+    elif a.cmd == 'sweep':
+        sweep(a)
+    else:
+        phase1_report(a)
 
 
 if __name__ == '__main__':
