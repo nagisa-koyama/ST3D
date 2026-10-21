@@ -1,0 +1,15 @@
+# ROW EXTRUSION (RX), arm H-G1, the H-G0 operator plus G1's ground fill (experiments_md 20261021_02; T05 §5 RX, 9a7c1f5 / b479ec7 / d2797c9).
+# ANALYSIS (an ablation): read as D against 27471 (51.58) and against H-G0; it can never replace H-G0 as the method, because
+# choosing an arm on its Waymo val number would be selection on target labels (user ~23:10 10-21, T05 §5 d2797c9).
+# The H-G0 row config with only ROW_EXTRUSION's arm keys changed (ARM H, GROUND G1); everything else resolves from it.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-gblobs-accum-legaldepth-rx-hg0-nuscenes2waymo.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        ROW_EXTRUSION:
+            ARM: H
+            GROUND: G1
+    NUSCENES_N015:
+        ROW_EXTRUSION:
+            ARM: H
+            GROUND: G1

@@ -547,6 +547,14 @@ class DatasetTemplate(torch_data.Dataset):
             if ignore_other_classes:
                 aug_input['gt_boxes_ignore_mask'] = ~gt_boxes_mask
 
+            # ROW_EXTRUSION (experiments_md 20261021_02; T05 §5 RX): source points stacked in height at the target
+            # lattice's rows, bounded by the source boxes (augmentor/row_extrusion.py). RR's slot: after the zero-point
+            # filter, before the augmentor queue; only 'points' changes and the global RNG is not advanced. Absent =
+            # unchanged.
+            if self.dataset_cfg.get('ROW_EXTRUSION', None) is not None:
+                from .augmentor import row_extrusion
+                aug_input = row_extrusion.apply_in_loader(aug_input, self.dataset_cfg.ROW_EXTRUSION)
+
             data_dict = self.data_augmentor.forward(data_dict=aug_input)
 
         if data_dict.get('gt_boxes', None) is not None:
