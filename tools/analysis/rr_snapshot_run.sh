@@ -17,8 +17,8 @@ fi
 SNAP=$SCR/ST3D
 mkdir -p "$SNAP"
 git -C "$REPO" archive "$SHA" | tar -x -C "$SNAP"
-(cd "$REPO" && /usr/bin/find pcdet -name '*.so' -print0 | xargs -0 -I{} cp --parents {} "$SNAP"/)
-cp -a "$REPO/data/." "$SNAP/data/"
+(cd "$REPO" && /usr/bin/find pcdet -name '*.so' -print0 | rsync -rl --from0 --files-from=- ./ "$SNAP"/)
+rsync -rl "$REPO/data/" "$SNAP/data/"           # symlinks kept as links; no permissions (node-local FS refuses them)
 NSO=$(/usr/bin/find "$SNAP/pcdet" -name '*.so' | wc -l)
 [ "$NSO" -gt 0 ] || { echo "rr_snapshot_run: no compiled extensions in the snapshot" >&2; exit 2; }
 echo "=== snapshot of $(git -C "$REPO" rev-parse --short "$SHA") -> $SNAP ($NSO .so) ==="
