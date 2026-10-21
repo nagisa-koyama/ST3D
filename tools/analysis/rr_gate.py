@@ -560,7 +560,8 @@ BG_ROW_COLS = ('plat', 'frame', 'r_new', 'n_rendered', 'n_visible', 'n_kept', 'n
                'n1_viol', 'tries')
 BG_FRAME_COLS = ('plat', 'frame', 'n_car', 'n_bg', 'bg_attempted', 'bg_no_place', 'bg_zero', 'same_car_boxes',
                  'same_final_gt', 'hm_equal', 'centres_in_bg', 'orig_emptied_on', 'orig_emptied_off', 'car_emptied_by_bg',
-                 'car_points_lost', 'n_car_off')
+                 'car_points_lost', 'n_car_off', 'bg_rej_range', 'bg_rej_overlap', 'bg_rej_scene', 'bg_rej_empty',
+                 'bg_rej_rc', 'bg_rej_zrange', 'bg_rej_novis')
 
 
 def bg_overlap_violations(bg, gt, car, grow=0.5):
@@ -645,8 +646,10 @@ def bg_frame_checks(a, ds, i, seed_i, d, rec, B, A, P, CAP, BGM, rr_cfg, head, s
     else:
         emptied_by_bg, lost = -1, -1
     b = rec.get('bg', {})
+    rj = b.get('reject', {})
     return [plat, i, len(rec['copies']), len(bgc), b.get('n_attempted', 0), b.get('n_no_place', 0), b.get('n_zero', 0),
-            float(same_car), float(same_gt), hm_eq, cin, emp_on, emp_off, emptied_by_bg, lost, len(rec0['copies'])]
+            float(same_car), float(same_gt), hm_eq, cin, emp_on, emp_off, emptied_by_bg, lost, len(rec0['copies'])] + \
+        [rj.get(k, 0) for k in ('range', 'overlap', 'scene', 'empty', 'rc', 'zrange', 'novis')]
 
 
 def bg_sheet(path, key, sheet, lat):
@@ -709,7 +712,9 @@ def report_v8(res, cp, C, PL, verdict):
         f = fr[fr[:, 0] == p]
         print(f"{PLAT_NAME[p]}: {len(f)} frames; car copies {int(f[:, F['n_car']].sum())}, background copies "
               f"{int(f[:, F['n_bg']].sum())} (attempted {int(f[:, F['bg_attempted']].sum())}, no placement "
-              f"{int(f[:, F['bg_no_place']].sum())}, 0 points {int(f[:, F['bg_zero']].sum())})")
+              f"{int(f[:, F['bg_no_place']].sum())}, 0 points {int(f[:, F['bg_zero']].sum())}); background rejected tries "
+              + ' / '.join(f"{k} {int(f[:, F['bg_rej_' + k]].sum())}" for k in ('range', 'overlap', 'scene', 'empty', 'rc',
+                                                                               'zrange', 'novis')))
     n1 = int(rows[:, R['n1_viol']].sum()) if len(rows) else 0
     verdict_v8 = {'N1': n1 == 0}
     print(f"N1: BEV overlaps of background copies (grown 0.5 m) with GT boxes, car copies or other background copies: {n1} "
