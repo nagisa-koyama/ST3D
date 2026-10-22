@@ -12,7 +12,7 @@
 # >= 0.50 from the cut upward, 1.0 m centre match, >= 50 kept, else 1.01); rule A NEG_THRESH from the background plateau's
 # upper half-maximum on the teacher's Singapore TRAIN pseudo-labels at floor 0.0001; a SCORE below its NEG raised to it.
 # The passes: scripts/_scene_after_teacher.sh (1 GPU, chained afterany on B->B); the values are written here by the session
-# BEFORE this row is launched (20261017_09 §4.1's procedure). 1.01 / 1.01 are PLACEHOLDERS: the row must not run with them.
+# BEFORE this row is launched (20261017_09 §4.1's procedure): job 30190, 2026-10-23 03:56-04:17, the values below (raised: none).
 #
 # Schedule: EPOCH_FOLLOWS source, so 2,616 iterations x 20 epochs = 52,320 steps, matched to the B->S source-only reading it
 # is read against (its teacher's own schedule), as the S1 and Waymo -> nuScenes PL rows are matched to their baselines.
@@ -30,8 +30,8 @@ DATA_CONFIG_TAR:
     USE_PSEUDO_LABEL: True
 
 SELF_TRAIN:
-  SCORE_THRESH: [1.01, 1.01, 1.01]      # PLACEHOLDER until stage 2 (rule B on Boston val, teacher B->B ep20) is read
-  NEG_THRESH: [1.01, 1.01, 1.01]        # PLACEHOLDER until stage 2 (rule A on Singapore TRAIN pseudo-labels, floor 0.0001)
+  SCORE_THRESH: [0.2, 0.32, 0.35]       # job 30190: rule B, teacher 30188 ep20 (B->B) on Boston val n008, 1 sweep, 3,090 frames; none below its NEG
+  NEG_THRESH: [0.161, 0.173, 0.176]     # job 30190: rule A on the same teacher's Singapore TRAIN pseudo-labels (floor 0.0001; plateau modes 0.107 / 0.107 / 0.107)
   MODEL_TEACHER:
     CLASS_NAMES: [Car, Pedestrian, Cyclist]
     ONTOLOGY: kitti
