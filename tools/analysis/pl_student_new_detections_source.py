@@ -370,6 +370,17 @@ def read_pair(passed, teacher, student, op, numbers_t, numbers_s):
     out['L_by_Q'] = {k: dict(in_Q=float(linked[v & inq].mean()) if (v & inq).any() else float('nan'),
                              outside_Q=float(linked[v & ~inq].mean()) if (v & ~inq).any() else float('nan'))
                      for k, v in sets.items()}
+    # descriptive, added after the deciding numbers (20261022_02 §6.4): L over binned GT only, and L(neither) reweighted
+    # to S-only's bin mix, so the track link is compared with "neither" at the same range and density
+    binned = bins >= 0
+    out['L_binned'] = {k: float(linked[v & binned].mean()) if (v & binned).any() else float('nan') for k, v in sets.items()}
+    nb = len(r_t)
+    w = np.bincount(bins[sets['s_only'] & binned], minlength=nb).astype(np.float64)
+    n_nei = np.bincount(bins[sets['neither'] & binned], minlength=nb)
+    l_nei = np.bincount(bins[sets['neither'] & binned & linked], minlength=nb) / np.maximum(n_nei, 1)
+    ok = n_nei > 0
+    out['L_neither_bin_matched'] = float((w[ok] * l_nei[ok]).sum() / max(w[ok].sum(), 1))
+    out['L_neither_bin_matched_weight_covered'] = float(w[ok].sum() / max(w.sum(), 1))
     # localisation split of S-only, at the teacher's operating point
     pt = passed['models'][teacher]
     best_t = best_iou_above(pt['pairs'], pt['det']['score'], n_gt, tau_t)
@@ -392,13 +403,15 @@ def read_pair(passed, teacher, student, op, numbers_t, numbers_s):
                          r_t=None if np.isnan(r_t[b]) else float(r_t[b]),
                          r_s=float(fs[m].mean()) if m.any() else None, Q=bool(q[b]),
                          **{k: int((v & m).sum()) for k, v in sets.items()},
-                         L_s_only=float(linked[so & m].mean()) if (so & m).any() else None))
+                         L_s_only=float(linked[so & m].mean()) if (so & m).any() else None,
+                         L_neither=float(linked[sets['neither'] & m].mean()) if (sets['neither'] & m).any() else None))
         fs_rate.append(rows[-1]['r_s'])
     for name, m in (('0 points', gt['npts'] < 1), ('>= 75 m, >= 1 point', (gt['rng'] >= RINGS[-1]) & (gt['npts'] >= 1))):
         rows.append(dict(bin=-1, ring=name, pts='', n=int(m.sum()), r_t=float(ft[m].mean()) if m.any() else None,
                          r_s=float(fs[m].mean()) if m.any() else None, Q=None,
                          **{k: int((v & m).sum()) for k, v in sets.items()},
-                         L_s_only=float(linked[so & m].mean()) if (so & m).any() else None))
+                         L_s_only=float(linked[so & m].mean()) if (so & m).any() else None,
+                         L_neither=float(linked[sets['neither'] & m].mean()) if (sets['neither'] & m).any() else None))
     out['bins'] = rows
     # T-only by ring (reported)
     ring = np.where(gt['rng'] < RINGS[-1], np.searchsorted(np.asarray(RINGS[1:-1], np.float64), gt['rng'], side='right'), -1)
@@ -479,14 +492,18 @@ def summarise(passed, ref_check=None):
                          f'diff {r["Ra"]["diff"]:+.4f} -> supported {r["Ra"]["supported"]}')
             lines.append(f'R-b: share(S-only) {r["Rb"]["share_s_only"]:.4f}, share(neither) {r["Rb"]["share_neither"]:.4f}, '
                          f'diff {r["Rb"]["diff"]:+.4f} -> supported {r["Rb"]["supported"]}')
+            lines.append('descriptive: L over binned GT ' + json.dumps(r['L_binned']) +
+                         f'; L(neither) at S-only\'s bin mix {r["L_neither_bin_matched"]:.4f} '
+                         f'(S-only weight covered {r["L_neither_bin_matched_weight_covered"]:.4f})')
             lines.append('S-only split: ' + json.dumps(r['split']))
             lines.append('by ring (0-10 ... 50-75, >= 75): ' + json.dumps(r['by_ring']))
             lines.append('')
-            table(['ring', 'points', 'GT', 'r_T', 'r_S', 'Q', 'both', 'S-only', 'T-only', 'neither', 'L(S-only)'],
+            table(['ring', 'points', 'GT', 'r_T', 'r_S', 'Q', 'both', 'S-only', 'T-only', 'neither', 'L(S-only)', 'L(neither)'],
                   [[b['ring'], b['pts'], b['n'], '-' if b['r_t'] is None else '%.3f' % b['r_t'],
                     '-' if b['r_s'] is None else '%.3f' % b['r_s'], '-' if b['Q'] is None else ('yes' if b['Q'] else 'no'),
                     b['both'], b['s_only'], b['t_only'], b['neither'],
-                    '-' if b['L_s_only'] is None else '%.3f' % b['L_s_only']] for b in r['bins']])
+                    '-' if b['L_s_only'] is None else '%.3f' % b['L_s_only'],
+                    '-' if b['L_neither'] is None else '%.3f' % b['L_neither']] for b in r['bins']])
     return '\n'.join(lines), num
 
 
