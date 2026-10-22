@@ -98,8 +98,9 @@ def load_annos(kind, result_pkl, max_frames=None):
         del infos
         fids = [d['frame_id'] for d in dets]
         gt = [copy.deepcopy(by_fid[f]['annos']) for f in fids]
-        for g in gt:
-            g['gt_boxes_lidar'] = np.asarray(g['gt_boxes_lidar'], np.float64).reshape(len(g['name']), -1)[:, :7].copy()
+        for g in gt:  # a frame without labels stores an empty array that cannot be reshaped
+            g['gt_boxes_lidar'] = np.asarray(g['gt_boxes_lidar'], np.float64).reshape(len(g['name']), -1)[:, :7].copy() \
+                if len(g['name']) else np.zeros((0, 7))
         dt = [copy.deepcopy(d) for d in dets]
         kitti_utils.transform_annotations_to_kitti_format(dt, map_name_to_kitti=WAYMO_MAP)
         kitti_utils.transform_annotations_to_kitti_format(gt, map_name_to_kitti=WAYMO_MAP, info_with_fakelidar=False)
