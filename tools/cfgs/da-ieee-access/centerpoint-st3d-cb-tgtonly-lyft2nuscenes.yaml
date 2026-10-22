@@ -1,0 +1,27 @@
+# CHECK PL-TGTONLY, ROW T4 (analysis row; experiments_md 20261003_05 §5, amendment 22:58 before any number, commit 7264a3e;
+# launch and checks in experiments_md 20261022_08). The direct CenterPoint replication of MIRU2024's Lyft -> nuScenes
+# target-only self-training row.
+#
+# The with-source twin 27592 (centerpoint-st3d-cb-lyft2nuscenes, W&B yfe7t7hz; the S1 matched baseline) with ONE change: the
+# student trains on the target pseudo-labels only (SELF_TRAIN.SRC.USE_DATA False). Teacher and init 25835 epoch 30 (unadapted
+# MeanVFE source-only, frozen, one pass), cuts SCORE 0.241 / 0.203 / 0.246 and NEG 0.1, augmentation, LR / OneCycle, seed 666,
+# 2 GPUs at a global batch of 6: all as 27592 (inherited below).
+#
+# What the source-off change forces (the schedule is matched in STEPS, as the design asks):
+# - EPOCH_FOLLOWS target: an epoch is one pass over nuScenes TRAIN, 4,689 iterations (28,130 frames / 6).
+# - NUM_EPOCHS 20 = 93,780 steps, the integer closest to 27592's 94,500 (3,150 x 30; 21 epochs would be 98,469).
+# - PROG_AUG.UPDATE_AUG [5, 10, 15]: 27592 stepped its augmentation at the start of its epochs 8 / 15 / 23 = steps 25,200 /
+#   47,250 / 72,450; the target epochs whose start is nearest are 5.37 -> 5, 10.08 -> 10, 15.45 -> 15.
+# Reading (T05 §5 amendment): Delta = student - 23.17 (teacher 25835) and D_src = student - 23.03 (27592); >= +2 / <= -2 /
+# level. Last epoch, Car BEV R40 IoU 0.7 on nuScenes val.
+# Legality: as 27592; analysis row.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-st3d-cb-lyft2nuscenes.yaml
+
+OPTIMIZATION:
+    NUM_EPOCHS: 20
+
+SELF_TRAIN:
+    EPOCH_FOLLOWS: target
+    SRC: {USE_DATA: False}
+    PROG_AUG:
+        UPDATE_AUG: [5, 10, 15]

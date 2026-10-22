@@ -1,0 +1,25 @@
+# CHECK PL-TGTONLY, ROW T1 (analysis row; experiments_md 20261003_05 §5, fixed 2026-10-22 22:55 JST before any number,
+# commit 11f3ed5; launch and checks in experiments_md 20261022_08).
+#
+# The with-source twin 27812 (centerpoint-global-st3d-waymo2nuscenes, W&B pi8c395l) with ONE change: the student trains on
+# the target pseudo-labels only (SELF_TRAIN.SRC.USE_DATA False). Teacher and init 27599 epoch 7 (frozen, one pass), cuts,
+# augmentation, LR / OneCycle, seed 666, 2 GPUs at a global batch of 6: all as 27812 (inherited below).
+#
+# What the source-off change forces (the schedule is matched in STEPS, as the design asks):
+# - EPOCH_FOLLOWS target: an epoch is one pass over nuScenes TRAIN, 4,689 iterations (28,130 frames / 6).
+# - NUM_EPOCHS 20 = 93,780 steps, the integer closest to 27812's 92,218 (13,174 x 7; 19 epochs would be 89,091).
+# - PROG_AUG.UPDATE_AUG [6, 11, 14]: 27812 stepped its augmentation at the start of its epochs 2 / 4 / 5 = steps 26,348 /
+#   52,696 / 65,870; the target epochs whose start is nearest are 5.62 -> 6, 11.24 -> 11, 14.05 -> 14 (steps 28,134 /
+#   51,579 / 65,646). Kept at [2, 4, 5] it would step at 10% / 20% / 25% of the run instead of 29% / 57% / 71%.
+# Reading (T05 §5): Delta = student - 30.63 (teacher 27599) at the last epoch, Car BEV R40 IoU 0.7 on nuScenes val.
+# Legality: as 27812 (teacher on Waymo labels + nuScenes TRAIN-cloud histogram; label-free cuts); analysis row.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-global-st3d-waymo2nuscenes.yaml
+
+OPTIMIZATION:
+    NUM_EPOCHS: 20
+
+SELF_TRAIN:
+    EPOCH_FOLLOWS: target
+    SRC: {USE_DATA: False}
+    PROG_AUG:
+        UPDATE_AUG: [6, 11, 14]

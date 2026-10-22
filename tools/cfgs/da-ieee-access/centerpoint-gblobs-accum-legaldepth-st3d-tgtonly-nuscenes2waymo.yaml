@@ -1,0 +1,25 @@
+# CHECK PL-TGTONLY, ROW T3 (analysis row; experiments_md 20261003_05 §5, fixed 2026-10-22 22:55 JST before any number,
+# commit 11f3ed5; launch and checks in experiments_md 20261022_08).
+#
+# The with-source twin 27704 (centerpoint-gblobs-accum-legaldepth-st3d-nuscenes2waymo, W&B 5hzcs4e4) with ONE change: the
+# student trains on the target pseudo-labels only (SELF_TRAIN.SRC.USE_DATA False). Teacher and init 27471 epoch 20 (frozen,
+# one pass), cuts, augmentation, LR / OneCycle, seed 666, 2 GPUs at a global batch of 6: all as 27704 (inherited below).
+#
+# What the source-off change forces (the schedule is matched in STEPS, as the design asks):
+# - EPOCH_FOLLOWS target: an epoch is one pass over Waymo TRAIN at SAMPLED_INTERVAL 10, 2,635 iterations (15,809 / 6).
+# - NUM_EPOCHS 36 = 94,860 steps, the integer closest to 27704's 93,780 (4,689 x 20; 35 epochs would be 92,225).
+# - PROG_AUG.UPDATE_AUG [9, 18, 27]: 27704 stepped its augmentation at the start of its epochs 5 / 10 / 15 = steps 23,445 /
+#   46,890 / 70,335; the target epochs whose start is nearest are 8.90 -> 9, 17.80 -> 18, 26.69 -> 27.
+# Reading (T05 §5): D_src = student - 55.68 (27704 / 28563 mean); >= +2 the source holds the student back on sparse -> dense,
+# <= -2 it helps, otherwise level; also read against the teacher's 51.58. Last epoch, Car BEV R40 IoU 0.7 on Waymo val.
+# Legality: as 27704; analysis row.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-gblobs-accum-legaldepth-st3d-nuscenes2waymo.yaml
+
+OPTIMIZATION:
+    NUM_EPOCHS: 36
+
+SELF_TRAIN:
+    EPOCH_FOLLOWS: target
+    SRC: {USE_DATA: False}
+    PROG_AUG:
+        UPDATE_AUG: [9, 18, 27]
