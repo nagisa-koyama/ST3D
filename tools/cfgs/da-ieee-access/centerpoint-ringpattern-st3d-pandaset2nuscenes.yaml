@@ -1,0 +1,107 @@
+# P-PL (T05 §5 item 3, user's 「全部やりましょう！」 2026-10-22 22:35; experiments_md/20261022_07, pre-declared there before any
+# cut was computed or any row launched). ANALYSIS row, the held-out test of "nothing left to fill": UDA-LEGAL
+# PSEUDO-LABELLING ON THE PANDASET -> NUSCENES SCAN-PATTERN TEACHER 28034. This pair was not used to form the paper's
+# logic. PREDICTION, FIXED: level (< +2) as saved and at equal statistics (test-time AdaBN of teacher and student).
+#
+# Teacher and init: job 28034 (centerpoint-ringpattern-pandaset2nuscenes, W&B lf9c36yn, epoch 115 = its final epoch;
+# 33.93 / 15.48 Car BEV / 3D R40 IoU 0.7 on nuScenes val in its own run; two-seed mean 34.10 with 28279). The student
+# keeps the same scan-pattern thinning of the PandaSet source (RING_PATTERN, training only), as 29334 kept 27807's.
+# This file is centerpoint-ringpattern-pandaset2nuscenes + USE_PSEUDO_LABEL on the target + SELF_TRAIN.
+#
+# SELF_TRAIN: 29334's block (centerpoint-ringpattern-st3d-waymo2nuscenes = 27566's resolved block with MODEL_TEACHER = the
+# MeanVFE CenterPoint), with TWO changes:
+#   - PROG_AUG.UPDATE_AUG [5, 10, 15] of 20 epochs rescaled to 28034's 115 epochs -> [29, 58, 86] (27812's round-half-up:
+#     28.75, 57.5, 86.25);
+#   - the two cut lines, re-derived for THIS teacher by the pre-declared rules (20261004_01 §5e):
+#     * SCORE_THRESH, rule B: the teacher as trained on its labelled SOURCE val = PandaSet val (20 sequences, 1,600 frames),
+#       seen through the same RING_PATTERN thinning it was trained with; smallest t from which precision stays >= 0.50
+#       (1.0 m centre match, >= 50 kept), else 1.01. Pass: analysis/pseudo_label_threshold/rule_b_pandaset_val.py (the
+#       PandaSet loader thins in training mode only, keys frames by the in-sequence index and stores cuboids in WORLD
+#       coordinates, so the Waymo tool chain cannot serve it; GT point count on the RAW Pandar64 cloud, as Waymo's stored
+#       num_points_in_gt).
+#     * NEG_THRESH, rule A: the background plateau's upper half-maximum on the teacher's nuScenes TRAIN pseudo-labels
+#       (floor 0.0001). A SCORE_THRESH below its NEG_THRESH is raised to it.
+#     Passes: scripts/_ppl_cuts.sh (GPU) then scripts/_ppl_cut_checks.sh (CPU). Values and jobs: experiments_md/20261022_07 §6.
+# Schedule follows the source (EPOCH_FOLLOWS: source): 115 epochs x 814 iterations = 93,610 steps at global batch 6, as 28034.
+# Legality: teacher trained on PandaSet labels + nuScenes' published scan spec and TRAIN-cloud azimuth step (no target label);
+# target = unlabelled nuScenes TRAIN; cuts by pre-declared label-free rules (rule B reads SOURCE labels only); PROG_AUG and
+# the memory ensemble as published (decision F); family default size augmentation; SHIFT_COOR as the teacher.
+#
+# PRE-DECLARED READING (experiments_md/20261022_07 §3.3; one seed): Car BEV AP_R40 IoU 0.7 on nuScenes val ("all objects"),
+# final epoch 115, against the teacher 28034 at the same evaluation (33.93): D >= +2 adds, |D| < 2 level, D <= -2 hurts.
+# Then teacher and student under test-time full AdaBN (tools/analysis/adabn_eval.sh none / target, 1,000 strided nuScenes
+# TRAIN frames, MIX 1.0): Delta_eq = student(target) - teacher(target), same bars. Prediction: level on both.
+#
+# Launch: experiments_md/20261022_07 §4 (2 GPUs, global batch 6, 150G, seed 666, --pretrained_model and
+# --pretrained_model_teacher = 28034 epoch 115: /storage/wandb/run-20261010_193142-lf9c36yn/files/ckpt/checkpoint_epoch_115.pth).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-ringpattern-pandaset2nuscenes.yaml
+
+DATA_CONFIG_TAR:
+    USE_PSEUDO_LABEL: True
+
+SELF_TRAIN:
+  SCORE_THRESH: [1.01, 1.01, 1.01]      # PENDING rule B, teacher 28034 ep115 on PandaSet val through RING_PATTERN (scripts/_ppl_cut_checks.sh); 1.01 = no positives until replaced
+  NEG_THRESH: [1.01, 1.01, 1.01]        # PENDING rule A on teacher 28034's nuScenes TRAIN pseudo-labels (floor 0.0001)
+  MODEL_TEACHER:
+    CLASS_NAMES: [Car, Pedestrian, Cyclist]
+    ONTOLOGY: kitti
+    NAME: CenterPoint
+    VFE: {NAME: MeanVFE}
+    BACKBONE_3D: {NAME: VoxelResBackBone8x}
+    MAP_TO_BEV: {NAME: HeightCompression, NUM_BEV_FEATURES: 256}
+    BACKBONE_2D:
+      NAME: BaseBEVBackbone
+      LAYER_NUMS: [5]
+      LAYER_STRIDES: [1]
+      NUM_FILTERS: [128]
+      UPSAMPLE_STRIDES: [2]
+      NUM_UPSAMPLE_FILTERS: [256]
+    DENSE_HEAD:
+      NAME: CenterHead
+      CLASS_AGNOSTIC: false
+      CLASS_NAMES_EACH_HEAD:
+      - [Car, Pedestrian, Cyclist]
+      SHARED_CONV_CHANNEL: 64
+      USE_BIAS_BEFORE_NORM: true
+      NUM_HM_CONV: 2
+      SEPARATE_HEAD_CFG:
+        HEAD_ORDER: [center, center_z, dim, rot]
+        HEAD_DICT:
+          center: {out_channels: 2, num_conv: 2}
+          center_z: {out_channels: 1, num_conv: 2}
+          dim: {out_channels: 3, num_conv: 2}
+          rot: {out_channels: 2, num_conv: 2}
+      TARGET_ASSIGNER_CONFIG: {FEATURE_MAP_STRIDE: 4, NUM_MAX_OBJS: 500, GAUSSIAN_OVERLAP: 0.1, MIN_RADIUS: 2}
+      LOSS_CONFIG:
+        LOSS_WEIGHTS:
+          cls_weight: 1.0
+          loc_weight: 2.0
+          code_weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      POST_PROCESSING:
+        SCORE_THRESH: 0.0001
+        POST_CENTER_LIMIT_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+        MAX_OBJ_PER_SAMPLE: 500
+        NMS_CONFIG: {NMS_TYPE: nms_gpu, NMS_THRESH: 0.5, NMS_PRE_MAXSIZE: 4096, NMS_POST_MAXSIZE: 500}
+    POST_PROCESSING:
+      RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+      SCORE_THRESH: 0.0001
+      OUTPUT_RAW_SCORE: false
+      EVAL_METRIC: kitti
+      NMS_CONFIG: {MULTI_CLASSES_NMS: false, NMS_TYPE: nms_gpu, NMS_THRESH: 0.5, NMS_PRE_MAXSIZE: 4096, NMS_POST_MAXSIZE: 500}
+  EPOCH_FOLLOWS: source
+  UPDATE_PSEUDO_LABEL: [0]
+  UPDATE_PSEUDO_LABEL_INTERVAL: 2
+  FROZEN_TEACHER_SINGLE_PASS: true
+  INIT_PS: None
+  SRC: {USE_DATA: true, USE_GRAD: true, LOSS_WEIGHT: 1.0, BACKWARD_TOGETHER: true}
+  TAR: {USE_DATA: true, LOSS_WEIGHT: 1.0, BACKWARD_TOGETHER: true}
+  PROG_AUG:
+    ENABLED: true
+    UPDATE_AUG: [29, 58, 86]            # [5, 10, 15] of 20 rescaled to 115 epochs (round-half-up), as 27812 did for 7
+    SCALE: 1.1
+  MEMORY_ENSEMBLE:
+    ENABLED: true
+    NAME: nms_ensemble
+    IOU_THRESH: 0.1
+    NMS_CONFIG: {NMS_TYPE: nms_gpu, MULTI_CLASSES_NMS: false, NMS_PRE_MAXSIZE: 512, NMS_POST_MAXSIZE: 100, NMS_THRESH: 0.1}
+    MEMORY_VOTING: {ENABLED: true, IGNORE_THRESH: 2, RM_THRESH: 3}

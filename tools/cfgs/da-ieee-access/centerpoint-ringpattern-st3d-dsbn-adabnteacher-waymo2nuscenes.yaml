@@ -1,0 +1,38 @@
+# R-ROUTE (T05 §5 item 2, user's 「全部やりましょう！」 2026-10-22 22:35; experiments_md/20261022_07, pre-declared there before
+# any cut was computed or any row launched). ANALYSIS row: the S1 route (AdaBN-adapted frozen teacher + per-domain-BN
+# student) applied to the Waymo -> nuScenes scan-pattern teacher 27807. Does the route add on top of a CONSTRUCTED
+# scan pattern? Reading: final-epoch Car BEV R40 IoU 0.7 on nuScenes val minus 36.21 (the two-seed thinning mean);
+# >= +2 adds ("input first" is not the whole prescription), |D| < 2 level (thinning alone is the prescription), <= -2 hurts.
+#
+# This file = 29334's config (centerpoint-ringpattern-st3d-waymo2nuscenes: 27807's source thinning + USE_PSEUDO_LABEL +
+# 27812's SELF_TRAIN block) + the two keys of the S1 row centerpoint-st3d-dsbn-adabnteacher-lyft2nuscenes:
+#   - SELF_TRAIN.DSNORM: every BatchNorm of student AND teacher becomes a DSNorm with a SOURCE and a TARGET set of
+#     statistics; source batches use / update the source set, pseudo-labelled target batches the target set, evaluation
+#     uses the target set.
+#   - SELF_TRAIN.TEACHER_ADABN: before the frozen teacher labels anything, the TARGET set of its statistics is
+#     re-estimated on 1,000 strided nuScenes TRAIN frames (eval-mode view, no labels, weights untouched), MIX 1.0 = FULL
+#     AdaBN, the pre-declared textbook variant (user 2026-10-05). Its source set stays as trained.
+# plus the two cut lines, RE-DERIVED FOR THE ADAPTED TEACHER by the pre-declared label-free rules (20261004_01 §5e):
+#   - SCORE_THRESH, rule B: the ADAPTED teacher (nuScenes TRAIN statistics in every BN layer) on its labelled SOURCE val =
+#     Waymo val int 5 through RING_PATTERN.APPLY_AT_EVAL (the flat config of 29316), smallest t from which precision stays
+#     >= 0.50 (1.0 m centre match, >= 50 kept), else 1.01. Pass: analysis/pseudo_label_threshold/gen_adapted_teacher_pass.py
+#     (adapts on THIS config's DATA_CONFIG_TAR, generates on the flat config's). The as-trained teacher's rule B (29316:
+#     0.19 / 0.28 / 0.32) is reported beside, never used.
+#   - NEG_THRESH, rule A: the background plateau's upper half-maximum on the ADAPTED teacher's nuScenes TRAIN pseudo-labels
+#     (floor 0.0001). A SCORE_THRESH below its NEG_THRESH is raised to it.
+# Passes: scripts/_rroute_cuts.sh (GPU) then scripts/_rroute_cut_checks.sh (CPU). Values and jobs: experiments_md/20261022_07 §6.
+# Legality: 29334's pre-flight unchanged; TEACHER_ADABN reads unlabelled nuScenes TRAIN clouds; DSNORM is a model choice;
+# rule B reads SOURCE labels only. Analysis row, disclosed.
+# The adapted teacher's own AP (reported): 35.06 / 14.22 (job 30171, test-time full AdaBN of 27807 ep7, 20261022_01 §6.2).
+# Launch as 29334 (experiments_md/20261022_07 §4): 2 GPUs, global batch 6, 150G, seed 666, --pretrained_model and
+# --pretrained_model_teacher = 27807 epoch 7 (/storage/wandb/run-20261008_212958-87h61vfd/files/ckpt/checkpoint_epoch_7.pth).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-ringpattern-st3d-waymo2nuscenes.yaml
+
+SELF_TRAIN:
+    DSNORM: True
+    TEACHER_ADABN:
+        FRAMES: 1000
+        MIX: 1.0          # target statistics: the textbook (full) AdaBN, pre-declared, never tuned on val
+        BATCH_SIZE: 4
+    SCORE_THRESH: [1.01, 1.01, 1.01]   # PENDING rule B for the ADAPTED teacher (scripts/_rroute_cut_checks.sh); 1.01 = no positives until replaced
+    NEG_THRESH: [1.01, 1.01, 1.01]     # PENDING rule A on the ADAPTED teacher's nuScenes TRAIN pass
