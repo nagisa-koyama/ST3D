@@ -12,14 +12,16 @@ Why its own script and not generate_pseudo_labels.py + source_precision_cut.py:
   (iii) PandaSet infos carry no boxes: cuboids are stored in WORLD coordinates and go through the frame's pose and the
         axis swap, so GT must be read in the loader's frame, not from the infos.
 So this script subclasses the dataset FOR THIS PASS ONLY (nothing in pcdet is edited): raw device-0 points in the
-normative frame, the training-path ring mask (`_ring_keep_mask`, on the exact pre-swap ego points, np.random phases as in
-training), SHIFT_COOR on points and boxes, GT from `_get_annotations(info, pose)` mapped to the model vocabulary with the
+normative frame (the parent's eval path), the thinned cloud from the parent's own TRAINING path (`_get_lidar_points`
+with `training` set for that call: the mask acts on the float64 pre-swap ego points, np.random phases as in training;
+an earlier version re-derived the mask from the float32 normative points and differed on 3 of 20 frames at azimuth-bin
+boundaries, job 30195), SHIFT_COOR on points and boxes, GT from `_get_annotations(info, pose)` mapped to the model vocabulary with the
 dataset's own ontology map, frames keyed by (sequence, frame_idx). GT point counts are taken on the RAW Pandar64 cloud
 (the analogue of Waymo's stored num_points_in_gt, the disclosed choice of 20261017_06 §3). The teacher is
 SELF_TRAIN.MODEL_TEACHER of --cfg_file with the checkpoint AS TRAINED, eval mode, its configured post-processing.
 
-Pre-check (bug-prevention rule 4, a new path): on --check frames, with the same np.random state, the thinned cloud equals
-the training-mode `_get_lidar_points` cloud point for point; a mismatch aborts.
+Pre-check (bug-prevention rule 4, a new path): on --check frames, every thinned point is a point of the raw cloud and the
+keep ratio is printed (20261010_05 measured the pattern on PandaSet TRAIN); a failure aborts.
 
     python analysis/pseudo_label_threshold/rule_b_pandaset_val.py \
         --cfg_file cfgs/da-ieee-access/centerpoint-ringpattern-st3d-pandaset2nuscenes.yaml \
@@ -59,17 +61,22 @@ class PandasetValThroughPattern(PandasetDataset):
         assert not self.training and self.eval_ring_thin_cfg is None
         return PandasetDataset._get_lidar_points(self, info, pose)
 
-    def thinned_points(self, info, pose, raw):
-        """The parent's training-mode mask on the exact pre-swap ego points (normative x = ego y, normative y = -ego x)."""
-        ego = np.stack([-raw[:, 1], raw[:, 0], raw[:, 2]], axis=1)
-        keep = self._ring_keep_mask(info, ego)
-        return raw[keep]
+    def thinned_points(self, info, pose):
+        """The parent's TRAINING path, i.e. exactly the cloud the teacher was trained on (RING_PATTERN applied to the
+        float64 pre-swap ego points, then the axis swap and float32). `training` is toggled for this call only; each
+        DataLoader worker owns its copy of the dataset, so the toggle is process-local."""
+        assert self.eval_ring_thin_cfg is None
+        self.training = True
+        try:
+            return PandasetDataset._get_lidar_points(self, info, pose)
+        finally:
+            self.training = False
 
     def __getitem__(self, index):
         info = self.pandaset_infos[index]
         pose = self._get_pose(info)
         raw = self.raw_points(info, pose)
-        pts = self.thinned_points(info, pose, raw)
+        pts = self.thinned_points(info, pose)
         boxes, labels, _ = self._get_annotations(info, pose)
         shift = self.dataset_cfg.get('SHIFT_COOR', None)
         if shift:
@@ -128,29 +135,23 @@ def main():
     logger.info('PandaSet val through RING_PATTERN %s: %d frames, SHIFT_COOR %s, infos %s'
                 % (dict(src.RING_PATTERN), len(ds), src.get('SHIFT_COOR'), val_infos))
 
-    # Pre-check: the script's thinning equals the training path point for point under the same np.random state.
+    # Pre-check: every thinned point is a raw point (the training path only drops points), keep ratio as 20261010_05.
     n_ok = 0
     ratios = []
     for i in range(0, len(ds), max(1, len(ds) // max(args.check, 1)))[:args.check]:
         info = ds.pandaset_infos[i]; pose = ds._get_pose(info)
         raw = ds.raw_points(info, pose)
-        st = np.random.get_state()
-        mine = ds.thinned_points(info, pose, raw)
-        np.random.set_state(st)
-        ds.training = True
-        try:
-            theirs = PandasetDataset._get_lidar_points(ds, info, pose)
-        finally:
-            ds.training = False
-        same = mine.shape == theirs.shape and np.array_equal(mine, theirs)
-        n_ok += int(same)
-        ratios.append(len(mine) / max(len(raw), 1))
-        if not same:
-            logger.error('pre-check MISMATCH on %s/%02d: mine %s vs training path %s' % (info['sequence'], info['frame_idx'], mine.shape, theirs.shape))
-    logger.info('pre-check: thinned cloud equals the training-mode cloud on %d / %d frames; keep ratio mean %.3f'
+        thin = ds.thinned_points(info, pose)
+        raw_rows = {r.tobytes() for r in raw}
+        subset = len(thin) < len(raw) and all(r.tobytes() in raw_rows for r in thin)
+        n_ok += int(subset)
+        ratios.append(len(thin) / max(len(raw), 1))
+        if not subset:
+            logger.error('pre-check FAILED on %s/%02d: thinned %s not a subset of raw %s' % (info['sequence'], info['frame_idx'], thin.shape, raw.shape))
+    logger.info('pre-check: thinned cloud is a subset of the raw cloud on %d / %d frames; keep ratio mean %.3f'
                 % (n_ok, min(args.check, len(ds)), float(np.mean(ratios))))
     if n_ok != min(args.check, len(ds)):
-        raise SystemExit('pre-check failed: the pass does not reproduce the training-mode thinning')
+        raise SystemExit('pre-check failed: the thinned cloud is not the raw cloud thinned')
 
     teacher_cfg = cfg.SELF_TRAIN.MODEL_TEACHER
     teacher_classes = teacher_cfg.get('CLASS_NAMES', None) or cfg.CLASS_NAMES

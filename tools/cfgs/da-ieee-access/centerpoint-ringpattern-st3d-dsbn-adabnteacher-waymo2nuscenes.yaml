@@ -34,5 +34,5 @@ SELF_TRAIN:
         FRAMES: 1000
         MIX: 1.0          # target statistics: the textbook (full) AdaBN, pre-declared, never tuned on val
         BATCH_SIZE: 4
-    SCORE_THRESH: [1.01, 1.01, 1.01]   # PENDING rule B for the ADAPTED teacher (scripts/_rroute_cut_checks.sh); 1.01 = no positives until replaced
-    NEG_THRESH: [1.01, 1.01, 1.01]     # PENDING rule A on the ADAPTED teacher's nuScenes TRAIN pass
+    SCORE_THRESH: [0.22, 0.31, 0.387]   # jobs 30194 / 30196: rule B, ADAPTED teacher on Waymo val int5 through RING_PATTERN (7,998 frames): 0.22 / 0.31 / 0.38; Cyclist raised to its NEG (step 6). As-trained teacher (29316): 0.19 / 0.28 / 0.32
+    NEG_THRESH: [0.202, 0.214, 0.387]   # jobs 30194 / 30196: rule A on the ADAPTED teacher's nuScenes TRAIN pass (floor 0.0001; plateau modes 0.133 / 0.165 / 0.165); predicted first pass pos 22.516 / 6.696 / 0.053, ign 4.560 / 11.210 / 0.000 per frame
