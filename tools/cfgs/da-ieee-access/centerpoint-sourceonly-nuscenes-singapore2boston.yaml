@@ -1,0 +1,32 @@
+# SCENE (experiments_md/20261003_05 §5, user ~22:35 2026-10-22 「全部やりましょう！」, item 1; report
+# experiments_md/20261022_06): the SCENE term of the sensor gap, measured with the sensor held fixed. nuScenes is one
+# HDL-32E on two capture vehicles whose mapping to city is exact (n008 = every boston-seaport frame, n015 = every
+# Singapore frame; LIDAR_TOP at 1.840 / 1.841 m), so a source-only row trained on one city and evaluated on the other
+# differs from the in-city oracle in geography, traffic and annotation content only.
+#
+# THIS FILE: S->B, cross-city source-only. NOT trained separately: the S->S model rescored on Boston val with this config (reuse rule).
+#   source  = nuScenes TRAIN, vehicle n015 (singapore) with labels, single sweep
+#   target  = nuScenes VAL,   vehicle n008 (boston), EVALUATION ONLY (train.py builds no target training loader)
+# The recipe is the in-domain nuScenes oracle's (centerpoint-sourceonly-nuscenes.yaml, job 25743, 44.98 / 26.63): same
+# model, LR 0.003, global batch 6 (3 per GPU x 2), NUM_EPOCHS 20, OneCycle. With the data halved the step count is no
+# longer the family's ~94k: Boston 15,695 train frames -> 2,616 it/epoch -> 52,320 steps; Singapore 12,435 -> 2,073 ->
+# 41,460 steps (train.py logs the resolved schedule). Both cities keep the dataset's SHIFT_COOR 1.75 (measured 1.72 on
+# each vehicle, da_nuscenes_n008/n015_dataset.yaml).
+# The VEHICLE filter is applied to BOTH splits (nuscenes_dataset.filter_by_platform runs after the infos of either
+# split are loaded), so train and val are split the same way.
+#
+# Legality: analysis row (the scene term is a measurement, not a method). The target city's labels are read only by
+# the evaluation. UDA-legal pre-flight: every number is the oracle's; nothing was chosen on the target city.
+#
+# Readings (fixed before any number, T05 §5 item 1): T_S = (S->S) - (B->S), T_B = (B->B) - (S->B); >= 2 present, else
+# absent at this resolution (Car BEV R40 IoU 0.7, ±2 at one seed). Also reported at equal statistics (test-time AdaBN,
+# analysis/adabn_eval.sh target arm on the target city's TRAIN clouds) and the mounting difference n008 / n015.
+#
+# Launch (from ST3D/tools, 2 GPUs as the oracle): see experiments_md/20261022_06 §4.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-nuscenes.yaml
+
+DATA_CONFIG:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_nuscenes_n015_dataset.yaml
+
+DATA_CONFIG_TAR:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_nuscenes_n008_dataset.yaml
