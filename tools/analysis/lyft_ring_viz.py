@@ -21,6 +21,14 @@ the per-ring phase unwrap (`lyft_rings.deskew_and_rings`).
              that label changes are compared with the level-1 ring cuts (missing / extra / displaced).
   plots  - the figures, from the frames JSON.
   all    - both.
+  table  - the per-frame table of every wrong-count frame (the columns of 20261022_05 §4.4) for both platforms, the
+           fragment facts, and, line by line of RING_PATTERN's lattice, why the recovered and the joined rings keep
+           different rings (`pattern_lines`). Reads the frames JSON, recomputes each wrong-count frame's rings; writes
+           wrong_count_table_20261023.json and wrong_count_table_<platform>.md. Changes no figure.
+
+--align_platforms (opt-in, user 2026-10-23: 「60ビームの可視化方法を40ビームと合わせてくれないか」, 20261022_05 §6): figure 4 draws
+EVERY wrong-count frame on both platforms (default: all on 40-beam, six on 64-beam), and figure 1 draws the moving
+frame at the 10th percentile of far purity on both platforms (default: 64-beam only). Without it the output is unchanged.
 
 All angles are about the SENSOR: the raw LIDAR_TOP .bin is read directly (the loader and its SHIFT_COOR are not used);
 after de-skew, about the sensor at each point's firing time. Lyft's LIDAR_TOP frame is yawed 176-179 deg in the car
@@ -31,6 +39,8 @@ using each info's `ref_from_car`.
 
 Usage (from ST3D/tools, inside the container):
   python3 analysis/lyft_ring_viz.py all --out_dir /home/koyama/data/lyft_rings/viz_20261022
+  python3 analysis/lyft_ring_viz.py plots --align_platforms --out_dir /home/koyama/data/lyft_rings/viz_20261022
+  python3 analysis/lyft_ring_viz.py table --out_dir /home/koyama/data/lyft_rings/viz_20261022
 """
 import argparse
 import io
@@ -839,8 +849,24 @@ def fig_pair(plat, label, rec, p, ring, lev, nus, path):
 
 
 # ----------------------------------------------------------------------------------------------- plots stage
+def draws_lowpurity(plat, align=False):
+    """Figure 1 draws the moving frame at p10 of far purity: 64-beam always; 40-beam only with --align_platforms."""
+    return plat == '64' or bool(align)
+
+
+def f4_wrong_frames(recs, plat, align=False):
+    """The wrong-count frames figure 4 draws, ordered by |rings - N|, then file. Default: all on 40-beam and six on
+    64-beam spanning the range of |rings - 64|; with --align_platforms, all on both platforms."""
+    wrong = sorted([r for r in recs if r['run2']['rings'] != N[plat]],
+                   key=lambda r: (abs(r['run2']['rings'] - N[plat]), r['file']))
+    if plat == '64' and len(wrong) > 6 and not align:
+        wrong = [wrong[int(round(x * (len(wrong) - 1)))] for x in (0, 0.2, 0.4, 0.6, 0.8, 1.0)]
+    return wrong
+
+
 def stage_plots(args):
     t0 = time.time()
+    align = bool(getattr(args, 'align_platforms', False))
     fr = json.load(open(os.path.join(args.out_dir, 'frames_20261022.json')))
     infos = pickle.load(open(ldr.ROOT + 'lyft_infos_train.pkl', 'rb'))
     prm = ldr.params_from_explore(args.explore)
@@ -848,6 +874,8 @@ def stage_plots(args):
     nus_sp = np.array([nusc_speed(i) for i in nus_infos])
     nrng = np.random.default_rng(20261022)
     manifest = {'figures': [], 'frames': {}}
+    if align:
+        manifest['align_platforms'] = True
     for plat in ('40', '64'):
         P = fr['platforms'][plat]
         recs = P['records']
@@ -878,7 +906,7 @@ def stage_plots(args):
         still, _ = med_purity(still_c)
         mov, mov_sorted = med_purity(mov_c)
         picks = [('standstill', 'standstill', still), ('moving', 'moving', mov)]
-        if plat == '64':
+        if draws_lowpurity(plat, align):
             picks.append(('moving_lowpurity', 'moving, far purity at p10 of moving frames',
                           mov_sorted[len(mov_sorted) // 10]))
         manifest['frames'][plat] = {}
@@ -906,10 +934,7 @@ def stage_plots(args):
         manifest['frames'][plat]['hist_pooled_moving'] = {'host': mov_host, 'files': [r['file'] for r in mv]}
         manifest['frames'][plat]['hist_pooled_standstill'] = [r['file'] for r in still_c]
         # Figure 4: wrong-count frames, plus one exact-count frame the template reading flags
-        wrong = sorted([r for r in recs if r['run2']['rings'] != N[plat]],
-                       key=lambda r: (abs(r['run2']['rings'] - N[plat]), r['file']))
-        if plat == '64' and len(wrong) > 6:
-            wrong = [wrong[int(round(x * (len(wrong) - 1)))] for x in (0, 0.2, 0.4, 0.6, 0.8, 1.0)]
+        wrong = f4_wrong_frames(recs, plat, align)
         draw = [('wrong', 'gate frame with a wrong ring count', r) for r in wrong]
         ex_t = sorted([r for r in recs if r['run2']['rings'] == N[plat] and r['diag']['template']['events']],
                       key=lambda r: r['file'])
@@ -951,13 +976,272 @@ def stage_plots(args):
     print('wrote manifest, %.0f s' % manifest['seconds'], flush=True)
 
 
+# ----------------------------------------------------------------------------------------------- table stage
+TABLE_HEAD = ['file', 'sample token', 'speed (m/s)', 'rings, run 2 (run 1)', 'fragments', 'rings after joining',
+              'RING_PATTERN rings kept, recovered -> joined', 'what differs', 'kept points differing']
+TEMPLATE_HEAD = 'template reading after joining'
+
+
+def lattice(ring_el, phase_v):
+    """RING_PATTERN's vertical lattice exactly as lr.ring_pattern_mask builds it: (line index j, line elevation, ring
+    nearest the line) for each line inside [min, max] of `ring_el`. A line sits at (j + phase_v) * SPACING whatever the
+    rings, so one j is the same line for the recovered and for the joined rings."""
+    ring_el = np.asarray(ring_el, dtype=np.float64)
+    lo, hi = ring_el.min(), ring_el.max()
+    j0 = int(np.floor((lo - phase_v * SPACING) / SPACING)) - 1
+    j1 = int(np.ceil((hi - phase_v * SPACING) / SPACING)) + 1
+    j = np.arange(j0, j1 + 1)
+    t = (j + phase_v) * SPACING
+    m = (t >= lo) & (t <= hi)
+    assert m.any(), 'field of view narrower than one lattice spacing'
+    return j[m], t[m], np.argmin(np.abs(ring_el[None, :] - t[m][:, None]), axis=1)
+
+
+def pattern_lines(lev, lev_j, cm, frag_rings, phase_v):
+    """Line by line, why RING_PATTERN keeps different rings with the recovered rings (levels `lev`) and with the joined
+    rings (levels `lev_j`; `cm` maps recovered ID -> joined ID). Kind of each line:
+      widened    - the line exists only for the recovered rings (a recovered ring lies outside the joined range);
+      narrowed   - the line exists only for the joined rings;
+      fragment   - a fragment is the recovered ring nearest the line;
+      other_ring - the nearest recovered full ring is not the joined ring nearest the line;
+      same       - the same ring either way.
+    Returns (lines, recovered rings kept, joined rings kept); the kept sets are lr.ring_pattern_mask's."""
+    fset = {int(x) for x in frag_rings}
+    jr, tr, nr = lattice(lev, phase_v)
+    jj, tj, nj = lattice(lev_j, phase_v)
+    R = {int(a): (float(b), int(c)) for a, b, c in zip(jr, tr, nr)}
+    J = {int(a): (float(b), int(c)) for a, b, c in zip(jj, tj, nj)}
+    lines = []
+    for j in sorted(set(R) | set(J)):
+        r = R[j][1] if j in R else None
+        k = J[j][1] if j in J else None
+        if k is None:
+            kind = 'widened'
+        elif r is None:
+            kind = 'narrowed'
+        elif r in fset:
+            kind = 'fragment'
+        elif int(cm[r]) != k:
+            kind = 'other_ring'
+        else:
+            kind = 'same'
+        lines.append({'line': j, 'elevation_deg': (R[j] if j in R else J[j])[0], 'kind': kind, 'recovered_ring': r,
+                      'recovered_is_fragment': None if r is None else r in fset,
+                      'recovered_joined_id': None if r is None else int(cm[r]), 'joined_ring': k})
+    return lines, sorted({int(x) for x in nr}), sorted({int(x) for x in nj})
+
+
+def _and(items):
+    items = [str(x) for x in items]
+    return items[0] if len(items) == 1 else ', '.join(items[:-1]) + ' and ' + items[-1]
+
+
+def what_differs(d):
+    """The 'what differs' cell of the 20261022_05 §4.4 tables, from one frame's diagnostic. Ring numbers are joined IDs
+    (= laser index when N rings remain after joining); '(k pt)' is a kept fragment's points that RING_PATTERN KEEPS."""
+    if d['kept_same']:
+        return 'same rings'
+    kj = {k['joined_id'] for k in d['kept_after_join']}
+    kr = {k['joined_id'] for k in d['kept_recovered'] if not k['fragment']}
+    only_r, only_j = sorted(kr - kj), sorted(kj - kr)
+    size = {f['ring']: f['points'] for f in d['fragments']}
+    by_id = {}                                              # joined ID -> [(points kept, fragment points)], kept fragments
+    for k in sorted(d['kept_recovered'], key=lambda k: (k['joined_id'], k['ring'])):
+        if k['fragment']:
+            by_id.setdefault(k['joined_id'], []).append((k['points_kept'], size[k['ring']]))
+
+    def rings(ids):
+        return ('ring %d' % ids[0]) if len(ids) == 1 else 'rings ' + ', '.join(str(i) for i in ids)
+
+    parts = []
+    if only_r:
+        s = 'recovered also keeps ' + rings(only_r)
+        if len(only_r) == 1 and list(by_id) == only_r and len(by_id[only_r[0]]) == 1:
+            s += ' and its fragment (%d pt)' % by_id.pop(only_r[0])[0][0]
+        parts.append(s)
+    if only_j:
+        parts.append(rings(only_j) + ' kept only after joining')
+    if len(by_id) == 1 and len(next(iter(by_id.values()))) == 1:
+        (i, [(kp, n)]), = by_id.items()
+        parts.append('recovered keeps a 1-point fragment of %d' % i if n == 1 else
+                     'recovered keeps a fragment of %d (%d pt)' % (i, kp))
+    elif by_id:
+        groups = []                                          # [ids, kept points or None, text for a multi-fragment ID]
+        for i, fs in by_id.items():
+            if len(fs) == 1 and groups and groups[-1][1] == fs[0][0]:
+                groups[-1][0].append(i)
+            elif len(fs) == 1:
+                groups.append([[i], fs[0][0], None])
+            else:
+                groups.append([[i], None, '%d (%d fragments, %s pt)' % (i, len(fs), _and([kp for kp, _ in fs]))])
+        txt = []
+        for ids, kp, multi in groups:
+            if multi is not None:
+                txt.append(multi)
+            elif len(ids) == 1:
+                txt.append('%d (%d pt)' % (ids[0], kp))
+            else:
+                txt.append((_and(ids) if len(groups) == 1 else ', '.join(str(i) for i in ids)) + ' (%d pt each)' % kp)
+        parts.append('recovered keeps fragments of ' + _and(txt))
+    return '; '.join(parts)
+
+
+def template_cell(t):
+    """The template-reading cell: cut events of the joined rings, or 'none'."""
+    parts = [(t['n_extra'], 'extra'), (t['n_missing'], 'missing'), (t['n_displaced'], 'displaced')]
+    parts = [('%d %s' % (n, w), n) for n, w in parts if n]
+    if not parts:
+        return 'none'
+    return _and([p for p, _ in parts]) + (' cut' if sum(n for _, n in parts) == 1 else ' cuts')
+
+
+def fragments_cell(d):
+    """points @ sensor azimuth (deg) -> joined ring, per fragment in stored order."""
+    def a1(x):
+        s = '%.1f' % x
+        return '0.0' if s == '-0.0' else s
+    return ', '.join('%d @ %s -> %d' % (f['points'], a1(f['azimuth_deg']), f['joins_joined_id'])
+                     for f in d['fragments']) or 'none'
+
+
+def table_row(rec, plat, with_template):
+    d = rec['diag']
+    cells = [rec['file'].replace('.bin', ''), '`%s`' % rec['token'],
+             'n/a' if rec['speed_mps'] is None else '%.1f' % rec['speed_mps'],
+             '%d (%d)' % (rec['run2']['rings'], rec['run1']['rings']), fragments_cell(d), '%d' % d['rings_after_join'],
+             '%d -> %d' % (len(d['kept_recovered']), len(d['kept_after_join'])), what_differs(d),
+             '{:,}'.format(d['kept_points_differing'])]
+    if with_template:
+        cells.append(template_cell(d['template']))
+    return '| ' + ' | '.join(cells) + ' |'
+
+
+def stage_table(args):
+    """Per-frame tables, fragment facts and RING_PATTERN line kinds of every wrong-count frame (both platforms)."""
+    t0 = time.time()
+    fr = json.load(open(os.path.join(args.out_dir, 'frames_20261022.json')))
+    infos = pickle.load(open(ldr.ROOT + 'lyft_infos_train.pkl', 'rb'))
+    prm = ldr.params_from_explore(args.explore)
+    out = {'note': 'experiments_md 20261022_05 §4.4 / §6; rows sorted by (recovered rings run 2, file)',
+           'platforms': {}}
+    for plat in ('40', '64'):
+        P = fr['platforms'][plat]
+        recs = P['records']
+        sel = [i for i in infos if ldr.platform(i) == plat]
+        wrong = sorted([r for r in recs if r['run2']['rings'] != N[plat]], key=lambda r: (r['run2']['rings'], r['file']))
+        exact = [r for r in recs if r['run2']['rings'] == N[plat]]
+        frames, frags = [], []
+        for r in wrong:
+            inf = sel[r['sel_index']]
+            assert inf['token'] == r['token'], 'replayed frame does not match the frames JSON'
+            p = ldr.load(inf)
+            q, ring, lev = recover(p, inf, prm, plat, True)
+            d = r['diag']
+            d_now, _ = diagnose(p, q, ring, lev, np.array(P['template_host'][r['host']]), plat, r['phase_v'], r['phase_h'])
+            for key in ('fragments', 'kept_recovered', 'kept_after_join', 'kept_same', 'kept_points_differing',
+                        'rings_after_join'):
+                assert json.loads(json.dumps(d_now[key])) == d[key], 'recomputed %s differs from the JSON: %s' % (key, r['file'])
+            az, el = lr.azimuth_deg(q), lr.elevation_deg(q)
+            ring_j, cm, _ = merge_fragments(ring, az, el)
+            nj = int(ring_j.max()) + 1
+            lev_j = np.array([np.median(el[ring_j == k]) for k in range(nj)])
+            lines, kr_r, kr_j = pattern_lines(lev, lev_j, cm, [f['ring'] for f in d['fragments']], r['phase_v'])
+            assert kr_r == [k['ring'] for k in d['kept_recovered']], r['file']
+            assert kr_j == [k['joined_id'] for k in d['kept_after_join']], r['file']
+            kept_r = {k['ring']: k['points_kept'] for k in d['kept_recovered']}
+            kept_j = {k['joined_id']: k['points_kept'] for k in d['kept_after_join']}
+            for ln in lines:
+                ln['recovered_points_kept'] = None if ln['recovered_ring'] is None else kept_r[ln['recovered_ring']]
+                ln['joined_points_kept'] = None if ln['joined_ring'] is None else kept_j[ln['joined_ring']]
+            kinds = Counter(ln['kind'] for ln in lines)
+            fr_rows = []
+            for f in d['fragments']:
+                jid = f['joins_joined_id']
+                nb = [abs(lev_j[jid] - lev_j[x]) for x in (jid - 1, jid + 1) if 0 <= x < nj]
+                tr = d['template']['rings']
+                fr_rows.append({
+                    'file': r['file'], 'ring': f['ring'], 'points': f['points'], 'azimuth_deg': f['azimuth_deg'],
+                    'from_sweep_start_deg': float(abs(wrap(f['azimuth_deg'] - r['sweep_start_azimuth_deg']))),
+                    'joins': f['joins'], 'joined_id': jid,
+                    'laser': jid if nj == N[plat] else (int(tr[jid]['main']) if tr else None),
+                    'laser_from': 'joined ID (N rings after joining)' if nj == N[plat] else 'template main laser',
+                    'elevation_deg': f['elevation_deg'], 'joined_ring_elevation_deg': float(lev_j[jid]),
+                    'offset_deg': float(f['elevation_deg'] - lev_j[jid]), 'local_gap_deg': float(min(nb)),
+                    'below_lowest_ring': bool(f['elevation_deg'] < lev_j.min()),
+                    'above_highest_ring': bool(f['elevation_deg'] > lev_j.max()),
+                    'widens_range': bool(f['elevation_deg'] < lev_j.min() or f['elevation_deg'] > lev_j.max()),
+                    'points_kept': kept_r.get(f['ring'], 0)})
+            frags += fr_rows
+            frames.append({'file': r['file'], 'token': r['token'], 'speed_mps': r['speed_mps'],
+                           'rings_run2': r['run2']['rings'], 'rings_run1': r['run1']['rings'],
+                           'rings_after_join': d['rings_after_join'], 'n_fragments': d['n_fragments'],
+                           'kept_recovered': len(d['kept_recovered']), 'kept_after_join': len(d['kept_after_join']),
+                           'kept_points_recovered': d['kept_points_recovered'],
+                           'kept_points_after_join': d['kept_points_after_join'],
+                           'kept_same': d['kept_same'], 'kept_points_differing': d['kept_points_differing'],
+                           'what_differs': what_differs(d), 'template': template_cell(d['template']),
+                           'template_counts': [d['template']['n_extra'], d['template']['n_missing'],
+                                               d['template']['n_displaced']],
+                           'line_kinds': dict(kinds), 'lines': [ln for ln in lines if ln['kind'] != 'same'],
+                           'widened': kinds['widened'] > 0, 'fragment_takes_line': kinds['fragment'] > 0,
+                           'other_kind': kinds['narrowed'] + kinds['other_ring'] > 0,
+                           'row': table_row(r, plat, plat != '40')})
+        both = [f for f in frames if f['widened'] and f['fragment_takes_line']]
+        facts = {
+            'wrong_frames': len(wrong), 'exact_frames': len(exact),
+            'run1_wrong_frames_all': sum(r['run1']['rings'] != N[plat] for r in recs),
+            'rings_run2': dict(sorted(Counter(f['rings_run2'] for f in frames).items())),
+            'rings_run1_on_these': dict(sorted(Counter(f['rings_run1'] for f in frames).items())),
+            'after_join': dict(sorted(Counter(f['rings_after_join'] for f in frames).items())),
+            'frames_with_fragments': sum(f['n_fragments'] > 0 for f in frames),
+            'exact_frames_with_fragments': sum(r['diag']['n_fragments'] > 0 for r in exact),
+            'fragments': len(frags), 'fragment_points': dict(sorted(Counter(x['points'] for x in frags).items())),
+            'within_2deg_of_sweep_start': sum(x['from_sweep_start_deg'] <= 2.0 for x in frags),
+            'median_from_sweep_start_deg': float(np.median([x['from_sweep_start_deg'] for x in frags])) if frags else None,
+            'joins': dict(Counter(x['joins'] for x in frags)),
+            'lasers': dict(sorted(Counter(x['laser'] for x in frags if x['laser'] is not None).items())),
+            'laser_from': dict(Counter(x['laser_from'] for x in frags)),
+            'within_half_gap_of_joined_ring': sum(abs(x['offset_deg']) <= x['local_gap_deg'] / 2 for x in frags),
+            'below_lowest_ring': sum(x['below_lowest_ring'] for x in frags),
+            'above_highest_ring': sum(x['above_highest_ring'] for x in frags),
+            'template_frames_resolved': sum(f['rings_after_join'] == N[plat] and f['template'] != 'none' for f in frames),
+            'template_frames_unresolved': sum(f['rings_after_join'] != N[plat] and f['template'] != 'none' for f in frames),
+            'template_cuts_extra_missing_displaced_wrong': [int(sum(f['template_counts'][i] for f in frames)) for i in range(3)],
+            'template_frames_exact': sum(bool(r['diag']['template']['events']) for r in exact),
+            'template_cuts_extra_missing_displaced_exact': [int(sum(r['diag']['template'][k] for r in exact))
+                                                            for k in ('n_extra', 'n_missing', 'n_displaced')],
+            'kept_recovered': dict(sorted(Counter(f['kept_recovered'] for f in frames).items())),
+            'kept_after_join': dict(sorted(Counter(f['kept_after_join'] for f in frames).items())),
+            'kept_same_frames': sum(f['kept_same'] for f in frames),
+            'mechanism_frames': {'widened': sum(f['widened'] for f in frames),
+                                 'fragment_takes_line': sum(f['fragment_takes_line'] for f in frames),
+                                 'both': len(both), 'other_kind': sum(f['other_kind'] for f in frames),
+                                 'differ_without_a_line_kind': sum((not f['kept_same']) and not (
+                                     f['widened'] or f['fragment_takes_line'] or f['other_kind']) for f in frames)},
+            'example_rule_first_with_both': both[0]['file'] if both else None}
+        out['platforms'][plat] = {'facts': facts, 'frames': frames, 'fragments': frags}
+        head = TABLE_HEAD + ([TEMPLATE_HEAD] if plat != '40' else [])
+        md = ['| ' + ' | '.join(head) + ' |', '|' + '---|' * len(head)] + [f['row'] for f in frames]
+        with open(os.path.join(args.out_dir, 'wrong_count_table_%s.md' % plat), 'w') as fh:
+            fh.write('\n'.join(md) + '\n')
+        print(plat, 'FACTS', json.dumps(facts), flush=True)
+    out['seconds'] = time.time() - t0
+    json.dump(out, open(os.path.join(args.out_dir, 'wrong_count_table_20261023.json'), 'w'), indent=1)
+    print('wrote table JSON and markdown, %.0f s' % out['seconds'], flush=True)
+
+
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
-    ap.add_argument('mode', choices=['frames', 'plots', 'all'])
+    ap.add_argument('mode', choices=['frames', 'plots', 'all', 'table'])
     ap.add_argument('--out_dir', default='/home/koyama/data/lyft_rings/viz_20261022')
     ap.add_argument('--explore', default=RINGS_DIR + 'explore_20261010.json')
+    ap.add_argument('--align_platforms', action='store_true',
+                    help='opt-in (20261022_05 §6): figure 4 draws every wrong-count frame on both platforms and figure 1 '
+                         'the far-purity p10 moving frame on both; default output unchanged')
     args = ap.parse_args()
     if args.mode in ('frames', 'all'):
         stage_frames(args)
     if args.mode in ('plots', 'all'):
         stage_plots(args)
+    if args.mode == 'table':
+        stage_table(args)
