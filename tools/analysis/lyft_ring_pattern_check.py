@@ -12,8 +12,9 @@ Reports, over strided kept frames (same frames and seeds for both rows):
 - C1-analog: boxes per class (centre inside POINT_CLOUD_RANGE) holding >= 1 point when entering the data processor and
   0 after it, i.e. emptied by sample_points_hist_based (drop_empty_gt_boxes drops them: the processor-stage recount);
 - what reaches the model, per row: positives per class per frame, points per box (median) by box range, boxes with 0
-  points (must be 0), points per frame per radial bin beside nuScenes TRAIN's (the C1-analog's installed target
-  histogram) and the source's unthinned histogram.
+  points (must be 0 for the C1-analog; for P the range mask's residual, as 27807 / 28034, with where they sit), points
+  per frame per radial bin beside nuScenes TRAIN's (the C1-analog's installed target histogram) and the source's
+  unthinned histogram.
 """
 import json
 import sys
@@ -150,6 +151,9 @@ for i in idx:
                 for b in range(len(BOX_R) - 1):
                     mb = m & (br >= BOX_R[b]) & (br < BOX_R[b + 1])
                     st['ppb'][c][b].extend(cnt[mb].tolist())
+            # where the boxes reaching the model with 0 points sit: |x|, |y| against POINT_CLOUD_RANGE's 75.2 m edge
+            st.setdefault('zero_where', []).extend(
+                [[round(float(max(abs(b[0]), abs(b[1]))), 2), round(float(b[2]), 2), int(b[7])] for b in gb[cnt == 0]])
 
 
 def coarse(h):
@@ -173,6 +177,7 @@ res = {
                                     'share': CE['emptied'][c] / max(CE['hit'][c], 1)} for c in names},
     'reaching_model': {t: {'positives_per_frame': {c: float(S[t]['pos'][k] / f) for k, c in enumerate(names)},
                            'boxes_with_0_points': {c: int(S[t]['zero'][k]) for k, c in enumerate(names)},
+                           'zero_point_boxes_max_abs_xy_z_label': S[t].get('zero_where', []),
                            'points_per_box_median_by_range': {
                                c: {'%d-%d m' % (BOX_R[b], BOX_R[b + 1]):
                                    [float(np.median(v)) if v else None, len(v)] for b, v in S[t]['ppb'][c].items()}
@@ -195,5 +200,8 @@ res['points_per_frame_by_bin']['P_over_C1_analog'] = (
 json.dump(res, open(out, 'w'), indent=1)
 print('SMOKE', json.dumps(res))
 assert mismatch == 0, 'the loader thinned a different cloud than the cache mask'
-assert all(v == 0 for t in ('P', 'C') for v in res['reaching_model'][t]['boxes_with_0_points'].values()), \
-    'a box with 0 points reached the model'
+# C1-analog's recount runs after the processor's range mask, so nothing empty may reach the model. P recounts at the
+# loader (prepare_data's zero-point filter, as 27807 / 28034), so a box the RANGE MASK empties later still reaches it:
+# the precedents' disclosed residual (20261010_05 §4.1-4.2), reported here, with where those boxes sit.
+assert all(v == 0 for v in res['reaching_model']['C']['boxes_with_0_points'].values()), \
+    'a box with 0 points reached the model in the C1-analog row'

@@ -19,4 +19,6 @@ echo "=== 3. target dump, C1-analog (calibration installed, 1000 frames) ==="
 TARGET_DUMP_CALIB_FRAMES=1000 "${SING[@]}" python3 analysis/target_dump.py "$C" LYFT_40BEAM 200
 echo "=== 4. emptied_boxes.py, P (processor stage) ==="
 "${SING[@]}" python3 analysis/emptied_boxes.py "$P" LYFT_40BEAM 200
+echo "=== 5. emptied_boxes.py, the unthinned 40-beam entry of 25781's config (no histograms installed: range mask only) ==="
+"${SING[@]}" python3 analysis/emptied_boxes.py cfgs/da-ieee-access/centerpoint-global-lyft2nuscenes.yaml LYFT_40BEAM 200
 echo "=== done $(date '+%Y-%m-%d %H:%M %Z') ==="
