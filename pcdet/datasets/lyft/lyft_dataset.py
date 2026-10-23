@@ -27,8 +27,40 @@ class LyftDataset(DatasetTemplate):
             dataset_cfg=dataset_cfg, class_names=class_names, training=training, root_path=self.root_path, logger=logger,
             model_ontology=model_ontology
         )
+        # RING_PATTERN (opt-in, training only; experiments_md 20261024_01): thin each RAW LIDAR_TOP scan to a target
+        # sensor's published scan pattern, by the laser rings recovered offline (lyft_ring_pattern.py; cache written
+        # by tools/analysis/lyft_ring_cache.py, gate run 2's recovery). Rings exist for the 40-beam platform only and
+        # index ONE stored scan, so the key requires LIDAR_CONFIG 40, one frame and KEEP_FRAMES (exact-count frames);
+        # those are checked before any info is read. The cache is loaded here, in the parent, so every training frame
+        # is checked against it before a loader exists.
+        self.ring_pattern_cfg = self.dataset_cfg.get('RING_PATTERN', None) if self.training else None
+        self._ring_cache = None
+        if self.ring_pattern_cfg is not None:
+            assert str(self.dataset_cfg.get('LIDAR_CONFIG', None)) == '40', \
+                'RING_PATTERN: the ring cache covers the 40-beam platform only (LIDAR_CONFIG: 40)'
+            assert (self.dataset_cfg.get('MAX_SWEEPS', 1) or 1) <= 1, \
+                'RING_PATTERN: rings index one stored scan; accumulated sweeps have no single stored order'
+            assert self.dataset_cfg.get('KEEP_FRAMES', None) is not None, \
+                'RING_PATTERN: set KEEP_FRAMES to the exact-ring-count list the cache was built with'
+
         self.infos = []
         self.include_lyft_data(self.mode)
+
+        if self.ring_pattern_cfg is not None:
+            from . import lyft_ring_pattern
+            rp = self.ring_pattern_cfg
+            cache = lyft_ring_pattern.load_ring_cache(rp['RING_CACHE'], rp.get('SHA256', None))
+            stems = [Path(i['lidar_path']).stem for i in self.infos]
+            missing = [s for s in stems if s not in cache]
+            assert not missing, 'RING_PATTERN: %d training frames have no ring cache entry, e.g. %s' % (
+                len(missing), missing[:3])
+            wrong = [s for s in stems if len(cache[s]['lev']) != int(rp['N_RINGS'])]
+            assert not wrong, 'RING_PATTERN: %d training frames do not hold %d rings, e.g. %s' % (
+                len(wrong), int(rp['N_RINGS']), wrong[:3])
+            self._ring_cache = {s: cache[s] for s in stems}
+            self.logger.info('RING_PATTERN: %d frames, %d rings each, lattice %.2f deg, azimuth bin %.3f deg'
+                             % (len(self._ring_cache), int(rp['N_RINGS']), float(rp['SPACING_DEG']),
+                                float(rp['AZ_RES_DEG'])))
 
         # Per-object motion compensation. ON whenever this dataset accumulates, because
         # accumulation without it is a label-correlated artefact rather than a weaker version of
@@ -66,6 +98,26 @@ class LyftDataset(DatasetTemplate):
         self.infos.extend(lyft_infos)
         self.logger.info('Total samples for lyft dataset: %d' % (len(lyft_infos)))
         self.infos = self.filter_by_lidar_config(self.infos)
+        self.infos = self.filter_by_keep_frames(self.infos)
+
+    def filter_by_keep_frames(self, infos):
+        """KEEP_FRAMES (opt-in, training only; experiments_md 20261024_01): train on the frames named in LIST (lidar
+        file stems, one per line; SHA256 pins the committed file). Every listed frame must be found after the
+        LIDAR_CONFIG filter, so a list naming a frame of another platform or split fails here, not silently."""
+        cfg = self.dataset_cfg.get('KEEP_FRAMES', None)
+        if cfg is None:
+            return infos
+        if not self.training:
+            self.logger.info('KEEP_FRAMES is a training-split list: not applied in %s mode' % self.mode)
+            return infos
+        from . import lyft_ring_pattern
+        stems = lyft_ring_pattern.read_keep_list(cfg['LIST'], cfg.get('SHA256', None))
+        want = set(stems)
+        kept = [info for info in infos if Path(info['lidar_path']).stem in want]
+        assert len(kept) == len(stems), 'KEEP_FRAMES: %d of %d listed frames found in the %d infos' % (
+            len(kept), len(stems), len(infos))
+        self.logger.info('KEEP_FRAMES: kept %d of %d lyft samples (%s)' % (len(kept), len(infos), cfg['LIST']))
+        return kept
 
     # Lyft ships two vehicle configurations: BETA_V0 carries 40-beam lidars,
     # BETA_PLUS_PLUS carries 64-beam ones. The host is the first token of the
@@ -148,6 +200,14 @@ class LyftDataset(DatasetTemplate):
 
         info = copy.deepcopy(self.infos[index])
         points = self.get_lidar_with_sweeps(index, max_sweeps=self.dataset_cfg.MAX_SWEEPS)
+
+        # RING_PATTERN: on the RAW sensor-frame scan in stored order, before LEVEL_COOR, SHIFT_COOR and augmentation,
+        # so the zero-point GT filter in prepare_data recounts the thinned cloud (Lyft infos carry no point count).
+        if self.ring_pattern_cfg is not None and self.training:
+            from . import lyft_ring_pattern
+            stem = Path(info['lidar_path']).stem
+            points = points[lyft_ring_pattern.ring_pattern_keep(stem, points, self._ring_cache.get(stem, None),
+                                                                 self.ring_pattern_cfg)]
 
         # LEVEL_COOR (pcdet/utils/level_utils.py): about the sensor origin, so before SHIFT_COOR.
         level_R = self.level_rotation_for(Path(info['lidar_path']).stem)
