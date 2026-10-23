@@ -111,6 +111,66 @@ def collate(batch):
     return out
 
 
+def frame_key(k):
+    """(sequence, frame_idx) as a hashable tuple. torch's pin_memory turns plain tuples into LISTS ("backwards
+    compatibility"), which made job 30220 die with `unhashable type: 'list'`; the loader now runs with pin_memory=False
+    and every key is normalised here as well."""
+    seq, idx = k
+    return (str(seq), int(idx))
+
+
+def collect(frames, extras, pred_dicts):
+    """Store one batch's predictions [x, y, z, dx, dy, dz, heading, label (1-based), score] beside its packed GT.
+    Returns (raw points, thinned points) summed over the batch."""
+    n_raw = n_thin = 0
+    for b, pd in enumerate(pred_dicts):
+        boxes = pd['pred_boxes'].detach().cpu().numpy().reshape(-1, 7)
+        labels = pd['pred_labels'].detach().cpu().numpy().reshape(-1)
+        scores = pd['pred_scores'].detach().cpu().numpy().reshape(-1)
+        key = frame_key(extras['frame_key'][b])
+        assert key not in frames, 'frame %s seen twice' % (key,)
+        frames[key] = {'pred': np.concatenate([boxes, labels[:, None], scores[:, None]], axis=1).astype(np.float32),
+                       'gt': np.asarray(extras['gt_pack'][b], dtype=np.float32).reshape(-1, 9)}
+        n_raw += int(extras['n_raw'][b]); n_thin += int(extras['n_thin'][b])
+    return n_raw, n_thin
+
+
+def rule_b_cuts(frames, classes):
+    """Rule B of source_precision_cut.py on {key: {'pred', 'gt'}}; classes = {model index (1-based): name}.
+    Returns (cuts, {index: (precision array, kept array, GT count)}) on GRID."""
+    rows = {c: [] for c in classes}
+    gt_total = {c: 0 for c in classes}
+    for fr in frames.values():
+        gt, p_all = fr['gt'], fr['pred']
+        for c in classes:
+            g = gt[(gt[:, 7] == c) & (gt[:, 8] >= 1)]
+            g = g[(np.abs(g[:, 0]) <= RANGE) & (np.abs(g[:, 1]) <= RANGE)]
+            gt_total[c] += len(g)
+            p = p_all[np.abs(p_all[:, 7]) == c]
+            p = p[(np.abs(p[:, 0]) <= RANGE) & (np.abs(p[:, 1]) <= RANGE)]
+            hit = match(p[:, :2], p[:, 8], g[:, :2] if len(g) else np.zeros((0, 2)))
+            rows[c] += list(zip(p[:, 8], hit))
+    cuts, curves = {}, {}
+    for c, name in classes.items():
+        a = np.array(rows[c], dtype=float).reshape(-1, 2)
+        prec, kept = [], []
+        for t in GRID:
+            k = a[a[:, 0] >= t]
+            kept.append(len(k))
+            prec.append(k[:, 1].mean() if len(k) else np.nan)
+        prec, kept = np.array(prec), np.array(kept)
+        valid = kept >= MIN_KEPT
+        cut = 1.01
+        for i, t in enumerate(GRID):
+            later = valid[i:]
+            if valid[i] and np.all(prec[i:][later] >= P_STAR):
+                cut = float(t)
+                break
+        cuts[name] = cut
+        curves[c] = (prec, kept, gt_total[c])
+    return cuts, curves
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--cfg_file', required=True, help='the P-PL config: DATA_CONFIG = the teacher\'s thinned PandaSet source')
@@ -120,6 +180,7 @@ def main():
     ap.add_argument('--workers', type=int, default=4)
     ap.add_argument('--check', type=int, default=20, help='frames for the training-path equality pre-check')
     ap.add_argument('--classes', nargs='+', default=['Car', 'Pedestrian', 'Cyclist'])
+    ap.add_argument('--max_batches', type=int, default=None, help='smoke test: stop after this many batches')
     args = ap.parse_args()
 
     out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
@@ -163,23 +224,23 @@ def main():
         dict(teacher_cfg.DENSE_HEAD.POST_PROCESSING.NMS_CONFIG)))
 
     loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, collate_fn=collate,
-                        pin_memory=True)
+                        pin_memory=False)
     frames = {}
     n_raw = n_thin = 0
     with torch.no_grad():
         for it, batch in enumerate(loader):
+            if args.max_batches is not None and it >= args.max_batches:
+                break
             extras = {k: batch.pop(k) for k in EXTRA_KEYS}
             load_data_to_gpu(batch)
             pred_dicts, _ = model(batch)
-            for b, pd in enumerate(pred_dicts):
-                boxes = pd['pred_boxes'].cpu().numpy(); labels = pd['pred_labels'].cpu().numpy(); scores = pd['pred_scores'].cpu().numpy()
-                frames[extras['frame_key'][b]] = {'pred': np.concatenate([boxes, labels[:, None], scores[:, None]], axis=1).astype(np.float32),
-                                                  'gt': extras['gt_pack'][b]}
-                n_raw += extras['n_raw'][b]; n_thin += extras['n_thin'][b]
+            r, t = collect(frames, extras, pred_dicts)
+            n_raw += r; n_thin += t
             if it % 50 == 0:
                 logger.info('pass %d / %d batches' % (it + 1, len(loader)))
-    logger.info('wrote %d frames; points per frame raw %.0f -> thinned %.0f (ratio %.3f); predictions per frame %.1f'
-                % (len(frames), n_raw / len(frames), n_thin / len(frames), n_thin / max(n_raw, 1),
+    logger.info('wrote %d frames%s; points per frame raw %.0f -> thinned %.0f (ratio %.3f); predictions per frame %.1f'
+                % (len(frames), ' (SMOKE: --max_batches %d)' % args.max_batches if args.max_batches else '',
+                   n_raw / len(frames), n_thin / len(frames), n_thin / max(n_raw, 1),
                    np.mean([len(f['pred']) for f in frames.values()])))
     at_cap = sum(len(f['pred']) >= teacher_cfg.DENSE_HEAD.POST_PROCESSING.MAX_OBJ_PER_SAMPLE for f in frames.values())
     logger.info('frames at the rank cap (%d boxes): %d' % (teacher_cfg.DENSE_HEAD.POST_PROCESSING.MAX_OBJ_PER_SAMPLE, at_cap))
@@ -188,43 +249,17 @@ def main():
 
     # Rule B, the code of source_precision_cut.py with GT from the pass.
     classes = {cfg.CLASS_NAMES.index(n) + 1: n for n in args.classes}
-    rows = {c: [] for c in classes}
-    gt_total = {c: 0 for c in classes}
-    for fk, fr in frames.items():
-        gt, p_all = fr['gt'], fr['pred']
-        for c in classes:
-            g = gt[(gt[:, 7] == c) & (gt[:, 8] >= 1)]
-            g = g[(np.abs(g[:, 0]) <= RANGE) & (np.abs(g[:, 1]) <= RANGE)] if len(g) else g
-            gt_total[c] += len(g)
-            p = p_all[np.abs(p_all[:, 7]) == c]
-            p = p[(np.abs(p[:, 0]) <= RANGE) & (np.abs(p[:, 1]) <= RANGE)]
-            hit = match(p[:, :2], p[:, 8], g[:, :2] if len(g) else np.zeros((0, 2)))
-            rows[c] += list(zip(p[:, 8], hit))
+    cuts, curves = rule_b_cuts(frames, classes)
     print(f'source val frames read: {len(frames)} of {len(ds)} (pandaset, through RING_PATTERN; match {MATCH_DIST} m, '
-          f'range {RANGE} m, P* {P_STAR}, min kept {MIN_KEPT})')
-    cuts = {}
+          f'range {RANGE} m, P* {P_STAR}, min kept {MIN_KEPT})' + ('  SMOKE TEST, NOT A CUT' if args.max_batches else ''))
+    show = [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80]
     for c, name in classes.items():
-        a = np.array(rows[c], dtype=float).reshape(-1, 2)
-        prec, kept = [], []
-        for t in GRID:
-            k = a[a[:, 0] >= t]
-            kept.append(len(k))
-            prec.append(k[:, 1].mean() if len(k) else np.nan)
-        prec, kept = np.array(prec), np.array(kept)
-        valid = kept >= MIN_KEPT
-        cut = 1.01
-        for i, t in enumerate(GRID):
-            later = valid[i:]
-            if valid[i] and np.all(prec[i:][later] >= P_STAR):
-                cut = float(t)
-                break
-        cuts[name] = cut
-        show = [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80]
+        prec, kept, n_gt = curves[c]
         curve = '  '.join(f'{t:.2f}:{prec[GRID == t][0]:.2f}({kept[GRID == t][0]})' for t in show)
-        print(f'{name:10s} GT boxes (>= 1 raw point, in range): {gt_total[c]}')
+        print(f'{name:10s} GT boxes (>= 1 raw point, in range): {n_gt}')
         print(f'{name:10s} precision(kept) at t: {curve}')
-        print(f'{name:10s} cut = {cut:.2f}' + ('  (gated off: precision never holds >= 0.50)' if cut > 1 else ''))
-    print('cuts:', cuts)
+        print(f'{name:10s} cut = {cuts[name]:.2f}' + ('  (gated off: precision never holds >= 0.50)' if cuts[name] > 1 else ''))
+    print(('smoke cuts (not for use):' if args.max_batches else 'cuts:'), cuts)
 
 
 if __name__ == '__main__':
