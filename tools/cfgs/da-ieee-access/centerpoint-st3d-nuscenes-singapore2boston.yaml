@@ -12,8 +12,8 @@
 # the teacher's precision on Singapore VAL (labelled SOURCE val, n015, 1 sweep, as trained, >= 0.50 from the cut upward,
 # 1.0 m centre match, >= 50 kept, else 1.01); rule A NEG_THRESH from the background plateau's upper half-maximum on the
 # teacher's Boston TRAIN pseudo-labels at floor 0.0001; a SCORE below its NEG raised to it. The passes:
-# scripts/_scene_pl_s2b_cuts.sh (1 GPU); the values are written here by the session BEFORE this row is launched.
-# 1.01 / 1.01 are PLACEHOLDERS: the row must not run with them.
+# scripts/_scene_pl_s2b_cuts.sh (1 GPU); the values are written here by the session BEFORE this row is launched:
+# job 30241, 2026-10-23 14:26-14:35, the values below (raised: none).
 #
 # Schedule: EPOCH_FOLLOWS source, so 2,073 iterations x 20 epochs = 41,460 steps, equal to S->S's own training (30189's log:
 # total_it_each_epochs [2073], total_it=41460). Seed 666 (--fix_random_seed).
@@ -32,8 +32,8 @@ DATA_CONFIG_TAR:
     USE_PSEUDO_LABEL: True
 
 SELF_TRAIN:
-  SCORE_THRESH: [1.01, 1.01, 1.01]      # PLACEHOLDER until stage 2 (rule B on Singapore val, teacher S->S 30189 ep20) is read
-  NEG_THRESH: [1.01, 1.01, 1.01]        # PLACEHOLDER until stage 2 (rule A on Boston TRAIN pseudo-labels, floor 0.0001) is read
+  SCORE_THRESH: [0.2, 0.33, 0.46]       # job 30241: rule B, teacher 30189 ep20 (S->S) on Singapore val n015, 1 sweep, 2,929 frames; none below its NEG
+  NEG_THRESH: [0.149, 0.150, 0.151]     # job 30241: rule A on the same teacher's Boston TRAIN pseudo-labels (floor 0.0001; plateau modes 0.107 / 0.107 / 0.107)
   MODEL_TEACHER:
     CLASS_NAMES: [Car, Pedestrian, Cyclist]
     ONTOLOGY: kitti
