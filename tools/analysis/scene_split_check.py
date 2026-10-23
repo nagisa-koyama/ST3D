@@ -12,6 +12,8 @@
    len(DataLoader) without drop_last) and the 20-epoch step count follow.
 3. Mounting per vehicle: ref_from_car (vehicle -> LIDAR_TOP) of every info, inverted to the sensor pose in the vehicle
    frame; distinct translations (mm) and Euler angles (0.01 deg) per vehicle, with counts.
+4. Car GT points per box per city and split (annotation num_lidar_pts): the reference of the stage-2 points-per-box
+   bar (empty < 10%, median at the target's own GT density; 20261022_06 §6.3). A sanity reference, never a method value.
 No point cloud is read. Exit code 0 only if every assertion holds.
 """
 import collections
@@ -35,6 +37,7 @@ ROWS = {  # file -> (source vehicle, eval vehicle, pseudo-labelling)
     'centerpoint-sourceonly-nuscenes-boston2singapore.yaml': ('n008', 'n015', False),
     'centerpoint-sourceonly-nuscenes-singapore2boston.yaml': ('n015', 'n008', False),
     'centerpoint-st3d-nuscenes-boston2singapore.yaml': ('n008', 'n015', True),
+    'centerpoint-st3d-nuscenes-singapore2boston.yaml': ('n015', 'n008', True),
 }
 DATA = Path('../data/nuscenes/v1.0-trainval')
 META = DATA / 'v1.0-trainval'
@@ -128,6 +131,7 @@ def check_split():
     log_of = sample_to_log()
     classes = {'car': 'Car', 'pedestrian': 'Pedestrian', 'bicycle': 'Cyclist'}
     mount = {v: collections.Counter() for v in CITY}
+    carpts = collections.defaultdict(list)  # (split, vehicle) -> num_lidar_pts of car GT boxes with >= 1 point inside 75.2 m
     summary = {}
     for split in ('train', 'val'):
         infos = pickle.load(open(DATA / f'nuscenes_infos_10sweeps_{split}.pkl', 'rb'))
@@ -151,6 +155,11 @@ def check_split():
             t = tuple(np.round(inv[:3, 3] * 1000).astype(int))  # mm
             ang = tuple(np.round(euler_deg(inv[:3, :3]), 2))
             mount[v][(t, ang)] += 1
+            npts = np.asarray(info.get('num_lidar_pts', []))
+            gtb = np.asarray(info['gt_boxes'])
+            for n, k, g in zip(info['gt_names'], npts, gtb):
+                if n == 'car' and k >= 1 and abs(g[0]) <= 75.2 and abs(g[1]) <= 75.2:
+                    carpts[(split, v)].append(int(k))
         print(f'\n=== {split}: {len(infos)} infos, {missing} without a log record')
         for v in sorted(per_vehicle):
             n = per_vehicle[v]
@@ -170,6 +179,10 @@ def check_split():
         print(f'  {v} ({CITY[v]}): {len(mount[v])} distinct calibrations over {sum(mount[v].values())} infos')
         for (t, ang), n in mount[v].most_common(6):
             print(f'    t = {t} mm, (yaw, pitch, roll) = {ang} deg: {n} infos')
+    print('\n=== Car GT points per box (num_lidar_pts, keyframe, >= 1 point, centre inside 75.2 m): the reference of the cut check bar')
+    for (split, v), k in sorted(carpts.items()):
+        k = np.asarray(k)
+        print(f'  {split} {v} ({CITY[v]}): {len(k)} boxes, median {np.median(k):.1f}, p10 {np.percentile(k, 10):.1f}, p90 {np.percentile(k, 90):.1f}')
     return summary
 
 

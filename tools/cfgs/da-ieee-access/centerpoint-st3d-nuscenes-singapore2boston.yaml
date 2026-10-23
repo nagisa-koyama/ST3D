@@ -1,0 +1,99 @@
+# SCENE, the pseudo-labelling row PL S->B (experiments_md/20261003_05 §5 "Check PL S->B", fixed 2026-10-23 14:22 JST after the
+# user's ~14:20 「A、かつ提案承認」; report experiments_md/20261022_06 §8). PL B->S's recipe (centerpoint-st3d-nuscenes-
+# boston2singapore.yaml, 20261022_06 §2.3) with the cities swapped: source Singapore (n015) with labels, target Boston (n008)
+# TRAIN unlabelled, same HDL-32E, single sweep. S->B carries the scene term (T_B = +9.50; B->S has none, T_S = +0.97), so this
+# row asks whether pseudo-labelling fills scene content; PL B->S is its control for gains that are not scene.
+#
+# Teacher and init: the S->S in-city oracle (centerpoint-sourceonly-nuscenes-singapore2singapore.yaml, job 30189, epoch 20),
+# passed as --pretrained_model and --pretrained_model_teacher. The SELF_TRAIN block is PL B->S's, unchanged: TEACHER FROZEN,
+# ONE generation pass (FROZEN_TEACHER_SINGLE_PASS), SRC + TAR, plain shared-BN student (no DSNorm, no TEACHER_ADABN), PROG_AUG
+# as published (decision F; UPDATE_AUG [5, 10, 15] of 20 epochs), memory ensemble as published. Only the two cut lines differ,
+# re-derived for THIS teacher by the pre-declared rules (20261004_01 §5e), never copied from PL B->S: rule B SCORE_THRESH from
+# the teacher's precision on Singapore VAL (labelled SOURCE val, n015, 1 sweep, as trained, >= 0.50 from the cut upward,
+# 1.0 m centre match, >= 50 kept, else 1.01); rule A NEG_THRESH from the background plateau's upper half-maximum on the
+# teacher's Boston TRAIN pseudo-labels at floor 0.0001; a SCORE below its NEG raised to it. The passes:
+# scripts/_scene_pl_s2b_cuts.sh (1 GPU); the values are written here by the session BEFORE this row is launched.
+# 1.01 / 1.01 are PLACEHOLDERS: the row must not run with them.
+#
+# Schedule: EPOCH_FOLLOWS source, so 2,073 iterations x 20 epochs = 41,460 steps, equal to S->S's own training (30189's log:
+# total_it_each_epochs [2073], total_it=41460). Seed 666 (--fix_random_seed).
+#
+# Legality: UDA-legal design, reported as analysis. Rule B reads Singapore (source) labels only; rule A reads no label;
+# Boston labels are read by the evaluation only (and by the B->B oracle, a separate row). Family default size augmentation.
+#
+# Reading (fixed before any number, T05 §5): at epoch 20, Car BEV R40 IoU 0.7 on Boston val, ±2. Delta = PL - 34.76 (S->B,
+# saved statistics) and Delta_eq = PL at equal statistics - 33.36 (S->B under AdaBN on Boston TRAIN). Scene fill is read only
+# if Delta >= +2 at both AND Delta exceeds PL B->S's Delta (PL - 39.54) by >= 2. Both >= +2 within 2 of each other: generic
+# self-training, not a scene fill. Delta < +2: pseudo-labelling does not fill the scene term. Reported, no bar: Delta / 9.50,
+# IoU 0.5, first-pass cars per frame against Boston TRAIN's 16.30.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-nuscenes-singapore2boston.yaml
+
+DATA_CONFIG_TAR:
+    USE_PSEUDO_LABEL: True
+
+SELF_TRAIN:
+  SCORE_THRESH: [1.01, 1.01, 1.01]      # PLACEHOLDER until stage 2 (rule B on Singapore val, teacher S->S 30189 ep20) is read
+  NEG_THRESH: [1.01, 1.01, 1.01]        # PLACEHOLDER until stage 2 (rule A on Boston TRAIN pseudo-labels, floor 0.0001) is read
+  MODEL_TEACHER:
+    CLASS_NAMES: [Car, Pedestrian, Cyclist]
+    ONTOLOGY: kitti
+    NAME: CenterPoint
+    VFE: {NAME: MeanVFE}
+    BACKBONE_3D: {NAME: VoxelResBackBone8x}
+    MAP_TO_BEV: {NAME: HeightCompression, NUM_BEV_FEATURES: 256}
+    BACKBONE_2D:
+      NAME: BaseBEVBackbone
+      LAYER_NUMS: [5]
+      LAYER_STRIDES: [1]
+      NUM_FILTERS: [128]
+      UPSAMPLE_STRIDES: [2]
+      NUM_UPSAMPLE_FILTERS: [256]
+    DENSE_HEAD:
+      NAME: CenterHead
+      CLASS_AGNOSTIC: false
+      CLASS_NAMES_EACH_HEAD:
+      - [Car, Pedestrian, Cyclist]
+      SHARED_CONV_CHANNEL: 64
+      USE_BIAS_BEFORE_NORM: true
+      NUM_HM_CONV: 2
+      SEPARATE_HEAD_CFG:
+        HEAD_ORDER: [center, center_z, dim, rot]
+        HEAD_DICT:
+          center: {out_channels: 2, num_conv: 2}
+          center_z: {out_channels: 1, num_conv: 2}
+          dim: {out_channels: 3, num_conv: 2}
+          rot: {out_channels: 2, num_conv: 2}
+      TARGET_ASSIGNER_CONFIG: {FEATURE_MAP_STRIDE: 4, NUM_MAX_OBJS: 500, GAUSSIAN_OVERLAP: 0.1, MIN_RADIUS: 2}
+      LOSS_CONFIG:
+        LOSS_WEIGHTS:
+          cls_weight: 1.0
+          loc_weight: 2.0
+          code_weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      POST_PROCESSING:
+        SCORE_THRESH: 0.0001
+        POST_CENTER_LIMIT_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+        MAX_OBJ_PER_SAMPLE: 500
+        NMS_CONFIG: {NMS_TYPE: nms_gpu, NMS_THRESH: 0.5, NMS_PRE_MAXSIZE: 4096, NMS_POST_MAXSIZE: 500}
+    POST_PROCESSING:
+      RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+      SCORE_THRESH: 0.0001
+      OUTPUT_RAW_SCORE: false
+      EVAL_METRIC: kitti
+      NMS_CONFIG: {MULTI_CLASSES_NMS: false, NMS_TYPE: nms_gpu, NMS_THRESH: 0.5, NMS_PRE_MAXSIZE: 4096, NMS_POST_MAXSIZE: 500}
+  EPOCH_FOLLOWS: source
+  UPDATE_PSEUDO_LABEL: [0]
+  UPDATE_PSEUDO_LABEL_INTERVAL: 2
+  FROZEN_TEACHER_SINGLE_PASS: true
+  INIT_PS: None
+  SRC: {USE_DATA: true, USE_GRAD: true, LOSS_WEIGHT: 1.0, BACKWARD_TOGETHER: true}
+  TAR: {USE_DATA: true, LOSS_WEIGHT: 1.0, BACKWARD_TOGETHER: true}
+  PROG_AUG:
+    ENABLED: true
+    UPDATE_AUG: [5, 10, 15]
+    SCALE: 1.1
+  MEMORY_ENSEMBLE:
+    ENABLED: true
+    NAME: nms_ensemble
+    IOU_THRESH: 0.1
+    NMS_CONFIG: {NMS_TYPE: nms_gpu, MULTI_CLASSES_NMS: false, NMS_PRE_MAXSIZE: 512, NMS_POST_MAXSIZE: 100, NMS_THRESH: 0.1}
+    MEMORY_VOTING: {ENABLED: true, IGNORE_THRESH: 2, RM_THRESH: 3}
