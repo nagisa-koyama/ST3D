@@ -1,0 +1,25 @@
+# SCENE, PL S->B + DANN (experiments_md/20261003_05 §5, entry "User 10-24 ~02:40", item 2, fixed 2026-10-24 02:44 JST;
+# report experiments_md/20261022_06 §9). Analysis: does a feature-level loss fill the scene term where pseudo-labels did not.
+#
+# = centerpoint-st3d-nuscenes-singapore2boston.yaml (the PL S->B row, job 30243, W&B v4wk919k; cuts ST3D 40c2455) UNCHANGED
+# - teacher and init S->S 30189 epoch 20, SCORE 0.20 / 0.33 / 0.46, NEG 0.149 / 0.150 / 0.151, 41,460 steps, seed 666,
+# plain shared BN, PROG_AUG [5, 10, 15] - plus the fork's existing in-head DANN block, copied exactly from
+# centerpoint-st3d-dann-lyft2nuscenes.yaml: the one key `dann_weight` 0.1 in the student's DENSE_HEAD LOSS_WEIGHTS. That key
+# makes CenterHead build the domain discriminator (pcdet/models/model_utils/dann_utils.py: ReverseLayerF at a constant 1.0 on
+# spatial_features_2d, 3-layer conv DomainDiscriminator, BCE against the batch's domain label, mean / batch size x 0.1);
+# train_st_utils stamps domain_label 0 on the source batch (Singapore TRAIN) and 1 on the target batch (Boston TRAIN), sums
+# the two halves at 0.5 each and adds them to the detection losses in the one plain backward (no USE_TORCHJD). No Boston
+# label enters the domain loss. dann_weight 0.1 is the published value (decision F), never tuned on our target results.
+# The TEACHER block is left without `dann_weight`, as in every DANN row: it runs in eval mode and never sees a domain label.
+#
+# Reading (fixed before any number, T05 §5): D = row (epoch 20, saved statistics) - 37.39 (PL S->B, 30243), Car BEV R40
+# IoU 0.7 on Boston val; >= +2 DANN adds to pseudo-labelling on the scene pair; |D| < 2 level; <= -2 it costs. Reported:
+# D_eq = row at equal statistics (AdaBN, Boston TRAIN) - 35.46; share of T_B closed.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-st3d-nuscenes-singapore2boston.yaml
+
+MODEL:
+    DENSE_HEAD:
+        LOSS_CONFIG:
+            LOSS_WEIGHTS: {
+                'dann_weight': 0.1
+            }
