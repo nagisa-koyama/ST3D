@@ -40,8 +40,8 @@ DATA_CONFIG_TAR:
     USE_PSEUDO_LABEL: True
 
 SELF_TRAIN:
-  SCORE_THRESH: [1.01, 1.01, 1.01]      # PENDING rule B, teacher 28034 ep115 on PandaSet val through RING_PATTERN (scripts/_ppl_cut_checks.sh); 1.01 = no positives until replaced
-  NEG_THRESH: [1.01, 1.01, 1.01]        # PENDING rule A on teacher 28034's nuScenes TRAIN pseudo-labels (floor 0.0001)
+  SCORE_THRESH: [0.19, 0.28, 1.01]      # jobs 30227 / 30228: rule B, teacher 28034 ep115 as trained on PandaSet val (1,600 frames) through RING_PATTERN; Cyclist gated off (precision never holds >= 0.50); none below its NEG
+  NEG_THRESH: [0.181, 0.19, 0.194]      # jobs 30195 / 30228: rule A on teacher 28034's nuScenes TRAIN pseudo-labels (floor 0.0001; plateau modes 0.133 / 0.133 / 0.133); predicted first pass pos 23.576 / 4.577 / 0.000, ign 3.399 / 9.119 / 0.443 per frame
   MODEL_TEACHER:
     CLASS_NAMES: [Car, Pedestrian, Cyclist]
     ONTOLOGY: kitti
