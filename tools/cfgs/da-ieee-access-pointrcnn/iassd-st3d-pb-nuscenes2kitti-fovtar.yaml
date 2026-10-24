@@ -35,8 +35,9 @@ DATA_CONFIG_TAR:
         - NAME: sample_points
           # train: rule PB on the target's TRAINING view (1,000 strided KITTI TRAIN frames, training mode, augmentation,
           #        the cut pseudo-labels installed), at PROG_AUG epoch 0 AND at its last intensity; the larger P99 ->
-          #        the smallest multiple of 4,096 >= it. PENDING the census (experiments_md 20261025_01 §5): 20480 is a
-          #        PROVISIONAL value, replaced before this row can train (the cut lines below refuse to train until then).
+          #        the smallest multiple of 4,096 >= it. Census CPU job 30490 (logs/pl_ia_20261025/census_job.sh,
+          #        experiments_md 20261025_01 §5): P99 (numpy linear) 20,470.0 at epoch 0 (max 20,865), 20,469.2 at
+          #        the last intensity (max 20,896) -> 20,480; about 1% of frames are subsampled.
           # test:  the crop twin's eval budget (rule PB, 20261024_05 §2), also the teacher's labelling pass.
           NUM_POINTS: {
             'train': 20480,
@@ -53,10 +54,15 @@ DATA_CONFIG_TAR:
 SELF_TRAIN:
     # One pass over the SOURCE per epoch (as 27566 / every family source-only arm); the target is cycled.
     EPOCH_FOLLOWS: source
-    # PENDING the cut job (experiments_md 20261025_01 §4). Placeholders that cannot train: the first labelling pass
-    # indexes them per class and raises. generate_pseudo_labels.py overrides both lines with its score floor.
-    SCORE_THRESH: PENDING_RULE_B_AND_STEP_6
-    NEG_THRESH: PENDING_RULE_A
+    # Cut job 30487 (logs/pl_ia_20261025/cuts_job.sh, experiments_md 20261025_01 §4), teacher PB A1 30422 ep20 as trained,
+    # generation at score 0.0001 (no --max_obj), the S2 chain's tools as 27480 ran them:
+    # - rule B (decision B, all classes), precision on labelled nuScenes VAL (single sweep, PB N's eval block 28,672)
+    #   >= 0.50 from the cut up (1.0 m centre match, >= 50 kept): Car 0.10, Pedestrian 0.10, Cyclist 0.22;
+    # - rule A (decision A), upper half-maximum of the background plateau on unlabelled KITTI TRAIN (this file's crop
+    #   block): Car 0.035, Pedestrian 0.148, Cyclist 0.015;
+    # - rule A step 6: Pedestrian's 0.10 is below its NEG_THRESH and is raised to 0.148 (no ignore band for it).
+    SCORE_THRESH: [0.1, 0.148, 0.22]
+    NEG_THRESH: [0.035, 0.148, 0.015]
     UPDATE_PSEUDO_LABEL: [0]
     UPDATE_PSEUDO_LABEL_INTERVAL: 2
 
