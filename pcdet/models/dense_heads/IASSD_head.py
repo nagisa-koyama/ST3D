@@ -473,7 +473,14 @@ class IASSD_Head(PointHeadTemplate):
             centers_pred = centers_pred[simple_pos_mask][:, 1:4]
             simple_center_origin_loss_box = F.smooth_l1_loss(centers_pred, center_box_labels)
             center_origin_loss_box.append(simple_center_origin_loss_box.unsqueeze(-1))
-        center_origin_loss_box = torch.cat(center_origin_loss_box, dim=-1).mean()
+        if len(center_origin_loss_box) == 0:
+            # ST3D: no positive vote centre in this batch. Upstream raised here (torch.cat of an empty list); it became
+            # reachable once drop_empty_gt_boxes removes the boxes a sparse point budget empties (S2R A2R, job 30375,
+            # experiments_md 20261024_03). A zero that keeps the graph, so every DDP rank still reduces every parameter.
+            # Unchanged whenever a positive exists, so every run that did not crash here is unaffected.
+            center_origin_loss_box = self.forward_ret_dict['ctr_offsets'].sum() * 0.0
+        else:
+            center_origin_loss_box = torch.cat(center_origin_loss_box, dim=-1).mean()
         center_origin_loss_box = center_origin_loss_box * self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS.get('vote_weight')
         if tb_dict is None:
             tb_dict = {}
@@ -765,12 +772,18 @@ class IASSD_Head(PointHeadTemplate):
         pos_mask = self.forward_ret_dict['center_cls_labels'] > 0
         gt_boxes = self.forward_ret_dict['center_gt_box_of_fg_points']
         pred_boxes = self.forward_ret_dict['point_box_preds']
+        all_pred_boxes = pred_boxes
         pred_boxes = pred_boxes[pos_mask]
-        loss_corner = loss_utils.get_corner_loss_lidar(
-            pred_boxes[:, 0:7],
-            gt_boxes[:, 0:7]
-        )
-        loss_corner = loss_corner.mean()
+        if pred_boxes.shape[0] == 0:
+            # ST3D: no positive centre in this batch. Upstream took the mean of an empty tensor here, a NaN loss (same
+            # trigger as get_contextual_vote_loss above). A zero that keeps the graph; unchanged whenever a positive exists.
+            loss_corner = all_pred_boxes.sum() * 0.0
+        else:
+            loss_corner = loss_utils.get_corner_loss_lidar(
+                pred_boxes[:, 0:7],
+                gt_boxes[:, 0:7]
+            )
+            loss_corner = loss_corner.mean()
         loss_corner = loss_corner * self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['corner_weight']
         if tb_dict is None:
             tb_dict = {}
