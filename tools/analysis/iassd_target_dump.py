@@ -11,6 +11,12 @@ and whether the two label vectors agree point for point; plus the sentinel censu
 the box-target / foreground-row pairing the losses rely on.
 
     python analysis/iassd_target_dump.py --cfg_file cfgs/da-ieee-access-pointrcnn/iassd-sourceonly-kitti2kitti.yaml [--frames 0 1]
+
+Opt-in, absent by default (experiments_md 20261025_01, PL-IA): `--target_ps_label <pkl>` dumps a batch of the SELF-TRAINING
+TARGET block instead (DATA_CONFIG_TAR, USE_PSEUDO_LABEL, training mode, augmentation on, the pseudo-labels of <pkl>
+installed as train_model_st installs them). Its boxes carry the ignore band (label -c for class c), so the independent
+reference maps every negative label to -1, the head's ignore value (IASSD_head.py, ffcd090); the ignore boxes, the points
+inside them and how the head labels those points are printed per class.
 """
 import argparse
 import os
@@ -50,12 +56,29 @@ def main():
     ap.add_argument('--calib_frames', type=int, default=0,
                     help='install the global density calibration first, as train.py does for a HIST_DIST_ON_THE_FLY '
                          'source (HIST_DIST_BEFORE_POINT_BUDGET honoured), so sample_points_hist_based is live')
+    ap.add_argument('--target_ps_label', default=None, metavar='PKL',
+                    help='opt-in: dump the self-training TARGET block (DATA_CONFIG_TAR, training mode) with these '
+                         'pseudo-labels installed; the reference maps negative (ignore-band) labels to -1')
     a = ap.parse_args()
     log = logging.getLogger('dump'); log.addHandler(logging.StreamHandler()); log.setLevel(logging.WARNING)
     cfg = cfg_from_yaml_file(a.cfg_file, EasyDict())
-    dcfg = cfg.DATA_CONFIG if cfg.get('DATA_CONFIG', None) else list(cfg.DATA_CONFIGS.values())[0]
-    ds, _, _ = build_dataloader(dataset_cfg=dcfg, class_names=cfg.CLASS_NAMES, batch_size=1, dist=False, workers=0,
-                                logger=log, training=True, model_ontology=cfg.get('ONTOLOGY', None))
+    if a.target_ps_label:
+        import pickle
+        from pcdet.utils import self_training_utils
+        dcfg = cfg.DATA_CONFIG_TAR
+        assert dcfg.get('USE_PSEUDO_LABEL', False), '--target_ps_label needs DATA_CONFIG_TAR.USE_PSEUDO_LABEL'
+        assert not a.calib_frames, '--calib_frames is for a source block'
+        ds, _, _ = build_dataloader(dataset_cfg=dcfg, class_names=cfg.CLASS_NAMES, batch_size=1, dist=False, workers=0,
+                                    logger=log, training=True, model_ontology=cfg.get('ONTOLOGY', None))
+        self_training_utils.PSEUDO_LABELS.clear()
+        self_training_utils.PSEUDO_LABELS.update(pickle.load(open(a.target_ps_label, 'rb')))
+        ds.set_pseudo_labels(self_training_utils.PSEUDO_LABELS)
+        print('TARGET block %s with pseudo-labels %s (%d frames installed)' % (dcfg.DATASET, a.target_ps_label,
+                                                                             len(self_training_utils.PSEUDO_LABELS)))
+    else:
+        dcfg = cfg.DATA_CONFIG if cfg.get('DATA_CONFIG', None) else list(cfg.DATA_CONFIGS.values())[0]
+        ds, _, _ = build_dataloader(dataset_cfg=dcfg, class_names=cfg.CLASS_NAMES, batch_size=1, dist=False, workers=0,
+                                    logger=log, training=True, model_ontology=cfg.get('ONTOLOGY', None))
     if a.calib_frames and dcfg.get('HIST_DIST_ON_THE_FLY', False):
         from pcdet.datasets.point_calibration import calibration_target_config, link_point_calibration
         tcfg_cal, _ = calibration_target_config(cfg.DATA_CONFIG_TAR)
@@ -98,6 +121,17 @@ def main():
                                                     for c, v in per_box.items()})
     print('positive GT boxes holding 0 points (must be 0 when the config recounts):',
           {cfg.CLASS_NAMES[c - 1]: int(sum(n == 0 for n in v)) for c, v in per_box.items()})
+    ign_box = {c: [] for c in range(1, len(cfg.CLASS_NAMES) + 1)}
+    if a.target_ps_label:   # ignore-band boxes (label -c): kept by the recount whatever they hold
+        for k in range(B):
+            m = pts[:, 0] == k
+            valid = gt[k, :, 3:6].abs().sum(1) > 0
+            inside = roiaware_pool3d_utils.points_in_boxes_cpu(pts[m, 1:4], gt[k][valid][:, :7]) > 0
+            for t, c in enumerate(gt[k][valid][:, 7].long().tolist()):
+                if c < 0 and -c in ign_box:
+                    ign_box[-c].append(int(inside[t].sum()))
+        print('ignore-band boxes per class: n (points inside, median):',
+              {cfg.CLASS_NAMES[c - 1]: (len(v), float(np.median(v)) if v else None) for c, v in ign_box.items()})
 
     for name, kw, ext_w in (('centre targets', dict(), tcfg.GT_EXTRA_WIDTH),
                             ('vote targets (extend_gt)', dict(use_ex_gt_assign=True, fg_pc_ignore=False),
@@ -120,13 +154,16 @@ def main():
                 band = roiaware_pool3d_utils.points_in_boxes_cpu(pts[m, 1:4], ext[k][valid][:, :7]) > 0
                 r[band.any(0) & ~tight.any(0)] = -1
             cover = inside if kw else tight
+            ref_lab = gt[k][valid][:, 7].long()
+            if a.target_ps_label:   # an ignore-band box (negative label) is an ignore region: the head gives -1
+                ref_lab = torch.where(ref_lab < 0, torch.full_like(ref_lab, -1), ref_lab)
             for t in reversed(range(boxes.shape[0])):   # the FIRST containing box wins, as in the CPU stand-in
-                r[cover[t]] = int(gt[k][valid][t, 7])
+                r[cover[t]] = int(ref_lab[t])
             if kw:  # extended path: a point inside a TIGHT box keeps that box ("instance points should keep unchanged")
                 in_tight = tight.any(0)
                 rt = torch.zeros_like(r)
                 for t in reversed(range(boxes.shape[0])):
-                    rt[tight[t]] = int(gt[k][valid][t, 7])
+                    rt[tight[t]] = int(ref_lab[t])
                 r[in_tight] = rt[in_tight]
             ref[m] = r
             multi += int((cover.sum(0) > 1).sum())
@@ -136,6 +173,19 @@ def main():
             print('  %-11s %8d %14d %14d' % (cname, int((cls == c).sum()), int((ref == c).sum()), int((lab == c).sum())))
         print('  ignored (-1): %d | background: %d | labels agree point for point: %s (points inside 2+ boxes: %d)'
               % (int((lab == -1).sum()), int((lab == 0).sum()), bool(torch.equal(lab, ref)), multi))
+        if a.target_ps_label:   # points inside an ignore-band box (tight box), and what the head made of them
+            for c, cname in enumerate(cfg.CLASS_NAMES, start=1):
+                in_ign = torch.zeros(len(pts), dtype=torch.bool)
+                for k in range(B):
+                    m = torch.where(pts[:, 0] == k)[0]
+                    valid = gt[k, :, 3:6].abs().sum(1) > 0
+                    sel = gt[k][valid][:, 7] == -c
+                    if sel.any():
+                        hit = roiaware_pool3d_utils.points_in_boxes_cpu(pts[m, 1:4], gt[k][valid][sel][:, :7]) > 0
+                        in_ign[m[hit.any(0)]] = True
+                print('  %-11s ignore-band points %6d -> labelled -1: %d, positive: %d, background: %d'
+                      % (cname, int(in_ign.sum()), int((lab[in_ign] == -1).sum()), int((lab[in_ign] > 0).sum()),
+                         int((lab[in_ign] == 0).sum())))
         pos = lab > 0
         print('  gt_box_of_fg_points rows %d = positives %d: %s | box targets only on positives: %s'
               % (out['gt_box_of_fg_points'].shape[0], int(pos.sum()), out['gt_box_of_fg_points'].shape[0] == int(pos.sum()),

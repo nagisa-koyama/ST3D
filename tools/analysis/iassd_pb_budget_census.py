@@ -28,6 +28,14 @@ the cost fallback, applies P99 to that step's output). Derived (exact expectatio
 
     python analysis/iassd_pb_budget_census.py --cfg_file <cfg> --block <DATA_CONFIG | DATA_CONFIGS key | DATA_CONFIG_TAR>
         [--split train|val] [--frames 1000] [--workers 8] [--out <json>]
+
+Opt-in, absent by default (experiments_md 20261025_01, the PL-IA row; T05 §5 PL-IA design): `--target_training --ps_label
+<pkl> --prog_aug epoch0|last` measures a SELF-TRAINING target block (`DATA_CONFIG_TAR` with USE_PSEUDO_LABEL) in its
+TRAINING view, as train.py / train_model_st build it: training mode, augmentation on, the pseudo-labels of <pkl> installed
+(self_training_utils.PSEUDO_LABELS + dataset.set_pseudo_labels, as train_model_st does), on the target's TRAIN split. The
+augmentor is at PROG_AUG epoch 0 (`epoch0`) or at its last intensity (`last`: re_prepare(intensity=SCALE) called once
+per UPDATE_AUG entry, the calls train_model_st has made by its last epoch; re_prepare compounds). Labels never set a
+value: they change which object points survive the zero-point filter and ROS (the cloud entering the budget).
 """
 import argparse
 import json
@@ -189,9 +197,65 @@ def _work(args):
     return out
 
 
-def build_block(cfg, block, split, logger, calib_frames=None):
+def augmentor_state(ds):
+    """The intensity-scaled augmentor parameters, as a compact string (what PROG_AUG changes)."""
+    keys = ('SCALE_UNIFORM_NOISE', 'ROT_UNIFORM_NOISE', 'WORLD_ROT_ANGLE', 'WORLD_SCALE_RANGE')
+    out = []
+    for c in ds.data_augmentor.augmentor_configs.AUG_CONFIG_LIST:
+        if c.NAME in ds.data_augmentor.augmentor_configs.DISABLE_AUG_LIST:
+            continue
+        for k in keys:
+            if k in c:
+                v = c[k]
+                v = {n: [round(float(x), 4) for x in iv] for n, iv in v.items()} if isinstance(v, dict) else \
+                    [round(float(x), 4) for x in v]
+                out.append('%s.%s=%s' % (c.NAME, k, v))
+    return '; '.join(out)
+
+
+def build_target_training_block(cfg, logger, ps_label, prog_aug):
+    """`--target_training`: the self-training target block in its training view (train.py / train_model_st)."""
+    import pickle
+    from pcdet.datasets import build_dataloader
+    from pcdet.utils import self_training_utils
+    blk = cfg.DATA_CONFIG_TAR
+    if not blk.get('USE_PSEUDO_LABEL', False):
+        raise ValueError('--target_training needs DATA_CONFIG_TAR.USE_PSEUDO_LABEL (a self-training target block)')
+    ds, _, _ = build_dataloader(dataset_cfg=blk, class_names=cfg.CLASS_NAMES, batch_size=1, dist=False, workers=0,
+                                logger=logger, training=True, model_ontology=cfg.get('ONTOLOGY', None))
+    labels = pickle.load(open(ps_label, 'rb'))
+    self_training_utils.PSEUDO_LABELS.clear()
+    self_training_utils.PSEUDO_LABELS.update(labels)
+    ds.set_pseudo_labels(self_training_utils.PSEUDO_LABELS)
+    pa = cfg.SELF_TRAIN.get('PROG_AUG', None)
+    n_updates = 0
+    if prog_aug == 'last':
+        if not (pa and pa.ENABLED):
+            raise ValueError('--prog_aug last: the config has no enabled SELF_TRAIN.PROG_AUG')
+        n_updates = len(pa.UPDATE_AUG)
+        for _ in range(n_updates):     # train_model_st's calls at each UPDATE_AUG epoch (re_prepare compounds)
+            ds.data_augmentor.re_prepare(augmentor_configs=None, intensity=pa.SCALE)
+    elif prog_aug != 'epoch0':
+        raise ValueError('--prog_aug must be epoch0 or last')
+    allb = [np.asarray(v['gt_boxes']).reshape(-1, 9) for v in labels.values()]
+    lab = np.concatenate(allb)[:, 7] if allb else np.zeros(0)
+    how = ('SELF-TRAINING target, training mode, augmentation on (train.py / train_model_st), train split; pseudo-labels '
+           '%s installed (%d frames; per frame %s); PROG_AUG %s (%d re_prepare calls x %s): %s' % (
+               ps_label, len(labels),
+               {int(c): round(float((lab == c).sum()) / max(len(labels), 1), 3) for c in np.unique(lab)},
+               prog_aug, n_updates, pa.SCALE if pa else None, augmentor_state(ds)))
+    return ds, blk, how
+
+
+def build_block(cfg, block, split, logger, calib_frames=None, target_training=False, ps_label=None, prog_aug=None):
     from pcdet.datasets import build_dataloader
     from pcdet.datasets.point_calibration import calibration_target_config, link_point_calibration
+    if target_training:
+        if block != 'DATA_CONFIG_TAR' or split != 'train' or not ps_label or prog_aug is None:
+            raise ValueError('--target_training: --block DATA_CONFIG_TAR, --split train, --ps_label and --prog_aug')
+        return build_target_training_block(cfg, logger, ps_label, prog_aug)
+    if ps_label or prog_aug:
+        raise ValueError('--ps_label / --prog_aug only with --target_training')
     if block == 'DATA_CONFIG_TAR':
         blk = cfg.DATA_CONFIG_TAR
         if split == 'train':
@@ -232,6 +296,12 @@ def main():
     ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--calib_frames', type=int, default=None, help='default: the block HIST_DIST_FRAMES (train.py)')
     ap.add_argument('--out', default=None)
+    ap.add_argument('--target_training', action='store_true',
+                    help='opt-in (PL-IA): measure DATA_CONFIG_TAR in its self-training TRAINING view; needs --ps_label '
+                         'and --prog_aug')
+    ap.add_argument('--ps_label', default=None, help='with --target_training: the pseudo-label pkl to install')
+    ap.add_argument('--prog_aug', default=None, choices=['epoch0', 'last'],
+                    help='with --target_training: the PROG_AUG state (epoch 0, or after every UPDATE_AUG re_prepare)')
     a = ap.parse_args()
     os.chdir(TOOLS)
     sys.path.insert(0, TOOLS)
@@ -243,7 +313,7 @@ def main():
     cfg = cfg_from_yaml_file(a.cfg_file, EasyDict())
     t0 = time.time()
     np.random.seed(a.seed)
-    ds, blk, how = build_block(cfg, a.block, a.split, logger, a.calib_frames)
+    ds, blk, how = build_block(cfg, a.block, a.split, logger, a.calib_frames, a.target_training, a.ps_label, a.prog_aug)
     rec, step_name, old_np, before = _hook(ds)
     idx = strided_indices(len(ds), a.frames)
     _STATE.update(ds=ds, rec=rec, pcr=np.asarray(blk.POINT_CLOUD_RANGE, dtype=np.float64))
@@ -259,6 +329,7 @@ def main():
     res = dict(cfg_file=a.cfg_file, block=a.block, split=a.split, built=how, dataset=type(ds).__name__,
                dataset_len=len(ds), budget_step=step_name, steps_before_budget=before, parent_num_points=old_np,
                pb_value=(a.split == 'train'), seconds=round(time.time() - t0, 1), summary=summ,
+               **(dict(target_training=True, ps_label=a.ps_label, prog_aug=a.prog_aug) if a.target_training else {}),
                frames=[dict(idx=r['idx'], n_in=r['n_in'], u_in=sum(r['mult'].values()), vox=r['vox'], sec=r['sec'])
                        for r in rows])
     s = summ

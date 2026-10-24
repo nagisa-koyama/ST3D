@@ -1,0 +1,182 @@
+# S2 IA-SSD pseudo-labelling row PL-IA (experiments_md 20261025_01; design FIXED 10-25 00:42 JST in experiments_md
+# 20261003_05 §5 "S2 IA-SSD pseudo-labelling (PL-IA)", commit d8dd0d8, before any number of the row). The IA-SSD replication
+# of the S2 pseudo-labelling step (CenterPoint 27566 / 28283, centerpoint-accum-legaldepth-st3d-nuscenes2kitti.yaml).
+#
+# Base: the PB A1 crop twin (iassd-sourceonly-recount-pb-nuscenes2kitti-fovtar.yaml): PB A1's MODEL, source block (nuScenes
+# single sweep, budget 28,672 + recount) and OPTIMIZATION (adam_onecycle, LR 0.01, 20 epochs), the KITTI target cut to the
+# camera FOV. Resolved, this file differs from that base ONLY in:
+#   - DATA_CONFIG_TAR.USE_PSEUDO_LABEL: True (the target is trained on, on pseudo-labels only);
+#   - DATA_CONFIG_TAR.DATA_PROCESSOR: the budget's TRAIN key (rule PB on the target's training view, below) and
+#     drop_empty_gt_boxes (MIN_POINTS 1) right after the budget; the eval key stays the crop twin's 20,480;
+#   - SELF_TRAIN: 27566's block unchanged (EPOCH_FOLLOWS source, frozen teacher, one pass at epoch 0, memory ensemble
+#     inert, PROG_AUG 1.1 at 5 / 10 / 15, loss weights 1, backward together), except MODEL_TEACHER = this MODEL (plus the
+#     CLASS_NAMES / ONTOLOGY keys 27566's teacher block carries) and the two cut lines, re-derived for THIS teacher.
+#
+# Teacher and init (both --pretrained_model and --pretrained_model_teacher): PB A1 30422 (W&B qmjuvxoe), epoch 20,
+# /home/koyama/data/wandb/run-20261024_185550-qmjuvxoe/files/ckpt/checkpoint_epoch_20.pth (frozen ST3D ad2407e).
+# Source-only, mean_size from nuScenes TRAIN; never saw a KITTI label.
+#
+# LEGALITY (memory/repo/uda_legality_rule.md): no KITTI label sets anything here. Cuts: rule B (decision B) = the teacher's
+# precision on the labelled SOURCE val (nuScenes, single sweep, PB N's eval block 28,672); rule A (decision A) = the
+# background plateau of the teacher's scores on unlabelled KITTI TRAIN through this file's own crop block; rule A step 6
+# (a SCORE_THRESH below its NEG_THRESH is raised to it). Target train budget: point counts of unlabelled KITTI TRAIN clouds
+# with the cut pseudo-labels installed. IA-SSD recipe as published (decision F), SOURCE mean_size, family augmentation
+# (ROS Car [0.85, 1.20], legal 2026-10-05), PROG_AUG on (decision F).
+#
+# Launch (do not hand-roll): ST3D/tools/logs/pl_ia_20261025/launch_pl_ia.sh (1 GPU, global batch 6, seed 666; two chained
+# crop scorings of epoch 20 with iassd-sourceonly-recount-pb-nuscenes2kitti-fovtar.yaml).
+_BASE_CONFIG_: cfgs/da-ieee-access-pointrcnn/iassd-sourceonly-recount-pb-nuscenes2kitti-fovtar.yaml
+
+DATA_CONFIG_TAR:
+    USE_PSEUDO_LABEL: True
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+        - NAME: sample_points
+          # train: rule PB on the target's TRAINING view (1,000 strided KITTI TRAIN frames, training mode, augmentation,
+          #        the cut pseudo-labels installed), at PROG_AUG epoch 0 AND at its last intensity; the larger P99 ->
+          #        the smallest multiple of 4,096 >= it. PENDING the census (experiments_md 20261025_01 §5): 20480 is a
+          #        PROVISIONAL value, replaced before this row can train (the cut lines below refuse to train until then).
+          # test:  the crop twin's eval budget (rule PB, 20261024_05 §2), also the teacher's labelling pass.
+          NUM_POINTS: {
+            'train': 20480,
+            'test': 20480
+          }
+        - NAME: drop_empty_gt_boxes
+          MIN_POINTS: 1     # = MIN_POINTS_OF_GT; positives only, ignore-band boxes (label < 0) are kept
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+
+SELF_TRAIN:
+    # One pass over the SOURCE per epoch (as 27566 / every family source-only arm); the target is cycled.
+    EPOCH_FOLLOWS: source
+    # PENDING the cut job (experiments_md 20261025_01 §4). Placeholders that cannot train: the first labelling pass
+    # indexes them per class and raises. generate_pseudo_labels.py overrides both lines with its score floor.
+    SCORE_THRESH: PENDING_RULE_B_AND_STEP_6
+    NEG_THRESH: PENDING_RULE_A
+    UPDATE_PSEUDO_LABEL: [0]
+    UPDATE_PSEUDO_LABEL_INTERVAL: 2
+
+    # The teacher is a separate frozen model (--pretrained_model_teacher), never written to: one labelling pass at epoch 0.
+    FROZEN_TEACHER_SINGLE_PASS: True
+
+    INIT_PS: None
+
+    SRC:
+        USE_DATA: True
+        USE_GRAD: True
+        LOSS_WEIGHT: 1.0
+        BACKWARD_TOGETHER: True
+
+    TAR:
+        USE_DATA: True
+        LOSS_WEIGHT: 1.0
+        BACKWARD_TOGETHER: True
+
+    PROG_AUG:
+        ENABLED: True
+        UPDATE_AUG: [5, 10, 15]
+        SCALE: 1.1
+
+    MEMORY_ENSEMBLE:
+        ENABLED: True
+        NAME: nms_ensemble
+        IOU_THRESH: 0.1
+        NMS_CONFIG:
+            NMS_TYPE: nms_gpu
+            MULTI_CLASSES_NMS: False
+            NMS_PRE_MAXSIZE: 512
+            NMS_POST_MAXSIZE: 100
+            NMS_THRESH: 0.1
+        MEMORY_VOTING:
+            ENABLED: True
+            IGNORE_THRESH: 2
+            RM_THRESH: 3
+
+    # = MODEL (PB A1's IA-SSD, text for text) plus the two bookkeeping keys 27566's teacher block carries. Its
+    # POST_PROCESSING SCORE_THRESH 0.0001 is the generation floor; tests/test_pl_ia_config.py pins MODEL_TEACHER == MODEL.
+    MODEL_TEACHER:
+        CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
+        ONTOLOGY: 'kitti'
+        NAME: IASSD
+
+        BACKBONE_3D:
+            NAME: IASSD_Backbone
+            SA_CONFIG:
+                NPOINT_LIST: [[4096], [1024], [512], [256], [-1], [256]]
+                SAMPLE_RANGE_LIST: [[-1], [-1], [-1], [-1], [-1], [-1]]
+                SAMPLE_METHOD_LIST: &sample_method_list [['D-FPS'], ['D-FPS'], ['ctr_aware'], ['ctr_aware'], [], []]
+                RADIUS_LIST: [[0.2,0.8], [0.8,1.6], [1.6,4.8], [], [], [4.8, 6.4]]
+                NSAMPLE_LIST: [[16,32], [16,32], [16,32], [], [], [16, 32]]
+                MLPS: [[[16,16,32],  [32,32,64]],
+                       [[64,64,128],  [64,96,128]],
+                       [[128,128,256],  [128,256,256]],
+                       [],
+                       [128],
+                       [[256,256,512], [256,512,1024]]]
+                LAYER_TYPE: ['SA_Layer', 'SA_Layer', 'SA_Layer', 'SA_Layer', 'Vote_Layer', 'SA_Layer']
+                DILATED_GROUP: [False, False, False, False, False, False]
+                AGGREGATION_MLPS: [[64], [128], [256], [256], [], [512]]
+                CONFIDENCE_MLPS: [[], [128], [256], [], [], []]
+                LAYER_INPUT: [0, 1, 2, 3, 4, 3]
+                CTR_INDEX: [-1, -1, -1, -1, -1, 5]
+                MAX_TRANSLATE_RANGE: [3.0, 3.0, 2.0]
+
+        POINT_HEAD:
+            NAME: IASSD_Head
+            CLS_FC: [256, 256]
+            REG_FC: [256, 256]
+            CLASS_AGNOSTIC: False
+            USE_POINT_FEATURES_BEFORE_FUSION: False
+            TARGET_CONFIG:
+                INS_AWARE_ASSIGN: True
+                GT_EXTRA_WIDTH: [0.2, 0.2, 0.2]
+                ASSIGN_METHOD:
+                    NAME: 'extend_gt'
+                    ASSIGN_TYPE: 'centers_origin'
+                    EXTRA_WIDTH: [1.0, 1.0, 1.0]
+                    FG_PC_IGNORE: False
+                BOX_CODER: PointResidual_BinOri_Coder
+                BOX_CODER_CONFIG: {
+                    'angle_bin_num': 12,
+                    'use_mean_size': True,
+                    'mean_size': [
+                        [4.63, 1.96, 1.74],
+                        [0.73, 0.67, 1.77],
+                        [1.70, 0.61, 1.30]
+                    ]
+                }
+            LOSS_CONFIG:
+                LOSS_CLS: WeightedCrossEntropy
+                LOSS_REG: WeightedSmoothL1Loss
+                LOSS_INS: WeightedCrossEntropy
+                SAMPLE_METHOD_LIST: *sample_method_list
+                LOSS_VOTE_TYPE: 'none'
+                CORNER_LOSS_REGULARIZATION: True
+                CENTERNESS_REGULARIZATION: True
+                CENTERNESS_REGULARIZATION_SA: True
+                LOSS_WEIGHTS: {
+                    'ins_aware_weight': [0, 1.0, 1.0],
+                    'vote_weight': 1.0,
+                    'point_cls_weight': 1.0,
+                    'point_box_weight': 1.0,
+                    'corner_weight': 1.0,
+                    'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+                    'dir_weight': 0.2
+                }
+
+        POST_PROCESSING:
+            RECALL_MODE: 'normal'
+            RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+            SCORE_THRESH: 0.0001
+            OUTPUT_RAW_SCORE: False
+            EVAL_METRIC: kitti
+            NMS_CONFIG:
+                MULTI_CLASSES_NMS: False
+                NMS_TYPE: nms_gpu
+                NMS_THRESH: 0.01
+                NMS_PRE_MAXSIZE: 4096
+                NMS_POST_MAXSIZE: 500

@@ -263,6 +263,14 @@ class IASSD_Head(PointHeadTemplate):
         gt_boxes = input_dict['gt_boxes']
         if gt_boxes.shape[-1] == 10:   #nscence
             gt_boxes = torch.cat((gt_boxes[..., 0:7], gt_boxes[..., -1:]), dim=-1)
+        if gt_boxes.dim() == 3 and gt_boxes.shape[1] == 0:
+            # ST3D zero-row guard (experiments_md 20261025_01; T05 §5 PL-IA design, accepted unconditional, precedent
+            # bb88c1f): a batch in which NO frame holds a box row (the collate pads gt_boxes to the batch maximum, so
+            # (B, 0, 8)). Every index into gt_boxes[k] below then hits an empty dimension and raises (IndexError on CPU,
+            # a device-side assert on CUDA; tests/test_pl_ia_config.py). Reachable once pseudo-labels with their cuts
+            # and the recount can leave a whole target batch without a box. Nothing is assigned; get_loss returns a
+            # graph-connected zero for this batch only. A batch with at least one row (padding or real) is unchanged.
+            return {'zero_gt_rows': True}
 
         targets_dict_center = {}
         # assert gt_boxes.shape.__len__() == 3, 'gt_boxes.shape=%s' % str(gt_boxes.shape)
@@ -412,6 +420,8 @@ class IASSD_Head(PointHeadTemplate):
 
     def get_loss(self, tb_dict=None):
         tb_dict = {} if tb_dict is None else tb_dict
+        if self.forward_ret_dict.get('zero_gt_rows', False):
+            return self._zero_gt_rows_loss(tb_dict)
 
         # vote loss
         if self.model_cfg.TARGET_CONFIG.get('ASSIGN_METHOD') is not None and \
@@ -459,6 +469,18 @@ class IASSD_Head(PointHeadTemplate):
         point_loss = center_loss_reg + center_loss_cls + center_loss_box + corner_loss + sa_loss_cls + iou3d_loss
         return point_loss, tb_dict
 
+
+    def _zero_gt_rows_loss(self, tb_dict):
+        """The zero-row guard's loss (see assign_targets): 0 times every prediction the losses read, so the batch adds
+        nothing and every parameter still sits in the graph (DDP reduces each one). Logged as zero_gt_rows_batch."""
+        d = self.forward_ret_dict
+        parts = [d['center_cls_preds'], d['center_box_preds'], d['ctr_offsets']]
+        parts += [p for p in d.get('sa_ins_preds', []) if torch.is_tensor(p) and p.numel() > 0]
+        if d.get('box_iou3d_preds', None) is not None:
+            parts.append(d['box_iou3d_preds'])
+        loss = sum(p.sum() for p in parts) * 0.0
+        tb_dict.update({'zero_gt_rows_batch': 1.0})
+        return loss, tb_dict
 
     def get_contextual_vote_loss(self, tb_dict=None):
         pos_mask = self.forward_ret_dict['center_origin_cls_labels'] > 0
