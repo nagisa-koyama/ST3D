@@ -96,9 +96,11 @@ def _tail(cfg_file, block, meta):
     blk = _block_cfg(cfg, block)
     procs = blk.DATA_PROCESSOR
     at = budget_index(procs, meta['mode'])
+    if at > 0 and procs[at]['NAME'] == 'sample_points_by_voxels' and procs[at - 1]['NAME'] == 'shuffle_points':
+        at -= 1   # the authors' voxel step is shuffle + voxels (rule PB fallback): the capture sits before both
     proc = DataProcessor(procs, point_cloud_range=np.asarray(blk.POINT_CLOUD_RANGE, dtype=np.float32),
                          training=meta['training'], num_point_features=meta['num_point_features'])
-    budget = procs[at]['NUM_POINTS'][meta['mode']]
+    budget = procs[budget_index(procs, meta['mode'])]['NUM_POINTS'][meta['mode']]
     return proc.data_processor_queue[at:], [p['NAME'] for p in procs[at:]], budget, cfg
 
 
@@ -159,7 +161,7 @@ def time_arms(a):
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
         nb = max(1, len(dicts) // a.batch_size)
-        times, losses, pts = [], [], []
+        times, losses, pts, cpu = [], [], [], []
         t_arm = None
         for step in range(a.warmup + a.iters):
             if step == a.warmup:
@@ -172,8 +174,10 @@ def time_arms(a):
             samples = []
             for d in dicts[b * a.batch_size:(b + 1) * a.batch_size]:
                 d = copy.deepcopy(d)
+                c0 = time.perf_counter()
                 for f in tail:
                     d = f(data_dict=d)
+                cpu.append(time.perf_counter() - c0)   # the tail's loader-side CPU cost per frame (budget step on)
                 d.pop('num_points_in_gt', None)   # what WaymoDataset.__getitem__ drops after prepare_data
                 samples.append(d)
             batch = DatasetTemplate.collate_batch(samples)
@@ -202,17 +206,17 @@ def time_arms(a):
         res = dict(arm=os.path.basename(cfg_file), block=block, tail=names, budget=budget, n=len(t), s_med=float(np.median(t)),
                    s_mean=float(t.mean()), peak_gb=torch.cuda.max_memory_allocated() / 2 ** 30,
                    loss=float(np.mean(losses)) if losses else float('nan'), finite=bool(np.isfinite(losses).all()) if
-                   losses else True, pts=float(np.mean(pts)))
+                   losses else True, pts=float(np.mean(pts)), cpu=float(np.median(cpu)))
         results.append(res)
         del model, optimizer
         torch.cuda.empty_cache()
     base = results[0]
     for r in results:
         print('RESULT %s arm=%s block=%s budget=%s tail=%s s_per_it_median=%.4f s_per_it_mean=%.4f ratio_median=%.2f '
-              'ratio_mean=%.2f timed_steps=%d peak_gb=%.2f loss=%.3f finite=%s pts_per_frame=%.0f' % (
+              'ratio_mean=%.2f timed_steps=%d peak_gb=%.2f loss=%.3f finite=%s pts_per_frame=%.0f tail_cpu_s_per_frame=%.4f' % (
                   'eval' if a.eval else 'train', r['arm'], r['block'], r['budget'], '>'.join(r['tail']), r['s_med'],
                   r['s_mean'], r['s_med'] / base['s_med'], r['s_mean'] / base['s_mean'], r['n'], r['peak_gb'], r['loss'],
-                  r['finite'], r['pts']))
+                  r['finite'], r['pts'], r['cpu']))
 
 
 def main():

@@ -57,14 +57,21 @@ PINNED = {
                                             {'DATA_CONFIG': 16384, 'DATA_CONFIG_TAR': 28672}, []),
     'iassd-global-toponly-recount-pb-waymo2nuscenes': ('iassd-global-toponly-recount-waymo2nuscenes',
                                                        {'DATA_CONFIG': 57344, 'DATA_CONFIG_TAR': 28672}, []),
+    # cost fallback on the two source blocks (timing smoke 30399: 5.75x / 4.26x at the plain P99 budgets 413,696 /
+    # 286,720): the authors' voxel step, cap lifted to 150,000, budget = P99 of its output (coordinator 17:05)
     'iassd-accum-legaldepth-recount-pb-nuscenes2kitti': ('iassd-accum-legaldepth-recount-nuscenes2kitti',
-                                                         {'NUSCENES_N008': 413696, 'NUSCENES_N015': 286720,
+                                                         {'NUSCENES_N008': 126976, 'NUSCENES_N015': 106496,
                                                           'DATA_CONFIG_TAR': 131072}, []),
     'iassd-accum-legaldepth-recount-pb-nuscenes2kitti-fovtar': ('iassd-accum-legaldepth-recount-nuscenes2kitti-fovtar',
-                                                                {'NUSCENES_N008': 413696, 'NUSCENES_N015': 286720,
+                                                                {'NUSCENES_N008': 126976, 'NUSCENES_N015': 106496,
                                                                  'DATA_CONFIG_TAR': 20480}, []),
 }
 LAUNCHED_NEVER = ['iassd-sourceonly-pb-kitti2kitti-fovcrop-noros-zshift']   # K budget-only candidate (coordinator 16:06)
+VOXEL_FALLBACK = {(pb, blk) for pb in ('iassd-accum-legaldepth-recount-pb-nuscenes2kitti',
+                                       'iassd-accum-legaldepth-recount-pb-nuscenes2kitti-fovtar')
+                  for blk in ('NUSCENES_N008', 'NUSCENES_N015')}
+AUTHORS_VOXEL = {'SAMPLE_TYPE': 'raw', 'VOXEL_SIZE': [0.1, 0.1, 0.15], 'MAX_POINTS_PER_VOXEL': 5,
+                 'MAX_NUMBER_OF_VOXELS': {'train': 150000, 'test': 150000}}
 
 
 def load(rel):
@@ -118,6 +125,17 @@ def test_pb_config_differs_from_its_parent_only_in_the_budget_and_the_declared_r
         if blk in recount:
             assert 'drop_empty_gt_boxes' not in [p['NAME'] for p in pp]
             pa = [p for p in pa if p['NAME'] != 'drop_empty_gt_boxes']
+        if (pb, blk) in VOXEL_FALLBACK:   # the authors' step replaces the plain budget: shuffle, then voxels -> budget
+            assert names == ['mask_points_and_boxes_outside_range', 'shuffle_points', 'sample_points_by_voxels',
+                             'drop_empty_gt_boxes', 'shuffle_points'], names
+            assert pa[1]['SHUFFLE_ENABLED'] == {'train': True, 'test': False}
+            v = dict(pa[2])
+            assert {k: v[k] for k in AUTHORS_VOXEL} == AUTHORS_VOXEL
+            assert [p['NAME'] for p in pp] == ['mask_points_and_boxes_outside_range', 'sample_points',
+                                               'drop_empty_gt_boxes', 'shuffle_points']
+            pa = [pa[0], dict(NAME='sample_points', NUM_POINTS=v['NUM_POINTS'])] + pa[3:]
+        else:
+            assert 'sample_points_by_voxels' not in names
         budget_entry(pa)['NUM_POINTS'] = budget_entry(pp)['NUM_POINTS']
         node(a, blk)['DATA_PROCESSOR'] = pa
     assert a == b
@@ -213,7 +231,12 @@ def test_frame_under_the_pb_budget_is_padded_with_every_real_point_and_box_kept(
     np.random.seed(0)
     out = _chain(load(C + pb + '.yaml'), blk, training=True).forward({'points': pts.copy(), 'gt_boxes': boxes.copy()})
     assert len(out['points']) == budget
-    assert len(np.unique(out['points'], axis=0)) == len(np.unique(pts, axis=0))
+    if (pb, blk) in VOXEL_FALLBACK:   # one point per occupied voxel, then padded: distinct out = occupied voxels
+        from analysis.iassd_pb_budget_census import occupied_voxels
+        n_vox = occupied_voxels(pts, [-75.2, -75.2, -2, 75.2, 75.2, 4])
+        assert abs(len(np.unique(out['points'], axis=0)) - n_vox) <= 1e-3 * n_vox   # float32 / float64 binning
+    else:
+        assert len(np.unique(out['points'], axis=0)) == len(np.unique(pts, axis=0))
     assert out['gt_boxes'].shape == boxes.shape
 
 
@@ -264,3 +287,21 @@ def test_recounted_ignore_boxes_never_become_iassd_positives(pb, blk, budget, mo
     assert (lab > 0).any(), 'the dense positive is assigned'
     assert res['gt_box_of_fg_points'].shape[0] == int((lab > 0).sum())
     assert (res['gt_box_of_fg_points'][:, 7] > 0).all()
+
+
+def test_the_census_voxel_count_is_the_voxel_steps_output():
+    """The fallback budget is the P99 of the census' occupied-voxel count: it must equal what sample_points_by_voxels
+    keeps (one point per occupied voxel, cap lifted) on a cloud with many shared voxels."""
+    from analysis.iassd_pb_budget_census import occupied_voxels
+    cfg = load(C + 'iassd-accum-legaldepth-recount-pb-nuscenes2kitti.yaml')
+    rng = np.random.RandomState(4)
+    base = np.c_[rng.uniform(-60, 60, 20000), rng.uniform(-60, 60, 20000), rng.uniform(-1.5, 3, 20000)]
+    pts = np.concatenate([base + rng.normal(0, 0.02, base.shape) for _ in range(6)]).astype(np.float32)  # accumulated
+    proc = _chain(cfg, 'NUSCENES_N008', training=True)
+    np.random.seed(0)
+    out = proc.forward({'points': pts.copy(), 'gt_boxes': np.zeros((0, 8), np.float32)})
+    n_vox = occupied_voxels(pts, cfg.DATA_CONFIGS.NUSCENES_N008.POINT_CLOUD_RANGE)
+    assert n_vox < len(pts)
+    # spconv bins in float32, the census in float64: a point on a voxel face can land on either side. Measured 3 of
+    # 47,872 here (6e-5); a budget is a multiple of 4,096 above the P99, so this cannot move one.
+    assert abs(len(np.unique(out['points'], axis=0)) - n_vox) <= 1e-3 * n_vox
