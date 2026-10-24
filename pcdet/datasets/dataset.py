@@ -460,6 +460,14 @@ class DatasetTemplate(torch_data.Dataset):
         """
         # print("data_dict[gt_names] in the beginning of prepare_data", data_dict['gt_names'])
 
+        # EVAL_OSENS2 (ANALYSIS, evaluation only; absent = unchanged): one perturbation of the evaluation cloud's points
+        # (pitch, background / foreground thinning, ground removal) for the target-oracle sensitivity analysis OSENS-2
+        # (experiments_md 20261025_03; osens2_utils.py). Here, before the class filter, every box the loader keeps is
+        # seen; GT boxes are never moved.
+        if not self.training and self.dataset_cfg.get('EVAL_OSENS2', None) is not None:
+            from .osens2_utils import apply_in_prepare_data
+            data_dict = apply_in_prepare_data(data_dict, self.dataset_cfg.EVAL_OSENS2)
+
         # ontology remapping
         # Pseudo-labelled names are ALREADY in the model vocabulary and must not be mapped again.
         # `fill_pseudo_labels` builds gt_names from `self.class_names` ('Car', 'Pedestrian',

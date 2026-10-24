@@ -1,0 +1,106 @@
+"""Eval-only twins of the three CenterPoint target oracles for OSENS-2 (experiments_md 20261025_03; design FIXED in
+20261003_05 §5 at 2026-10-25 01:34 JST, experiments_md f0bd7d0). ANALYSIS: target labels at evaluation only.
+
+Each twin is `_BASE_CONFIG_: <oracle config>` plus a change in DATA_CONFIG_TAR only, applied at evaluation to the scan
+as read (the oracles and checkpoints of the degradation table, 20261010_01 §3 / 20261011_02):
+
+  A. mounting, frame part
+     - height `dz{m|p}NNN`: SHIFT_COOR z + dz, dz in {-0.45, -0.30, -0.10, +0.10, +0.30, +0.45} m. Points and GT move
+       together and predictions are un-shifted by SHIFT_COOR as usual, so only the model's frame moves.
+     - pitch `pitch{m|p}N`: EVAL_OSENS2.PITCH_DEG in {-2, -1, +1, +2} deg, points rotated about the sensor's lateral
+       axis through its origin in the loader frame (SHIFT_COOR + the sensor's raw-frame position); positive = the
+       ground rises ahead (20261004_02's sign). GT and predictions stay in the original frame.
+  B. processing
+     - nuScenes `keepego`: EVAL_KEEP_EGO_POINTS (remove_ego_points off at evaluation).
+     - Waymo second return dropped: NOT APPLICABLE, the stored clouds hold the first return only (no twin).
+  C. world, background (GT boxes enlarged by 0.25 m, pcdet's enlarge_box3d convention, every box the loader keeps)
+     - `bgkeep050`, `bgkeep025`: points outside every box thinned to 1/2, 1/4; in-box points kept;
+     - `fgkeep050`, `fgkeep025`: in-box points thinned to 1/2, 1/4; the rest kept;
+     - `groundrm020`: outside the boxes, points within 0.2 m of the frame's ground plane (fitted on the outside points)
+       removed.
+
+`--check` resolves every twin and passes only if nothing outside DATA_CONFIG_TAR differs from its oracle and the target
+block differs in exactly the keys the arm sets.
+
+    python analysis/make_osens2_configs.py [--check]
+"""
+import sys
+from pathlib import Path
+
+import yaml
+
+sys.path.insert(0, '.')
+from analysis.make_sensitivity_configs import resolved  # noqa: E402  (imports _init_path)
+
+OUT = Path('cfgs/da-ieee-access-analysis/osens2')
+BOX_MARGIN = 0.25
+DZ = (-0.45, -0.30, -0.10, 0.10, 0.30, 0.45)
+PITCH = (-2.0, -1.0, 1.0, 2.0)
+REGION = (('background', 0.5), ('background', 0.25), ('foreground', 0.5), ('foreground', 0.25))
+GROUND_DIST = 0.2
+# oracle -> (config name, dataset, sensor position in the loader's RAW frame, vehicle forward axis in that frame)
+ORACLES = {
+    'waymo': ('centerpoint-sourceonly-waymo2waymo', 'WaymoDataset', (1.43, 0.0, 2.184), 'x'),     # TOP extrinsic, all 1,000 segments
+    'nuscenes': ('centerpoint-sourceonly-nuscenes', 'NuScenesDataset', (0.0, 0.0, 0.0), 'y'),     # LIDAR_TOP frame, x right / y forward
+    'kitti': ('centerpoint-sourceonly-kitti2kitti-noros-zshift', 'KittiDataset', (0.0, 0.0, 0.0), 'x'),  # velodyne frame
+}
+
+
+def _num(v):
+    return ('m' if v < 0 else 'p') + ('%03d' % int(round(abs(v) * 100)))
+
+
+def arms(oracle):
+    """[(tag, DATA_CONFIG_TAR change)] for one oracle, given its resolved target block."""
+    name, dataset, sensor_raw, fwd = ORACLES[oracle]
+    tb = resolved(Path('cfgs/da-ieee-access') / f'{name}.yaml')['DATA_CONFIG_TAR']
+    assert tb['DATASET'] == dataset, tb['DATASET']
+    shift = [float(v) for v in tb['SHIFT_COOR']]
+    assert shift[0] == 0.0 and shift[1] == 0.0, shift
+    out = []
+    for dz in DZ:
+        out.append(('dz' + _num(dz), {'SHIFT_COOR': [0.0, 0.0, round(shift[2] + dz, 6)]}))
+    origin = [round(sensor_raw[k] + shift[k], 6) for k in range(3)]
+    for d in PITCH:
+        out.append(('pitch' + ('m' if d < 0 else 'p') + '%d' % abs(int(d)),
+                    {'EVAL_OSENS2': {'PITCH_DEG': d, 'SENSOR_ORIGIN': origin, 'FORWARD_AXIS': fwd}}))
+    if dataset == 'NuScenesDataset':
+        out.append(('keepego', {'EVAL_KEEP_EGO_POINTS': True}))
+    for side, keep in REGION:
+        out.append(({'background': 'bg', 'foreground': 'fg'}[side] + 'keep%03d' % int(round(keep * 100)),
+                    {'EVAL_OSENS2': {'REGION_THIN': {'SIDE': side, 'KEEP': keep}, 'BOX_MARGIN': BOX_MARGIN}}))
+    out.append(('groundrm%03d' % int(round(GROUND_DIST * 100)),
+                {'EVAL_OSENS2': {'GROUND_REMOVE_DIST': GROUND_DIST, 'BOX_MARGIN': BOX_MARGIN}}))
+    return out
+
+
+def twin_path(oracle, tag):
+    return OUT / f'{ORACLES[oracle][0]}-osens2-{tag}.yaml'
+
+
+def main(check=False):
+    OUT.mkdir(parents=True, exist_ok=True)
+    ok_all = True
+    for oracle, (name, _, _, _) in ORACLES.items():
+        base_path = Path('cfgs/da-ieee-access') / f'{name}.yaml'
+        rb = resolved(base_path)
+        for tag, tar in arms(oracle):
+            child = twin_path(oracle, tag)
+            if not check:
+                header = (f'# EVAL-ONLY twin of {base_path} for OSENS-2 (experiments_md 20261025_03; design 20261003_05 §5, '
+                          f'2026-10-25 01:34 JST): {tag}, target-side change only.\n'
+                          f'# Generated by analysis/make_osens2_configs.py. ANALYSIS (target labels at evaluation only).\n')
+                child.write_text(header + yaml.safe_dump({'_BASE_CONFIG_': str(base_path), 'DATA_CONFIG_TAR': tar},
+                                                         sort_keys=False, default_flow_style=None))
+            rc = resolved(child)
+            diffs = [k for k in set(rb) | set(rc) if k not in ('DATA_CONFIG_TAR', '_BASE_CONFIG_') and rb.get(k) != rc.get(k)]
+            tb, tc = rb['DATA_CONFIG_TAR'], rc['DATA_CONFIG_TAR']
+            changed = sorted(k for k in set(tb) | set(tc) if tb.get(k) != tc.get(k) and k != '_BASE_CONFIG_')
+            ok = not diffs and set(changed) == set(tar) and all(tc[k] == v for k, v in tar.items())
+            ok_all &= ok
+            print(f'{child.name}: {"OK" if ok else "DIFF " + str(diffs) + str(changed)}  changed={changed}')
+    sys.exit(0 if ok_all else 1)
+
+
+if __name__ == '__main__':
+    main(check='--check' in sys.argv)

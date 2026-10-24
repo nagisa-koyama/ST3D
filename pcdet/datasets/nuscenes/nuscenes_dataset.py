@@ -238,10 +238,18 @@ class NuScenesDataset(DatasetTemplate):
         mask = ~((np.abs(points[:, 0]) < center_radius) & (np.abs(points[:, 1]) < center_radius))
         return points[mask]
 
+    def _eval_keep_ego_points(self):
+        """EVAL_KEEP_EGO_POINTS (ANALYSIS, evaluation only; absent = False = unchanged): skip remove_ego_points on the
+        evaluation keyframe and its sweeps, so the ego vehicle's own returns (26% of the in-range keyframe points) stay
+        in the cloud. OSENS-2 arm B (experiments_md 20261025_03): the oracle, trained with the removal, scored without."""
+        return (not self.training) and bool(self.dataset_cfg.get('EVAL_KEEP_EGO_POINTS', False))
+
     def get_sweep(self, sweep_info):
         lidar_path = self.root_path / sweep_info['lidar_path']
         points_sweep = np.fromfile(str(lidar_path), dtype=np.float32, count=-1).reshape([-1, 5])[:, :4]
-        points_sweep = self.remove_ego_points(points_sweep).T
+        if not self._eval_keep_ego_points():
+            points_sweep = self.remove_ego_points(points_sweep)
+        points_sweep = points_sweep.T
         if sweep_info['transform_matrix'] is not None:
             num_points = points_sweep.shape[1]
             points_sweep[:3, :] = sweep_info['transform_matrix'].dot(
@@ -359,7 +367,8 @@ class NuScenesDataset(DatasetTemplate):
             rng = np.random.default_rng(zlib.crc32(str(info['lidar_path']).encode()))
             points = points[ring_thin_mask(points, points[:, 4], thin.MODE, stride=thin.get('STRIDE', 2), rng=rng)]
         points = points[:, :4]
-        points = self.remove_ego_points(points, center_radius=1.5)
+        if not self._eval_keep_ego_points():
+            points = self.remove_ego_points(points, center_radius=1.5)
         sweep_points_list = [points]
         sweep_times_list = [np.zeros((points.shape[0], 1))]
 
