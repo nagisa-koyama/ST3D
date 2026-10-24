@@ -1,0 +1,29 @@
+# S2R A2R (experiments_md 20261024_03; design T05 §5 "IA-SSD designs FIXED 13:43 JST", item 2, experiments_md 1085f1b):
+# IA-SSD A2 (27546, iassd-accum-legaldepth-nuscenes2kitti: accumulation Boston 15 / Singapore 10) with ONE change,
+# drop_empty_gt_boxes right after the 16,384-point budget on BOTH source platform blocks, as in the 441eece / Waymo ->
+# nuScenes IA-SSD rows. Why (defect D2): without it about 13% of A2's Car and 19-24% of its Pedestrian training boxes
+# trained as positives on empty space (job 29310). Training-only; evaluation untouched. Seed 666, everything else = A2.
+#
+# PRE-DECLARED: see iassd-sourceonly-recount-nuscenes2kitti.yaml (D_R = A2R - A1R under the crop, bars +-2).
+# LEGALITY: as A2 (nuScenes SOURCE mean_size, label-free depths of 27468, decision F recipe). Source labels only.
+_BASE_CONFIG_: cfgs/da-ieee-access-pointrcnn/iassd-accum-legaldepth-nuscenes2kitti.yaml
+
+DATA_CONFIGS:
+    NUSCENES_N008:
+        DATA_PROCESSOR: &iassd_recount_processor
+            - NAME: mask_points_and_boxes_outside_range
+              REMOVE_OUTSIDE_BOXES: True
+            - NAME: sample_points
+              NUM_POINTS: {
+                'train': 16384,
+                'test': 16384
+              }
+            - NAME: drop_empty_gt_boxes
+              MIN_POINTS: 1     # = MIN_POINTS_OF_GT, as the Waymo -> nuScenes IA-SSD rows
+            - NAME: shuffle_points
+              SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+              }
+    NUSCENES_N015:
+        DATA_PROCESSOR: *iassd_recount_processor

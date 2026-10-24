@@ -1,0 +1,6 @@
+# S2R A2R scored under the crop (27688's protocol): A2R's config with the KITTI target cut to the camera FOV before the
+# 16,384-point sampling, exactly as iassd-accum-legaldepth-nuscenes2kitti-fovtar does for A2 (experiments_md 20261024_03).
+_BASE_CONFIG_: cfgs/da-ieee-access-pointrcnn/iassd-accum-legaldepth-recount-nuscenes2kitti.yaml
+DATA_CONFIG_TAR:
+    FOV_POINTS_ONLY: True
+    ALLOW_FOV_POINTS_ONLY: True

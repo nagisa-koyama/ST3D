@@ -1,0 +1,33 @@
+# S2R A1R (experiments_md 20261024_03; design T05 §5 "IA-SSD designs FIXED 13:43 JST", item 2, experiments_md 1085f1b):
+# IA-SSD A1 (27501, iassd-sourceonly-nuscenes2kitti) with ONE change, drop_empty_gt_boxes right after the 16,384-point
+# budget, as in the 441eece / Waymo -> nuScenes IA-SSD rows. Why (defect D2 of the 2026-10-24 inventory): prepare_data's
+# zero-point filter runs BEFORE the processor, so the boxes the budget empties trained as positives on empty space in A1
+# (4.8% of Car, 7.9% of Pedestrian training boxes, job 28125) and A2 (about 13% of Car, 19-24% of Pedestrian, job
+# 29310). The recount is training-only; evaluation is untouched. Seed 666 (--fix_random_seed), everything else = A1.
+#
+# PRE-DECLARED (T05 §5, 13:43, before any number): scored under the crop (27688's protocol, the -fovtar twin), Car
+# moderate BEV R40 IoU 0.7, each arm the mean of two scorings. D_R = A2R - A1R: <= -2 -> the reversal holds without
+# empty-box positives; |.| < 2 -> B2's "reverses" is withdrawn to "level" and the cause was the empty boxes; >= +2 ->
+# accumulation helps IA-SSD once boxes are recounted (the claim flips). Within 1.5 of a bar -> a second seed.
+# Beside: A1R - A1 (two-seed mean), A2R - A2, the 360-degree scoring (in-run), IoU 0.5, emptied-box shares.
+#
+# LEGALITY: as A1 (nuScenes SOURCE mean_size, published IA-SSD recipe under decision F, SCORE_THRESH 0.0001, family size
+# augmentation, x,y,z). The recount uses source labels only.
+_BASE_CONFIG_: cfgs/da-ieee-access-pointrcnn/iassd-sourceonly-nuscenes2kitti.yaml
+
+DATA_CONFIG:
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+        - NAME: sample_points
+          NUM_POINTS: {
+            'train': 16384,
+            'test': 16384
+          }
+        - NAME: drop_empty_gt_boxes
+          MIN_POINTS: 1     # = MIN_POINTS_OF_GT, as the Waymo -> nuScenes IA-SSD rows
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }

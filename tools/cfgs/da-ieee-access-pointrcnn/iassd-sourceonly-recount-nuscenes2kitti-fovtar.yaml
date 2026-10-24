@@ -1,0 +1,6 @@
+# S2R A1R scored under the crop (27688's protocol): A1R's config with the KITTI target cut to the camera FOV before the
+# 16,384-point sampling, exactly as iassd-sourceonly-nuscenes2kitti-fovtar does for A1 (experiments_md 20261024_03).
+_BASE_CONFIG_: cfgs/da-ieee-access-pointrcnn/iassd-sourceonly-recount-nuscenes2kitti.yaml
+DATA_CONFIG_TAR:
+    FOV_POINTS_ONLY: True
+    ALLOW_FOV_POINTS_ONLY: True
