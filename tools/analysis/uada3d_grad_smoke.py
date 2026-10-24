@@ -14,8 +14,9 @@ checks per trial:
      discriminator losses, the loop's weight 1.0 each), through the GRL at the configured coefficient;
   3. GRL sign: the same gradient with grl_coeff = -lambda (GradientReversal: grad_in = -lambda x grad_out, so -lambda bypasses
      it) has cosine -1 and norm ratio 1 on backbone and head parameters; the discriminator's own gradient is NOT reversed;
-  4. the target batch carries no label (UNSUPERVISED), CenterHead assigns no target for it (domain 1), and DACenterPoint takes
-     no detection loss on it;
+  4. the target's raw GT boxes (UNSUPERVISED still carries them in the batch) influence nothing - the discriminator loss and
+     every gradient equal, within spconv's run-to-run noise, with them zeroed - CenterHead assigns no target for it (domain 1), and DACenterPoint
+     takes no detection loss on it;
   5. BN: plain BatchNorm modules (no DSNorm).
 Prints `checks: ALL PASS` or the failures. Needs a GPU. Run from ST3D/tools (reads the live checkout).
 """
@@ -110,7 +111,23 @@ for trial in range(n_trials):
     n_tgt_gt = 0 if tgt_gt is None else int((np.abs(tgt_gt[..., :7]).sum(-1) > 0).sum())
     print(f'trial {trial}: source idx {si.tolist()}, target idx {ti.tolist()}; source GT boxes '
           f'{int((s_np["gt_boxes"][..., 7] > 0).sum())}, target GT boxes in the batch {n_tgt_gt}')
-    check(n_tgt_gt == 0, 'target batch carries no label (UNSUPERVISED)')
+    # UNSUPERVISED loads the target RAW (no augmentor, no GT-dependent processing) but the raw boxes still ride in the batch,
+    # as in 26390 / 27174. The contract is that they influence NOTHING: same losses and gradients with them zeroed.
+    if tgt_gt is not None:
+        t_zero = copy.deepcopy(t_np)
+        t_zero['gt_boxes'] = np.zeros_like(t_zero['gt_boxes'])
+        gs, ls_ = [], []
+        for batch in (t_np, t_np, t_zero):   # run, rerun (the run-to-run noise floor of spconv), GT zeroed
+            model.zero_grad(set_to_none=True)
+            _, dl_x, _, _, _, _ = run(batch, 1, lam)
+            gs.append(flat(torch.autograd.grad(dl_x, up + dp, allow_unused=True), up + dp))
+            ls_.append(float(dl_x))
+        noise = float((gs[1] - gs[0]).norm())
+        delta = float((gs[2] - gs[0]).norm())
+        check(abs(ls_[2] - ls_[0]) <= max(10 * abs(ls_[1] - ls_[0]), 1e-9) and delta <= max(10 * noise, 1e-12 * float(gs[0].norm())),
+              f'target GT boxes ({n_tgt_gt} in the batch, raw) influence nothing: discriminator loss {ls_[0]:.8f} / rerun '
+              f'{ls_[1]:.8f} / GT zeroed {ls_[2]:.8f}; gradient difference with GT zeroed {delta:.3e} against the rerun noise '
+              f'{noise:.3e} (|g| {float(gs[0].norm()):.3e})')
     out = {}
     for name, g in (('grl', lam), ('bypass', -lam)):
         model.zero_grad(set_to_none=True)
