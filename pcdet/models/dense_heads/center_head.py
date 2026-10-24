@@ -105,6 +105,9 @@ class CenterHead(nn.Module):
         self.domain_discriminator = dann_utils.build_domain_discriminator(
             self.model_cfg.get('LOSS_CONFIG', None), in_channels=input_channels
         )
+        # GRL coefficient: LOSS_CONFIG.DANN_GRL_COEFF (opt-in), else the published 1.0.
+        self.dann_grl_coeff = dann_utils.grl_coefficient(self.model_cfg.get('LOSS_CONFIG', None)) \
+            if self.domain_discriminator is not None else dann_utils.GRL_COEFF
 
     def build_losses(self):
         self.add_module('hm_loss_func', loss_utils.FocalLossCenterNet())
@@ -426,7 +429,7 @@ class CenterHead(nn.Module):
         if self.domain_discriminator is not None and 'domain_label' in data_dict:
             self.forward_ret_dict['domain_label'] = data_dict['domain_label']
             self.forward_ret_dict['domain_preds'] = dann_utils.domain_predictions(
-                self.domain_discriminator, spatial_features_2d
+                self.domain_discriminator, spatial_features_2d, self.dann_grl_coeff
             )
 
         pred_dicts = []

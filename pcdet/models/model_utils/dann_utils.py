@@ -42,9 +42,21 @@ def build_domain_discriminator(loss_cfg, in_channels):
     return DomainDiscriminator(in_channels=in_channels)
 
 
-def domain_predictions(discriminator, features):
-    """Reverse the gradient into `features` and classify the domain per BEV cell."""
-    reverse_feature = ReverseLayerF.apply(features, GRL_COEFF)
+def grl_coefficient(loss_cfg):
+    """The GRL coefficient alpha: `LOSS_CONFIG.DANN_GRL_COEFF` when set, else the published constant
+    GRL_COEFF (1.0). Opt-in (absent in every config before 2026-10-24), so existing rows are unchanged.
+    alpha scales ONLY the reversed gradient into the features; the discriminator's own gradient and the
+    loss value do not depend on it. Added for the matched-weight DANN row (experiments_md 20261022_06 §10)."""
+    coeff = GRL_COEFF if loss_cfg is None else loss_cfg.get('DANN_GRL_COEFF', GRL_COEFF)
+    coeff = float(coeff)
+    if not coeff > 0 or coeff != coeff or coeff == float('inf'):
+        raise ValueError('LOSS_CONFIG.DANN_GRL_COEFF must be a finite positive number, got %r' % (coeff,))
+    return coeff
+
+
+def domain_predictions(discriminator, features, coeff=GRL_COEFF):
+    """Reverse the gradient into `features` (scaled by `coeff`) and classify the domain per BEV cell."""
+    reverse_feature = ReverseLayerF.apply(features, coeff)
     return discriminator(reverse_feature)
 
 

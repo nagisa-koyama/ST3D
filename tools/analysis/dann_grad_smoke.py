@@ -73,7 +73,9 @@ disc = model.dense_head.domain_discriminator
 check(disc is not None, 'student CenterHead built a domain discriminator (dann_weight %s)'
       % cfg.MODEL.DENSE_HEAD.LOSS_CONFIG.LOSS_WEIGHTS.get('dann_weight'))
 check(teacher.dense_head.domain_discriminator is None, 'teacher has no discriminator (frozen, never sees a domain label)')
-check(dann_utils.GRL_COEFF == 1.0, f'GRL coefficient constant {dann_utils.GRL_COEFF} (the fork\'s DANN, no ramp)')
+alpha = float(model.dense_head.dann_grl_coeff)
+check(alpha == dann_utils.grl_coefficient(cfg.MODEL.DENSE_HEAD.LOSS_CONFIG),
+      f'GRL coefficient {alpha} (LOSS_CONFIG.DANN_GRL_COEFF {cfg.MODEL.DENSE_HEAD.LOSS_CONFIG.get("DANN_GRL_COEFF", "absent -> 1.0")}), constant, no ramp')
 
 
 def norm_types(m):
@@ -105,7 +107,7 @@ _real_domain_predictions = dann_utils.domain_predictions
 
 
 def forwards(src_np, tar_np, grl):
-    dann_utils.domain_predictions = _real_domain_predictions if grl else (lambda d, f: d(f))
+    dann_utils.domain_predictions = _real_domain_predictions if grl else (lambda d, f, *a, **k: d(f))
     try:
         s, t = copy.deepcopy(src_np), copy.deepcopy(tar_np)
         s['domain_label'] = 0
@@ -170,9 +172,20 @@ for trial in range(n_trials):
         cos = torch.nn.functional.cosine_similarity(a.flatten().double(), b.flatten().double(), dim=0).item()
         ratio = (a.norm() / b.norm()).item() if b.norm() > 0 else float('nan')
         rel = (a.norm() / d.norm()).item() if d is not None and d.norm() > 0 else float('nan')
-        check(float(a.abs().sum()) > 0 and cos < -0.999 and abs(ratio - 1) < 1e-2,
+        check(float(a.abs().sum()) > 0 and cos < -0.999 and abs(ratio / alpha - 1) < 1e-2,
               f'{k} ({probe[k]}): domain-loss gradient |g| {a.norm():.3e} non-zero, REVERSED (cosine with GRL-bypassed '
-              f'{cos:+.6f}, norm ratio {ratio:.4f}); |g_dann| / |g_det| {rel:.3e}')
+              f'{cos:+.6f}, norm ratio {ratio:.4f} = alpha x {ratio / alpha:.4f}); |g_dann| / |g_det| {rel:.3e}')
+    # both gradient norms over EVERY parameter upstream of the discriminator input (backbone_3d + backbone_2d)
+    up = [p for n, p in model.named_parameters() if n.startswith('backbone_3d.') or n.startswith('backbone_2d.')]
+    model.zero_grad(set_to_none=True)
+    ls3, lt3, ds3, dt3, _, _, _ = forwards(src_np, tar_np, grl=True)
+    gd = torch.autograd.grad(ls3, up, retain_graph=True, allow_unused=True)
+    gm = torch.autograd.grad(0.5 * ds3 + 0.5 * dt3, up, allow_unused=True)
+    nd = math.sqrt(sum(float(g.double().pow(2).sum()) for g in gd if g is not None))
+    nm = math.sqrt(sum(float(g.double().pow(2).sum()) for g in gm if g is not None))
+    print(f'  upstream ({len(up)} tensors): |g_src_det| {nd:.4e}, |g_dom| (through the GRL at alpha {alpha:g}) {nm:.4e}, '
+          f'ratio |g_src_det| / |g_dom| {nd / nm:.4g}')
+    check(nm > 0 and math.isfinite(nm), 'domain gradient on the upstream parameters non-zero and finite')
     # pseudo-labels untouched
     gt_after = t_after['gt_boxes'].detach().cpu().numpy() if torch.is_tensor(t_after['gt_boxes']) else t_after['gt_boxes']
     check(np.array_equal(gt_before.astype(np.float32), gt_after.astype(np.float32)),
