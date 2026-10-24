@@ -133,7 +133,14 @@ def time_arms(a):
             d = copy.deepcopy(dicts[0])
             for f in tail:
                 d = f(data_dict=d)
-            batch = DatasetTemplate.collate_batch([d, copy.deepcopy(d)])
+            d.pop('num_points_in_gt', None)
+            d2 = copy.deepcopy(dicts[-1])
+            for f in tail:
+                d2 = f(data_dict=d2)
+            d2.pop('num_points_in_gt', None)
+            batch = DatasetTemplate.collate_batch([d, d2])   # two DIFFERENT frames, so ragged keys show here
+            for k, v in batch.items():
+                assert not (isinstance(v, np.ndarray) and v.dtype == object and k not in ('frame_id', 'gt_names', 'metadata', 'calib')), k
             print('DRY arm=%s budget=%s tail=%s points out %d, distinct %d, batch keys %s' % (
                 os.path.basename(cfg_file), budget, '>'.join(names), len(d['points']),
                 len(np.unique(d['points'][:, :3], axis=0)), sorted(batch.keys())))
@@ -167,6 +174,7 @@ def time_arms(a):
                 d = copy.deepcopy(d)
                 for f in tail:
                     d = f(data_dict=d)
+                d.pop('num_points_in_gt', None)   # what WaymoDataset.__getitem__ drops after prepare_data
                 samples.append(d)
             batch = DatasetTemplate.collate_batch(samples)
             torch.cuda.synchronize()
