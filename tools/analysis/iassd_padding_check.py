@@ -18,6 +18,7 @@ budget), so what the network receives is the frame's distinct points plus copies
    labelled positives only through the copies it received; the copies per box are printed against the frame's mean.
 
     python analysis/iassd_padding_check.py --cfg_file <cfg> [--frames 100] [--fps_frames 5] [--target_frames 0 1 2 3]
+        [--block <DATA_CONFIGS key>] [--no_eval_block] [--calib_frames N]   (opt-in, rule PB, experiments_md 20261024_05)
 """
 import argparse
 import logging
@@ -172,17 +173,36 @@ def main():
     ap.add_argument('--frames', type=int, default=100)
     ap.add_argument('--fps_frames', type=int, default=5)
     ap.add_argument('--target_frames', type=int, nargs='+', default=[0, 1, 2, 3])
+    # Opt-in (experiments_md 20261024_05, rule PB): absent, every default below reproduces the tool as it was.
+    ap.add_argument('--block', default=None,
+                    help='training block: a DATA_CONFIGS key instead of DATA_CONFIG (multi-block sources, e.g. A2, I2)')
+    ap.add_argument('--no_eval_block', action='store_true', help='skip the evaluated block (DATA_CONFIG_TAR)')
+    ap.add_argument('--calib_frames', type=int, default=0,
+                    help='install the density calibration on a HIST_DIST_ON_THE_FLY training block first, as train.py '
+                         'does (HIST_DIST_BEFORE_POINT_BUDGET honoured), so sample_points_hist_based is live')
     a = ap.parse_args()
     log = logging.getLogger('padding'); log.addHandler(logging.StreamHandler()); log.setLevel(logging.WARNING)
     cfg = cfg_from_yaml_file(a.cfg_file, EasyDict())
     sa = cfg.MODEL.BACKBONE_3D.SA_CONFIG
     npoint1, radii, nsamples = sa.NPOINT_LIST[0][0], sa.RADIUS_LIST[0], sa.NSAMPLE_LIST[0]
     assert sa.SAMPLE_METHOD_LIST[0] == ['D-FPS'], sa.SAMPLE_METHOD_LIST[0]
-    print(f'{os.path.basename(a.cfg_file)}')
-    for label, blk, training in (('training block, training mode, augmentation on', cfg.DATA_CONFIG, True),
-                                 ('evaluated block, evaluation mode', cfg.DATA_CONFIG_TAR, False)):
+    print(f'{os.path.basename(a.cfg_file)}' + (f' [{a.block}]' if a.block else ''))
+    train_blk = cfg.DATA_CONFIG if a.block is None else cfg.DATA_CONFIGS[a.block]
+    blocks = [('training block, training mode, augmentation on', train_blk, True)]
+    if not a.no_eval_block:
+        blocks.append(('evaluated block, evaluation mode', cfg.DATA_CONFIG_TAR, False))
+    for label, blk, training in blocks:
         ds, _, _ = build_dataloader(dataset_cfg=blk, class_names=cfg.CLASS_NAMES, batch_size=1, dist=False, workers=0,
                                     logger=log, training=training, model_ontology=cfg.get('ONTOLOGY', None))
+        if training and a.calib_frames and blk.get('HIST_DIST_ON_THE_FLY', False):
+            from pcdet.datasets.point_calibration import calibration_target_config, link_point_calibration
+            tcfg, _ = calibration_target_config(cfg.DATA_CONFIG_TAR)
+            tds, _, _ = build_dataloader(dataset_cfg=tcfg, class_names=cfg.CLASS_NAMES, batch_size=1, dist=False,
+                                         workers=0, logger=log, training=False, model_ontology=cfg.get('ONTOLOGY', None))
+            link_point_calibration(ds, tds, num_frames=a.calib_frames, num_bins=blk.get('HIST_DIST_BINS', 50),
+                                   max_dist=blk.get('HIST_DIST_MAX_DIST', 75.0),
+                                   skip_point_budget=blk.get('HIST_DIST_BEFORE_POINT_BUDGET', False))
+            print(f'  calibration installed ({a.calib_frames} frames)')
         census(ds, a.frames, hook_budget(ds), npoint1, a.fps_frames, radii, nsamples, label)
         if training:
             targets(cfg, ds, a.target_frames)

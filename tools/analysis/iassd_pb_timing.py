@@ -153,7 +153,14 @@ def time_arms(a):
         torch.cuda.reset_peak_memory_stats()
         nb = max(1, len(dicts) // a.batch_size)
         times, losses, pts = [], [], []
+        t_arm = None
         for step in range(a.warmup + a.iters):
+            if step == a.warmup:
+                t_arm = time.perf_counter()
+            elif t_arm is not None and a.max_seconds and time.perf_counter() - t_arm > a.max_seconds:
+                print('  arm %s: stopped after %d timed steps (> %.0f s); the per-step time stands on those' % (
+                    os.path.basename(cfg_file), len(times), a.max_seconds))
+                break
             b = step % nb
             samples = []
             for d in dicts[b * a.batch_size:(b + 1) * a.batch_size]:
@@ -184,7 +191,7 @@ def time_arms(a):
                 if not a.eval:
                     losses.append(float(loss.detach()))
         t = np.array(times)
-        res = dict(arm=os.path.basename(cfg_file), block=block, tail=names, budget=budget, s_med=float(np.median(t)),
+        res = dict(arm=os.path.basename(cfg_file), block=block, tail=names, budget=budget, n=len(t), s_med=float(np.median(t)),
                    s_mean=float(t.mean()), peak_gb=torch.cuda.max_memory_allocated() / 2 ** 30,
                    loss=float(np.mean(losses)) if losses else float('nan'), finite=bool(np.isfinite(losses).all()) if
                    losses else True, pts=float(np.mean(pts)))
@@ -194,9 +201,9 @@ def time_arms(a):
     base = results[0]
     for r in results:
         print('RESULT %s arm=%s block=%s budget=%s tail=%s s_per_it_median=%.4f s_per_it_mean=%.4f ratio_median=%.2f '
-              'ratio_mean=%.2f peak_gb=%.2f loss=%.3f finite=%s pts_per_frame=%.0f' % (
+              'ratio_mean=%.2f timed_steps=%d peak_gb=%.2f loss=%.3f finite=%s pts_per_frame=%.0f' % (
                   'eval' if a.eval else 'train', r['arm'], r['block'], r['budget'], '>'.join(r['tail']), r['s_med'],
-                  r['s_mean'], r['s_med'] / base['s_med'], r['s_mean'] / base['s_mean'], r['peak_gb'], r['loss'],
+                  r['s_mean'], r['s_med'] / base['s_med'], r['s_mean'] / base['s_mean'], r['n'], r['peak_gb'], r['loss'],
                   r['finite'], r['pts']))
 
 
@@ -218,6 +225,8 @@ def main():
     t.add_argument('--warmup', type=int, default=10)
     t.add_argument('--iters', type=int, default=50)
     t.add_argument('--eval', action='store_true')
+    t.add_argument('--max_seconds', type=float, default=0,
+                   help='stop an arm\'s timed steps after this many seconds (0 = always --iters); reported per arm')
     t.add_argument('--dry', action='store_true', help='CPU: run each arm\'s tail and the collate only, no model')
     a = ap.parse_args()
     capture(a) if a.cmd == 'capture' else time_arms(a)
