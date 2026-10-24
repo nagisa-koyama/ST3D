@@ -96,7 +96,7 @@ def nxt(it, loader):
 rec = []
 for it in range(n_iters):
     lr_scheduler.step(it)
-    optimizer.zero_grad(set_to_none=True)
+    optimizer.zero_grad()
     g_det_sum = g_dom_sum = None
     per_rank = []
     acc = []
