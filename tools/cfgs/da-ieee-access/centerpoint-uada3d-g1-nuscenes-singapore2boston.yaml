@@ -1,0 +1,47 @@
+# SCENE, UADA3D at GRL weight 1.0 on S->B (experiments_md/20261003_05 §5, user 10-24, designs fixed 2026-10-24 10:13 JST, row 3,
+# FALLBACK form; report experiments_md/20261022_06 §10). Analysis.
+#
+# FORM. The preferred form (Discriminator2 added to 30243's pseudo-labelling row) is not built: the self-training path cannot
+# drive Discriminator2 without new code in shared core files (train_st_utils must stamp `domain` / `grl_coeff`; CenterHead
+# skips target assignment when `domain == 1`, which would drop the pseudo-labels; DACenterPoint drops the target detection loss;
+# the per-domain weight of the discriminator loss would be a new choice). Chosen on code feasibility only, before any number:
+# UADA3D ALONE on S->B through the existing adaptive_train.py path (Singapore TRAIN labelled, Boston TRAIN unlabelled, raw).
+#
+# = centerpoint-sourceonly-nuscenes-singapore2boston.yaml (the scene pair's recipe: n015 source, n008 target, single sweep,
+# 20 epochs, OneCycle LR 0.003, global source batch 6) plus the UADA3D block of centerpoint-uada3d-lyft2nuscenes.yaml (job
+# 26390) copied verbatim: DACenterPoint, Discriminator2 conditional adaptation (LeastSquares), EXPORT_SPATIAL_PREDS, target
+# UNSUPERVISED. The ONE departure from that row: OPTIMIZATION.GRL_LAMBDA 1.0 (GrlStandard is a constant; the family default
+# and the released UADA3D value are 0.1). The conditional GRLs receive it (ST3D 1247338 fix, a departure from the released code).
+#
+# Launch: ENTRY=adaptive_train.py BATCH=12 (3 source + 3 target per rank on 2 GPUs: source batch 6, 2,073 iterations x 20 =
+# 41,460 steps, as 30243), --pretrained_model = the common init S->S 30189 ep 20 (discriminator random, as in 30306).
+#
+# Reading (fixed before any number): D_U = row (ep 20, saved) - 34.76 (S->B) at +-2, beside PL S->B (37.39). Scene fill as
+# fixed 10-23 14:22 (row - 34.76 >= 1.83 + 2). D_eq reported. NaN or Car BEV < 20 -> "the weight destabilises this recipe".
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-nuscenes-singapore2boston.yaml
+
+DATA_CONFIG_TAR:
+    UNSUPERVISED: True
+
+MODEL:
+    NAME: DACenterPoint
+
+    DISCRIMINATOR:
+        NAME: Discriminator2
+        CONDITIONAL_ADAPTATION:
+            INPUT_DICT_KEYS: ['cls_preds_spatial', 'box_preds_spatial', 'spatial_features_2d']
+            MLP_TYPE: Conv2d
+            MLPS: [256, 128]
+            NUM_CLASSES: 3
+            BOX_REGRESSION_PARAMS: 8   # 2 center + 1 center_z + 3 dim + 2 rot
+            NUM_FEATURES: 256          # spatial_features_2d channels
+            KERNEL_SIZE: 3
+            USE_SIGMOID: True
+        LOSS_CONFIG:
+            LOSS_CONDITIONAL: LeastSquares
+
+    DENSE_HEAD:
+        EXPORT_SPATIAL_PREDS: True
+
+OPTIMIZATION:
+    GRL_LAMBDA: 1.0

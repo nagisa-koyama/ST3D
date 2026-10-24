@@ -1,0 +1,25 @@
+# SCENE, DANN-M: PL S->B + DANN at the MATCHED GRL coefficient (experiments_md/20261003_05 §5, user 10-24, designs fixed
+# 2026-10-24 10:13 JST, row 1; report experiments_md/20261022_06 §10). Analysis.
+#
+# = centerpoint-st3d-dann-nuscenes-singapore2boston.yaml (30306: 30243's PL S->B + the fork's DANN, dann_weight 0.1) with ONE
+# key changed: the GRL coefficient alpha (LOSS_CONFIG.DANN_GRL_COEFF, opt-in, ST3D ab10746; absent = the published 1.0).
+# Only the reversed gradient into the backbone changes; dann_weight 0.1 is kept, so the discriminator learns at the published
+# rate and the logged domain loss is on the same scale as 30306's.
+#
+# alpha_M = 69, by the pre-declared rule: on the init checkpoint (S->S 30189 ep 20), 200 training iterations of 30306's setup
+# at alpha = 1 (2 ranks x 3 frames emulated on one GPU, 30306's optimizer / OneCycle / clip, 30306's own first-pass
+# pseudo-labels), per iteration r = |g_src_det| / |g_dom| over every parameter upstream of the discriminator input
+# (backbone_3d + backbone_2d, 3,859,760 values); alpha_M = median(r) = 69.32 -> 69 (two significant figures), fixed for the
+# whole run. r: min 12.73, q1 40.76, median 69.32, q3 131.4, max 55,380 (job 30335, /home/koyama/data/scene_dann/
+# alpha_M_30306setup.json). Needs only source labels and unlabelled Boston TRAIN clouds; one value, never compared on target
+# results.
+#
+# Reading (fixed before any number): D = row (ep 20, saved) - 37.39 (PL S->B 30243); >= +2 adds, |D| < 2 level, <= -2 costs.
+# Scene fill as fixed 10-23 14:22 (row - 34.76 >= 1.83 + 2). D_eq reported. NaN or Car BEV < 20 -> "the matched weight
+# destabilises this recipe"; no weight is re-chosen.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-st3d-dann-nuscenes-singapore2boston.yaml
+
+MODEL:
+    DENSE_HEAD:
+        LOSS_CONFIG:
+            DANN_GRL_COEFF: 69.0

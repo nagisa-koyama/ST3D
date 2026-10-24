@@ -1,0 +1,14 @@
+# SCENE, DANN-M + PCGrad (experiments_md/20261003_05 §5, user 10-24, designs fixed 2026-10-24 10:13 JST, row 2; report
+# experiments_md/20261022_06 §10). Analysis.
+#
+# = centerpoint-st3d-dannm-nuscenes-singapore2boston.yaml (DANN-M, alpha_M = 69) plus SELF_TRAIN.USE_TORCHJD: True, exactly as
+# centerpoint-st3d-global-dann-pcgrad-lyft2nuscenes.yaml adds it to its DANN row: train_st_utils then runs
+# torchjd.backward([loss_src, dann, st], PCGrad(), parallel_chunk_size=1) over (source detection, domain through the GRL at
+# alpha_M, pseudo-label loss). Under DDP that backward bypasses the reducer, so the loop switches DDP sync off for the whole
+# iteration and all-reduces by hand (commu_utils.all_reduce_grads); pinned on CPU by tests/test_dann_pcgrad_ddp.py.
+#
+# Reading (fixed before any number): D_PC = row 2 - row 1 at +-2 (does PCGrad add over matched DANN); D = row - 37.39 beside.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-st3d-dannm-nuscenes-singapore2boston.yaml
+
+SELF_TRAIN:
+    USE_TORCHJD: True
