@@ -155,3 +155,106 @@ def test_source_only_eval_target_is_not_refused():
     """A source-only row declares DATA_CONFIG_TAR as an EVALUATION target only. Reading its real
     labels there is the point, so the guard must not fire when nothing trains on it."""
     assert_target_labels_are_not_used(_cfg(), False)
+
+
+# --- PL-GT: the one sanctioned analysis bypass (experiments_md 20261027_05) ----------------------------------------
+# DATA_CONFIG_TAR.ANALYSIS_TARGET_GT_AS_PSEUDO_LABELS names a frozen file of the TARGET's ground truth written as
+# pseudo-labels. The guard accepts it with an "ANALYSIS ROW" line; it must not weaken the guard for any config
+# without the key, and the key itself must not switch the pseudo-label checks off.
+
+from pcdet.utils import common_utils  # noqa: E402
+
+PLGT = FAMILY / 'centerpoint-gblobs-accum-legaldepth-plgt-nuscenes2waymo.yaml'
+PLGT_BASE = FAMILY / 'centerpoint-gblobs-accum-legaldepth-st3d-nuscenes2waymo.yaml'
+
+
+def _with_key(c, value='/home/koyama/data/plgt/x.pkl'):
+    c.DATA_CONFIG_TAR[common_utils.ANALYSIS_TARGET_GT_KEY] = value
+    return c
+
+
+class _Log:
+    def __init__(self):
+        self.lines = []
+
+    def info(self, msg, *a):
+        self.lines.append(('info', msg % a if a else msg))
+
+    def warning(self, msg, *a):
+        self.lines.append(('warning', msg % a if a else msg))
+
+
+def test_plgt_key_is_accepted_and_says_analysis_row():
+    log = _Log()
+    assert_target_labels_are_not_used(_with_key(_cfg(self_train=True, pseudo=True)), True, log)
+    assert any(lvl == 'warning' and 'ANALYSIS ROW: target labels used as training targets' in m for lvl, m in log.lines)
+
+
+def test_without_the_key_no_analysis_line_and_the_old_policy_line():
+    log = _Log()
+    assert_target_labels_are_not_used(_cfg(self_train=True, pseudo=True), True, log)
+    assert log.lines == [('info', 'target label policy: pseudo-labels')]
+
+
+@pytest.mark.parametrize('kwargs, err', [
+    (dict(self_train=True), 'USE_PSEUDO_LABEL'),                                  # job 25933's shape
+    (dict(), 'UNSUPERVISED'),                                                     # a trained target with no flag
+])
+def test_without_the_key_the_guard_still_refuses(kwargs, err):
+    c = _cfg(**kwargs)
+    assert common_utils.ANALYSIS_TARGET_GT_KEY not in c.DATA_CONFIG_TAR
+    with pytest.raises(AssertionError, match=err):
+        assert_target_labels_are_not_used(c, True)
+
+
+def test_the_key_does_not_switch_off_the_pseudo_label_check():
+    with pytest.raises(AssertionError, match='USE_PSEUDO_LABEL'):
+        assert_target_labels_are_not_used(_with_key(_cfg(self_train=True)), True)
+
+
+def test_the_key_needs_a_self_training_row():
+    with pytest.raises(AssertionError, match='SELF_TRAIN'):
+        assert_target_labels_are_not_used(_with_key(_cfg(pseudo=True)), True)
+
+
+def test_the_key_refuses_unsupervised():
+    with pytest.raises(AssertionError, match='UNSUPERVISED'):
+        assert_target_labels_are_not_used(_with_key(_cfg(self_train=True, pseudo=True, unsupervised=True)), True)
+
+
+def test_an_empty_key_is_absent():
+    """An empty value must not count as the analysis bypass: the normal checks run."""
+    with pytest.raises(AssertionError, match='USE_PSEUDO_LABEL'):
+        assert_target_labels_are_not_used(_with_key(_cfg(self_train=True), value=''), True)
+
+
+def test_only_the_plgt_config_carries_the_key_raw_text():
+    """No other config in the repo names the key (raw text, every family)."""
+    hits = sorted(p.relative_to(TOOLS / 'cfgs').as_posix() for p in (TOOLS / 'cfgs').rglob('*.yaml')
+                  if common_utils.ANALYSIS_TARGET_GT_KEY in p.read_text(encoding='utf-8', errors='ignore'))
+    assert hits == ['da-ieee-access/' + PLGT.name], hits
+
+
+@pytest.mark.parametrize('path', _self_training_configs(), ids=lambda p: p.stem)
+def test_only_the_plgt_config_carries_the_key_resolved(path):
+    """Also through _BASE_CONFIG_: a config built on the PL-GT one would inherit the key silently."""
+    has = bool(_resolved(path).DATA_CONFIG_TAR.get(common_utils.ANALYSIS_TARGET_GT_KEY, None))
+    assert has == (path.name == PLGT.name), path.name
+
+
+def _plain(d):
+    if isinstance(d, dict):
+        return {k: _plain(v) for k, v in d.items()}
+    if isinstance(d, (list, tuple)):
+        return [_plain(v) for v in d]
+    return d
+
+
+def test_plgt_config_is_27704s_config_plus_the_key():
+    """The design's ONE change: the resolved PL-GT config equals 27704's resolved config except the key."""
+    a, b = _plain(_resolved(PLGT)), _plain(_resolved(PLGT_BASE))
+    a.pop('_BASE_CONFIG_', None)
+    b.pop('_BASE_CONFIG_', None)
+    key = a['DATA_CONFIG_TAR'].pop(common_utils.ANALYSIS_TARGET_GT_KEY)
+    assert key.startswith('/home/koyama/data/') and key.endswith('.pkl')
+    assert a == b

@@ -346,3 +346,124 @@ def load_ps_label(frame_id, pseudo_labels=None):
                'dataset must carry the dict: DatasetTemplate.set_pseudo_labels'))
 
     return gt_box
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# ANALYSIS ONLY: the target's ground truth as FROZEN pseudo-labels ("PL-GT"; experiments_md 20261027_05, design T05 §5
+# fixed 2026-10-27 23:05 after the user's approval). Reached only through DATA_CONFIG_TAR.ANALYSIS_TARGET_GT_AS_PSEUDO_
+# LABELS (common_utils.ANALYSIS_TARGET_GT_KEY), absent from every method config. Target labels become training targets:
+# such a row never selects or feeds a method value and is labelled analysis everywhere (memory: uda_legality_rule.md).
+#
+# The file is written once (tools/analysis/plgt_build_target_gt_pseudo_labels.py) as a WRAPPER
+#   {'format': ANALYSIS_TARGET_GT_FORMAT, 'meta': {...}, 'labels': {frame_id: entry}}
+# so that handing it to any other pseudo-label path (INIT_PS, a ps_label_e*.pkl) fails loudly on the first frame
+# ("Cannot find pseudo label") instead of training on it. Each entry has the keys a teacher pass writes
+# (save_pseudo_label_batch) plus the stored per-box point count the oracle's zero-point filter reads.
+ANALYSIS_TARGET_GT_FORMAT = 'analysis_target_gt_as_pseudo_labels/v1'
+
+
+def analysis_target_gt_pseudo_label_path(config):
+    """The frozen target-GT pseudo-label file an ANALYSIS row names, or None (every other config)."""
+    tar = config.get('DATA_CONFIG_TAR', None)
+    if tar is None:
+        return None
+    return tar.get(common_utils.ANALYSIS_TARGET_GT_KEY, None) or None
+
+
+def target_gt_to_pseudo_label_entry(names, boxes, num_points_in_gt, map_dataset_to_model, class_names,
+                                    min_points=1, shift_coor=None):
+    """One frame's TARGET ground truth -> one PSEUDO_LABELS entry, through the filters a target ORACLE's training labels
+    pass in the loader (WaymoDataset.__getitem__ + DatasetTemplate.prepare_data, as job 26398 trained):
+      1. 'unknown' dropped (common_utils.drop_info_with_name);
+      2. dataset -> model ontology (Waymo: Vehicle -> Car, Pedestrian, Cyclist, Sign -> Misc); a name missing from the
+         map raises, as the loader does;
+      3. the zero-point filter on the STORED count: num_points_in_gt >= min_points (MIN_POINTS_OF_GT);
+      4. names outside class_names dropped (Misc, i.e. Sign);
+      5. SHIFT_COOR added to the centre, as __getitem__ adds it to every box.
+    The RANGE filter is not applied here: the loader applies it online after augmentation
+    (mask_points_and_boxes_outside_range), to these labels exactly as to the oracle's.
+
+    Returns (entry, stats). entry['gt_boxes'] is (N, 9) float64 [x, y, z, dx, dy, dz, heading, label, score]: label
+    in 1..C (MODEL vocabulary, never negative - no ignore band - and never IGNORE_CLASS_LABEL), score 1.0.
+    """
+    names = np.asarray(names)
+    boxes = np.asarray(boxes, dtype=np.float64)
+    if boxes.size == 0:
+        boxes = boxes.reshape(0, 7)
+    npts = np.asarray(num_points_in_gt).reshape(-1)
+    assert len(names) == len(boxes) == len(npts), (len(names), len(boxes), len(npts))
+    assert boxes.shape[1] >= 7, boxes.shape
+    stats = {'raw': len(names)}
+    known = names != 'unknown'
+    stats['unknown'] = int((~known).sum())
+    unmapped = sorted(set(names[known].tolist()) - set(map_dataset_to_model))
+    if unmapped:
+        raise KeyError('target GT names %s are not in the dataset -> model ontology map %s'
+                       % (unmapped, sorted(map_dataset_to_model)))
+    model_names = np.array([map_dataset_to_model[n] if k else '' for n, k in zip(names.tolist(), known)],
+                           dtype=object)
+    has_points = npts >= min_points
+    stats['empty'] = int((known & ~has_points).sum())
+    in_classes = np.array([n in class_names for n in model_names.tolist()], dtype=bool)
+    stats['other_class'] = int((known & has_points & ~in_classes).sum())
+    keep = known & has_points & in_classes
+    out = boxes[keep, :7].copy()
+    if shift_coor is not None:
+        out[:, 0:3] += np.asarray(shift_coor, dtype=np.float64)
+    kept_names = model_names[keep].astype(str)
+    labels = np.array([list(class_names).index(n) + 1 for n in kept_names.tolist()], dtype=np.float64)
+    n = len(out)
+    gt_box = np.concatenate([out, labels.reshape(-1, 1), np.ones((n, 1), dtype=np.float64)], axis=1)
+    entry = {
+        'gt_boxes': gt_box,
+        'cls_scores': np.ones(n, dtype=np.float32),
+        'iou_scores': np.ones(n, dtype=np.float32),
+        'memory_counter': np.zeros(n, dtype=np.float64),
+        'teacher_classes': np.array(kept_names.tolist(), dtype='<U10'),
+        'num_points_in_gt': npts[keep].astype(np.int64),
+    }
+    for i, c in enumerate(class_names):
+        stats['kept_' + c] = int((labels == i + 1).sum())
+    stats['kept'] = n
+    return entry, stats
+
+
+def validate_target_gt_pseudo_labels(labels, class_names, min_points=1):
+    """Refuse a target-GT pseudo-label dict that is not exactly what the PL-GT design asks for; return per-class counts.
+
+    Every label is a positive class 1..C (no ignore band -1..-C, no IGNORE_CLASS_LABEL, no background 0), every score
+    is 1.0, every box has positive extents and a finite pose, and every stored point count passed the zero-point
+    filter. Sentinels are tested here, before training, because CenterHead reads any negative label as an ignore
+    region (memory: bug_prevention_checklist.md, rule 1)."""
+    c = len(class_names)
+    counts = np.zeros(c, dtype=np.int64)
+    for frame_id, e in labels.items():
+        b = np.asarray(e['gt_boxes'])
+        assert b.ndim == 2 and b.shape[1] == 9, (frame_id, b.shape)
+        lab = b[:, 7]
+        assert np.all(lab == np.round(lab)) and np.all((lab >= 1) & (lab <= c)), \
+            ('%s: labels must be positive classes 1..%d (no ignore band, no %d, no 0), got %s'
+             % (frame_id, c, common_utils.IGNORE_CLASS_LABEL, np.unique(lab).tolist()))
+        assert np.all(b[:, 8] == 1.0), (frame_id, 'scores must be 1.0')
+        assert np.all(np.isfinite(b[:, :7])) and np.all(b[:, 3:6] > 0), (frame_id, 'non-finite box or extent <= 0')
+        npts = np.asarray(e['num_points_in_gt'])
+        assert len(npts) == len(b) and np.all(npts >= min_points), (frame_id, 'point counts')
+        for k in ('cls_scores', 'iou_scores', 'memory_counter', 'teacher_classes'):
+            assert len(e[k]) == len(b), (frame_id, k)
+        assert [class_names[int(l) - 1] for l in lab] == [str(t) for t in e['teacher_classes']], \
+            (frame_id, 'teacher_classes disagree with the labels')
+        counts += np.bincount(lab.astype(np.int64) - 1, minlength=c)
+    return counts
+
+
+def load_analysis_target_gt_pseudo_labels(path, class_names, min_points=1):
+    """Read and validate the frozen PL-GT file; returns (labels, meta, per-class counts)."""
+    with open(path, 'rb') as f:
+        blob = pkl.load(f)
+    assert isinstance(blob, dict) and blob.get('format') == ANALYSIS_TARGET_GT_FORMAT, \
+        '%s is not a %s file' % (path, ANALYSIS_TARGET_GT_FORMAT)
+    meta = blob['meta']
+    assert list(meta['class_names']) == list(class_names), (meta['class_names'], list(class_names))
+    labels = blob['labels']
+    counts = validate_target_gt_pseudo_labels(labels, list(class_names), min_points=min_points)
+    return labels, meta, counts

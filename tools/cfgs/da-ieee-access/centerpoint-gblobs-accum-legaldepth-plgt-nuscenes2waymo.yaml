@@ -1,0 +1,38 @@
+# ANALYSIS ROW "PL-GT" - NEVER A METHOD ROW. Waymo TRAIN ground truth used as FROZEN pseudo-labels: target labels are
+# training targets here. It never selects or feeds a method value and is labelled analysis in this file, its W&B note
+# and every table (memory: uda_legality_rule.md, analysis exception).
+#
+# Design (verbatim in experiments_md 20261027_05 §1): T05 §5 item 23, "PL-GT APPROVED by the user 10-27"
+# (「お願いします」), design FIXED 2026-10-27 23:05 by the coordinator before any PL-GT number (experiments_md fc4fcc9).
+# Row = 27704's resolved config (centerpoint-gblobs-accum-legaldepth-st3d-nuscenes2waymo, W&B 5hzcs4e4) with ONE
+# change: the target's pseudo-labels are the Waymo TRAIN ground truth of the same frames (SAMPLED_INTERVAL train 10,
+# 15,809 frames), written once and frozen. Everything else as 27704: student init 27471 epoch 20, seed 666, 2 GPUs,
+# schedule, 20 epochs, PROG_AUG, the nuScenes source mixture, evaluation at epoch 20 (+ the 27803-style rescore).
+#
+# The one change, as implemented (ST3D: common_utils.ANALYSIS_TARGET_GT_KEY, self_training_utils PL-GT helpers):
+# - the file below is written ONCE by `analysis/plgt_target_gt.py build <this cfg>` from the target dataset's own infos
+#   (the same 15,809 frames the loader serves; 27704 stored pseudo-labels for exactly this frame set);
+# - classes and filters as the Waymo oracle's training labels (26398, oracle 27179 = its epoch 7): 'unknown' dropped;
+#   Vehicle -> Car, Pedestrian, Cyclist (Sign -> Misc, dropped); stored num_points_in_gt >= MIN_POINTS_OF_GT (1), and the
+#   loader keeps that stored count instead of recounting (as for the oracle's labels); the range filter is the loader's
+#   own, after augmentation, as for the oracle; SHIFT_COOR [0, 0, 0] as the target's;
+# - score 1.0; no ignore band (no negative label, no -99): the SELF_TRAIN cuts below are inherited and never applied;
+# - the self-training loop loads the file in place of any teacher pass and never regenerates it (the teacher 27471 is
+#   still built and loaded, as in 27704, and never run);
+# - assert_target_labels_are_not_used accepts the key with an "ANALYSIS ROW" log line; unchanged for every other config.
+#
+# PRE-DECLARED READING (T05 §5, fixed before any PL-GT number; Car BEV AP_R40 IoU 0.7 on Waymo val, epoch 20, scored as
+# 27704; one seed, +-2): O = 65.92 (oracle 27179), M = 55.68 (27704 / 28563 mean), X = PL-GT.
+#   X >= 63.92: the residual is information only target labels carry; recipe, model and frames do not cap it.
+#   X <= 57.68: labels are not the cap; the recipe or the representation caps it.
+#   Between: label share (X - M) / (O - M) and recipe share (O - X) / (O - M) reported. Within 1.5 of a bar: seed 667.
+#
+# Launch (as 27704: 2 GPUs, 150G, seed 666; node01 / node03 / node13 / node61 excluded):
+#   EST_H=27 WANDB_NOTES="ANALYSIS PL-GT (...)" scripts/submit.sh --mem=150G --exclude=node01,node03,node13,node61 \
+#       --job-name=wymPLGT scripts/run_sourceonly_2gpu.sh \
+#       cfgs/da-ieee-access/centerpoint-gblobs-accum-legaldepth-plgt-nuscenes2waymo.yaml plgt_waymo_gt plgt_waymo_gt_nuscenes2waymo \
+#       --pretrained_model <27471 ep20> --pretrained_model_teacher <27471 ep20>
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-gblobs-accum-legaldepth-st3d-nuscenes2waymo.yaml
+
+DATA_CONFIG_TAR:
+    ANALYSIS_TARGET_GT_AS_PSEUDO_LABELS: /home/koyama/data/plgt_20261027/waymo_train_si10_gt_as_pseudo_labels.pkl

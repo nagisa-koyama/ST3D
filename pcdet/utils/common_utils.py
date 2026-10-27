@@ -168,6 +168,13 @@ def set_random_seed(seed):
 # class abs() recovers, so this value must stay outside that range.
 IGNORE_CLASS_LABEL = -99
 
+# ANALYSIS ONLY ("PL-GT", experiments_md 20261027_05; design T05 §5, fixed 2026-10-27 23:05): a DATA_CONFIG_TAR key
+# naming a frozen file of the TARGET's ground truth written as pseudo-labels. Absent from every method config. The
+# label guard (pcdet.datasets.assert_target_labels_are_not_used) accepts it with an "ANALYSIS ROW" line, the
+# self-training loop loads it in place of any teacher pass (self_training_utils.load_analysis_target_gt_pseudo_labels),
+# and the loader keeps its stored per-box point counts (DatasetTemplate.fill_pseudo_labels).
+ANALYSIS_TARGET_GT_KEY = 'ANALYSIS_TARGET_GT_AS_PSEUDO_LABELS'
+
 
 def keep_arrays_by_name(gt_names, used_classes):
     inds = [i for i, x in enumerate(gt_names) if x in used_classes]

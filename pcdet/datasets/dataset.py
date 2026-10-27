@@ -411,7 +411,16 @@ class DatasetTemplate(torch_data.Dataset):
             input_dict['pos_ps_bbox'][i] = num_ps_bbox
             input_dict['ign_ps_bbox'][i] = num_total_boxes - num_ps_bbox
 
-        input_dict.pop('num_points_in_gt', None)
+        if (getattr(self, 'dataset_cfg', None) or {}).get(common_utils.ANALYSIS_TARGET_GT_KEY, None):
+            # PL-GT (ANALYSIS; absent = unchanged): these labels ARE the target's ground truth, already through the
+            # oracle's zero-point filter on the STORED count (self_training_utils.target_gt_to_pseudo_label_entry).
+            # Hand that count to prepare_data, as the oracle's labels carry theirs, instead of recounting on the
+            # first-return cloud, which would drop the boxes the oracle trained on with only other returns inside.
+            labels = getattr(self, 'pseudo_labels', None)
+            labels = labels if labels is not None else self_training_utils.PSEUDO_LABELS
+            input_dict['num_points_in_gt'] = np.asarray(labels[input_dict['frame_id']]['num_points_in_gt'])
+        else:
+            input_dict.pop('num_points_in_gt', None)
 
     def merge_all_iters_to_one_epoch(self, merge=True, epochs=None):
         if merge:

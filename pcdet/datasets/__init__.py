@@ -71,6 +71,26 @@ def assert_target_labels_are_not_used(cfg, target_is_trained, logger=None):
     tar = cfg.get('DATA_CONFIG_TAR', None)
     if tar is None or not target_is_trained:
         return
+    # ANALYSIS ONLY (PL-GT, experiments_md 20261027_05): the one sanctioned way for target labels to become training
+    # targets - the target's ground truth written as frozen pseudo-labels under a named key, absent from every method
+    # config. It must still be a well-formed self-training target (the key cannot switch the checks below off), and the
+    # run says what it is. Without the key, nothing in this function changes.
+    gt_as_pseudo = tar.get(common_utils.ANALYSIS_TARGET_GT_KEY, None)
+    if gt_as_pseudo:
+        assert cfg.get('SELF_TRAIN', None), (
+            '%s is set but SELF_TRAIN is not: only a self-training row reads pseudo-labels, so the key would do '
+            'nothing and the target would train on its real labels by another path.' % common_utils.ANALYSIS_TARGET_GT_KEY)
+        assert bool(tar.get('USE_PSEUDO_LABEL', False)) and not bool(tar.get('UNSUPERVISED', False)), (
+            '%s needs DATA_CONFIG_TAR.USE_PSEUDO_LABEL: True and no UNSUPERVISED: the frozen GT file is read '
+            'through the pseudo-label path and nowhere else.' % common_utils.ANALYSIS_TARGET_GT_KEY)
+        msg = ('ANALYSIS ROW: target labels used as training targets (DATA_CONFIG_TAR.%s = %s). The target\'s ground '
+               'truth replaces the teacher\'s pseudo-labels; this row is never a method row.'
+               % (common_utils.ANALYSIS_TARGET_GT_KEY, gt_as_pseudo))
+        if logger is not None:
+            logger.warning(msg)
+        else:
+            print(msg)
+        return
     pseudo = bool(tar.get('USE_PSEUDO_LABEL', False))
     unsupervised = bool(tar.get('UNSUPERVISED', False))
     if cfg.get('SELF_TRAIN', None):
