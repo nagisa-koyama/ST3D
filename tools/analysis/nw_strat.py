@@ -613,7 +613,7 @@ if __name__ == '__main__':
     ap.add_argument('--no_official', action='store_true')
     ap.add_argument('--frames', type=int, default=30, help='pitch_check: strided val frames for the slope statistics')
     ap.add_argument('--index', type=int, default=100, help='pitch_check: the dumped frame')
-    a = ap.parse_args()
+    a = ap.parse_intermixed_args()      # the runs may follow the options (30893 died on `pass --out X oracle=...`)
     if a.fill_all is None:
         a.fill_all = str(Path(a.out) / 'fill_CD_all.npz')
     t0 = time.time()
