@@ -746,6 +746,8 @@ def fill_cd(a):
     w = np.load(SC_DIR / 'waymo_val.npz'); wc = w['car']
     rb = _bin_of(wc[:, S['r']])
     ok = (wc[:, S['n_pts']] >= 1) & (wc[:, S['length']] < LONG_M) & (rb >= 0)
+    if getattr(a, 'all_vehicle', False):   # NW-STRAT (experiments_md 20261027_03): every Vehicle GT, any range / count / length
+        ok = np.ones(len(wc), bool)
     frames, g0 = [], []
     n = 0
     for fid in fids:
@@ -774,7 +776,8 @@ def fill_cd(a):
     cols = ('g', 'r', 'n_top_inbox', 'n_sil', 'n_vis', 'fill', 'rc', 'nfill', 'pts_in_sil')
     print(f'[fill_cd] self-check: in-box TOP points whose pixel is in the silhouette, p5 / p50 '
           f'{np.round(np.nanpercentile(rows[:, 8], (5, 50)), 3).tolist()}', flush=True)
-    np.savez(Path(a.out) / 'fill_CD.npz', rows=rows, cols=np.array(cols), miss=miss,
+    np.savez(Path(a.out) / ('fill_CD_all.npz' if getattr(a, 'all_vehicle', False) else 'fill_CD.npz'), rows=rows,
+             cols=np.array(cols), miss=miss,
              n_pts_grid=wc[gi, S['n_pts']], n_vox=wc[gi, S['n_vox']])
     print(f'[fill_cd] {len(rows)} GT ({int(miss.sum())} misses) in {time.time() - t0:.0f} s', flush=True)
 
@@ -1496,6 +1499,9 @@ if __name__ == '__main__':
     ap.add_argument('--max_frames', type=int, default=0)
     ap.add_argument('--rows', action='store_true', help='fill_b: write the §8 per-row records instead of the §7 table')
     ap.add_argument('--n_frames', type=int, default=200)
+    ap.add_argument('--all_vehicle', action='store_true',
+                    help='fill_cd: every Waymo val Vehicle GT (no range bin, point or length filter), written to '
+                         'fill_CD_all.npz (NW-STRAT, experiments_md 20261027_03); absent = the §7 population, unchanged')
     a = ap.parse_args()
     t0 = time.time()
     {'select': select, 'extract_a': extract_a, 'extract_b': extract_b, 'extract_cd': extract_cd, 'elev': elev,

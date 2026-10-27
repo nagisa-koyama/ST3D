@@ -1,0 +1,12 @@
+# EVAL-ONLY twin of cfgs/da-ieee-access/centerpoint-gblobs-accum-legaldepth-st3d-nuscenes2waymo.yaml (27704's own config) for
+# NW-STRAT S1 (experiments_md 20261027_03; design 20261003_05 §5 item 23, FIXED 2026-10-27 21:15 JST, experiments_md b6656df).
+# ANALYSIS (Waymo val labels at evaluation only). Waymo val rotated by a source ground slope with the OSENS-2 pitch arm
+# (osens2_utils.pitch_points, ST3D 520c63d): PITCH_DEG > 0 raises the points ahead, so the ground then rises ahead, the sign
+# of 20261004_02's forward slopes. PITCH_DEG = 2.18 deg = Boston (n008) +2.29 minus Waymo +0.11 (20261004_02 §2 loader-frame slopes;
+# frame counts from 27704's own log). Sensor origin and axis as the waymo2waymo OSENS-2 twins (TOP at (1.43, 0, 2.184), SHIFT_COOR 0).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-gblobs-accum-legaldepth-st3d-nuscenes2waymo.yaml
+DATA_CONFIG_TAR:
+  EVAL_OSENS2:
+    PITCH_DEG: 2.18
+    SENSOR_ORIGIN: [1.43, 0.0, 2.184]
+    FORWARD_AXIS: x
