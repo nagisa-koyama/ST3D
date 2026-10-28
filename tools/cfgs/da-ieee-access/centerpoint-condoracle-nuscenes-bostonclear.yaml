@@ -1,0 +1,25 @@
+# ANALYSIS ONLY - NEVER A METHOD ROW: trained on TARGET labels (memory/repo/uda_legality_rule.md, analysis exception).
+# P2-B condition oracle, design fixed in experiments_md 20261003_05 (T05) §5 "PHASE 2, design FIXED 12:04" (af7680c);
+# report experiments_md 20261028_03. Pair N (nuScenes Boston rain-only vs Boston clear-only, 125 scenes each). This arm: Boston clear-only, 125 of the 265 Boston clear train scenes drawn with numpy
+# default_rng(0) (tools/analysis/condoracle_build.py; the list is in arms.json).
+#
+# Recipe = the nuScenes oracle's resolved config with ONLY the train frame set changed (and the epoch count that keeps
+# the oracle's optimiser steps). Oracle 25743 (W&B wfdcq75s, ST3D 8bcbd27): 28,130 keyframes x 20 epochs at 2 x 3 = 4,689 x 20 = 93,780 steps (562,600 frame-passes). Arm: 5,060 keyframes, 844 steps per epoch at 2 x 3; 562,600 / 5,060 = 111.19 -> 111 epochs (nearest integer; the clear arm takes the same 111): 93,684 steps (-0.10%).
+# The train infos are a filtered copy of nuscenes_infos_10sweeps_train.pkl (original order, info dicts untouched) under
+# /home/koyama/data/cond_oracle_20261028/, named by ABSOLUTE path (NuScenesDataset joins root_path / info_path).
+# The oracle yamls are byte-identical at the run's recorded commit and at the time of writing; the arm's resolved
+# config is checked key by key against the oracle run's LOGGED config by tools/analysis/condoracle_check.py.
+# No gt_sampling in this recipe (none in the oracle's AUG_CONFIG_LIST), MAX_SWEEPS 1: no object from outside the
+# arm's frames can enter. Evaluation: the FULL val as the oracle was scored (nuScenes val, all 6,019 keyframes; final epoch, as 25768 scored the oracle).
+
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-nuscenes.yaml
+
+DATA_CONFIG:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_nuscenes_dataset.yaml
+    INFO_PATH: {
+        'train': [/home/koyama/data/cond_oracle_20261028/nuscenes_boston_clear_train_infos.pkl],
+        'test': [nuscenes_infos_10sweeps_val.pkl],
+    }
+
+OPTIMIZATION:
+    NUM_EPOCHS: 111

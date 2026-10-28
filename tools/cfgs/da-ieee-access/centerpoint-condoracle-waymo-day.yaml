@@ -1,0 +1,27 @@
+# ANALYSIS ONLY - NEVER A METHOD ROW: trained on TARGET labels (memory/repo/uda_legality_rule.md, analysis exception).
+# P2-B condition oracle, design fixed in experiments_md 20261003_05 (T05) §5 "PHASE 2, design FIXED 12:04" (af7680c);
+# report experiments_md 20261028_03. Pair W (Waymo Night-only vs Day-only, 78 segments each at interval 2). This arm: Day | sunny, 78 train segments drawn per location to Night's counts (sf 36, phx 29, other 13),
+# numpy default_rng(0) (tools/analysis/condoracle_build.py; the list is in arms.json).
+#
+# Recipe = the Waymo oracle's resolved config with ONLY the train frame set changed (and the epoch count that keeps
+# the oracle's optimiser steps). Oracle 26398 (W&B y6p61n0x, ST3D 08518ae): 79,041 frames x 7 epochs at global batch 6 = 13,174 x 7 = 92,218 steps (553,287 frame-passes). Arm: 7,710 frames (ceil(15,419 / 2), the loader sampling the arm's own list), 1,285 steps per epoch at 2 x 3; 553,287 / 7,710 = 71.76 -> 72 epochs (nearest integer; the Day arm takes the same 72): 92,520 steps (+0.33%).
+# Base: centerpoint-sourceonly-waymo2waymo.yaml = centerpoint-sourceonly-waymo.yaml (26398's config) with the eval
+# target set to Waymo val, as 27179 scored the oracle (interval 5, 7,998 frames).
+# The train split is a list under /home/koyama/data/cond_oracle_20261028/ named by ABSOLUTE path: WaymoDataset opens
+# root_path / 'ImageSets' / (split + '.txt'), and a pathlib join with an absolute path is that path.
+# The oracle yamls are byte-identical at the run's recorded commit and at the time of writing; the arm's resolved
+# config is checked key by key against the oracle run's LOGGED config by tools/analysis/condoracle_check.py.
+# No gt_sampling in this recipe (none in the oracle's AUG_CONFIG_LIST), MAX_SWEEPS 1: no object from outside the
+# arm's frames can enter. Evaluation: the FULL val as the oracle was scored (Waymo val, interval 5, 7,998 frames; final epoch, rescored by analysis/eval_checkpoint.sh as 27179).
+
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-waymo2waymo.yaml
+
+DATA_CONFIG:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_waymo_dataset.yaml
+    DATA_SPLIT: {
+        'train': /home/koyama/data/cond_oracle_20261028/waymo_day_sunny_train,
+        'test': val
+    }
+
+OPTIMIZATION:
+    NUM_EPOCHS: 72
