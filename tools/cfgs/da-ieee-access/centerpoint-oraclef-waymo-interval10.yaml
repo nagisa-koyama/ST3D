@@ -1,0 +1,32 @@
+# ANALYSIS ONLY - NEVER A METHOD ROW: trained on TARGET labels (Waymo TRAIN ground truth; memory/repo/uda_legality_rule.md,
+# analysis exception). It never selects or feeds a method value.
+# "O_f", the FRAME-MATCHED Waymo oracle twin for PL-GT (30904 / 30928): design FIXED 2026-10-28 14:00 JST by the
+# coordinator in experiments_md 20261003_05 (T05) §5 item 23, "FRAME-MATCHED TWIN O_f, design FIXED" (experiments_md
+# e9bb63b), before any O_f number; report experiments_md 20261028_04.
+#
+# Recipe = the Waymo oracle's resolved config with ONE data change. Oracle 26398 (W&B y6p61n0x, ST3D 08518ae,
+# centerpoint-sourceonly-waymo.yaml; 1 GPU x 6, seed 666; scored on Waymo val interval 5 by 27179 at epoch 7 = 65.92).
+# The one change: DATA_CONFIG.SAMPLED_INTERVAL.train 2 -> 10 (test stays 5), i.e. the same 15,809 frames PL-GT 30904 /
+# 27704 train on (every 10th info of the same 158,081-info train list; a subset of the oracle's every-2nd, 79,041).
+# NUM_EPOCHS keeps the oracle's optimiser steps: oracle 79,041 x 7 = 553,287 frame-passes, ceil(79,041 / 6) x 7 =
+# 13,174 x 7 = 92,218 steps. O_f: 553,287 / 15,809 = 35.0 -> 35 epochs; ceil(15,809 / 6) = 2,635 steps per epoch at
+# batch 6 on 1 GPU; 2,635 x 35 = 92,225 steps (+0.008%); 553,315 frame-passes.
+# Run as 26398 ran: 1 GPU, --batch_size 6 (6 per GPU x 1 GPU; BATCH_SIZE_PER_GPU 3 below is overridden by it), workers
+# 8, 10 CPUs, 150G, --fix_random_seed with seed 666, num_epochs_to_eval 1 (in-run evaluation of the last two epochs).
+#
+# Base: centerpoint-sourceonly-waymo2waymo.yaml = centerpoint-sourceonly-waymo.yaml (26398's config) with ONLY the eval
+# target set to Waymo val, as 27179 scored the oracle; the final epoch is rescored by analysis/eval_checkpoint.sh as
+# 27179 (chained). No gt_sampling in this recipe (none in the oracle's AUG_CONFIG_LIST); MAX_SWEEPS 1.
+# The resolved config is checked key by key against 26398's LOGGED config (tools/analysis/oraclef_check.py).
+
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-waymo2waymo.yaml
+
+DATA_CONFIG:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_waymo_dataset.yaml
+    SAMPLED_INTERVAL: {
+        'train': 10,
+        'test': 5
+    }
+
+OPTIMIZATION:
+    NUM_EPOCHS: 35
