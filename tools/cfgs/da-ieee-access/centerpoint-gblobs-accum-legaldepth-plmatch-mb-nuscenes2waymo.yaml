@@ -1,0 +1,30 @@
+# ANALYSIS ROW "PL-MATCH MB (matched boxes)" - NEVER A METHOD ROW. 27704's own frozen epoch-0 pseudo-labels matched against the
+# Waymo TRAIN ground truth: target labels shape the training targets here. It never selects or feeds a method value and
+# is labelled analysis in this file, its W&B note and every table (memory: uda_legality_rule.md, analysis exception).
+#
+# Design: T05 §5 item 23, "PL-MATCH, splitting PL-GT's label share into box geometry, false positives and misses",
+# APPROVED by the user 10-28 ~20:00, FIXED 2026-10-28 20:01 by the coordinator before any number (experiments_md
+# 2e78a9c). Report: experiments_md 20261028_05.
+# Row = 27704's resolved config (centerpoint-gblobs-accum-legaldepth-st3d-nuscenes2waymo, W&B 5hzcs4e4) with ONE change:
+# its frozen target labels. Start: 27704's stored ps_label_e0.pkl (teacher 27471; the 15,809 Waymo train frames at
+# SAMPLED_INTERVAL 10, as PL-GT). Matching per frame and per class (GT Vehicle -> Car, Pedestrian, Cyclist, through
+# PL-GT's filters: the PL-GT file's GT), one-to-one, greedy by pseudo-label score descending, BEV IoU >= 0.5, POSITIVE
+# pseudo-labels only; the ignore band (negative labels) is never matched. This row: every matched POSITIVE pseudo-label takes its GT box (centre, size, heading) and keeps its class and score; unmatched positives stay as they are; unmatched GT is NOT added; the ignore band is unchanged.
+# Everything else as 27704 / PL-GT 30904: student init 27471 epoch 20, seed 666, 2 GPUs, schedule, PROG_AUG, source
+# mixture, evaluation at epoch 20 (+ the 27803-style rescore). No teacher pass.
+#
+# As implemented (ST3D common_utils.ANALYSIS_TARGET_PL_MATCH_KEY; self_training_utils PL-MATCH helpers):
+# - the file below is written ONCE by `analysis/plmatch_labels.py build` and never rewritten;
+# - labels keep the pseudo-label sentinels: positives 1..3 and the ignore band -1..-3, with the teacher's scores (the
+#   inherited SCORE_THRESH / NEG_THRESH are never applied again: no teacher pass runs);
+# - zero-point filter: a GT-replaced box carries its GT's STORED count (as PL-GT's GT boxes); every other box is
+#   recounted on the loaded cloud, as in 27704 (DatasetTemplate.fill_pseudo_labels);
+# - assert_target_labels_are_not_used accepts the key with an "ANALYSIS ROW" line; unchanged for every other config.
+#
+# PRE-DECLARED READING (T05 §5 item 23, fixed before any number; Car BEV AP_R40 IoU 0.7 on Waymo val, epoch 20, scored
+# as 27704; one seed, +-2): chain M (27704 / 28563, 55.68) -> MB -> MB-FP -> X (PL-GT). G = MB - M (box geometry of found objects).
+# Each part >= +2 readable, within +-2 not readable, <= -2 hurts; within 1.5 of a bar: seed 667 of that row.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-gblobs-accum-legaldepth-st3d-nuscenes2waymo.yaml
+
+DATA_CONFIG_TAR:
+    ANALYSIS_TARGET_PL_MATCH_PSEUDO_LABELS: /home/koyama/data/plmatch_20261028/plmatch_mb_27704e0_waymo_train_si10.pkl

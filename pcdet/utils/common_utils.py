@@ -175,6 +175,16 @@ IGNORE_CLASS_LABEL = -99
 # and the loader keeps its stored per-box point counts (DatasetTemplate.fill_pseudo_labels).
 ANALYSIS_TARGET_GT_KEY = 'ANALYSIS_TARGET_GT_AS_PSEUDO_LABELS'
 
+# ANALYSIS ONLY ("PL-MATCH", experiments_md 20261028_05; design T05 §5 item 23, fixed 2026-10-28 20:01, experiments_md
+# 2e78a9c): a DATA_CONFIG_TAR key naming a frozen file of a self-training row's OWN stored pseudo-labels after matching
+# them against the TARGET's ground truth (matched positives take their GT box; optionally unmatched positives removed;
+# the ignore band kept). Absent from every method config and exclusive with ANALYSIS_TARGET_GT_KEY. The label guard
+# accepts it with an "ANALYSIS ROW" line, the self-training loop loads it in place of any teacher pass
+# (self_training_utils.load_analysis_pl_match_pseudo_labels), and the loader keeps the stored count of the GT-replaced
+# boxes while recounting every other box on the cloud, as the pseudo-label path always did
+# (DatasetTemplate.fill_pseudo_labels).
+ANALYSIS_TARGET_PL_MATCH_KEY = 'ANALYSIS_TARGET_PL_MATCH_PSEUDO_LABELS'
+
 
 def keep_arrays_by_name(gt_names, used_classes):
     inds = [i for i, x in enumerate(gt_names) if x in used_classes]

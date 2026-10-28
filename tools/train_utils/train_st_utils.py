@@ -493,6 +493,8 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
     # frozen file, IS the pseudo-label set for the whole run. It is loaded here at any start epoch and never
     # regenerated: no teacher pass runs (the loop below forces update_ps_label off).
     target_gt_ps_path = self_training_utils.analysis_target_gt_pseudo_label_path(cfg)
+    pl_match_ps_path = self_training_utils.analysis_pl_match_pseudo_label_path(cfg)
+    assert target_gt_ps_path is None or pl_match_ps_path is None, 'PL-GT and PL-MATCH files are exclusive'
     if target_gt_ps_path is not None:
         gt_labels, gt_meta, gt_counts = self_training_utils.load_analysis_target_gt_pseudo_labels(
             target_gt_ps_path, list(cfg.CLASS_NAMES), min_points=cfg.DATA_CONFIG_TAR.get('MIN_POINTS_OF_GT', 1))
@@ -514,6 +516,38 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
             wandb.log({'train/ps_labels_total': int(gt_counts.sum())})
             for name, n in zip(cfg.CLASS_NAMES, gt_counts.tolist()):
                 wandb.log({'train/ps_labels_{}'.format(name): int(n)})
+    elif pl_match_ps_path is not None:
+        # PL-MATCH (ANALYSIS; absent = unchanged; experiments_md 20261028_05): a row's own stored pseudo-labels matched
+        # against the TARGET's ground truth, written once to a frozen file, ARE the pseudo-label set for the whole run.
+        # They keep the ignore band and the teacher's scores. Loaded here at any start epoch, never regenerated: no
+        # teacher pass runs (the loop below forces update_ps_label off).
+        pm_labels, pm_meta, pm_counts = self_training_utils.load_analysis_pl_match_pseudo_labels(
+            pl_match_ps_path, list(cfg.CLASS_NAMES), min_points=cfg.DATA_CONFIG_TAR.get('MIN_POINTS_OF_GT', 1))
+        tds = target_loader.dataset.dataset
+        infos = getattr(tds, 'infos', None)
+        if infos and isinstance(infos[0], dict) and 'frame_id' in infos[0]:
+            served = list(getattr(target_loader.dataset, 'indices', range(len(infos))))
+            missing = [infos[i]['frame_id'] for i in served if infos[i]['frame_id'] not in pm_labels]
+            assert not missing, ('%d of the %d target frames served have no entry in %s (first: %s): the file was '
+                                 'written for other frames' % (len(missing), len(served), pl_match_ps_path, missing[:3]))
+        self_training_utils.PSEUDO_LABELS.clear()
+        self_training_utils.PSEUDO_LABELS.update(pm_labels)
+        ps_labels_generated = True
+        if logger is not None:
+            logger.warning('ANALYSIS ROW (PL-MATCH %s): %d frames of frozen pseudo-labels matched against TARGET ground '
+                           'truth loaded from %s; per class %s: positives %s, ignore band %s, GT-replaced %s; no '
+                           'teacher pass will run.'
+                           % (pm_meta.get('row', '?'), len(pm_labels), pl_match_ps_path, list(cfg.CLASS_NAMES),
+                              pm_counts['positive'].tolist(), pm_counts['ignore'].tolist(),
+                              pm_counts['gt_replaced'].tolist()))
+        if rank == 0:
+            # the keys a teacher pass logs (gather_and_dump_pseudo_label_result: one per teacher class + 'Ignored')
+            wandb.log({'train/ps_labels_total': int(pm_counts['positive'].sum() + pm_counts['ignore'].sum())})
+            for name, n in zip(cfg.CLASS_NAMES, pm_counts['positive'].tolist()):
+                wandb.log({'train/ps_labels_{}'.format(name): int(n)})
+            wandb.log({'train/ps_labels_Ignored': int(pm_counts['ignore'].sum())})
+            for name, n in zip(cfg.CLASS_NAMES, pm_counts['gt_replaced'].tolist()):
+                wandb.log({'train/ps_labels_gt_replaced_{}'.format(name): int(n)})
     else:
         # for continue training.
         # if already exist generated pseudo label result
@@ -605,6 +639,8 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
                      and cur_epoch != 0)
             if target_gt_ps_path is not None:
                 update_ps_label = False   # PL-GT: the frozen target ground truth is never regenerated
+            if pl_match_ps_path is not None:
+                update_ps_label = False   # PL-MATCH: the frozen matched pseudo-labels are never regenerated
             if update_ps_label and ps_labels_generated and frozen_single_pass:
                 if teacher_is_frozen:
                     update_ps_label = False

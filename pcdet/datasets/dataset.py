@@ -419,6 +419,23 @@ class DatasetTemplate(torch_data.Dataset):
             labels = getattr(self, 'pseudo_labels', None)
             labels = labels if labels is not None else self_training_utils.PSEUDO_LABELS
             input_dict['num_points_in_gt'] = np.asarray(labels[input_dict['frame_id']]['num_points_in_gt'])
+        elif (getattr(self, 'dataset_cfg', None) or {}).get(common_utils.ANALYSIS_TARGET_PL_MATCH_KEY, None):
+            # PL-MATCH (ANALYSIS; absent = unchanged; experiments_md 20261028_05): a box whose geometry was replaced by
+            # a GT box carries that GT's STORED count and is filtered as PL-GT filters its GT boxes; every other box
+            # (an unmatched positive or the ignore band, count PL_MATCH_RECOUNT) is recounted here on the loaded
+            # cloud with the very call prepare_data makes when the count is absent (nothing touches the points or
+            # boxes in between), i.e. exactly as the plain pseudo-label path treats it.
+            labels = getattr(self, 'pseudo_labels', None)
+            labels = labels if labels is not None else self_training_utils.PSEUDO_LABELS
+            stored = np.asarray(labels[input_dict['frame_id']]['num_points_in_gt']).astype(np.int64)
+            assert len(stored) == len(gt_boxes), (input_dict['frame_id'], len(stored), len(gt_boxes))
+            counts = stored.copy()
+            recount = stored == self_training_utils.PL_MATCH_RECOUNT
+            if recount.any():
+                counts[recount] = roiaware_pool3d_utils.points_in_boxes_cpu(
+                    torch.from_numpy(input_dict['points'][:, :3]),
+                    torch.from_numpy(gt_boxes[recount])).numpy().sum(axis=1)
+            input_dict['num_points_in_gt'] = counts
         else:
             input_dict.pop('num_points_in_gt', None)
 

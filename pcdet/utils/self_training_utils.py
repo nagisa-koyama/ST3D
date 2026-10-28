@@ -467,3 +467,166 @@ def load_analysis_target_gt_pseudo_labels(path, class_names, min_points=1):
     labels = blob['labels']
     counts = validate_target_gt_pseudo_labels(labels, list(class_names), min_points=min_points)
     return labels, meta, counts
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# ANALYSIS ONLY: "PL-MATCH" (experiments_md 20261028_05; design T05 §5 item 23, fixed 2026-10-28 20:01 after the user's
+# approval, experiments_md 2e78a9c). A self-training row's OWN stored pseudo-labels (27704's ps_label_e0.pkl) matched
+# against the TARGET's ground truth, frozen, and served for the whole run in place of any teacher pass. Reached only
+# through DATA_CONFIG_TAR.ANALYSIS_TARGET_PL_MATCH_PSEUDO_LABELS (common_utils.ANALYSIS_TARGET_PL_MATCH_KEY), absent
+# from every method config. Target labels shape the training targets: such a row never selects or feeds a method value
+# and is labelled analysis everywhere (memory: uda_legality_rule.md).
+#
+# Unlike PL-GT's file, this one KEEPS the pseudo-label sentinels: the ignore band (labels -1..-C) and the teacher's
+# scores. The file is a wrapper {'format': ANALYSIS_PL_MATCH_FORMAT, 'meta': {...}, 'labels': {frame_id: entry}}, so
+# any other pseudo-label path fails loudly on it. Each entry has the keys a teacher pass writes plus
+#   num_points_in_gt (N,) int64: the GT's STORED count for a box whose geometry was replaced by a GT box (it is then
+#       treated as PL-GT treats its GT boxes), and PL_MATCH_RECOUNT (-1) for every other box (an unmatched positive or
+#       an ignore-band box), which the loader recounts on the loaded cloud exactly as the plain pseudo-label path does;
+#   match_gt_index (N,) int64 (-1 = none) and match_bev_iou (N,) float64: the audit trail of the matching.
+ANALYSIS_PL_MATCH_FORMAT = 'analysis_target_pl_match_pseudo_labels/v1'
+PL_MATCH_RECOUNT = -1
+
+
+def analysis_pl_match_pseudo_label_path(config):
+    """The frozen PL-MATCH pseudo-label file an ANALYSIS row names, or None (every other config)."""
+    tar = config.get('DATA_CONFIG_TAR', None)
+    if tar is None:
+        return None
+    return tar.get(common_utils.ANALYSIS_TARGET_PL_MATCH_KEY, None) or None
+
+
+def pl_match_greedy(ps_boxes, ps_labels, ps_scores, gt_boxes, gt_labels, num_classes, iou_fn, iou_thresh=0.5):
+    """One-to-one greedy matching of POSITIVE pseudo-labels to GT, per class, by pseudo-label score (descending).
+
+    For each class c in 1..num_classes, the positives with label == c are visited in descending score (stable for
+    ties); each takes the not-yet-taken GT box of class c with the highest BEV IoU, if that IoU >= iou_thresh. A
+    negative label (the ignore band -1..-C, or IGNORE_CLASS_LABEL) and label 0 are never matched; nor is a GT box of
+    another class. iou_fn(a (P, 7), b (G, 7)) -> (P, G) BEV IoU.
+
+    Returns (match (N,) int64 index into gt_boxes or -1, match_iou (N,) float64, 0 where unmatched).
+    """
+    ps_labels = np.asarray(ps_labels)
+    n = len(ps_labels)
+    match = np.full(n, -1, dtype=np.int64)
+    match_iou = np.zeros(n, dtype=np.float64)
+    gt_labels = np.asarray(gt_labels)
+    for c in range(1, num_classes + 1):
+        pos = np.where(ps_labels == c)[0]
+        gidx = np.where(gt_labels == c)[0]
+        if len(pos) == 0 or len(gidx) == 0:
+            continue
+        order = pos[np.argsort(-np.asarray(ps_scores)[pos], kind='stable')]
+        iou = np.asarray(iou_fn(np.asarray(ps_boxes)[order, :7], np.asarray(gt_boxes)[gidx, :7]), dtype=np.float64)
+        assert iou.shape == (len(order), len(gidx)), iou.shape
+        taken = np.zeros(len(gidx), dtype=bool)
+        for r, p in enumerate(order):
+            row = np.where(taken, -1.0, iou[r])
+            j = int(row.argmax())
+            if row[j] >= iou_thresh:
+                taken[j] = True
+                match[p] = gidx[j]
+                match_iou[p] = row[j]
+    return match, match_iou
+
+
+def pl_match_entry(ps_entry, gt_entry, num_classes, iou_fn, iou_thresh=0.5, drop_unmatched_positives=False):
+    """One frame of a stored pseudo-label set -> one PL-MATCH entry (design T05 §5 item 23).
+
+    MB (drop_unmatched_positives False): every matched positive takes its GT box (centre, size, heading, columns 0..6)
+    and keeps its label and score; unmatched positives and the ignore band are unchanged; unmatched GT is NOT added.
+    MB-FP (True): MB, plus every unmatched POSITIVE removed; the ignore band is unchanged.
+    gt_entry is one PL-GT entry (labels 1..C, stored num_points_in_gt), i.e. the GT through PL-GT's filters.
+    Returns (entry, info) with info = {'match', 'match_iou'} over the ORIGINAL pseudo-label rows.
+    """
+    b = np.asarray(ps_entry['gt_boxes'], dtype=np.float64)
+    if b.size == 0:
+        b = b.reshape(0, 9)
+    g = np.asarray(gt_entry['gt_boxes'], dtype=np.float64)
+    if g.size == 0:
+        g = g.reshape(0, 9)
+    lab = b[:, 7]
+    match, match_iou = pl_match_greedy(b, lab, b[:, 8], g, g[:, 7], num_classes, iou_fn, iou_thresh)
+    m = match >= 0
+    out = b.copy()
+    out[m, :7] = g[match[m], :7]
+    npts = np.full(len(b), PL_MATCH_RECOUNT, dtype=np.int64)
+    npts[m] = np.asarray(gt_entry['num_points_in_gt'], dtype=np.int64)[match[m]]
+    keep = np.ones(len(b), dtype=bool)
+    if drop_unmatched_positives:
+        keep = ~((lab > 0) & ~m)
+
+    def _sel(v, dtype=None):
+        if v is None:
+            return None
+        v = np.asarray(v) if dtype is None else np.asarray(v, dtype=dtype)
+        assert len(v) == len(b), (len(v), len(b))
+        return v[keep]
+
+    entry = {
+        'gt_boxes': out[keep],
+        'cls_scores': _sel(ps_entry.get('cls_scores', None)),
+        'iou_scores': _sel(ps_entry.get('iou_scores', None)),
+        'memory_counter': _sel(ps_entry.get('memory_counter', np.zeros(len(b)))),
+        'teacher_classes': _sel(ps_entry.get('teacher_classes', None)),
+        'num_points_in_gt': npts[keep],
+        'match_gt_index': match[keep],
+        'match_bev_iou': match_iou[keep],
+    }
+    return entry, {'match': match, 'match_iou': match_iou}
+
+
+def validate_pl_match_pseudo_labels(labels, class_names, min_points=1):
+    """Refuse a PL-MATCH pseudo-label dict that the design does not allow; return per-class counts.
+
+    Allowed labels are the positives 1..C and the ignore band -1..-C, both integers. Refused: 0 (background / padding),
+    IGNORE_CLASS_LABEL (-99), |label| > C, non-integers. Scores in (0, 1]; finite poses; extents > 0. num_points_in_gt
+    is PL_MATCH_RECOUNT or a stored count >= min_points, and a stored count (a GT-replaced box) only on a POSITIVE (the
+    ignore band is never matched). CenterHead reads any negative label as an ignore region and clips it away from every
+    class channel (memory: bug_prevention_checklist.md, rule 1); this check makes sure nothing else reaches it.
+
+    Returns a dict of (C,) int64 arrays: 'positive', 'ignore', 'gt_replaced'.
+    """
+    c = len(class_names)
+    pos = np.zeros(c, dtype=np.int64)
+    ign = np.zeros(c, dtype=np.int64)
+    rep = np.zeros(c, dtype=np.int64)
+    for frame_id, e in labels.items():
+        b = np.asarray(e['gt_boxes'])
+        assert b.ndim == 2 and b.shape[1] == 9, (frame_id, b.shape)
+        lab = b[:, 7]
+        ok = np.all(lab == np.round(lab)) and np.all((np.abs(lab) >= 1) & (np.abs(lab) <= c))
+        assert ok, ('%s: labels must be positives 1..%d or the ignore band -1..-%d (no 0, no %d), got %s'
+                    % (frame_id, c, c, common_utils.IGNORE_CLASS_LABEL, np.unique(lab).tolist()))
+        s = b[:, 8]
+        assert np.all(np.isfinite(s)) and np.all((s > 0) & (s <= 1)), (frame_id, 'scores must be in (0, 1]')
+        assert np.all(np.isfinite(b[:, :7])) and np.all(b[:, 3:6] > 0), (frame_id, 'non-finite box or extent <= 0')
+        npts = np.asarray(e['num_points_in_gt'])
+        assert npts.ndim == 1 and len(npts) == len(b) and np.issubdtype(npts.dtype, np.integer), (frame_id, 'counts')
+        stored = npts != PL_MATCH_RECOUNT
+        assert np.all(npts[stored] >= min_points), (frame_id, 'a stored count below MIN_POINTS_OF_GT')
+        assert not np.any(stored & (lab < 0)), (frame_id, 'an ignore-band box carries a stored GT count')
+        for k in ('cls_scores', 'iou_scores', 'memory_counter', 'teacher_classes', 'match_gt_index', 'match_bev_iou'):
+            if e.get(k, None) is not None:
+                assert len(e[k]) == len(b), (frame_id, k)
+        if e.get('match_gt_index', None) is not None:
+            assert np.array_equal(np.asarray(e['match_gt_index']) >= 0, stored), \
+                (frame_id, 'stored counts must sit exactly on the GT-replaced boxes')
+        li = lab.astype(np.int64)
+        pos += np.bincount(li[li > 0] - 1, minlength=c)
+        ign += np.bincount(-li[li < 0] - 1, minlength=c)
+        rep += np.bincount(li[stored] - 1, minlength=c)
+    return {'positive': pos, 'ignore': ign, 'gt_replaced': rep}
+
+
+def load_analysis_pl_match_pseudo_labels(path, class_names, min_points=1):
+    """Read and validate a frozen PL-MATCH file; returns (labels, meta, counts dict)."""
+    with open(path, 'rb') as f:
+        blob = pkl.load(f)
+    assert isinstance(blob, dict) and blob.get('format') == ANALYSIS_PL_MATCH_FORMAT, \
+        '%s is not a %s file' % (path, ANALYSIS_PL_MATCH_FORMAT)
+    meta = blob['meta']
+    assert list(meta['class_names']) == list(class_names), (meta['class_names'], list(class_names))
+    labels = blob['labels']
+    counts = validate_pl_match_pseudo_labels(labels, list(class_names), min_points=min_points)
+    return labels, meta, counts

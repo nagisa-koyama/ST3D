@@ -71,6 +71,29 @@ def assert_target_labels_are_not_used(cfg, target_is_trained, logger=None):
     tar = cfg.get('DATA_CONFIG_TAR', None)
     if tar is None or not target_is_trained:
         return
+    # ANALYSIS ONLY (PL-MATCH, experiments_md 20261028_05): a row's own frozen pseudo-labels matched against the target's
+    # ground truth (matched positives take their GT box). Target labels shape the training targets, so it is an
+    # analysis row like PL-GT, with the same checks; the two keys never go together. Absent = nothing changes.
+    pl_match = tar.get(common_utils.ANALYSIS_TARGET_PL_MATCH_KEY, None)
+    if pl_match:
+        assert not tar.get(common_utils.ANALYSIS_TARGET_GT_KEY, None), (
+            '%s and %s are both set: a row serves ONE frozen target label file.'
+            % (common_utils.ANALYSIS_TARGET_PL_MATCH_KEY, common_utils.ANALYSIS_TARGET_GT_KEY))
+        assert cfg.get('SELF_TRAIN', None), (
+            '%s is set but SELF_TRAIN is not: only a self-training row reads pseudo-labels, so the key would do '
+            'nothing and the target would train on its real labels by another path.'
+            % common_utils.ANALYSIS_TARGET_PL_MATCH_KEY)
+        assert bool(tar.get('USE_PSEUDO_LABEL', False)) and not bool(tar.get('UNSUPERVISED', False)), (
+            '%s needs DATA_CONFIG_TAR.USE_PSEUDO_LABEL: True and no UNSUPERVISED: the frozen file is read '
+            'through the pseudo-label path and nowhere else.' % common_utils.ANALYSIS_TARGET_PL_MATCH_KEY)
+        msg = ('ANALYSIS ROW: target labels used to build the training targets (DATA_CONFIG_TAR.%s = %s). Frozen '
+               'pseudo-labels matched against the target\'s ground truth replace the teacher pass; this row is never '
+               'a method row.' % (common_utils.ANALYSIS_TARGET_PL_MATCH_KEY, pl_match))
+        if logger is not None:
+            logger.warning(msg)
+        else:
+            print(msg)
+        return
     # ANALYSIS ONLY (PL-GT, experiments_md 20261027_05): the one sanctioned way for target labels to become training
     # targets - the target's ground truth written as frozen pseudo-labels under a named key, absent from every method
     # config. It must still be a well-formed self-training target (the key cannot switch the checks below off), and the
