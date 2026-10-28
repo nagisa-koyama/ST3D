@@ -29,10 +29,18 @@ count excludes X. gap(X) = AP_oracle(X) - AP_model(X); C_X = gap(all) - gap(X).
 M2: in each range x stored-points cell with >= 100 GT in each compared group, the rate at which the oracle finds a GT
 that the model misses (IoU 0.5, any score: greedy matching over all detections) for u < 0.5 against u >= 0.9.
 
-    python analysis/nw_strat.py pass --out <dir> oracle=<pkl> teacher=<pkl> m27704=<pkl> m28563=<pkl>
-    python analysis/nw_strat.py report --out <dir> [--fill_all <npz>]
+    python analysis/nw_strat.py pass --out <dir> oracle=<pkl> teacher=<pkl> m27704=<pkl> m28563=<pkl> [plgt=<pkl>]
+    python analysis/nw_strat.py report --out <dir> [--fill_all <npz>] [--rings] [--repro_json <old nw_strat.json>]
     python analysis/nw_strat.py pitch_check --out <dir>
     python analysis/nw_strat.py pitch_collect --out <dir>
+
+Opt-in report options (absent by default; added for the PL-GT beside items, experiments_md 20261027_05):
+- `--rings`: 20261017_13 §5.2's per-ring AP (0-10 ... 50-75 m) from the same pooled matching (a TP binned by its GT's
+  centre range, an FP by its own, n_GT by GT range), AP / PR / RL at IoU 0.7 and 0.5 per model and the gap to the
+  oracle; it must reproduce 20261017_13's numbers.json for the oracle, the teacher and 27704, or the job stops.
+- `--repro_json`: every number a previous nw_strat.json holds for the models it shares with this one (checks, u,
+  categories, M1 greedy and official, M2, readings) must be equal, or the job exits 3 (it still writes its outputs,
+  flagged in `repro_vs_previous`).
 """
 import argparse
 import copy
@@ -70,6 +78,83 @@ REPRO = {'m27704_greedy_ap': 55.02, 'oracle_greedy_ap': 65.21}
 # 20261007_03 §3 (AP on GT subsets, IoU 0.7), the convention check: oracle / GBlobs + accumulation (= teacher 27596)
 REPRO_SUBSETS = {'pts>=200': (94.1, 81.7), 'pts 50-199': (81.1, 60.1), 'pts 10-49': (38.3, 13.2), 'len<6': (65.3, 52.7),
                  'len<6 & pts>=200': (96.6, 87.4), 'len>=6': (44.6, 2.1)}
+RANKING_NUMBERS = Path('/home/koyama/data/waymo_ranking_20261017/full/numbers.json')   # 20261017_13 §5 (job 29382)
+
+
+# ------------------------------------------------------------------------------------------- per ring (--rings)
+def ring_table(P):
+    """20261017_13 §5.2's per-ring AP from the same pooled matching: a TP is binned by its GT's centre range, an FP by
+    its own, n_GT by GT range (rings 0-10 ... 50-75 m; beyond 75 m in no ring). AP / PR / RL (AP_R40 and continuous) per
+    model at IoU 0.7 and 0.5; gap = oracle AP - model AP per ring. Checked against 20261017_13's numbers.json."""
+    from waymo_ranking_loss_fp_taxonomy import RINGS, RING_NAMES, ap_split
+    gt = P['gt']
+    edges = np.asarray(RINGS[1:-1], np.float64)
+    gt_ring = np.where(gt['rng'] < RINGS[-1], np.searchsorted(edges, gt['rng'], side='right'), -1)
+    nk = len(RINGS) - 1
+    out = dict(rings=list(RING_NAMES), n_gt=[int((gt_ring == k).sum()) for k in range(nk)], models={})
+    for lab in P['labels']:
+        det = P['models'][lab]['det']
+        d_ring = np.where(det['rng'] < RINGS[-1], np.searchsorted(edges, det['rng'], side='right'), -1)
+        r = {}
+        for thr, key in ((0.7, 'gt7'), (0.5, 'gt5')):
+            tp = det[key] >= 0
+            tp_ring = np.where(tp, gt_ring[np.maximum(det[key], 0)], -1)
+            r[f'ring{thr}'] = []
+            for k in range(nk):
+                sel = (tp & (tp_ring == k)) | (~tp & (d_ring == k))
+                r[f'ring{thr}'].append(ap_split(det['score'][sel], tp[sel], int((gt_ring == k).sum())))
+        out['models'][lab] = r
+    for lab in P['labels']:
+        if lab != 'oracle':
+            for thr in (0.7, 0.5):
+                out['models'][lab][f'gap{thr}'] = [o['ap'] - m['ap'] for o, m in
+                                                   zip(out['models']['oracle'][f'ring{thr}'], out['models'][lab][f'ring{thr}'])]
+    ref = json.load(open(RANKING_NUMBERS))
+    chk = {}
+    for lab, rlab in PASS_LABEL.items():
+        if lab not in out['models']:
+            continue
+        for thr in (0.7, 0.5):
+            got, want = out['models'][lab][f'ring{thr}'], ref[rlab][f'ring{thr}']
+            chk[f'{lab}_ring{thr}'] = bool(len(got) == len(want) and all(
+                abs(g[k] - w[k]) <= 1e-9 for g, w in zip(got, want) for k in ('ap', 'pr', 'rl', 'ap_c', 'pr_c', 'rl_c', 'recall')))
+    out['checks_vs_20261017_13'] = chk
+    out['reproduces'] = bool(chk) and all(chk.values())
+    return out
+
+
+# --------------------------------------------------------------------------- reproduction of a previous report
+def compare_previous(old, new, labels):
+    """Paths at which `old` (a previous nw_strat.json) and `new` differ, over the models in `labels` (shared by both) and
+    the model-free parts. Exact comparison (both sides through JSON); NaN equals NaN."""
+    mism = []
+
+    def walk(a, b, path):
+        if isinstance(a, dict):
+            if not isinstance(b, dict):
+                mism.append(f'{path}: type'); return
+            for k in a:
+                if k not in b:
+                    mism.append(f'{path}/{k}: missing'); continue
+                walk(a[k], b[k], f'{path}/{k}')
+        elif isinstance(a, list):
+            if not isinstance(b, list) or len(a) != len(b):
+                mism.append(f'{path}: length'); return
+            for i, (x, y) in enumerate(zip(a, b)):
+                walk(x, y, f'{path}[{i}]')
+        elif isinstance(a, float) or isinstance(b, float):
+            if not (a == b or (a != a and b != b)):
+                mism.append(f'{path}: {a} != {b}')
+        elif a != b:
+            mism.append(f'{path}: {a} != {b}')
+    for k in ('n_frames', 'n_gt', 'checks', 'checks_failed', 'u', 'category_counts', 'both_seeds_same_side'):
+        if k in old:
+            walk(old[k], new.get(k), k)
+    for k in ('m1_greedy', 'm1_official', 'm2', 'readings', 'official_raw'):
+        for lab in labels:
+            if k in old and lab in old[k]:
+                walk(old[k][lab], new.get(k, {}).get(lab), f'{k}/{lab}')
+    return mism
 
 
 # ------------------------------------------------------------------------------------------------- AP conventions
@@ -439,9 +524,28 @@ def run_report(a):
     if 'm27704' in rd and 'm28563' in rd:
         keys = ('c_occl_ge_2', 'ratio_ge_1p5', 'ratio_le_1p2', 'factor', 'proxy', 'dominant', 'range_carries_2')
         res['both_seeds_same_side'] = {k: bool(rd['m27704'][k] == rd['m28563'][k]) for k in keys}
+    # ---- opt-in: per ring (20261017_13 §5.2), and the reproduction of a previous report
+    fail = []
+    if a.rings:
+        res['rings'] = ring_table(P)
+        print(f'[report] rings vs 20261017_13: {res["rings"]["checks_vs_20261017_13"]}', flush=True)
+        if not res['rings']['reproduces']:
+            fail.append('rings')
+    if a.repro_json:
+        old = json.load(open(a.repro_json))
+        shared = [lab for lab in P['labels'] if lab in old.get('m1_greedy', {}) or lab == 'oracle']
+        mism = compare_previous(old, json.loads(json.dumps(res, default=float)), shared)
+        res['repro_vs_previous'] = dict(path=str(a.repro_json), models=shared, n_mismatches=len(mism),
+                                        mismatches=mism[:200], reproduces=not mism)
+        print(f'[report] reproduction of {a.repro_json} for {shared}: {len(mism)} mismatches', flush=True)
+        if mism:
+            fail.append('repro_vs_previous')
     json.dump(res, open(out / 'nw_strat.json', 'w'), indent=1, default=float)
     write_md(res, out / 'nw_strat.md')
     print(f'[report] -> {out / "nw_strat.json"}, {out / "nw_strat.md"}', flush=True)
+    if fail:
+        print(f'[report] STOP: {fail} did not reproduce (outputs written, flagged)', flush=True)
+        sys.exit(3)
 
 
 def write_md(res, path):
@@ -471,6 +575,19 @@ def write_md(res, path):
         L.append(f'aggregate: {m["aggregate"]}'); L.append('')
     L.append(f'### readings: {json.dumps(res["readings"])}')
     L.append(f'both seeds same side: {res.get("both_seeds_same_side")}')
+    if 'rings' in res:
+        rg = res['rings']
+        for thr in (0.7, 0.5):
+            L.append(f'### Per ring, IoU {thr} (20261017_13 §5.2 pooled matching): AP / PR / RL; gap to the oracle')
+            rows = [[lab] + ['%.1f / %.1f / %.1f' % (s['ap'], s['pr'], s['rl']) for s in m[f'ring{thr}']]
+                    for lab, m in rg['models'].items()]
+            rows += [[lab + ' gap'] + ['%.2f' % g for g in m[f'gap{thr}']] for lab, m in rg['models'].items()
+                     if f'gap{thr}' in m]
+            table(['model'] + rg['rings'], rows + [['GT'] + rg['n_gt']])
+        L.append(f'rings vs 20261017_13: {rg["checks_vs_20261017_13"]}')
+    if 'repro_vs_previous' in res:
+        r = res['repro_vs_previous']
+        L.append(f'reproduction of {r["path"]} for {r["models"]}: {r["n_mismatches"]} mismatches {r["mismatches"][:20]}')
     Path(path).write_text('\n'.join(L) + '\n')
 
 
@@ -611,6 +728,9 @@ if __name__ == '__main__':
     ap.add_argument('--workers', type=int, default=8)
     ap.add_argument('--fill_all', default=None, help='report: fill_CD_all.npz (default <out>/fill_CD_all.npz)')
     ap.add_argument('--no_official', action='store_true')
+    ap.add_argument('--rings', action='store_true', help='report: 20261017_13 §5.2 per-ring AP and gaps (opt-in)')
+    ap.add_argument('--repro_json', default=None, help='report: a previous nw_strat.json that must be reproduced '
+                                                        'for the models both hold (opt-in)')
     ap.add_argument('--frames', type=int, default=30, help='pitch_check: strided val frames for the slope statistics')
     ap.add_argument('--index', type=int, default=100, help='pitch_check: the dumped frame')
     a = ap.parse_intermixed_args()      # the runs may follow the options (30893 died on `pass --out X oracle=...`)
