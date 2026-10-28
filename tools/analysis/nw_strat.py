@@ -33,6 +33,11 @@ that the model misses (IoU 0.5, any score: greedy matching over all detections) 
     python analysis/nw_strat.py report --out <dir> [--fill_all <npz>] [--rings] [--repro_json <old nw_strat.json>]
     python analysis/nw_strat.py pitch_check --out <dir>
     python analysis/nw_strat.py pitch_collect --out <dir>
+    python analysis/nw_strat.py geom --out <dir> --pass_pkl <nw_pass.pkl> --repro_json <its nw_strat.json> --fill_all <npz>
+
+`geom` (new mode, 2026-10-28): the EASY-CAR GEOMETRY CHECK of T05 §5 item 23 (FIXED 14:58, experiments_md 63d1587), on
+S0's near / dense / short / unoccluded subset: the gap at IoU 0.5 beside 0.7, and the signed box errors of matched
+easy cars; see run_geom.
 
 Opt-in report options (absent by default; added for the PL-GT beside items, experiments_md 20261027_05):
 - `--rings`: 20261017_13 §5.2's per-ring AP (0-10 ... 50-75 m) from the same pooled matching (a TP binned by its GT's
@@ -591,6 +596,183 @@ def write_md(res, path):
     Path(path).write_text('\n'.join(L) + '\n')
 
 
+# --------------------------------------------------------------------------------- easy-car geometry (mode geom)
+GEOM_MODELS_BAR = ('m27704', 'm28563')     # the reading is on their two-seed mean
+BAR_GEOM = 2.0
+GEOM_KEYS = ('length', 'width', 'height', 'along', 'across', 'yaw_deg', 'z (beside)')
+
+
+def dc_split(score, gt_idx, dc):
+    """ap_split (AP, perfect-ranking AP, ranking loss, max recall) under dc_ap's subset convention."""
+    from waymo_ranking_loss_fp_taxonomy import ap_split
+    dc = np.asarray(dc, bool)
+    gt_idx = np.asarray(gt_idx, np.int64)
+    matched = gt_idx >= 0
+    keep = ~(matched & dc[np.maximum(gt_idx, 0)])
+    return ap_split(np.asarray(score, np.float64)[keep], matched[keep], int((~dc).sum()))
+
+
+def box_errors(det_b, gt_b):
+    """Signed errors det - GT of matched pairs (N, 7 boxes [x, y, z, l, w, h, yaw]): extents, BEV centre along / across
+    the GT heading, yaw wrapped to [-180, 180) degrees, and centre z."""
+    d = det_b.astype(np.float64) - gt_b.astype(np.float64)
+    h = gt_b[:, 6].astype(np.float64)
+    along = d[:, 0] * np.cos(h) + d[:, 1] * np.sin(h)
+    across = -d[:, 0] * np.sin(h) + d[:, 1] * np.cos(h)
+    yaw = np.degrees((d[:, 6] + np.pi) % (2 * np.pi) - np.pi)
+    return {'length': d[:, 3], 'width': d[:, 4], 'height': d[:, 5], 'along': along, 'across': across, 'yaw_deg': yaw,
+            'z (beside)': d[:, 2]}
+
+
+def _err_stats(e):
+    out = {}
+    for k in GEOM_KEYS:
+        v = e[k]
+        out[k] = dict(median=float(np.median(v)), p25=float(np.percentile(v, 25)), p75=float(np.percentile(v, 75)),
+                      iqr=float(np.percentile(v, 75) - np.percentile(v, 25))) if len(v) else None
+    out['n'] = int(len(e['length']))
+    out['yaw_flipped_share'] = float(np.mean(np.abs(e['yaw_deg']) > 90.0)) if len(e['yaw_deg']) else float('nan')
+    return out
+
+
+def run_geom(a):
+    """EASY-CAR GEOMETRY CHECK (design T05 §5 item 23, FIXED 2026-10-28 14:58 JST, experiments_md 63d1587; ANALYSIS).
+    (a) S0's near / dense / short / unoccluded subset (the 'joint' categories set to don't-care): gap oracle - model, Car
+    BEV AP_R40, at IoU 0.5 beside 0.7; reading on the 27704 / 28563 mean: < 2 at IoU 0.5 -> box precision (a geometry
+    term); >= 2 -> it includes missed or false detections. (b) Beside, descriptive: on easy GT matched by each model at
+    BEV IoU >= 0.5 (S0's greedy matching, any score), median signed error and IQR of length, width, height, centre along /
+    across the GT heading and yaw. Checks first: the IoU-0.7 subset numbers of `--repro_json` (greedy and official)
+    reproduce exactly, and the boxes re-read from the result.pkls align with the pass."""
+    from waymo_ranking_loss_fp_taxonomy import load_inputs
+    out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
+    P = pickle.load(open(a.pass_pkl, 'rb'))
+    prev = json.load(open(a.repro_json))
+    gt = P['gt']; labels = P['labels']
+    F = np.load(a.fill_all); cn = {k: j for j, k in enumerate(F['cols'])}
+    R = F['rows']
+    u = np.where(R[:, cn['n_sil']] > 0, R[:, cn['n_vis']] / np.maximum(R[:, cn['n_sil']], 1), np.nan)
+    hard = categories(gt, u)['joint']
+    easy = ~hard
+    det = {lab: P['models'][lab]['det'] for lab in labels}
+    res = dict(design='20261003_05 §5 item 23, EASY-CAR GEOMETRY CHECK (FIXED 14:58, experiments_md 63d1587)',
+               pass_pkl=str(a.pass_pkl), repro_json=str(a.repro_json), n_gt=int(len(easy)), n_easy=int(easy.sum()))
+    # ---- checks first: IoU 0.7 on the subset, greedy, against the previous report (exact)
+    chk = {'n_easy_equals_previous': bool(int(easy.sum()) == len(easy) - prev['category_counts']['joint'])}
+    ap = {lab: {thr: dc_ap(det[lab]['score'], det[lab][key], hard) for thr, key in ((0.7, 'gt7'), (0.5, 'gt5'))}
+          for lab in labels}
+    for lab in labels:
+        if lab == 'oracle':
+            continue
+        p = prev['m1_greedy'][lab]['joint']
+        chk[f'{lab}_greedy07'] = bool(ap['oracle'][0.7] == p['ap_oracle'] and ap[lab][0.7] == p['ap_model']
+                                      and (ap['oracle'][0.7] - ap[lab][0.7]) == p['gap'])
+    # boxes, re-read in the pass's order (load_inputs, as the pass)
+    frames, dets, _ = load_inputs(P['runs'])
+    assert len(frames) == P['n_frames']
+    gtb = np.concatenate([f['gv'] for f in frames]).astype(np.float64)
+    chk['gt_boxes_align'] = bool(len(gtb) == len(gt['rng']) and np.allclose(np.hypot(gtb[:, 0], gtb[:, 1]), gt['rng'], atol=1e-4))
+    lab_i = {lab: i for i, (lab, _) in enumerate(P['runs'])}
+    detb = {}
+    for lab in labels:
+        b = np.concatenate([dets[lab_i[lab]][fi][0] for fi in range(len(frames))]).astype(np.float64)
+        s = np.concatenate([dets[lab_i[lab]][fi][1] for fi in range(len(frames))])
+        chk[f'{lab}_det_boxes_align'] = bool(len(b) == len(det[lab]['score']) and np.array_equal(s, det[lab]['score'])
+                                             and np.allclose(np.hypot(b[:, 0], b[:, 1]), det[lab]['rng'], atol=1e-4))
+        detb[lab] = b
+    # official evaluator on the subset (both IoU), the 0.7 / 0.5 values against the previous report's official_raw
+    from kitti_eval_cpu import load_official_eval
+    official = load_official_eval()
+    off = {}
+    for lab in labels:
+        t0 = time.time()
+        off[lab] = official_ap(frames, dets[lab_i[lab]], dc=hard, official=official)
+        pr = prev['official_raw'][lab]['joint']
+        chk[f'{lab}_official_07_05'] = bool(off[lab][0] == pr[0] and off[lab][1] == pr[1])
+        print(f'[geom] official {lab} on the easy subset: {off[lab][0]:.4f} / {off[lab][1]:.4f} ({time.time() - t0:.0f} s)',
+              flush=True)
+    res['checks'] = chk
+    failed = [k for k, v in chk.items() if not v]
+    res['checks_failed'] = failed
+    print(f'[geom] checks: failed {failed}', flush=True)
+    if failed:
+        json.dump(res, open(out / 'geom_checks.json', 'w'), indent=1, default=float)
+        print('[geom] STOP: a required check failed; no reading is computed', flush=True)
+        sys.exit(3)
+    # ---- (a) the subset gap at IoU 0.5 beside 0.7, greedy (primary) and official, with recall / ranking terms
+    A = {}
+    for lab in labels:
+        r = {}
+        for thr, key in ((0.7, 'gt7'), (0.5, 'gt5')):
+            s = dc_split(det[lab]['score'], det[lab][key], hard)
+            s_all = dc_split(det[lab]['score'], det[lab][key], np.zeros(len(easy), bool))
+            r[str(thr)] = dict(ap=ap[lab][thr], split=s, official=off[lab][0 if thr == 0.7 else 1], ap_all_gt=s_all['ap'])
+        A[lab] = r
+    for lab in labels:
+        if lab == 'oracle':
+            continue
+        for thr in ('0.7', '0.5'):
+            o, m = A['oracle'][thr], A[lab][thr]
+            m['gap'] = o['ap'] - m['ap']
+            m['gap_official'] = o['official'] - m['official']
+            m['gap_all_gt'] = o['ap_all_gt'] - m['ap_all_gt']
+            m['recall_term'] = o['split']['pr'] - m['split']['pr']
+            m['ranking_term'] = m['split']['rl'] - o['split']['rl']
+    res['a'] = A
+    mean05 = float(np.mean([A[lab]['0.5']['gap'] for lab in GEOM_MODELS_BAR]))
+    mean05_off = float(np.mean([A[lab]['0.5']['gap_official'] for lab in GEOM_MODELS_BAR]))
+    rd = lambda g: 'box precision (a geometry term)' if g < BAR_GEOM else 'includes missed or false detections'  # noqa: E731
+    res['reading'] = dict(mean_gap05=mean05, reading=rd(mean05), mean_gap05_official=mean05_off,
+                          reading_official=rd(mean05_off),
+                          per_seed={lab: dict(gap05=A[lab]['0.5']['gap'], reading=rd(A[lab]['0.5']['gap']))
+                                    for lab in GEOM_MODELS_BAR},
+                          seeds_same_side=bool(len({rd(A[lab]['0.5']['gap']) for lab in GEOM_MODELS_BAR}) == 1))
+    print(f'[geom] (a) mean gap at IoU 0.5 on the easy subset {mean05:.4f} (official {mean05_off:.4f}): '
+          f'{res["reading"]["reading"]}', flush=True)
+    # ---- (b) box errors on easy GT matched at IoU 0.5 by each model; beside, on the easy GT matched by all models
+    matched = {}
+    for lab in labels:
+        g5 = det[lab]['gt5']
+        di = np.nonzero(g5 >= 0)[0]
+        gi = g5[di]
+        k = easy[gi]
+        matched[lab] = (di[k], gi[k])
+    common = np.ones(len(easy), bool) & easy
+    for lab in labels:
+        m = np.zeros(len(easy), bool); m[matched[lab][1]] = True
+        common &= m
+    B, Bc = {}, {}
+    for lab in labels:
+        di, gi = matched[lab]
+        B[lab] = _err_stats(box_errors(detb[lab][di], gtb[gi]))
+        keep = common[gi]
+        Bc[lab] = _err_stats(box_errors(detb[lab][di[keep]], gtb[gi[keep]]))
+        assert len(np.unique(gi)) == len(gi), f'{lab}: a GT matched twice at IoU 0.5'
+    res['b'] = dict(matched_each=B, matched_by_all=Bc, n_common=int(common.sum()),
+                    gt_easy_extents=dict(median_length=float(np.median(gtb[easy, 3])), median_width=float(np.median(gtb[easy, 4])),
+                                         median_height=float(np.median(gtb[easy, 5]))))
+    json.dump(res, open(out / 'geom.json', 'w'), indent=1, default=float)
+    L = [f'EASY-CAR GEOMETRY CHECK: {res["n_easy"]} easy GT of {res["n_gt"]}; checks failed {failed}', '',
+         '### (a) gap oracle - model on the easy subset, Car BEV AP_R40 (greedy; official beside)', '',
+         '| model | IoU | AP | gap | official AP / gap | recall term / ranking term | gap on all GT |', '|---|---|---|---|---|---|---|']
+    for lab in labels:
+        for thr in ('0.7', '0.5'):
+            m = A[lab][thr]
+            L.append(f'| {lab} | {thr} | {m["ap"]:.2f} | {m.get("gap", float("nan")):.2f} | {m["official"]:.2f} / '
+                     f'{m.get("gap_official", float("nan")):.2f} | {m.get("recall_term", float("nan")):.2f} / '
+                     f'{m.get("ranking_term", float("nan")):.2f} | {m.get("gap_all_gt", float("nan")):.2f} |')
+    L += ['', f'reading: {json.dumps(res["reading"])}', '']
+    for name, BB in (('matched by each model at IoU 0.5', B), (f'matched by all models ({res["b"]["n_common"]} GT)', Bc)):
+        L += [f'### (b) signed error det - GT, median [p25, p75], on easy GT {name}', '',
+              '| model | n | ' + ' | '.join(GEOM_KEYS) + ' | yaw flipped |', '|---|' + '---|' * (len(GEOM_KEYS) + 2)]
+        for lab in labels:
+            s = BB[lab]
+            L.append(f'| {lab} | {s["n"]} | ' + ' | '.join('%+.3f [%+.3f, %+.3f]' % (s[k]['median'], s[k]['p25'], s[k]['p75'])
+                                                         for k in GEOM_KEYS) + f' | {s["yaw_flipped_share"]:.4f} |')
+        L.append('')
+    (out / 'geom.md').write_text('\n'.join(L) + '\n')
+    print(f'[geom] -> {out / "geom.json"}, {out / "geom.md"}', flush=True)
+
+
 # ---------------------------------------------------------------------------------------------------------- S1
 PITCH_EXTRA = '20261027_nwpitch'
 BASE_CFG = 'cfgs/da-ieee-access/centerpoint-gblobs-accum-legaldepth-st3d-nuscenes2waymo.yaml'      # 27704's own config
@@ -722,7 +904,7 @@ def run_pitch_collect(a):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('mode', choices=['pass', 'report', 'pitch_check', 'pitch_collect'])
+    ap.add_argument('mode', choices=['pass', 'report', 'pitch_check', 'pitch_collect', 'geom'])
     ap.add_argument('runs', nargs='*', help='pass: <label>=<result.pkl>, oracle first')
     ap.add_argument('--out', required=True)
     ap.add_argument('--workers', type=int, default=8)
@@ -730,12 +912,19 @@ if __name__ == '__main__':
     ap.add_argument('--no_official', action='store_true')
     ap.add_argument('--rings', action='store_true', help='report: 20261017_13 §5.2 per-ring AP and gaps (opt-in)')
     ap.add_argument('--repro_json', default=None, help='report: a previous nw_strat.json that must be reproduced '
-                                                        'for the models both hold (opt-in)')
+                                                        'for the models both hold (opt-in); geom: the nw_strat.json '
+                                                        'whose IoU-0.7 subset numbers must reproduce (required)')
+    ap.add_argument('--pass_pkl', default=None, help='geom: the nw_pass.pkl to read (default <out>/nw_pass.pkl)')
     ap.add_argument('--frames', type=int, default=30, help='pitch_check: strided val frames for the slope statistics')
     ap.add_argument('--index', type=int, default=100, help='pitch_check: the dumped frame')
     a = ap.parse_intermixed_args()      # the runs may follow the options (30893 died on `pass --out X oracle=...`)
     if a.fill_all is None:
         a.fill_all = str(Path(a.out) / 'fill_CD_all.npz')
     t0 = time.time()
-    {'pass': run_pass, 'report': run_report, 'pitch_check': run_pitch_check, 'pitch_collect': run_pitch_collect}[a.mode](a)
+    if a.pass_pkl is None:
+        a.pass_pkl = str(Path(a.out) / 'nw_pass.pkl')
+    if a.mode == 'geom' and not a.repro_json:
+        ap.error('geom needs --repro_json (the nw_strat.json whose IoU-0.7 subset numbers must reproduce)')
+    {'pass': run_pass, 'report': run_report, 'pitch_check': run_pitch_check, 'pitch_collect': run_pitch_collect,
+     'geom': run_geom}[a.mode](a)
     print(f'[{a.mode}] done in {time.time() - t0:.0f} s', flush=True)
