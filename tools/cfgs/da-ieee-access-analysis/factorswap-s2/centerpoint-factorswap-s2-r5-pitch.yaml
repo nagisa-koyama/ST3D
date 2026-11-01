@@ -1,0 +1,12 @@
+# ANALYSIS training row, FACTOR-SWAP S2 (experiments_md 20261003_05 §5 item 24; design fixed 2026-11-02 02:15 JST, approved
+# by the user ~02:20 JST): the KITTI oracle recipe 26843 (80.33 / 70.59) with ONE factor of its TRAINING data set to the
+# nuScenes value (pcdet/datasets/kitti/kitti_factor_swap.py, training only), scored on UNPERTURBED KITTI val in-run.
+# Contribution = AP(26843-recipe oracle) - AP(this row), Car BEV R40 moderate IoU 0.7, one seed; read only if >= 3 AP.
+# KITTI TRAIN labels train this row: labelled analysis, never a method.
+# This arm: R5, A1 mounting attitude: per-frame pitch +1.66 deg (Boston 2.29 - KITTI 0.63) with the Boston share of nuScenes TRAIN frames (15695 / 28130 = 0.5579), else +0.72 deg (Singapore 1.35 - 0.63); points and box centres together, boxes upright.
+# Values from /home/koyama/data/factorswap_s2/stats.json (tools/analysis/factorswap_s2_stats.py, Slurm CPU job 31406, TRAIN splits).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-kitti2kitti-noros-zshift.yaml
+DATA_CONFIG:
+    TRAIN_FACTOR_SWAP:
+        PITCH_DEG: [1.66, 0.72]
+        PITCH_PROB: [0.5579, 0.4421]

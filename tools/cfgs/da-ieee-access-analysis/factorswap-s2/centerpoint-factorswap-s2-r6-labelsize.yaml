@@ -1,0 +1,11 @@
+# ANALYSIS training row, FACTOR-SWAP S2 (experiments_md 20261003_05 §5 item 24; design fixed 2026-11-02 02:15 JST, approved
+# by the user ~02:20 JST): the KITTI oracle recipe 26843 (80.33 / 70.59) with ONE factor of its TRAINING data set to the
+# nuScenes value (pcdet/datasets/kitti/kitti_factor_swap.py, training only), scored on UNPERTURBED KITTI val in-run.
+# Contribution = AP(26843-recipe oracle) - AP(this row), Car BEV R40 moderate IoU 0.7, one seed; read only if >= 3 AP.
+# KITTI TRAIN labels train this row: labelled analysis, never a method.
+# This arm: R6, A2 label size (convention): GT dims x (nuScenes / KITTI TRAIN median isotropic scale), bottom kept, points untouched. Car 2.467 / 2.118 = 1.1649; Pedestrian 0.933 / 0.954 = 0.9778; Cyclist unscaled (medians unreliable).
+# Values from /home/koyama/data/factorswap_s2/stats.json (tools/analysis/factorswap_s2_stats.py, Slurm CPU job 31406, TRAIN splits).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-kitti2kitti-noros-zshift.yaml
+DATA_CONFIG:
+    TRAIN_FACTOR_SWAP:
+        GT_DIM_SCALE: {Car: 1.1649, Pedestrian: 0.9778}

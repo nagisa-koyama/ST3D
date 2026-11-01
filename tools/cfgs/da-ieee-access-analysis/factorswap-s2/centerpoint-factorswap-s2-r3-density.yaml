@@ -1,0 +1,13 @@
+# ANALYSIS training row, FACTOR-SWAP S2 (experiments_md 20261003_05 §5 item 24; design fixed 2026-11-02 02:15 JST, approved
+# by the user ~02:20 JST): the KITTI oracle recipe 26843 (80.33 / 70.59) with ONE factor of its TRAINING data set to the
+# nuScenes value (pcdet/datasets/kitti/kitti_factor_swap.py, training only), scored on UNPERTURBED KITTI val in-run.
+# Contribution = AP(26843-recipe oracle) - AP(this row), Car BEV R40 moderate IoU 0.7, one seed; read only if >= 3 AP.
+# KITTI TRAIN labels train this row: labelled analysis, never a method.
+# This arm: R3, A1 density matched to nuScenes per 1.5 m radial bin: keep rate = nuScenes / KITTI points per frame (capped at 1; KITTI 119608, nuScenes 24719 pts/frame in range; expected kept share 0.207).
+# Values from /home/koyama/data/factorswap_s2/stats.json (tools/analysis/factorswap_s2_stats.py, Slurm CPU job 31406, TRAIN splits).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-kitti2kitti-noros-zshift.yaml
+DATA_CONFIG:
+    TRAIN_FACTOR_SWAP:
+        RANGE_KEEP:
+            EDGES: [0, 1.5, 3, 4.5, 6, 7.5, 9, 10.5, 12, 13.5, 15, 16.5, 18, 19.5, 21, 22.5, 24, 25.5, 27, 28.5, 30, 31.5, 33, 34.5, 36, 37.5, 39, 40.5, 42, 43.5, 45, 46.5, 48, 49.5, 51, 52.5, 54, 55.5, 57, 58.5, 60, 61.5, 63, 64.5, 66, 67.5, 69, 70.5, 72, 73.5, 75]
+            RATE: [1, 0.5281, 0.3754, 0.1928, 0.1874, 0.1838, 0.188, 0.1913, 0.1719, 0.1446, 0.1378, 0.1452, 0.1564, 0.1658, 0.1796, 0.1845, 0.1881, 0.1916, 0.2041, 0.2105, 0.2144, 0.2255, 0.2444, 0.2402, 0.2346, 0.2469, 0.2423, 0.2484, 0.2533, 0.2324, 0.2402, 0.253, 0.2289, 0.2415, 0.2407, 0.2288, 0.2384, 0.2476, 0.2319, 0.2541, 0.2392, 0.2205, 0.2256, 0.2314, 0.2183, 0.2119, 0.2079, 0.2012, 0.1771, 0.2821]

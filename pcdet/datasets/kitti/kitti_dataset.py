@@ -393,6 +393,14 @@ class KittiDataset(DatasetTemplate):
             import zlib
             from .kitti_rings import eval_ring_thin_points
             points = eval_ring_thin_points(points, thin, np.random.default_rng(zlib.crc32(str(sample_idx).encode())))
+        # TRAIN_FACTOR_SWAP (ANALYSIS, training only; absent = unchanged): one generative factor of the TRAINING data
+        # set to its nuScenes value, for the factor-swap oracles (kitti_factor_swap.py; experiments_md 20261003_05 §5
+        # item 24). Point arms act here, on the raw scan; box arms below, before SHIFT_COOR; label arms at the end.
+        swap = self.dataset_cfg.get('TRAIN_FACTOR_SWAP', None) if self.training else None
+        if swap is not None:
+            from . import kitti_factor_swap
+            assert not self.dataset_cfg.get('USE_PSEUDO_LABEL', None), 'TRAIN_FACTOR_SWAP is for labelled training'
+            points = kitti_factor_swap.apply_points(points, swap, sample_idx)
         calib = self.get_calib(sample_idx)
 
         img_shape = info['image']['image_shape']
@@ -424,6 +432,8 @@ class KittiDataset(DatasetTemplate):
             gt_names = annos['name']
             gt_boxes_camera = np.concatenate([loc, dims, rots[..., np.newaxis]], axis=1).astype(np.float32)
             gt_boxes_lidar = box_utils.boxes3d_kitti_camera_to_lidar(gt_boxes_camera, calib)
+            if swap is not None:
+                gt_boxes_lidar = kitti_factor_swap.apply_boxes(gt_boxes_lidar, gt_names, swap, sample_idx)
 
             if self.dataset_cfg.get('SHIFT_COOR', None):
                 gt_boxes_lidar[:, 0:3] += self.dataset_cfg.SHIFT_COOR
@@ -432,6 +442,12 @@ class KittiDataset(DatasetTemplate):
                 'gt_names': gt_names,
                 'gt_boxes': gt_boxes_lidar
             })
+            if swap is not None and kitti_factor_swap.arm_of(swap) == 'REGION_THIN':
+                input_dict['points'] = kitti_factor_swap.region_thin(input_dict['points'], gt_boxes_lidar,
+                                                                     sample_idx, swap)
+            if swap is not None and kitti_factor_swap.arm_of(swap) == 'GT_IGNORE_BY_RANGE':
+                input_dict['gt_classes'], input_dict['gt_scores'] = kitti_factor_swap.ignore_labels(
+                    gt_boxes_lidar, gt_names, self.class_names, swap, sample_idx)
             # print("gt_names in __getitem__:", gt_names)
 
             if self.dataset_cfg.get('REMOVE_ORIGIN_GTS', None) and self.training:

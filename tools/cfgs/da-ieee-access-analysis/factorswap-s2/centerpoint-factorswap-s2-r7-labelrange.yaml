@@ -1,0 +1,14 @@
+# ANALYSIS training row, FACTOR-SWAP S2 (experiments_md 20261003_05 §5 item 24; design fixed 2026-11-02 02:15 JST, approved
+# by the user ~02:20 JST): the KITTI oracle recipe 26843 (80.33 / 70.59) with ONE factor of its TRAINING data set to the
+# nuScenes value (pcdet/datasets/kitti/kitti_factor_swap.py, training only), scored on UNPERTURBED KITTI val in-run.
+# Contribution = AP(26843-recipe oracle) - AP(this row), Car BEV R40 moderate IoU 0.7, one seed; read only if >= 3 AP.
+# KITTI TRAIN labels train this row: labelled analysis, never a method.
+# This arm: R7, A2 label range distribution: Car boxes set to IGNORE (-99) per 10 m bin so the supervised Car range histogram matches nuScenes (share within 30 m: KITTI 0.537, nuScenes 0.561); kept share of KITTI cars 0.803, so it also removes ~20% of Car supervision (disclosed).
+# Values from /home/koyama/data/factorswap_s2/stats.json (tools/analysis/factorswap_s2_stats.py, Slurm CPU job 31406, TRAIN splits).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-kitti2kitti-noros-zshift.yaml
+DATA_CONFIG:
+    TRAIN_FACTOR_SWAP:
+        GT_IGNORE_BY_RANGE:
+            CLASS: Car
+            EDGES: [0, 10, 20, 30, 40, 50, 60, 70, 1000]
+            KEEP: [0.907, 0.8527, 0.802, 0.7855, 0.7813, 0.6574, 0.725, 1]
