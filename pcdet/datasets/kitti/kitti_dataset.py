@@ -445,6 +445,9 @@ class KittiDataset(DatasetTemplate):
             if swap is not None and kitti_factor_swap.arm_of(swap) == 'REGION_THIN':
                 input_dict['points'] = kitti_factor_swap.region_thin(input_dict['points'], gt_boxes_lidar,
                                                                      sample_idx, swap)
+            if swap is not None and kitti_factor_swap.arm_of(swap) == 'RANGE_KEEP_FG_BG':
+                input_dict['points'] = kitti_factor_swap.range_keep_fg_bg(input_dict['points'], gt_boxes_lidar,
+                                                                          gt_names, sample_idx, swap)
             if swap is not None and kitti_factor_swap.arm_of(swap) == 'GT_IGNORE_BY_RANGE':
                 input_dict['gt_classes'], input_dict['gt_scores'] = kitti_factor_swap.ignore_labels(
                     gt_boxes_lidar, gt_names, self.class_names, swap, sample_idx)

@@ -145,3 +145,24 @@ def test_region_thin_foreground_only_thins_inside_boxes():
     out = kfs.region_thin(pts, boxes, '000001', cfg)
     assert np.sum(out[:, 0] > 20) == 1000
     assert np.sum(out[:, 0] < 20) == 500
+
+
+def test_range_keep_fg_bg_rates_inside_and_outside_class_boxes():
+    rng = np.random.default_rng(2)
+    car = np.c_[rng.uniform(9, 11, (2000, 1)), rng.uniform(-0.5, 0.5, (2000, 2)), np.zeros((2000, 1))]
+    ped = np.c_[rng.uniform(19.8, 20.2, (2000, 1)), rng.uniform(-0.2, 0.2, (2000, 2)), np.zeros((2000, 1))]
+    bg = np.c_[rng.uniform(30, 40, (2000, 1)), rng.uniform(-5, 5, (2000, 2)), np.zeros((2000, 1))]
+    pts = np.concatenate([car, ped, bg]).astype(np.float32)
+    boxes = np.array([[10.0, 0, 0, 3.0, 2.0, 2.0, 0], [20.0, 0, 0, 0.8, 0.8, 1.8, 0]], np.float32)
+    names = np.array(['Car', 'Pedestrian'])
+    cfg = EasyDict({'RANGE_KEEP_FG_BG': {'EDGES_BG': [0, 50, 75], 'RATE_BG': [0.5, 0.5],
+                                         'EDGES_FG': [0, 15, 75], 'RATE_FG': {'Car': [0.1, 0.9], 'Pedestrian': [0.9, -1]},
+                                         'BOX_MARGIN': 0.25}})
+    out = kfs.range_keep_fg_bg(pts, boxes, names, '000001', cfg)
+    n_car = np.sum(out[:, 0] < 15)
+    n_ped = np.sum((out[:, 0] > 15) & (out[:, 0] < 25))
+    n_bg = np.sum(out[:, 0] > 25)
+    assert abs(n_car / 2000 - 0.1) < 0.03          # Car box in fg bin 0 -> 0.1
+    assert abs(n_ped / 2000 - 0.5) < 0.04          # Pedestrian fg bin 1 is -1 -> falls back to the background rate
+    assert abs(n_bg / 2000 - 0.5) < 0.04
+    assert np.array_equal(out, kfs.range_keep_fg_bg(pts, boxes, names, '000001', cfg))

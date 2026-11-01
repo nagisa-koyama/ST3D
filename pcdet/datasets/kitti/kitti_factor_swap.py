@@ -29,6 +29,11 @@ dataset, like a recorded one, not a fresh draw per epoch. Exactly one arm per co
   REGION_THIN: {SIDE: foreground | background, KEEP: f}, BOX_MARGIN: m
       Point arm with boxes: OSENS-2's region thinning (osens2_utils.perturb) applied to the training cloud, with every
       box the loader keeps (all KITTI classes but DontCare).
+  RANGE_KEEP_FG_BG: {EDGES_BG: [...], RATE_BG: [...], EDGES_FG: [...], RATE_FG: {Car: [...], Pedestrian: [...]},
+                     BOX_MARGIN: m}
+      Point arm with boxes (R10, foreground return): a point inside a GT box of a RATE_FG class (enlarged by m) is
+      kept with RATE_FG[class][b] of its radius bin on EDGES_FG, every other point with RATE_BG on EDGES_BG. A
+      negative RATE_FG entry means "too few boxes to measure": that bin's foreground points take the background rate.
 """
 import zlib
 
@@ -37,7 +42,7 @@ import numpy as np
 from ...utils import common_utils
 
 POINT_ARMS = ('RING_THIN', 'RANGE_KEEP')
-ARMS = POINT_ARMS + ('PITCH_DEG', 'GT_DIM_SCALE', 'GT_IGNORE_BY_RANGE', 'REGION_THIN')
+ARMS = POINT_ARMS + ('PITCH_DEG', 'GT_DIM_SCALE', 'GT_IGNORE_BY_RANGE', 'REGION_THIN', 'RANGE_KEEP_FG_BG')
 
 
 def arm_of(cfg):
@@ -117,6 +122,28 @@ def region_thin(points, boxes, frame_id, cfg):
     from ..osens2_utils import perturb
     sub = {'REGION_THIN': cfg['REGION_THIN'], 'BOX_MARGIN': cfg['BOX_MARGIN']}
     return perturb(points, boxes, frame_id, sub)[0]
+
+
+def range_keep_fg_bg(points, boxes, names, frame_id, cfg):
+    """RANGE_KEEP_FG_BG on the training cloud: points and boxes in the same frame (both after SHIFT_COOR)."""
+    from ..osens2_utils import enlarge_boxes, in_any_box
+    sub = cfg['RANGE_KEEP_FG_BG']
+    rate_bg = np.asarray(sub['RATE_BG'], dtype=np.float64)
+    assert len(sub['EDGES_BG']) == len(rate_bg) + 1, 'RANGE_KEEP_FG_BG: len(EDGES_BG) must be len(RATE_BG) + 1'
+    rate = rate_bg[radius_bin(points[:, :2], sub['EDGES_BG'])]
+    fg_bin = radius_bin(points[:, :2], sub['EDGES_FG'])
+    names = np.asarray(names)
+    for cls, rf in sub['RATE_FG'].items():
+        rf = np.asarray(rf, dtype=np.float64)
+        assert len(sub['EDGES_FG']) == len(rf) + 1, 'RANGE_KEEP_FG_BG: len(EDGES_FG) must be len(RATE_FG[c]) + 1'
+        m = names == cls
+        if not m.any():
+            continue
+        inside = in_any_box(points, enlarge_boxes(np.asarray(boxes)[m], float(sub['BOX_MARGIN'])))
+        fg_rate = rf[fg_bin]
+        use = inside & (fg_rate >= 0)
+        rate = np.where(use, fg_rate, rate)
+    return points[frame_rng(frame_id, 'RANGE_KEEP_FG_BG').random(len(points)) < rate]
 
 
 def ignore_labels(boxes, names, class_names, cfg, frame_id):
