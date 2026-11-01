@@ -1,0 +1,21 @@
+# ANALYSIS training row, FACTOR-SWAP S2 (experiments_md 20261003_05 §5 item 24; design fixed 2026-11-02 02:15 JST, approved
+# by the user ~02:20 JST): the KITTI oracle recipe 26843 (80.33 / 70.59) with ONE factor of its TRAINING data set to the
+# nuScenes value (pcdet/datasets/kitti/kitti_factor_swap.py, training only), scored on UNPERTURBED KITTI val in-run.
+# Contribution = AP(26843-recipe oracle) - AP(this row), Car BEV R40 moderate IoU 0.7, one seed; read only if >= 3 AP.
+# KITTI TRAIN labels train this row: labelled analysis, never a method.
+# This arm: R10, foreground return (a proxy for beam reflectance; user-proposed and approved 2026-11-02): points inside
+# Car / Pedestrian boxes (+0.25 m) kept at the nuScenes / KITTI points-per-UNOCCLUDED-box ratio per 5 m bin (nuScenes boxes
+# at the KITTI size convention), every other point at the nuScenes / KITTI background ratio per 1.5 m bin (forward
+# +-40 deg sector). -1 = too few boxes: the background rate applies. Read against R3: foreground-return term = R3 - R10.
+# Values from /home/koyama/data/factorswap_s2/stats_fgbg.json (tools/analysis/factorswap_s2_fgbg_stats.py, Slurm CPU job 31418).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-kitti2kitti-noros-zshift.yaml
+DATA_CONFIG:
+    TRAIN_FACTOR_SWAP:
+        RANGE_KEEP_FG_BG:
+            EDGES_BG: [0, 1.5, 3, 4.5, 6, 7.5, 9, 10.5, 12, 13.5, 15, 16.5, 18, 19.5, 21, 22.5, 24, 25.5, 27, 28.5, 30, 31.5, 33, 34.5, 36, 37.5, 39, 40.5, 42, 43.5, 45, 46.5, 48, 49.5, 51, 52.5, 54, 55.5, 57, 58.5, 60, 61.5, 63, 64.5, 66, 67.5, 69, 70.5, 72, 73.5, 75]
+            RATE_BG: [1, 1, 0.3381, 0.1828, 0.1835, 0.1727, 0.1638, 0.1649, 0.1128, 0.1089, 0.1117, 0.1274, 0.1438, 0.164, 0.1731, 0.174, 0.1845, 0.2014, 0.2073, 0.2112, 0.2179, 0.2227, 0.2313, 0.2302, 0.2382, 0.239, 0.2379, 0.232, 0.2504, 0.227, 0.2377, 0.2445, 0.2426, 0.246, 0.2539, 0.2541, 0.2655, 0.2583, 0.2645, 0.2763, 0.266, 0.2624, 0.2562, 0.2541, 0.2254, 0.212, 0.219, 0.2235, 0.1961, 0.25]
+            EDGES_FG: [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75]
+            RATE_FG:
+                Car: [0.3985, 0.1861, 0.1138, 0.0939, 0.0873, 0.0822, 0.0693, 0.0722, 0.083, 0.082, 0.1146, 0.1104, 0.131, 0.1438, 0.0949]
+                Pedestrian: [-1, 0.1831, 0.102, 0.0916, 0.0902, 0.1024, 0.1178, 0.12, -1, -1, -1, -1, -1, -1, -1]
+            BOX_MARGIN: 0.25
