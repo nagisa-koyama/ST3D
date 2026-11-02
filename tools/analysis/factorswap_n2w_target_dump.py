@@ -205,6 +205,26 @@ def dump_rs(cfg, ds, base_ds, b_items, s_items):
               'side lidars only: %d)' % (positive.sum(), (sb[:, -1] > 0).sum(), dropped.sum(),
                                          (dropped & (n_all == 0)).sum(), (dropped & (n_all > 0)).sum()))
         check(same_boxes, 'swap boxes == oracle boxes minus the positives with no TOP point')
+    # what the recount drops, over strided frames: boxes empty in the five-lidar cloud too (the C1 convention, also a
+    # change against the oracle) against boxes only the side lidars see (the factor)
+    idx = np.linspace(0, len(ds) - 1, 300).astype(int)
+    car = list(cfg.CLASS_NAMES).index('Car') + 1
+    tot, conf, side, tot_c, conf_c, side_c = 0, 0, 0, 0, 0, 0
+    for i in idx:
+        b, _ = item(base_ds, i)
+        s, _ = item(ds, i)
+        bb = b['gt_boxes']
+        pos = bb[:, -1] > 0
+        n_all, n_top = per_box_counts(b['points'], bb), per_box_counts(s['points'], bb)
+        d = pos & (n_top == 0)
+        c = bb[:, -1] == car
+        tot += pos.sum(); conf += (d & (n_all == 0)).sum(); side += (d & (n_all > 0)).sum()
+        tot_c += c.sum(); conf_c += (d & c & (n_all == 0)).sum(); side_c += (d & c & (n_all > 0)).sum()
+    print('  %d strided frames: the recount drops %d of %d positives (%.1f%%): %d empty in the five-lidar cloud too '
+          '(%.1f%%, confound), %d seen only by the side lidars (%.1f%%); Car: %d / %d of %d (%.1f%% / %.1f%%)'
+          % (len(idx), conf + side, tot, 100.0 * (conf + side) / max(tot, 1), conf, 100.0 * conf / max(tot, 1), side,
+             100.0 * side / max(tot, 1), conf_c, side_c, tot_c, 100.0 * conf_c / max(tot_c, 1),
+             100.0 * side_c / max(tot_c, 1)))
 
 
 def trained_class_boxes(ds, i, swap=None):
