@@ -214,6 +214,17 @@ class DataAugmentor(object):
             keep_as_ignore = data_dict.pop('gt_boxes_ignore_mask', None)
             if keep_as_ignore is not None:
                 gt_boxes_mask = gt_boxes_mask | keep_as_ignore
+            # Per-box labels that ride beside the boxes (the pseudo-label route's and the factor-swap ignore arm's
+            # gt_classes / gt_scores) are filtered with them. prepare_data's class filter later indexes gt_classes by
+            # POSITION in the filtered name list, so an unfiltered array shifted every label after a dropped box: a
+            # KITTI Van before a Car made the Car IGNORE, a Cyclist after two Cars trained as a Car (experiments_md
+            # 20261003_05 §5 item 24, R7, caught before it ran).
+            for key in ('gt_classes', 'gt_scores'):
+                if data_dict.get(key, None) is not None:
+                    assert len(data_dict[key]) == len(gt_boxes_mask), \
+                        '%s has %d entries for %d boxes: an augmentor changed the box count without it' % (
+                            key, len(data_dict[key]), len(gt_boxes_mask))
+                    data_dict[key] = data_dict[key][gt_boxes_mask]
             data_dict['gt_boxes'] = data_dict['gt_boxes'][gt_boxes_mask]
             data_dict['gt_names'] = data_dict['gt_names'][gt_boxes_mask]
             data_dict.pop('gt_boxes_mask')
