@@ -1,0 +1,33 @@
+# ANALYSIS training row, FACTOR-SWAP N->W (experiments_md 20261003_05 §5 item 24, the nuScenes -> Waymo port of the S2
+# rows): the Waymo oracle recipe 26398 (65.92 / 51.77 Car BEV / 3D on Waymo val) with ONE factor of its TRAINING data set
+# to the nuScenes value, training only, scored on UNPERTURBED Waymo val in-run (DATA_CONFIG_TAR is the oracle's).
+# Contribution = AP(26398-recipe oracle) - AP(this row), Car BEV R40 (KITTI metric, all objects), one seed.
+# Waymo TRAIN labels train this row: labelled analysis, never a method. Launch needs the user's approval.
+# This arm: RS, A1 device (side lidars): train on the TOP lidar only (LIDAR_INDICES [0], sliced by the info's per-lidar
+# counts before the NLZ filter; get_lidar, the MAX_SWEEPS 1 training path), as nuScenes carries one roof lidar (spec,
+# HDL-32E only). The stored num_points_in_gt counts all five lidars, so the processor-stage recount drop_empty_gt_boxes
+# (MIN_POINTS 1, as in C1 = centerpoint-global-toponly-recount-waymo2nuscenes, WITHOUT its sample_points_hist_based)
+# drops positive boxes left with no TOP point: boxes seen only by the side lidars are not trained as positives on empty
+# space. Disclosed: the recount also drops the boxes that hold no point even in the five-lidar first-return cloud,
+# which the oracle trains on (C1's convention). LIDAR_INDICES is not training-gated, but evaluation reads
+# DATA_CONFIG_TAR, which does not set it.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-waymo2waymo.yaml
+DATA_CONFIG:
+    LIDAR_INDICES: [0]
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': False
+          }
+        - NAME: drop_empty_gt_boxes
+          MIN_POINTS: 1     # = MIN_POINTS_OF_GT (default 1)
+        - NAME: transform_points_to_voxels
+          VOXEL_SIZE: [0.1, 0.1, 0.15]
+          MAX_POINTS_PER_VOXEL: 10
+          MAX_NUMBER_OF_VOXELS: {
+            'train': 150000,
+            'test': 150000
+          }

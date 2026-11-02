@@ -346,6 +346,14 @@ class WaymoDataset(DatasetTemplate):
             points, ring_label = self.get_lidar_with_ring_labels(info)
         else:
             points = self.get_lidar_with_sweeps(info)
+        # TRAIN_FACTOR_SWAP (ANALYSIS, training only; absent = unchanged): one generative factor of the TRAINING data set
+        # to its nuScenes value, for the N->W factor-swap oracles (waymo_factor_swap.py; experiments_md 20261003_05 §5
+        # item 24). Point arm here, on the stored cloud; box arms below, before SHIFT_COOR; the rest after the boxes.
+        swap = self.dataset_cfg.get('TRAIN_FACTOR_SWAP', None) if self.training else None
+        if swap is not None:
+            from . import waymo_factor_swap
+            waymo_factor_swap.check_dataset_cfg(self.dataset_cfg, self.class_names)
+            points = waymo_factor_swap.apply_points(points, swap, info['frame_id'])
         if self.dataset_cfg.get('SHIFT_COOR', None):
             points[:, 0:3] += np.array(self.dataset_cfg.SHIFT_COOR, dtype=np.float32)
 
@@ -366,6 +374,10 @@ class WaymoDataset(DatasetTemplate):
                 gt_boxes_lidar = box_utils.boxes3d_kitti_fakelidar_to_lidar(annos['gt_boxes_lidar'])
             else:
                 gt_boxes_lidar = annos['gt_boxes_lidar']
+            if swap is not None:
+                gt_boxes_lidar = waymo_factor_swap.apply_boxes(
+                    gt_boxes_lidar, waymo_factor_swap.model_names(annos['name'], self.map_ontology_dataset_to_model),
+                    swap, info['frame_id'])
 
             if self.dataset_cfg.get('SHIFT_COOR', None):
                 gt_boxes_lidar[:, 0:3] += self.dataset_cfg.SHIFT_COOR
@@ -404,6 +416,11 @@ class WaymoDataset(DatasetTemplate):
             # TRAIN_TOP_THIN removes TOP points, so the stored count no longer says whether a box holds a point either.
             if self.train_top_thin_cfg is not None and self.training:
                 input_dict['num_points_in_gt'] = None
+            # TRAIN_FACTOR_SWAP's arms that need points and boxes together: REGION_THIN (with a recount of the boxes it
+            # empties) and GT_IGNORE_BY_RANGE (gt_classes from the MODEL names; raw 'Vehicle' is not a model class).
+            if swap is not None:
+                input_dict = waymo_factor_swap.finish(input_dict, swap, self.class_names,
+                                                      self.map_ontology_dataset_to_model, info['frame_id'])
 
             # for debug only
             # gt_boxes_mask = np.array([n in self.class_names for n in input_dict['gt_names']], dtype=np.bool_)

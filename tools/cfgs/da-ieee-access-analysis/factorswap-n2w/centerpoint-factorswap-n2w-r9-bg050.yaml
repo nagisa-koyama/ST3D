@@ -1,0 +1,12 @@
+# ANALYSIS training row, FACTOR-SWAP N->W (experiments_md 20261003_05 §5 item 24, the nuScenes -> Waymo port of the S2
+# rows): the Waymo oracle recipe 26398 (65.92 / 51.77 Car BEV / 3D on Waymo val) with ONE factor of its TRAINING data set
+# to the nuScenes value, training only, scored on UNPERTURBED Waymo val in-run (DATA_CONFIG_TAR is the oracle's).
+# Contribution = AP(26398-recipe oracle) - AP(this row), Car BEV R40 (KITTI metric, all objects), one seed.
+# Waymo TRAIN labels train this row: labelled analysis, never a method. Launch needs the user's approval.
+# This arm: R9, A3 background (training-side OSENS-2, not a swap; no nuScenes-side value): points outside GT boxes
+# enlarged by 0.25 m kept at 1/2 (every box the loader keeps: Vehicle, Pedestrian, Cyclist, Sign), seeded per frame.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-waymo2waymo.yaml
+DATA_CONFIG:
+    TRAIN_FACTOR_SWAP:
+        REGION_THIN: {SIDE: background, KEEP: 0.5}
+        BOX_MARGIN: 0.25
