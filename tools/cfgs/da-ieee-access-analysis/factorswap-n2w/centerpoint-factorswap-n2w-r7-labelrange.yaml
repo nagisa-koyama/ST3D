@@ -1,0 +1,19 @@
+# ANALYSIS training row, FACTOR-SWAP N->W (experiments_md 20261003_05 §5 item 24, the nuScenes -> Waymo port of the S2
+# rows): the Waymo oracle recipe 26398 (65.92 / 51.77 Car BEV / 3D on Waymo val) with ONE factor of its TRAINING data set
+# to the nuScenes value, training only, scored on UNPERTURBED Waymo val in-run (DATA_CONFIG_TAR is the oracle's).
+# Contribution = AP(26398-recipe oracle) - AP(this row), Car BEV R40 (KITTI metric, all objects), one seed.
+# Waymo TRAIN labels train this row: labelled analysis, never a method. Launch needs the user's approval.
+# This arm: R7, A2 label range distribution: Car boxes set to IGNORE (-99, a zero-weight footprint; never a negative) per
+# 10 m bin so the supervised Car range histogram matches nuScenes (share within 30 m: Waymo 0.343, nuScenes 0.561); KEEP
+# = (p_nus / p_waymo) / max over bins with >= 50 Waymo boxes, capped at 1. Kept share of Waymo cars 0.565, so it also
+# removes ~44% of Car supervision, most of it beyond 40 m (disclosed). Labels are computed from the MODEL names
+# (Vehicle -> Car) and reach prepare_data as gt_classes, which the augmentor filters with the class mask (ST3D 12b5147).
+# Values from /home/koyama/data/factorswap_n2w/stats.json (tools/analysis/factorswap_n2w_stats.py, Slurm CPU job 31454, TRAIN
+# splits: Waymo 79,041 frames at SAMPLED_INTERVAL 2, nuScenes 28,130).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-waymo2waymo.yaml
+DATA_CONFIG:
+    TRAIN_FACTOR_SWAP:
+        GT_IGNORE_BY_RANGE:
+            CLASS: Car
+            EDGES: [0, 10, 20, 30, 40, 50, 60, 70, 1000]
+            KEEP: [0.876, 1, 0.8778, 0.6558, 0.4475, 0.2723, 0.1603, 0.1423]

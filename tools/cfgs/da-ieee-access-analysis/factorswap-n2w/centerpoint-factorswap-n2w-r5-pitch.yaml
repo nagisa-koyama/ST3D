@@ -1,0 +1,19 @@
+# ANALYSIS training row, FACTOR-SWAP N->W (experiments_md 20261003_05 §5 item 24, the nuScenes -> Waymo port of the S2
+# rows): the Waymo oracle recipe 26398 (65.92 / 51.77 Car BEV / 3D on Waymo val) with ONE factor of its TRAINING data set
+# to the nuScenes value, training only, scored on UNPERTURBED Waymo val in-run (DATA_CONFIG_TAR is the oracle's).
+# Contribution = AP(26398-recipe oracle) - AP(this row), Car BEV R40 (KITTI metric, all objects), one seed.
+# Waymo TRAIN labels train this row: labelled analysis, never a method. Launch needs the user's approval.
+# This arm: R5, A1 mounting attitude (pitch): per-frame pitch +2.18 deg (nuScenes Boston forward ground slope +2.29 -
+# Waymo +0.11; 20261004_02) with the Boston share of nuScenes TRAIN frames (15,695 / 28,130 = 0.5579), else +1.24 deg
+# (Singapore 1.35 - 0.11); points and box centres together, boxes upright (size and yaw unchanged), about the lateral
+# axis through the Waymo TOP lidar (PIVOT, the TOP extrinsic's translation in the vehicle frame: identical in all 798
+# TRAIN segments; vehicle x is forward: every moving consecutive-frame pair moves along +x). The stored per-box counts
+# are kept (the rotation is rigid: points move with their box).
+# Values from /home/koyama/data/factorswap_n2w/stats.json (tools/analysis/factorswap_n2w_stats.py, Slurm CPU job 31454, TRAIN
+# splits: Waymo 79,041 frames at SAMPLED_INTERVAL 2, nuScenes 28,130).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-waymo2waymo.yaml
+DATA_CONFIG:
+    TRAIN_FACTOR_SWAP:
+        PITCH_DEG: [2.18, 1.24]
+        PITCH_PROB: [0.5579, 0.4421]
+        PIVOT: [1.43, 0.0, 2.184]

@@ -29,7 +29,8 @@ Waymo's stored num_points_in_gt (all returns, all five lidars) drives prepare_da
 EMPTY a box gets a differential recount (recount_emptied): a box is dropped exactly when the oracle drops it (stored
 count < 1) or when the arm emptied it (>= 1 point of the loaded cloud inside it before the arm, none after). A plain
 recount (None) would also drop the boxes that are empty in the first-return cloud already and that the oracle trains
-on, a second change against the oracle. REGION_THIN gets it; PITCH_DEG (rigid: points move with their box) and
+on, a second change against the oracle. Foreground REGION_THIN gets it (background thinning keeps every point inside
+the enlarged boxes, so it cannot empty one); PITCH_DEG (rigid: points move with their box) and
 GT_DIM_SCALE (the box definition, on the objects the oracle trains on) keep the stored count (the target dump measures
 how many boxes either would empty).
 """
@@ -147,7 +148,11 @@ def finish(input_dict, cfg, class_names, map_dataset_to_model, frame_id):
     boxes = input_dict.get('gt_boxes', None)
     if boxes is None:
         return input_dict
-    if arm == 'REGION_THIN':
+    if arm == 'REGION_THIN' and cfg['REGION_THIN']['SIDE'] == 'background' and float(cfg['BOX_MARGIN']) >= 0:
+        # Background thinning keeps every point inside the enlarged boxes, which contain the boxes: no box can be
+        # emptied, so the stored count stands and the two counting passes are skipped.
+        input_dict['points'] = region_thin(input_dict['points'], boxes, frame_id, cfg)
+    elif arm == 'REGION_THIN':
         before = points_per_box(input_dict['points'], boxes)
         input_dict['points'] = region_thin(input_dict['points'], boxes, frame_id, cfg)
         after = points_per_box(input_dict['points'], boxes)

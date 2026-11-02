@@ -343,6 +343,9 @@ def test_hook_refuses_accumulation():
 # ---------------------------------------------------------------- the row configs
 ROWS = {
     'rs-toponly': {'LIDAR_INDICES', 'DATA_PROCESSOR'},
+    'r5-pitch': {'TRAIN_FACTOR_SWAP'},
+    'r6-labelsize': {'TRAIN_FACTOR_SWAP'},
+    'r7-labelrange': {'TRAIN_FACTOR_SWAP'},
     'r8-fg050': {'TRAIN_FACTOR_SWAP'},
     'r9-bg050': {'TRAIN_FACTOR_SWAP'},
 }
