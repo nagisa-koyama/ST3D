@@ -17,8 +17,10 @@ ask for the most a currently free slot can give up to the share cap - not the ca
                                               fit a free slot? --apply does the three scontrol
                                               updates (NumCPUs, MinCPUsNode, CPUsPerTask)
 
-Partitions considered: a6000_ada, a6000, rtx8000 (a100 is broken at the node level, pro6000 is
-Blackwell and cannot run the container). A node in DOWN/DRAIN is skipped. The account cap is
+Partitions considered: a6000_ada, a6000, rtx8000 and, since 2026-11-03, a100 (node21 / node22 repaired; the
+container's torch, spconv, pcdet CUDA ops and numba evaluation passed on both, jobs 31527 / 31529). pro6000 is Blackwell
+and cannot run the container. A node in DOWN/DRAIN is skipped. Fitting a job (--adjust, --fit-pending) looks only at the
+nodes of the partitions that job asked for: its --partition, else run_sourceonly_2gpu.sh's own default (no a100). The account cap is
 12 GPUs at once (QOS limit12); the table says how many of them are in use.
 
 Floors, per GPU: 4 for a plain source-only row (loader ahead of the GPU at NUM_WORKERS 4:
@@ -31,7 +33,8 @@ import re
 import subprocess
 import sys
 
-PARTITIONS = ('a6000_ada', 'a6000', 'rtx8000')
+PARTITIONS = ('a6000_ada', 'a6000', 'rtx8000', 'a100')
+DEFAULT_JOB_PARTITIONS = ('a6000_ada', 'a6000', 'rtx8000')   # run_sourceonly_2gpu.sh's #SBATCH --partition
 GPU_CAP = 12
 
 
@@ -86,6 +89,22 @@ def best_fit(nodes, gpus, cpu_min, cpu_max):
     return best
 
 
+def in_partitions(nodes, partitions):
+    """The nodes a job asking for `partitions` can start on."""
+    return [n for n in nodes if any(p in partitions for p in n['partitions'])]
+
+
+def job_partitions(flags):
+    """The partitions in sbatch flags (--partition=a,b or -p a,b), else the launcher's default."""
+    for i, f in enumerate(flags):
+        m = re.match(r'--partition=(.+)', f)
+        if m:
+            return tuple(m.group(1).split(','))
+        if f in ('-p', '--partition') and i + 1 < len(flags):
+            return tuple(flags[i + 1].split(','))
+    return DEFAULT_JOB_PARTITIONS
+
+
 def table(nodes):
     lines = ['%-7s %-10s %5s %5s %5s %5s' % ('node', 'partition', 'cpuF', 'cpuT', 'gpuF', 'gpuT')]
     for n in nodes:
@@ -102,7 +121,7 @@ def adjust_flags(flags, nodes, cpu_min, cpu_max):
         m = re.match(r'--gres=gpu:(\d+)', f)
         if m:
             gpus = int(m.group(1))
-    fit = best_fit(nodes, gpus, cpu_min, cpu_max)
+    fit = best_fit(in_partitions(nodes, job_partitions(flags)), gpus, cpu_min, cpu_max)
     if fit is None:
         return flags, 'no node has %d free GPU(s) with >= %d free CPUs each right now; keeping the request' % (gpus, cpu_min)
     node, per_gpu = fit
@@ -122,11 +141,12 @@ def adjust_flags(flags, nodes, cpu_min, cpu_max):
 
 
 def pending_jobs():
-    out = sh('squeue -u $USER -h -t PD -o "%i|%j|%b|%C"')
+    out = sh('squeue -u $USER -h -t PD -o "%i|%j|%b|%C|%P"')
     jobs = []
     for l in out.splitlines():
-        jid, name, gres, cpus = l.split('|')
-        jobs.append(dict(id=jid, name=name, gpus=int((re.search(r'gpu:(\d+)', gres) or [0, 1])[1]), cpus=int(cpus)))
+        jid, name, gres, cpus, parts = l.split('|')
+        jobs.append(dict(id=jid, name=name, gpus=int((re.search(r'gpu:(\d+)', gres) or [0, 1])[1]), cpus=int(cpus),
+                         partitions=tuple(parts.split(','))))
     return jobs
 
 
@@ -149,7 +169,7 @@ def main():
     print('my GPUs in use: %d of %d (QOS limit12)' % (my_gpus_in_use(), GPU_CAP), file=sys.stderr)
     if a.fit_pending:
         for j in pending_jobs():
-            fit = best_fit(nodes, j['gpus'], a.min, a.max)
+            fit = best_fit(in_partitions(nodes, j['partitions']), j['gpus'], a.min, a.max)
             if fit is None:
                 print('%s %-12s %d GPU %2d CPUs: nothing free' % (j['id'], j['name'], j['gpus'], j['cpus']), file=sys.stderr)
                 continue

@@ -20,7 +20,7 @@ cd /home/koyama/code/ST3D/tools
 W=/home/koyama/data/wandb
 R=cfgs/da-ieee-access-analysis/redraw
 OUT=/home/koyama/code/ST3D/output/da-ieee-access-analysis/redraw
-GPU=(--partition=a6000_ada,a6000,rtx8000 --gres=gpu:1 --cpus-per-task=8 --mem=64G)
+GPU=(--partition=a100,a6000_ada,a6000,rtx8000 --gres=gpu:1 --cpus-per-task=8 --mem=64G)
 jid() { sed -n 's/^submitted job \([0-9]*\):.*/\1/p'; }
 
 #     key  config stem                                             checkpoint                                                    extra_tag               epoch time      original

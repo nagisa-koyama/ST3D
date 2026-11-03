@@ -3,7 +3,8 @@
 That evening 13 GPUs were idle while five 2-GPU jobs pended at 20 CPUs each: the nodes with free
 GPUs had 0-16 free CPUs. The tool exists so the request is sized to what a free slot can give,
 above the loader's floor - these pin that arithmetic and the parser's handling of DOWN nodes and
-CPU-only allocations.
+CPU-only allocations. Since 2026-11-03 the a100 nodes are counted (repaired), but a job is fitted only to the
+nodes of the partitions it asked for: the 2026-09-29 tests below therefore fit over the launcher's default partitions.
 """
 import sys
 from pathlib import Path
@@ -38,21 +39,25 @@ NodeName=node21 CPUAlloc=0 CPUTot=64 State=IDLE Partitions=a100,a100_interactive
 """
 
 
+def _default():
+    return fs.in_partitions(fs.parse_nodes(FIXTURE), fs.DEFAULT_JOB_PARTITIONS)
+
+
 def test_parser_reads_free_cpus_and_gpus_and_skips_other_partitions():
     nodes = {n['name']: n for n in fs.parse_nodes(FIXTURE)}
-    assert set(nodes) == {'node03', 'node11', 'node12', 'node61', 'node62'}   # a100 excluded
+    assert set(nodes) == {'node03', 'node11', 'node12', 'node61', 'node62', 'node21'}   # a100 counted since 2026-11-03
     assert (nodes['node11']['cpu_free'], nodes['node11']['gpu_free']) == (0, 4)  # CPU-only tenant
     assert (nodes['node61']['cpu_free'], nodes['node61']['gpu_free']) == (16, 3)
     assert nodes['node62']['usable'] is False and nodes['node62']['gpu_free'] == 4
 
 
 def test_two_gpu_job_fits_node61_at_eight_per_gpu_not_the_ten_cap():
-    node, per_gpu = fs.best_fit(fs.parse_nodes(FIXTURE), gpus=2, cpu_min=5, cpu_max=10)
+    node, per_gpu = fs.best_fit(_default(), gpus=2, cpu_min=5, cpu_max=10)
     assert node['name'] == 'node61' and per_gpu == 8      # 16 free CPUs / 2 GPUs
 
 
 def test_floor_is_respected_and_down_nodes_never_chosen():
-    nodes = fs.parse_nodes(FIXTURE)
+    nodes = _default()
     assert fs.best_fit(nodes, gpus=2, cpu_min=9, cpu_max=10) is None   # node61 gives 8, node62 is down
     # node12 and node61 both give the 10-per-GPU cap; the tie goes to the node with more CPUs left
     assert fs.best_fit(nodes, gpus=1, cpu_min=4, cpu_max=10)[0]['name'] == 'node61'
@@ -66,3 +71,15 @@ def test_adjust_shrinks_only_when_the_request_is_larger_than_the_fit():
     assert flags == ['--gres=gpu:2', '--cpus-per-task=12']     # never enlarged
     flags, note = fs.adjust_flags(['--gres=gpu:2', '--cpus-per-task=20'], nodes, 9, 10)
     assert flags == ['--gres=gpu:2', '--cpus-per-task=20'] and 'keeping' in note
+
+
+def test_a100_is_counted_but_a_job_is_fitted_only_to_its_own_partitions():
+    nodes = fs.parse_nodes(FIXTURE)
+    assert fs.job_partitions(['--gres=gpu:2']) == fs.DEFAULT_JOB_PARTITIONS
+    assert fs.job_partitions(['-p', 'a100,a6000_ada', '--gres=gpu:2']) == ('a100', 'a6000_ada')
+    # without --partition (run_sourceonly_2gpu.sh's own default) the idle node21 must not hide node61's 16 free CPUs
+    flags, note = fs.adjust_flags(['--gres=gpu:2', '--cpus-per-task=20'], nodes, 5, 10)
+    assert flags == ['--gres=gpu:2', '--cpus-per-task=16'] and 'node61' in note
+    # asking for a100 lets the same job start on node21 at the cap
+    flags, note = fs.adjust_flags(['--partition=a100,a6000_ada', '--gres=gpu:2', '--cpus-per-task=20'], nodes, 5, 10)
+    assert flags == ['--partition=a100,a6000_ada', '--gres=gpu:2', '--cpus-per-task=20'] and 'node21' in note
