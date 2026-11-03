@@ -73,7 +73,8 @@ def measure(cfg_file, n, out):
     from easydict import EasyDict
     from pcdet.config import cfg_from_yaml_file
     from pcdet.datasets import build_dataloader
-    from pcdet.datasets.point_calibration import calibration_target_config, link_point_calibration
+    from pcdet.datasets.point_calibration import (calibration_reference, calibration_target_config,
+                                                  link_point_calibration)
     from pcdet.utils import common_utils
 
     cfg = EasyDict()
@@ -87,13 +88,15 @@ def measure(cfg_file, n, out):
                                  logger=logger, training=False, model_ontology=cfg.get('ONTOLOGY'))
     calibrated = bool(dc.get('HIST_DIST_ON_THE_FLY', False))
     if calibrated:
-        link_point_calibration(src, tgt, num_frames=dc.get('HIST_DIST_FRAMES', 1000),
+        reference, pc_range = calibration_reference(dc, src, tgt, logger=logger)   # as train.py
+        link_point_calibration(src, reference, num_frames=dc.get('HIST_DIST_FRAMES', 1000),
                                num_bins=dc.get('HIST_DIST_BINS', 50), max_dist=dc.get('HIST_DIST_MAX_DIST', 75.0),
                                logger=logger, fov_degree=dc.get('HIST_DIST_FOV_DEGREE', None),
                                fov_heading=dc.get('HIST_DIST_FOV_HEADING', 0.0),
-                               skip_point_budget=dc.get('HIST_DIST_BEFORE_POINT_BUDGET', False))
+                               skip_point_budget=dc.get('HIST_DIST_BEFORE_POINT_BUDGET', False), pc_range=pc_range)
     np.random.seed(0)
-    res = dict(cfg=cfg_file, calibrated=calibrated, target_split=split, edges=EDGES.tolist())
+    res = dict(cfg=cfg_file, calibrated=calibrated, target_split=split, edges=EDGES.tolist(),
+               reference=dc.get('HIST_DIST_REFERENCE_CFG', None), in_grid=bool(dc.get('HIST_DIST_IN_GRID', False)))
     for side, ds in (('source', src), ('target', tgt)):
         pts, pts_all, vox = [], [], []
         for j, i in enumerate(strided(len(ds), n)):

@@ -1,0 +1,22 @@
+# PandaSet Pandar64 -> nuScenes, the COUNT-MATCHED control (row L) of the scan-lattice arm
+# centerpoint-ringpattern-pandaset2nuscenes (28034 / 28279): the density twin C1-analog
+# (centerpoint-global-fovcut-recount-pandaset2nuscenes, 28041 / 28280) with ONE change, what its per-bin thinning is
+# matched to. experiments_md 20261003_05 §5 item 29 (review R3 B-2).
+#
+# Why: inside the voxel grid the lattice arm and C1-analog feed the detector the same points per 5-m bin from 10 to
+# 70 m (0.87-1.16) but not at 0-10 m (0.35 / 0.55); C1-analog was matched to nuScenes on every return, most of which lie
+# above the grid beyond 20 m (item 28). This row is thinned to the LATTICE ARM's in-grid points per 1.5-m bin, so it
+# differs from the lattice arm in the arrangement of the points, not in their count per bin.
+#   - HIST_DIST_REFERENCE_CFG: the reference histogram is the lattice config's SOURCE in training mode (PandaSet TRAIN
+#     under the lattice rule), not nuScenes TRAIN;
+#   - HIST_DIST_IN_GRID: both histograms count only points inside POINT_CLOUD_RANGE, z included.
+# Everything else is C1-analog's (Pandar64 only, one frame, the HDL-32E FOV cut, the recount, 1,000 frames, 50 bins).
+#
+# PRE-DECLARED GATE AND READING: experiments_md 20261003_05 §5 item 29.
+#
+# Legal: PandaSet (source) clouds only; the lattice rule's inputs are nuScenes' published spec and its TRAIN azimuth
+# step. No target label, no target cloud in the calibration.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-global-fovcut-recount-pandaset2nuscenes.yaml
+DATA_CONFIG:
+    HIST_DIST_REFERENCE_CFG: cfgs/da-ieee-access/centerpoint-ringpattern-pandaset2nuscenes.yaml
+    HIST_DIST_IN_GRID: True

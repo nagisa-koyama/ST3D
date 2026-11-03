@@ -42,8 +42,20 @@ def cone_mask(points, fov_degree, heading_degree=0.0):
     return np.abs(az) <= fov_degree / 2.0
 
 
+def points_in_grid(points, pc_range):
+    """Points the voxel generator takes: inside [min, max) of POINT_CLOUD_RANGE on x, y AND z.
+
+    The processor's range mask (`mask_points_by_range`) cuts x and y only, so `dataset[i]['points']` still holds the
+    returns above and below the voxel grid. On nuScenes they are about two thirds of the points beyond 50 m (upward
+    beams on buildings and trees), so a histogram over every return matches a source to the target on points the
+    detector never sees (experiments_md 20261003_05 §5 item 28).
+    """
+    lo, hi = np.asarray(pc_range[:3]), np.asarray(pc_range[3:6])
+    return points[np.all((points[:, :3] >= lo) & (points[:, :3] < hi), axis=1)]
+
+
 def compute_range_histogram(dataset, num_frames=DEFAULT_FRAMES, num_bins=DEFAULT_BINS,
-                            max_dist=MAX_DIST, logger=None, fov_degree=None, fov_heading=0.0):
+                            max_dist=MAX_DIST, logger=None, fov_degree=None, fov_heading=0.0, pc_range=None):
     """Mean points per frame per radial bin, measured through the dataset's own pipeline.
 
     Sampling goes through `dataset[i]`, so the points counted are exactly the ones the correction
@@ -63,6 +75,9 @@ def compute_range_histogram(dataset, num_frames=DEFAULT_FRAMES, num_bins=DEFAULT
     (experiments_md/20260928_02). Both sides must be measured in the same cone; the rate is then
     applied to every source point by radius, which assumes the source's density does not depend on
     azimuth - true of a spinning sensor, and moot for a flash one whose points are all in the cone.
+
+    `pc_range` (DATA_CONFIG.HIST_DIST_IN_GRID) counts only the points inside the voxel grid, z included - see
+    points_in_grid. None counts every point the loader returns, as every config before 2026-11-03.
     """
     n = len(dataset)
     if n == 0:
@@ -79,6 +94,8 @@ def compute_range_histogram(dataset, num_frames=DEFAULT_FRAMES, num_bins=DEFAULT
             continue
         if fov_degree is not None:
             points = points[cone_mask(points, fov_degree, fov_heading)]
+        if pc_range is not None:
+            points = points_in_grid(points, pc_range)
         dist = np.linalg.norm(points[:, 0:2], axis=1)
         total += np.histogram(np.clip(dist, 0, max_dist - 1e-4), bins=edges)[0]
         used += 1
@@ -86,10 +103,11 @@ def compute_range_histogram(dataset, num_frames=DEFAULT_FRAMES, num_bins=DEFAULT
         raise ValueError('no usable frames while measuring a histogram')
     hist = total / used
     if logger is not None:
-        logger.info('point calibration: measured %s over %d frames, %.0f pts/frame in range%s'
+        logger.info('point calibration: measured %s over %d frames, %.0f pts/frame in range%s%s'
                     % (getattr(dataset, 'dataset_ontology', '?'), used, hist.sum(),
                        '' if fov_degree is None
-                       else ' inside the %g deg cone at heading %g' % (fov_degree, fov_heading)))
+                       else ' inside the %g deg cone at heading %g' % (fov_degree, fov_heading),
+                       '' if pc_range is None else ' inside the voxel grid (z included)'))
     return hist
 
 
@@ -120,6 +138,48 @@ def calibration_target_config(target_cfg, split=None):
             if key in cfg and 'train' in cfg[key]:
                 cfg[key]['test'] = cfg[key]['train']
     return cfg, split
+
+
+def build_reference_source(cfg_file, logger=None):
+    """The SOURCE dataset of `cfg_file` (its DATA_CONFIG, CLASS_NAMES and ONTOLOGY), in training mode, as that row trains.
+
+    Only `dataset[i]` is read, so no loader is iterated. Run from tools/, where config paths resolve.
+    """
+    from easydict import EasyDict
+
+    from ..config import cfg_from_yaml_file
+    from . import build_dataloader
+    ref = EasyDict()
+    cfg_from_yaml_file(cfg_file, ref)
+    dataset, _, _ = build_dataloader(dataset_cfg=ref.DATA_CONFIG, class_names=ref.CLASS_NAMES, batch_size=1,
+                                     dist=False, workers=0, logger=logger, training=True,
+                                     model_ontology=ref.get('ONTOLOGY', None))
+    return dataset
+
+
+def calibration_reference(data_config, source_set, calib_target, logger=None, build_reference=build_reference_source):
+    """What one source's density calibration is matched to, and the range its histograms count: (dataset, pc_range).
+
+    Default: `calib_target` (the target's eval-mode view, calibration_target_config) and every point the loader returns,
+    as every config before 2026-11-03.
+
+    DATA_CONFIG.HIST_DIST_REFERENCE_CFG names a config whose SOURCE dataset, in training mode, replaces the target view:
+    the source is thinned to that training arm's per-bin counts instead of the target's. It exists for a count-matched
+    control - the P->N density twin calibrated to the scan-lattice arm (experiments_md 20261003_05 §5 item 29) - and needs
+    the same POINT_CLOUD_RANGE as this source. DATA_CONFIG.HIST_DIST_IN_GRID: True counts both sides inside the voxel
+    grid, z included (points_in_grid). train.py and tools/analysis/arm_point_count_bins.py both take the pair from here.
+    """
+    reference = calib_target
+    ref_cfg = data_config.get('HIST_DIST_REFERENCE_CFG', None)
+    if ref_cfg:
+        reference = build_reference(ref_cfg, logger=logger)
+        assert np.allclose(reference.point_cloud_range, source_set.point_cloud_range), \
+            ('HIST_DIST_REFERENCE_CFG %s has POINT_CLOUD_RANGE %s, this source %s'
+             % (ref_cfg, list(reference.point_cloud_range), list(source_set.point_cloud_range)))
+        if logger is not None:
+            logger.info('point calibration: matched to the SOURCE of %s (training mode), not to the target' % ref_cfg)
+    pc_range = source_set.point_cloud_range if data_config.get('HIST_DIST_IN_GRID', False) else None
+    return reference, pc_range
 
 
 class _augmentation_off:
@@ -195,7 +255,7 @@ def point_budget_after_correction(processor_cfgs):
 
 def link_point_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
                            num_bins=DEFAULT_BINS, max_dist=MAX_DIST, logger=None,
-                           fov_degree=None, fov_heading=0.0, skip_point_budget=False):
+                           fov_degree=None, fov_heading=0.0, skip_point_budget=False, pc_range=None):
     """Measure both domains and install the pair into the SOURCE dataset's processor.
 
     Only the source is corrected: the target's own calibration target is itself, which makes its
@@ -211,6 +271,9 @@ def link_point_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
 
     `skip_point_budget` (DATA_CONFIG.HIST_DIST_BEFORE_POINT_BUDGET) measures BOTH sides with their fixed
     `sample_points` budget removed - see _point_budget_off. False keeps every existing config's measurement.
+
+    `pc_range` (DATA_CONFIG.HIST_DIST_IN_GRID, via calibration_reference) counts BOTH sides inside the voxel grid only.
+    The rate is still applied to every source point by radius; points outside the grid never reach the detector.
     """
     # With a cone, measure the source unrotated (see _augmentation_off); without one, exactly as before.
     with ExitStack() as stack:
@@ -219,12 +282,12 @@ def link_point_calibration(source_set, target_set, num_frames=DEFAULT_FRAMES,
         if skip_point_budget:
             stack.enter_context(_point_budget_off(source_set))
         src = compute_range_histogram(source_set, num_frames, num_bins, max_dist, logger=logger,
-                                      fov_degree=fov_degree, fov_heading=fov_heading)
+                                      fov_degree=fov_degree, fov_heading=fov_heading, pc_range=pc_range)
     with ExitStack() as stack:
         if skip_point_budget:
             stack.enter_context(_point_budget_off(target_set))
         tgt = compute_range_histogram(target_set, num_frames, num_bins, max_dist, logger=logger,
-                                      fov_degree=fov_degree, fov_heading=fov_heading)
+                                      fov_degree=fov_degree, fov_heading=fov_heading, pc_range=pc_range)
     source_set.data_processor.set_hist_dist(src, tgt, max_dist=max_dist)
     if logger is not None:
         rate = source_set.data_processor.per_bin_sample_rate()

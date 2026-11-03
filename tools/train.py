@@ -316,15 +316,20 @@ def main():
                 or dc.get('HIST_DIST_BEFORE_POINT_BUDGET', False), \
                 ('sample_points is listed after sample_points_hist_based: set DATA_CONFIG.HIST_DIST_BEFORE_POINT_BUDGET: '
                  'True so the histograms measure the sensors, not the fixed point budget.')
+            # The target view unless HIST_DIST_REFERENCE_CFG names another training arm; HIST_DIST_IN_GRID counts inside
+            # the voxel grid only (point_calibration.calibration_reference). Both absent: exactly as before.
+            from pcdet.datasets.point_calibration import calibration_reference
+            reference, pc_range = calibration_reference(dc, source['dataset_class'], calib_target, logger=logger)
             link_point_calibration(
-                source['dataset_class'], calib_target,
+                source['dataset_class'], reference,
                 num_frames=dc.get('HIST_DIST_FRAMES', 1000),
                 num_bins=dc.get('HIST_DIST_BINS', 50),
                 max_dist=dc.get('HIST_DIST_MAX_DIST', 75.0),
                 logger=logger,
                 fov_degree=dc.get('HIST_DIST_FOV_DEGREE', None),
                 fov_heading=dc.get('HIST_DIST_FOV_HEADING', 0.0),
-                skip_point_budget=dc.get('HIST_DIST_BEFORE_POINT_BUDGET', False))
+                skip_point_budget=dc.get('HIST_DIST_BEFORE_POINT_BUDGET', False),
+                pc_range=pc_range)
 
     # A correction listed in the pipeline but never given histograms is a no-op that looks like a
     # run. Say so rather than letting the result be quietly identical to the uncorrected arm.
