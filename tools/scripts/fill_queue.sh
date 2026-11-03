@@ -4,11 +4,11 @@
 # Run in the BACKGROUND from the master node (tmux/nohup), not via sbatch - it is a submitter, not
 # a job. It submits one row at a time and only when a slot is free.
 #
-# MAXJOBS=8 is a COURTESY limit, not Slurm's: Slurm allows this account 12 running / 16 submitted
-# jobs and 12 GPUs (QOS limit12), but the ~36 GPUs this container can use are shared by ~8 active
+# MAXJOBS=12 is a COURTESY limit, not Slurm's (the user's, 2026-11-03; 8 before): Slurm allows this account 16 running /
+# 20 submitted jobs and 16 GPUs (QOS limit16), but the ~44 GPUs this container can use are shared by ~8 active
 # users (experiments_md/20260927_04). The count includes PENDING jobs, which is what stops a deep
 # queue from taking every GPU as it frees ahead of anyone who submits later. GPUs are deliberately
-# NOT capped here - the user's decision - so 2-GPU rows can take the total past 8, up to Slurm's 12.
+# NOT capped here - the user's decision - so 2-GPU rows can take the GPU total past 12, up to Slurm's 16.
 #
 # Every row goes through scripts/submit.sh with its own EST_H (hours on ONE GPU, from the closest
 # comparable run's real elapsed time), and size_job.py turns that into --gres (2 GPUs above 24 h),
@@ -24,7 +24,7 @@
 set -uo pipefail
 cd /home/koyama/code/ST3D/tools
 unset EST_H  # set per row below; one inherited from the caller's shell must not size every row
-MAXJOBS=${MAXJOBS:-8}
+MAXJOBS=${MAXJOBS:-12}
 POLL=${POLL:-180}
 S=scripts/run_sourceonly_2gpu.sh
 
