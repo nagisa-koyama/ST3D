@@ -1,7 +1,9 @@
 """tools/analysis/arm_point_count_bins.py helpers (experiments_md 20261003_05 §5 item 28).
 
 Pins the 5-m binning (75 m and beyond not counted), the (z, y, x) voxel-index order of the voxel generator, the
-0-70 m restriction of the pre-declared reading and its two bands, and that a sparse bin of the target does not decide.
+0-70 m restriction of the pre-declared reading and its two bands, that a sparse bin of the target does not decide, and
+the z cut: the first version counted points above the voxel grid (the processor's range mask cuts x and y only), which
+on nuScenes inflated the target's far bins about threefold (item 28, 2026-11-03).
 """
 import importlib.util
 import os
@@ -50,3 +52,11 @@ def test_sparse_target_bin_does_not_decide():
     t = np.full(14, 100.0); t[13] = 0.5        # < 1% of the target's 0-70 m points
     lat = t.copy(); lat[13] = 5.0
     assert ab.reading(_s(lat), _s(t), _s(t))['matched']
+
+
+def test_points_above_or_below_the_voxel_grid_are_not_input():
+    pcr = [-75.2, -75.2, -2.0, 75.2, 75.2, 4.0]
+    p = np.array([[50.0, 0, 0.0, 1], [50.0, 0, 4.0, 1], [50.0, 0, 9.0, 1], [50.0, 0, -2.0, 1], [50.0, 0, -2.5, 1],
+                  [75.3, 0, 0.0, 1], [-75.1, 0, 0.0, 1]], np.float32)
+    kept = ab.in_voxel_range(p, pcr)
+    assert kept[:, 2].tolist() == [0.0, -2.0, 0.0] and kept[:, 0].tolist() == [50.0, 50.0, np.float32(-75.1)]

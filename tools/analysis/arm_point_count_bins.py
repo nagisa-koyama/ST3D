@@ -4,9 +4,14 @@ density-matched twin and the target (experiments_md 20261003_05 §5 item 28; pap
 Per config: the SOURCE train split in training mode, as trained (augmentation on; a config with HIST_DIST_ON_THE_FLY
 gets its density calibration installed as train.py does, over HIST_DIST_FRAMES frames, the target measured on its
 TRAIN split), and the TARGET train split in eval mode (calibration_target_config, the view the calibration measures).
-Counted after the full __getitem__, so after the range cut, the thinning, the recount and the voxelisation: points and
-occupied voxels per frame in 5-m bins of horizontal range from the (shifted) origin, 0-75 m. No label is read beyond
-what the training loader itself reads.
+Counted after the full __getitem__, so after the range cut, the thinning, the recount and the voxelisation, per frame in
+5-m bins of horizontal range from the (shifted) origin, 0-75 m:
+- `points`: points inside the full POINT_CLOUD_RANGE, z included: the points the voxel generator takes. The processor's
+  range mask (`mask_points_by_range`) cuts x and y only, so `d['points']` still holds points above and below the voxel
+  grid; on nuScenes beyond 50 m about two thirds of them (upward beams on buildings and trees);
+- `points_all`: every point of `d['points']` (x, y cut only), the count 20261005_01 §15.6 reported;
+- `voxels`: occupied voxels.
+No label is read beyond what the training loader itself reads.
 
     python analysis/arm_point_count_bins.py measure <cfg> <frames> <out.json>
     python analysis/arm_point_count_bins.py report <lattice.json> <density.json> [<label>]
@@ -27,6 +32,12 @@ def bin_counts(xy):
     """Count per 5-m bin of horizontal range; points at or beyond 75 m are not counted."""
     r = np.hypot(xy[:, 0], xy[:, 1])
     return np.histogram(r[r < EDGES[-1]], bins=EDGES)[0]
+
+
+def in_voxel_range(points, pc_range):
+    """Points the voxel generator takes: inside [min, max) of POINT_CLOUD_RANGE on x, y AND z."""
+    lo, hi = np.asarray(pc_range[:3]), np.asarray(pc_range[3:6])
+    return points[np.all((points[:, :3] >= lo) & (points[:, :3] < hi), axis=1)]
 
 
 def voxel_xy(coords, voxel_size, pc_range):
@@ -84,14 +95,15 @@ def measure(cfg_file, n, out):
     np.random.seed(0)
     res = dict(cfg=cfg_file, calibrated=calibrated, target_split=split, edges=EDGES.tolist())
     for side, ds in (('source', src), ('target', tgt)):
-        pts, vox = [], []
+        pts, pts_all, vox = [], [], []
         for j, i in enumerate(strided(len(ds), n)):
             d = ds[i]
-            pts.append(bin_counts(d['points'][:, :2]))
+            pts.append(bin_counts(in_voxel_range(d['points'], ds.point_cloud_range)[:, :2]))
+            pts_all.append(bin_counts(d['points'][:, :2]))
             vox.append(bin_counts(voxel_xy(d['voxel_coords'], ds.data_processor.voxel_size, ds.point_cloud_range)))
             if j % 50 == 0:
                 logger.info('%s %s frame %d / %d' % (cfg_file, side, j, n))
-        res[side] = dict(points=summarise(pts), voxels=summarise(vox))
+        res[side] = dict(points=summarise(pts), points_all=summarise(pts_all), voxels=summarise(vox))
     with open(out, 'w') as f:
         json.dump(res, f)
     logger.info('wrote %s' % out)
@@ -100,7 +112,7 @@ def measure(cfg_file, n, out):
 def report(lat_path, den_path, label=''):
     lat, den = (json.load(open(p)) for p in (lat_path, den_path))
     print(f'\n## {label or lat_path}\nlattice {lat["cfg"]}\ndensity {den["cfg"]} (calibrated {den["calibrated"]})\n')
-    for unit in ('points', 'voxels'):
+    for unit in ('points', 'points_all', 'voxels'):
         rows = [('target', den['target'][unit]), ('lattice', lat['source'][unit]), ('density', den['source'][unit])]
         print(f'{unit} per frame | ' + ' | '.join(f'{int(a)}-{int(a) + 5}' for a in EDGES[:-1]) + ' | 0-70 |')
         print('|---' * (len(EDGES) + 1) + '|')
