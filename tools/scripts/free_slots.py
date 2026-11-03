@@ -21,7 +21,7 @@ Partitions considered: a6000_ada, a6000, rtx8000 and, since 2026-11-03, a100 (no
 container's torch, spconv, pcdet CUDA ops and numba evaluation passed on both, jobs 31527 / 31529). pro6000 is Blackwell
 and cannot run the container. A node in DOWN/DRAIN is skipped. Fitting a job (--adjust, --fit-pending) looks only at the
 nodes of the partitions that job asked for: its --partition, else run_sourceonly_2gpu.sh's own default. The account cap is
-12 GPUs at once (QOS limit12); the table says how many of them are in use.
+16 GPUs at once (QOS limit16 since at least 2026-11-03; limit12 before); the table says how many are in use.
 
 Floors, per GPU: 4 for a plain source-only row (loader ahead of the GPU at NUM_WORKERS 4:
 <0.2% data-wait on KITTI/Lyft/nuScenes), 5 for self-training rows (three loaders plus the
@@ -35,7 +35,7 @@ import sys
 
 PARTITIONS = ('a6000_ada', 'a6000', 'rtx8000', 'a100')
 DEFAULT_JOB_PARTITIONS = ('a100', 'a6000_ada', 'a6000', 'rtx8000')   # run_sourceonly_2gpu.sh's #SBATCH --partition
-GPU_CAP = 12
+GPU_CAP = 16
 
 
 def sh(cmd):
@@ -166,7 +166,7 @@ def main():
         print(' '.join(flags))
         return 0
     print(table(nodes), file=sys.stderr)
-    print('my GPUs in use: %d of %d (QOS limit12)' % (my_gpus_in_use(), GPU_CAP), file=sys.stderr)
+    print('my GPUs in use: %d of %d (QOS limit16)' % (my_gpus_in_use(), GPU_CAP), file=sys.stderr)
     if a.fit_pending:
         for j in pending_jobs():
             fit = best_fit(in_partitions(nodes, j['partitions']), j['gpus'], a.min, a.max)
