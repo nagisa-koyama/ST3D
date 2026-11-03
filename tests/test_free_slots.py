@@ -3,9 +3,11 @@
 That evening 13 GPUs were idle while five 2-GPU jobs pended at 20 CPUs each: the nodes with free
 GPUs had 0-16 free CPUs. The tool exists so the request is sized to what a free slot can give,
 above the loader's floor - these pin that arithmetic and the parser's handling of DOWN nodes and
-CPU-only allocations. Since 2026-11-03 the a100 nodes are counted (repaired), but a job is fitted only to the
-nodes of the partitions it asked for: the 2026-09-29 tests below therefore fit over the launcher's default partitions.
+CPU-only allocations. Since 2026-11-03 the a100 nodes are counted (repaired) and in the launcher's default, but a job is
+fitted only to the nodes of the partitions it asked for: the 2026-09-29 tests below fit over that day's three partitions.
 """
+
+SEP29 = ('a6000_ada', 'a6000', 'rtx8000')
 import sys
 from pathlib import Path
 
@@ -40,7 +42,7 @@ NodeName=node21 CPUAlloc=0 CPUTot=64 State=IDLE Partitions=a100,a100_interactive
 
 
 def _default():
-    return fs.in_partitions(fs.parse_nodes(FIXTURE), fs.DEFAULT_JOB_PARTITIONS)
+    return fs.in_partitions(fs.parse_nodes(FIXTURE), SEP29)
 
 
 def test_parser_reads_free_cpus_and_gpus_and_skips_other_partitions():
@@ -64,22 +66,22 @@ def test_floor_is_respected_and_down_nodes_never_chosen():
 
 
 def test_adjust_shrinks_only_when_the_request_is_larger_than_the_fit():
-    nodes = fs.parse_nodes(FIXTURE)
-    flags, note = fs.adjust_flags(['--gres=gpu:2', '--cpus-per-task=20', '--time=25:00:00'], nodes, 5, 10)
-    assert flags == ['--gres=gpu:2', '--cpus-per-task=16', '--time=25:00:00'] and 'node61' in note
-    flags, _ = fs.adjust_flags(['--gres=gpu:2', '--cpus-per-task=12'], nodes, 5, 10)
-    assert flags == ['--gres=gpu:2', '--cpus-per-task=12']     # never enlarged
-    flags, note = fs.adjust_flags(['--gres=gpu:2', '--cpus-per-task=20'], nodes, 9, 10)
-    assert flags == ['--gres=gpu:2', '--cpus-per-task=20'] and 'keeping' in note
+    nodes, p = fs.parse_nodes(FIXTURE), '--partition=' + ','.join(SEP29)
+    flags, note = fs.adjust_flags([p, '--gres=gpu:2', '--cpus-per-task=20', '--time=25:00:00'], nodes, 5, 10)
+    assert flags == [p, '--gres=gpu:2', '--cpus-per-task=16', '--time=25:00:00'] and 'node61' in note
+    flags, _ = fs.adjust_flags([p, '--gres=gpu:2', '--cpus-per-task=12'], nodes, 5, 10)
+    assert flags == [p, '--gres=gpu:2', '--cpus-per-task=12']     # never enlarged
+    flags, note = fs.adjust_flags([p, '--gres=gpu:2', '--cpus-per-task=20'], nodes, 9, 10)
+    assert flags == [p, '--gres=gpu:2', '--cpus-per-task=20'] and 'keeping' in note
 
 
 def test_a100_is_counted_but_a_job_is_fitted_only_to_its_own_partitions():
     nodes = fs.parse_nodes(FIXTURE)
-    assert fs.job_partitions(['--gres=gpu:2']) == fs.DEFAULT_JOB_PARTITIONS
+    assert fs.job_partitions(['--gres=gpu:2']) == fs.DEFAULT_JOB_PARTITIONS and 'a100' in fs.DEFAULT_JOB_PARTITIONS
     assert fs.job_partitions(['-p', 'a100,a6000_ada', '--gres=gpu:2']) == ('a100', 'a6000_ada')
-    # without --partition (run_sourceonly_2gpu.sh's own default) the idle node21 must not hide node61's 16 free CPUs
-    flags, note = fs.adjust_flags(['--gres=gpu:2', '--cpus-per-task=20'], nodes, 5, 10)
-    assert flags == ['--gres=gpu:2', '--cpus-per-task=16'] and 'node61' in note
+    # a job that does not ask for a100: the idle node21 must not hide node61's 16 free CPUs
+    flags, note = fs.adjust_flags(['--partition=a6000,rtx8000', '--gres=gpu:2', '--cpus-per-task=20'], nodes, 5, 10)
+    assert flags == ['--partition=a6000,rtx8000', '--gres=gpu:2', '--cpus-per-task=16'] and 'node61' in note
     # asking for a100 lets the same job start on node21 at the cap
     flags, note = fs.adjust_flags(['--partition=a100,a6000_ada', '--gres=gpu:2', '--cpus-per-task=20'], nodes, 5, 10)
     assert flags == ['--partition=a100,a6000_ada', '--gres=gpu:2', '--cpus-per-task=20'] and 'node21' in note

@@ -64,7 +64,7 @@ for row in "${ROWS[@]}"; do
   ENVARR=(); [ "$ENVS" != "-" ] && read -ra ENVARR <<< "$ENVS"
   EXTRARR=(); [ "$EXTRA" != "-" ] && read -ra EXTRARR <<< "$EXTRA"
   CMD=(env ${ENVARR[@]+"${ENVARR[@]}"} EST_H="$EST" scripts/submit.sh --job-name="$NAME" --mem="$MEM"
-       --partition=a6000_ada,a6000,rtx8000 "$S" "$CFG" "$TAG" "$RUN" ${EXTRARR[@]+"${EXTRARR[@]}"})
+       --partition=a100,a6000_ada,a6000,rtx8000 "$S" "$CFG" "$TAG" "$RUN" ${EXTRARR[@]+"${EXTRARR[@]}"})
   if [ "${DRY_RUN:-0}" = "1" ]; then echo "[dry run] ${CMD[*]}"; continue; fi
   while [ "$(njobs)" -ge "$MAXJOBS" ]; do sleep "$POLL"; done
   echo "[$(date +%H:%M)] submitting $NAME ($CFG, EST_H $EST, env: $ENVS)"

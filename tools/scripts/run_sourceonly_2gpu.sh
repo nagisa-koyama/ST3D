@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=sourceonly
-#SBATCH --partition=a6000_ada,a6000,rtx8000
+#SBATCH --partition=a100,a6000_ada,a6000,rtx8000   # a100 (node21 / node22) repaired 2026-11-03, smoke 31527 / 31529
 #SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=20
 #SBATCH --mem=96G               # enough for the five N=1 source-only rows (~10 GB resident each).
