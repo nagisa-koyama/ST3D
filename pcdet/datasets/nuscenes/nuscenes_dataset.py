@@ -359,12 +359,13 @@ class NuScenesDataset(DatasetTemplate):
         # EVAL_RING_THIN (ANALYSIS, evaluation only; absent = unchanged): cut the keyframe's scan pattern by its stored
         # ring index - every STRIDE-th ring ('rows'), every STRIDE-th return per ring ('cols'), or their count-matched
         # random controls (experiments_md 20261010_01 §3: how the nuScenes oracle degrades under pattern changes).
+        # Seeded by the lidar path; DRAW k >= 1 redraws the random arms (absent / 0 = the original seed; eval_cut_rng.py).
         thin = self.dataset_cfg.get('EVAL_RING_THIN', None)
         if thin is not None and not self.training:
             assert max_sweeps <= 1, 'EVAL_RING_THIN cuts one scan'
-            import zlib
+            from ..eval_cut_rng import eval_cut_rng
             from ...utils.beam_downsample_utils import ring_thin_mask
-            rng = np.random.default_rng(zlib.crc32(str(info['lidar_path']).encode()))
+            rng = eval_cut_rng(info['lidar_path'], thin.get('DRAW', None))
             points = points[ring_thin_mask(points, points[:, 4], thin.MODE, stride=thin.get('STRIDE', 2), rng=rng)]
         points = points[:, :4]
         if not self._eval_keep_ego_points():

@@ -1,0 +1,9 @@
+# ANALYSIS, eval-only redraw (experiments_md 20261003_05 §5 item 30, the random-cut redraws): the original random arm
+# cfgs/da-ieee-access-analysis/rowcut/centerpoint-sourceonly-waymo2waymo-toprandom.yaml
+# (draw 0: job 27953, W&B pyq4bjea) with its count-matched random cut drawn again. Waymo oracle 26398, TOP block, stride 2.
+# EVAL_TOP_THIN.DRAW 1 seeds each frame from (crc32 of the frame key, 1) instead of the frame key alone (eval_cut_rng.py);
+# the checkpoint, the eval script and every other key are the original's. One key added; nothing else.
+_BASE_CONFIG_: cfgs/da-ieee-access-analysis/rowcut/centerpoint-sourceonly-waymo2waymo-toprandom.yaml
+DATA_CONFIG_TAR:
+    EVAL_TOP_THIN:
+        DRAW: 1

@@ -387,12 +387,13 @@ class KittiDataset(DatasetTemplate):
         # EVAL_RING_THIN (ANALYSIS, evaluation only; absent = unchanged): cut the evaluation scan's pattern by its laser
         # rings, recovered from the stored order before any crop or shift (kitti_rings.py): lines, columns, azimuth bins,
         # their count-matched random controls, or a render to another sensor's pattern. The KITTI arm of the
-        # target-oracle degradation table (experiments_md 20261011_02). Seeded by the frame, so rescoring sees the same cut.
+        # target-oracle degradation table (experiments_md 20261011_02). Seeded by the frame, so rescoring sees the same cut;
+        # DRAW k >= 1 redraws the random arms (absent / 0 = the original seed; eval_cut_rng.py).
         thin = self.dataset_cfg.get('EVAL_RING_THIN', None)
         if thin is not None and not self.training:
-            import zlib
+            from ..eval_cut_rng import eval_cut_rng
             from .kitti_rings import eval_ring_thin_points
-            points = eval_ring_thin_points(points, thin, np.random.default_rng(zlib.crc32(str(sample_idx).encode())))
+            points = eval_ring_thin_points(points, thin, eval_cut_rng(sample_idx, thin.get('DRAW', None)))
         # TRAIN_FACTOR_SWAP (ANALYSIS, training only; absent = unchanged): one generative factor of the TRAINING data
         # set to its nuScenes value, for the factor-swap oracles (kitti_factor_swap.py; experiments_md 20261003_05 §5
         # item 24). Point arms act here, on the raw scan; box arms below, before SHIFT_COOR; label arms at the end.

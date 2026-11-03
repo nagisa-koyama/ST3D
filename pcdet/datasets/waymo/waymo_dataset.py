@@ -211,9 +211,10 @@ class WaymoDataset(DatasetTemplate):
 
     def get_lidar_eval_top_thin(self, info):
         """ANALYSIS: the evaluation frame with its TOP block thinned (EVAL_TOP_THIN; waymo_rings.eval_top_thin_points).
-        The random arm is seeded by the frame id, so two scorings of one checkpoint see the same points."""
-        import zlib
-        rng = np.random.default_rng(zlib.crc32(str(info['frame_id']).encode()))
+        The random arm is seeded by the frame id, so two scorings of one checkpoint see the same points; EVAL_TOP_THIN.DRAW
+        k >= 1 redraws it (absent / 0 = the original seed; eval_cut_rng.py, experiments_md 20261003_05 §5 item 30)."""
+        from ..eval_cut_rng import eval_cut_rng
+        rng = eval_cut_rng(info['frame_id'], self.eval_top_thin_cfg.get('DRAW', None))
         return self.get_lidar_top_thin(info, self.eval_top_thin_cfg, rng)
 
     def get_lidar_top_thin(self, info, cfg, rng):

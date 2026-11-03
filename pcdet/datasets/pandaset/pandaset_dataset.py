@@ -339,12 +339,13 @@ class PandasetDataset(DatasetTemplate):
 
     def _eval_ring_thin_mask(self, info, ego_points):
         """EVAL_RING_THIN keep mask over one evaluation frame's device-0 points; random draws are seeded by the frame
-        (sequence, frame_idx), so every arm and every rerun cuts a frame the same way."""
-        import zlib
+        (sequence, frame_idx), so every arm and every rerun cuts a frame the same way; DRAW k >= 1 redraws them (absent /
+        0 = the original seed; eval_cut_rng.py, experiments_md 20261003_05 §5 item 30)."""
+        from ..eval_cut_rng import eval_cut_rng
         from .pandaset_rings import load_cached_labels, eval_thin_mask
         cfg = self.eval_ring_thin_cfg
         labels = load_cached_labels(cfg['LABEL_CACHE'], info['sequence'], info['frame_idx'], len(ego_points))
-        rng = np.random.default_rng(zlib.crc32(('%s/%02d' % (info['sequence'], int(info['frame_idx']))).encode()))
+        rng = eval_cut_rng('%s/%02d' % (info['sequence'], int(info['frame_idx'])), cfg.get('DRAW', None))
         return eval_thin_mask(ego_points, labels, cfg, rng)
 
     def _get_annotations(self, info, pose, return_uuids=False):

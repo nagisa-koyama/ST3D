@@ -1,0 +1,9 @@
+# ANALYSIS, eval-only redraw (experiments_md 20261003_05 §5 item 30, the random-cut redraws): the original random arm
+# cfgs/da-ieee-access-analysis/sensitivity-pandaset/centerpoint-pandaset-spin2spin-ringrandom.yaml
+# (draw 0: job 28095, W&B e1nkih3c) with its count-matched random cut drawn again. Pandar64 spin oracle 26389, stride 2, scored under rule A.
+# EVAL_RING_THIN.DRAW 2 seeds each frame from (crc32 of the frame key, 2) instead of the frame key alone (eval_cut_rng.py);
+# the checkpoint, the eval script and every other key are the original's. One key added; nothing else.
+_BASE_CONFIG_: cfgs/da-ieee-access-analysis/sensitivity-pandaset/centerpoint-pandaset-spin2spin-ringrandom.yaml
+DATA_CONFIG_TAR:
+    EVAL_RING_THIN:
+        DRAW: 2
