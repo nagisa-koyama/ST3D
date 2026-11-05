@@ -1,0 +1,23 @@
+# Waymo -> nuScenes, the COUNT-MATCHED control (row L_W) of the scan-lattice arm
+# centerpoint-ringpattern-waymo2nuscenes (27807 / 27840): the density twin C1
+# (centerpoint-global-toponly-recount-waymo2nuscenes, 27850 / 28278) with ONE change, what its per-bin thinning is
+# matched to. experiments_md 20261003_05 §5 item 31e (the W->N version of item 29's P->N row L).
+#
+# Why: inside the voxel grid the lattice arm holds 0.64 of C1's points per frame (0-70 m) and differs outside the
+# item 28 band at 0-10 m and 25-35 m (/home/koyama/data/arm_point_counts/report_w2n.md); C1 was matched to nuScenes on
+# every return. This row is thinned to the LATTICE ARM's in-grid points per 1.5-m bin, so it differs from the lattice
+# arm in the arrangement of the points, not in their count per bin.
+#   - HIST_DIST_REFERENCE_CFG: the reference histogram is the lattice config's SOURCE in training mode (Waymo TOP
+#     under the nuScenes pattern), not nuScenes TRAIN;
+#   - HIST_DIST_IN_GRID: both histograms count only points inside POINT_CLOUD_RANGE, z included.
+# Everything else is C1's (TOP only, the processor-stage recount, 1,000 calibration frames, 50 bins). No new code: the
+# two keys are item 29's (ST3D cd9b655).
+#
+# PRE-DECLARED GATE AND READING: experiments_md 20261003_05 §5 item 31e.
+#
+# Legal: Waymo (source) clouds and source labels (recount) only; the lattice rule's inputs are nuScenes' published spec
+# and its TRAIN azimuth step. No target label, no target cloud in the calibration.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-global-toponly-recount-waymo2nuscenes.yaml
+DATA_CONFIG:
+    HIST_DIST_REFERENCE_CFG: cfgs/da-ieee-access/centerpoint-ringpattern-waymo2nuscenes.yaml
+    HIST_DIST_IN_GRID: True
