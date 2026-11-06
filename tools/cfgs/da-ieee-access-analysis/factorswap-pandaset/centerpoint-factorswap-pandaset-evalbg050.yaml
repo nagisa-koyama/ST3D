@@ -1,0 +1,11 @@
+# EVAL-ONLY twin (experiments_md 20261003_05 §5 item 34, the R9 matched-cut check, as 31b): the Pandar64 spin oracle
+# 26389 (centerpoint-pandaset-spin2flash.yaml recipe, 115 epochs, 2 GPUs x 3) scored on Pandar64 spin val
+# (centerpoint-pandaset-spin2spin.yaml), its evaluation
+# cloud with points outside every GT box enlarged by 0.25 m kept at 1/2 (EVAL_OSENS2 REGION_THIN, the
+# osens2/...-bgkeep050 arm). Score the oracle AND its r9-bg050 row with it: R9_cut >= O_cut + 2 means the
+# training cut leaks the box positions.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-pandaset-spin2spin.yaml
+DATA_CONFIG_TAR:
+  EVAL_OSENS2:
+    REGION_THIN: {SIDE: background, KEEP: 0.5}
+    BOX_MARGIN: 0.25

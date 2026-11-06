@@ -1,0 +1,26 @@
+# ANALYSIS oracle, FACTOR-SWAP on Lyft 64-beam (experiments_md 20261003_05 §5 item 34b): O_L64, the Lyft oracle recipe
+# 25769 (cfgs/da-ieee-access/centerpoint-sourceonly-lyft2lyft.yaml, 30 epochs, W&B ioasskls) on the 64-beam platform only
+# (hosts a101 / a102, 3,402 TRAIN frames), for training AND evaluation: da_lyft64_dataset.yaml's two keys, LIDAR_CONFIG 64
+# and SHIFT_COOR 2.04, on both blocks. Lyft TRAIN labels train it: labelled analysis, never a method.
+#
+# Against 25769, exactly those four values differ (checked by tools/analysis/factorswap_pl_config_check.py against the
+# current lyft2lyft file AND against 25769's logged config). Model, schedule (30 epochs; 3,402 frames x 30 = 17,010 steps
+# at global batch 6, not the family's ~94k: the design keeps the recipe's epochs), augmentation and SCORE_THRESH are
+# 25769's. Layout 1 GPU x 6 (design).
+#
+# SHIFT_COOR 2.04 is the 64-beam median Car box BASE (20260922_03 §1; the road estimator gives 1.87): label-derived, which
+# an oracle trained on its own labels may use (analysis). The source-only control on Lyft-64 val (the nuScenes oracle
+# 25743 rescored) must not: its twin uses a label-free value (factorswap-lyft64/...-evalonly-nuscenes-oracle-on-lyft64).
+#
+# The two keys are written here instead of `_BASE_CONFIG_: da_lyft64_dataset.yaml` on purpose: pcdet/config.py fills a
+# child block from the PARENT's block (da_lyft_dataset.yaml, SHIFT_COOR 1.87) before the child's own base is expanded,
+# so a nested base would silently keep 1.87.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-lyft2lyft.yaml
+
+DATA_CONFIG:
+    LIDAR_CONFIG: 64
+    SHIFT_COOR: [0.0, 0.0, 2.04]
+
+DATA_CONFIG_TAR:
+    LIDAR_CONFIG: 64
+    SHIFT_COOR: [0.0, 0.0, 2.04]

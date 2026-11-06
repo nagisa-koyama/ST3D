@@ -216,6 +216,17 @@ class PandasetDataset(DatasetTemplate):
         # zrot_world_to_ego is propagated in order to be able to transform the
         # predicted yaws back to world coordinates
 
+        # TRAIN_FACTOR_SWAP (ANALYSIS, training only; absent = unchanged): one generative factor of the TRAINING data
+        # set to its nuScenes value, for the factor-swap oracles (loader_factor_swap.py; experiments_md 20261003_05 §5
+        # item 34). Here, with points and boxes both shifted; draws keyed by (sequence, frame), never by dataset index.
+        swap = self.dataset_cfg.get('TRAIN_FACTOR_SWAP', None) if self.training else None
+        if swap is not None:
+            from .. import loader_factor_swap
+            loader_factor_swap.check_dataset_cfg(self.dataset_cfg, self.class_names, 'pandaset')
+            input_dict = loader_factor_swap.apply(input_dict, swap, self.class_names,
+                                                  self.map_ontology_dataset_to_model,
+                                                  '%s/%02d' % (seq_idx, int(info['frame_idx'])), 'pandaset')
+
         # delete default label
         if self.dataset_cfg.get('USE_PSEUDO_LABEL', None) and self.training:
             input_dict['gt_boxes'] = None
@@ -225,6 +236,8 @@ class PandasetDataset(DatasetTemplate):
             self.fill_pseudo_labels(input_dict)
 
         data_dict = self.prepare_data(data_dict=input_dict)
+        if swap is not None:
+            data_dict.pop('num_points_in_gt', None)     # set by the swap for the zero-point filter; not collatable
 
         return data_dict
 
