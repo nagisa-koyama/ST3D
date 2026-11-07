@@ -59,8 +59,7 @@ def _frame(loader):
 def test_arms_per_loader():
     pitch = EasyDict({'PITCH_DEG': 1.0, 'PIVOT': PIVOT})
     assert lfs.arm_of(pitch, 'pandaset') == 'PITCH_DEG'
-    with pytest.raises(AssertionError):                        # Lyft has no pitch row: refused, not ignored
-        lfs.arm_of(pitch, 'lyft')
+    assert lfs.arm_of(pitch, 'lyft') == 'PITCH_DEG'             # since item 37d (Lyft R5); item 34 refused it
     for loader in ('pandaset', 'lyft'):
         with pytest.raises(AssertionError):
             lfs.arm_of(EasyDict({}), loader)
@@ -393,13 +392,27 @@ def test_hook_applies_after_shift_with_the_frame_key_and_pops_the_count(loader):
         assert 'num_points_in_gt' not in out                                 # popped after prepare_data
 
 
-def test_hook_refuses_accumulation_and_lyft_pitch():
+def test_hook_refuses_accumulation():
     ds, _ = _pandaset({**_dcfg('pandaset', {'GT_DIM_SCALE': {'Car': 1.2}}), 'MAX_SWEEPS': 3})
     with pytest.raises(AssertionError):
         ds[0]
-    ds, _ = _lyft(_dcfg('lyft', {'PITCH_DEG': 1.0, 'PIVOT': [0, 0, 1.6]}))
-    with pytest.raises(AssertionError):
-        ds[0]
+
+
+def test_hook_pitches_lyft_points_and_boxes_together():
+    """Item 37d: the Lyft hook applies PITCH_DEG (item 34 refused it): points and box centres rotate by the same angle
+    about PIVOT, box sizes and the box set unchanged."""
+    ds0, base = _lyft(_dcfg('lyft'))
+    ds0[0]
+    ds, seen = _lyft(_dcfg('lyft', {'PITCH_DEG': -3.0, 'PIVOT': [0, 0, SHIFT['lyft']]}))
+    ds[0]
+    assert len(seen['gt_boxes']) == len(base['gt_boxes'])
+    assert np.allclose(seen['gt_boxes'][:, 3:], base['gt_boxes'][:, 3:])
+    assert not np.allclose(seen['points'][:, :3], base['points'][:, :3])
+    pv = np.array([0.0, 0.0, SHIFT['lyft']])
+    ang = lambda p: np.degrees(np.arctan2(p[:, 2] - pv[2], p[:, 0] - pv[0]))   # noqa: E731
+    far = np.hypot(base['points'][:, 0], base['points'][:, 2] - pv[2]) > 2.0
+    d = (ang(seen['points'][far, :3].astype(np.float64)) - ang(base['points'][far, :3].astype(np.float64)) + 180) % 360 - 180
+    assert np.allclose(d, -3.0, atol=1e-3)
 
 
 # ---------------------------------------------------------------- the row configs (item 34)

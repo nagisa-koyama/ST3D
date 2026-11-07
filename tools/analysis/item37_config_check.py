@@ -4,6 +4,7 @@ analysis/factorswap_pl_config_check.py (item 34). ANALYSIS tooling; reads config
        oracle's; MODEL / CLASS_NAMES / ONTOLOGY equal what jobs 31539, 31550 and the oracle 26389 logged.
   37b: L_L40 differs from the C1-analog config (and 30313's logged config) only in HIST_DIST_REFERENCE_CFG /
        HIST_DIST_IN_GRID; its Lyft-40 val eval twin differs from it only in DATA_CONFIG_TAR, which equals O_L40's.
+  37c: P_K and L_K differ from the KITTI oracle config (and 26843's logged config) only in their TRAIN_FACTOR_SWAP arm.
 Prints one line per check and "ALL ITEM-37 CONFIG CHECKS PASSED" or exits 1. Run inside the container from ST3D/tools:
     python analysis/item37_config_check.py
 """
@@ -50,9 +51,23 @@ def check_37b():
              C.diff(tw, p_tw, ('MODEL', 'CLASS_NAMES', 'ONTOLOGY', 'DATA_CONFIG_TAR')), [])
 
 
+def check_37c():
+    base = C.D + 'centerpoint-sourceonly-kitti2kitti-noros-zshift.yaml'
+    o = C.flat(C.load(base))
+    for path, keys in ((C.A + 'factorswap-s2/centerpoint-factorswap-s2-p-pattern.yaml',
+                        ['DATA_CONFIG.TRAIN_FACTOR_SWAP.RING_THIN.MODE', 'DATA_CONFIG.TRAIN_FACTOR_SWAP.RING_THIN.SPACING_DEG',
+                         'DATA_CONFIG.TRAIN_FACTOR_SWAP.RING_THIN.AZ_RES_DEG']),
+                       (G.L_K, ['DATA_CONFIG.TRAIN_FACTOR_SWAP.RANGE_KEEP.EDGES',
+                                'DATA_CONFIG.TRAIN_FACTOR_SWAP.RANGE_KEEP.RATE'])):
+        r = C.flat(C.load(path))
+        C.expect('37c %s vs the oracle config' % path.split('/')[-1], C.diff(r, o), keys)
+        C.expect('37c %s vs 26843 logged' % path.split('/')[-1], C.diff(r, C.logged(26843)), keys)
+
+
 def main():
     check_37a()
     check_37b()
+    check_37c()
     if C.FAILS:
         print('FAILED ITEM-37 CONFIG CHECKS (%d):' % len(C.FAILS))
         for f in C.FAILS:

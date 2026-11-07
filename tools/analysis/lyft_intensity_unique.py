@@ -14,7 +14,7 @@ HOSTS_64 = ('host-a101', 'host-a102')
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--root', default='../data/lyft')
+    ap.add_argument('--root', default='../data/lyft/trainval')   # DATA_PATH / VERSION, as LyftDataset reads it
     ap.add_argument('--frames', type=int, default=200)
     a = ap.parse_args()
     root = Path(a.root)

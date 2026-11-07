@@ -7,11 +7,12 @@ the key is read only in training mode and the configs set it on the training blo
 DATA_CONFIG_TAR). Exactly one arm per config, with the meaning of pcdet/datasets/waymo/waymo_factor_swap.py, whose
 dataset-agnostic functions are reused here unchanged (imports only; the KITTI and Waymo paths are not touched):
 
-  PITCH_DEG: d | [d1, d2, ...], PITCH_PROB: [...], PIVOT: [x, y, z]       (PandaSet only)
+  PITCH_DEG: d | [d1, d2, ...], PITCH_PROB: [...], PIVOT: [x, y, z]       (PandaSet; Lyft since item 37d)
       Points AND GT box centres rotated together about the lateral (y) axis through PIVOT, d > 0 raising the points
       ahead (+x; a flat ground then rises ahead by d degrees). Boxes stay upright (size, yaw unchanged). One angle per
       frame, drawn with PITCH_PROB from the frame key. PIVOT is in the LOADER frame AFTER SHIFT_COOR (this hook runs
-      after the loader has shifted points and boxes), with +x forward.
+      after the loader has shifted points and boxes). The angle is about +x: on Lyft, whose LIDAR_TOP x points BACKWARD,
+      a config raises the ground ahead by d degrees with PITCH_DEG -d (experiments_md 20261003_05 §5 item 37d).
   GT_DIM_SCALE: {Car: f, Pedestrian: f}
       dx, dy, dz of the GT boxes whose MODEL class is named, x f, each box's BOTTOM kept. Points untouched.
   GT_IGNORE_BY_RANGE: {CLASS: <model class>, EDGES: [...], KEEP: [...]}
@@ -49,8 +50,9 @@ from .waymo import waymo_factor_swap as wfs
 ARMS = wfs.ARMS                     # ('PITCH_DEG', 'GT_DIM_SCALE', 'GT_IGNORE_BY_RANGE', 'REGION_THIN')
 LOADER_ARMS = {
     'pandaset': ARMS,
-    # Lyft has no pitch row in item 34 (its sensor x points backward; the design measures pitch on PandaSet only).
-    'lyft': ('GT_DIM_SCALE', 'GT_IGNORE_BY_RANGE', 'REGION_THIN'),
+    # Lyft had no pitch row in item 34 (its sensor x points backward); item 37d adds one, with the angle's sign set by the
+    # config (PITCH_DEG about +x; see the docstring).
+    'lyft': ('PITCH_DEG', 'GT_DIM_SCALE', 'GT_IGNORE_BY_RANGE', 'REGION_THIN'),
 }
 # Keys that change the training cloud or labels in another way (or the frame the hook assumes); one factor per row.
 EXCLUSIVE_DATASET_KEYS = {

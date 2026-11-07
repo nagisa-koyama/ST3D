@@ -1,0 +1,13 @@
+# ANALYSIS training row, FACTOR-SWAP S2 (experiments_md 20261003_05 §5 item 37c; design fixed 2026-11-08 01:40 JST, user
+# 2026-11-08 「不足する学習摂動は全て許可」): the KITTI oracle recipe 26843 (80.33 / 70.59) with ONE factor of its TRAINING data
+# set to the nuScenes value (pcdet/datasets/kitti/kitti_factor_swap.py, training only), scored on UNPERTURBED KITTI val
+# in-run. KITTI TRAIN labels train this row: labelled analysis, never a method.
+# This arm: P_K, the scan pattern: KITTI's rings nearest nuScenes' HDL-32E vertical lattice (1.33 deg, published) within
+# KITTI's field of view and one point per kept ring per 0.332 deg azimuth bin (nuScenes TRAIN median step), phases drawn
+# per frame (kitti_rings.eval_ring_thin_mask MODE pattern, the rule of the other targets' P rows, 27807). The same
+# contrast as Waymo / Pandar64 / Lyft-40: pattern = C1 - P with C1 = R3 (density per range bin); structure beyond count
+# = L_K - P_K (centerpoint-factorswap-s2-l-latcount.yaml), count part = R3 - L_K, paired by seed.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-kitti2kitti-noros-zshift.yaml
+DATA_CONFIG:
+    TRAIN_FACTOR_SWAP:
+        RING_THIN: {MODE: pattern, SPACING_DEG: 1.33, AZ_RES_DEG: 0.332}

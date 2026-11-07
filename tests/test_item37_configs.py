@@ -111,3 +111,94 @@ def test_37b_twin_is_l_with_the_lyft40_oracle_eval_block(monkeypatch):
     for k in set(twin) | set(src):
         if k != 'DATA_CONFIG_TAR':
             assert twin.get(k) == src.get(k), k
+
+
+# ---- 37c: the KITTI pattern row P_K (TRAIN_FACTOR_SWAP RING_THIN MODE pattern) and its config
+
+import numpy as np  # noqa: E402
+
+P_K = 'cfgs/da-ieee-access-analysis/factorswap-s2/centerpoint-factorswap-s2-p-pattern.yaml'
+KITTI_ORACLE = 'cfgs/da-ieee-access/centerpoint-sourceonly-kitti2kitti-noros-zshift.yaml'
+PATTERN = {'RING_THIN': {'MODE': 'pattern', 'SPACING_DEG': 1.33, 'AZ_RES_DEG': 0.332}}
+
+
+def kitti_like_scan(n_rings=64, step_deg=0.17, r=20.0):
+    """A raw HDL-64E-like scan in stored order: one ring's full turn after another, azimuth rising from ~0 deg, ring
+    elevations from +2 down to -24.8 deg (the order kitti_rings.rings_from_order reads)."""
+    el = np.linspace(2.0, -24.8, n_rings)
+    az = np.arange(0.05, 360.0, step_deg)
+    pts = []
+    for e in el:
+        a = np.radians(az)
+        pts.append(np.stack([r * np.cos(a), r * np.sin(a), np.full_like(a, r * np.tan(np.radians(e))),
+                             np.full_like(a, 0.5)], 1))
+    return np.concatenate(pts).astype(np.float32), el
+
+
+def test_37c_pattern_arm_is_the_frame_seeded_lattice():
+    from pcdet.datasets.kitti import kitti_factor_swap, kitti_rings
+    pts, el = kitti_like_scan()
+    a = kitti_factor_swap.apply_points(pts, EasyDict(PATTERN), '000042')
+    b = kitti_factor_swap.apply_points(pts, EasyDict(PATTERN), '000042')
+    assert np.array_equal(a, b)                                    # a fixed dataset: the same cut every epoch
+    m = kitti_rings.eval_ring_thin_mask(pts, PATTERN['RING_THIN'], kitti_factor_swap.frame_rng('000042', 'RING_THIN'))
+    assert np.array_equal(a, pts[m])
+    ring, lev = kitti_rings.rings_from_order(pts[:, :3])
+    kept = np.unique(ring[m])
+    assert 18 <= len(kept) <= 22                                   # 26.8 deg of KITTI FOV / 1.33 deg
+    assert abs(np.median(np.diff(np.sort(lev[kept]))) - 1.33) < 0.3
+    az = np.degrees(np.arctan2(pts[m, 1], pts[m, 0]))
+    per_ring = [np.sum(ring[m] == k) for k in kept]
+    assert max(per_ring) <= int(np.ceil(360.0 / 0.332)) + 1       # one point per 0.332 deg bin, not every 0.17 deg return
+    assert min(per_ring) >= 0.9 * 360.0 / 0.332
+
+
+def test_37c_p_k_config_is_the_oracle_plus_the_pattern_arm(monkeypatch):
+    monkeypatch.chdir(TOOLS)
+    p, o = resolved(P_K), resolved(KITTI_ORACLE)
+    swap = p['DATA_CONFIG'].pop('TRAIN_FACTOR_SWAP')
+    assert swap == plain(PATTERN)
+    assert p == o
+
+
+# ---- 37d: pitch rows on Lyft, whose LIDAR_TOP x points backward
+
+def test_37d_lyft_accepts_the_pitch_arm():
+    from pcdet.datasets import loader_factor_swap as lfs
+    assert lfs.arm_of(EasyDict({'PITCH_DEG': [-3.0, -2.0], 'PITCH_PROB': [0.5, 0.5], 'PIVOT': [0, 0, 2.0]}), 'lyft') \
+        == 'PITCH_DEG'
+
+
+def test_37d_lyft_pitch_sign_raises_the_ground_ahead_to_nuscenes_slope(monkeypatch):
+    """A flat ground falling 1.03 deg ahead (ahead = -x on Lyft) must, after the row's draw, rise ahead by nuScenes'
+    slope (2.29 or 1.35). With the sign of the angle wrong it would fall by ~4.3 deg instead."""
+    from pcdet.datasets.waymo import waymo_factor_swap as wfs
+    monkeypatch.chdir(TOOLS)
+    for target, lyft_fwd in (('lyft64', None), ('lyft40', None)):
+        cfg = resolved('cfgs/da-ieee-access-analysis/factorswap-%s/centerpoint-factorswap-%s-r5-pitch.yaml'
+                       % (target, target))
+        block = cfg['DATA_CONFIG'] if 'DATA_CONFIG' in cfg else cfg['DATA_CONFIGS']['LYFT_40BEAM']
+        swap = EasyDict(block['TRAIN_FACTOR_SWAP'])
+        import json
+        st = json.load(open('/home/koyama/data/factorswap_lyft/stats_%s.json' % target))
+        lyft_fwd = st['ground']['forward_slope_deg']['median']          # rise ahead, already sign-corrected
+        x = np.linspace(-40.0, 40.0, 401)
+        # ground in the loader frame: z rises along -x (ahead) by lyft_fwd, through the point under the sensor
+        ground = np.stack([x, np.zeros_like(x), np.tan(np.radians(lyft_fwd)) * (-x)], 1)
+        for k, want in enumerate((2.29, 1.35)):
+            out = wfs.pitch_about(ground, float(swap.PITCH_DEG[k]), swap.PIVOT)
+            rise_ahead = np.degrees(np.arctan(np.polyfit(-out[:, 0], out[:, 2], 1)[0]))
+            assert abs(rise_ahead - want) < 0.02, (target, k, rise_ahead)
+        assert swap.PIVOT == [0.0, 0.0, float(st['shift_coor'][2])]
+
+
+def test_37c_l_k_config_is_the_oracle_plus_the_measured_rates(monkeypatch):
+    import json
+    monkeypatch.chdir(TOOLS)
+    lk = resolved('cfgs/da-ieee-access-analysis/factorswap-s2/centerpoint-factorswap-s2-l-latcount.yaml')
+    o = resolved(KITTI_ORACLE)
+    swap = lk['DATA_CONFIG'].pop('TRAIN_FACTOR_SWAP')
+    assert lk == o
+    r = json.load(open('/home/koyama/data/factorswap_s2/kitti_pattern_rates.json'))
+    assert swap['RANGE_KEEP']['RATE'] == plain(r['RATE']) and swap['RANGE_KEEP']['EDGES'] == plain(r['EDGES'])
+    assert len(r['EDGES']) == len(r['RATE']) + 1 and all(0 < x <= 1 for x in r['RATE'])
