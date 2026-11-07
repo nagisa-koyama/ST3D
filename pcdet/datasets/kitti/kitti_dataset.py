@@ -394,6 +394,15 @@ class KittiDataset(DatasetTemplate):
             from ..eval_cut_rng import eval_cut_rng
             from .kitti_rings import eval_ring_thin_points
             points = eval_ring_thin_points(points, thin, eval_cut_rng(sample_idx, thin.get('DRAW', None)))
+        # EVAL_FACTOR_SWAP (ANALYSIS, evaluation only; absent = unchanged): a TRAIN_FACTOR_SWAP point arm applied to the
+        # evaluation scan with the same function and the same frame-seeded draw, to score a factor-swap oracle on clouds
+        # cut the way it was trained (experiments_md 20261003_05 §5 item 33e). Box and label arms are refused.
+        eval_swap = self.dataset_cfg.get('EVAL_FACTOR_SWAP', None)
+        if eval_swap is not None and not self.training:
+            from . import kitti_factor_swap
+            assert kitti_factor_swap.arm_of(eval_swap) in kitti_factor_swap.POINT_ARMS, \
+                'EVAL_FACTOR_SWAP takes a point arm (%s)' % (kitti_factor_swap.POINT_ARMS,)
+            points = kitti_factor_swap.apply_points(points, eval_swap, sample_idx)
         # TRAIN_FACTOR_SWAP (ANALYSIS, training only; absent = unchanged): one generative factor of the TRAINING data
         # set to its nuScenes value, for the factor-swap oracles (kitti_factor_swap.py; experiments_md 20261003_05 §5
         # item 24). Point arms act here, on the raw scan; box arms below, before SHIFT_COOR; label arms at the end.

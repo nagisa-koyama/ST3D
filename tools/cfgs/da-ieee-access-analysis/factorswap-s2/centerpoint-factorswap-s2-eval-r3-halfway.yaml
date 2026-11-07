@@ -1,0 +1,11 @@
+# EVAL-ONLY twin of the KITTI oracle base for experiments_md 20261003_05 §5 item 33e (design fixed 2026-11-07 18:39 JST).
+# KITTI val cut half-way in log density between R3's training cut and full KITTI: RATE' = sqrt(R3's RATE)
+# per bin (4 decimals), EDGES as R3.
+# Same frame-seeded draw as training (EVAL_FACTOR_SWAP -> kitti_factor_swap.apply_points, evaluation only). Scores the R3
+# density oracles (31414 / 31948 / 32099) and the oracle (26843 / 31817). ANALYSIS.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-kitti2kitti-noros-zshift.yaml
+DATA_CONFIG_TAR:
+    EVAL_FACTOR_SWAP:
+        RANGE_KEEP:
+            EDGES: [0, 1.5, 3, 4.5, 6, 7.5, 9, 10.5, 12, 13.5, 15, 16.5, 18, 19.5, 21, 22.5, 24, 25.5, 27, 28.5, 30, 31.5, 33, 34.5, 36, 37.5, 39, 40.5, 42, 43.5, 45, 46.5, 48, 49.5, 51, 52.5, 54, 55.5, 57, 58.5, 60, 61.5, 63, 64.5, 66, 67.5, 69, 70.5, 72, 73.5, 75]
+            RATE: [1.0, 0.7267, 0.6127, 0.4391, 0.4329, 0.4287, 0.4336, 0.4374, 0.4146, 0.3803, 0.3712, 0.3811, 0.3955, 0.4072, 0.4238, 0.4295, 0.4337, 0.4377, 0.4518, 0.4588, 0.463, 0.4749, 0.4944, 0.4901, 0.4844, 0.4969, 0.4922, 0.4984, 0.5033, 0.4821, 0.4901, 0.503, 0.4784, 0.4914, 0.4906, 0.4783, 0.4883, 0.4976, 0.4816, 0.5041, 0.4891, 0.4696, 0.475, 0.481, 0.4672, 0.4603, 0.456, 0.4486, 0.4208, 0.5311]
