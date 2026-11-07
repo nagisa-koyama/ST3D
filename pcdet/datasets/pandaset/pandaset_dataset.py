@@ -326,6 +326,16 @@ class PandasetDataset(DatasetTemplate):
         if not self.training and self.eval_ring_thin_cfg is not None:
             keep = self._eval_ring_thin_mask(info, ego_points)
             ego_points, points_int = ego_points[keep], points_int[keep]
+        swap = self.dataset_cfg.get('TRAIN_FACTOR_SWAP', None) if self.training else None
+        if swap is not None and swap.get('REFLECTION_DROP', None) is not None:
+            # TRAIN_FACTOR_SWAP.REFLECTION_DROP (R11 / R11r, experiments_md 20261003_05 §5 item 35g; absent = unchanged):
+            # in PandaSet ego axes about the fitted sensor origin (M1's frame), before the axis swap, SHIFT_COOR and any
+            # augmentation; keyed by (sequence, frame). The boxes it empties fall to prepare_data's recount.
+            from .pandaset_rings import ORIGIN
+            from ..reflection_drop import keep_mask
+            keep = keep_mask(np.asarray(ego_points, dtype=np.float64) - ORIGIN, points_int, swap['REFLECTION_DROP'],
+                             '%s/%02d' % (info['sequence'], int(info['frame_idx'])))[0]
+            ego_points, points_int = ego_points[keep], points_int[keep]
         # Pandaset ego coordinates are:
         # - x pointing to the right
         # - y pointing to the front

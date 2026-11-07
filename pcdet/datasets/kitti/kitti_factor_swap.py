@@ -34,6 +34,11 @@ dataset, like a recorded one, not a fresh draw per epoch. Exactly one arm per co
       Point arm with boxes (R10, foreground return): a point inside a GT box of a RATE_FG class (enlarged by m) is
       kept with RATE_FG[class][b] of its radius bin on EDGES_FG, every other point with RATE_BG on EDGES_BG. A
       negative RATE_FG entry means "too few boxes to measure": that bin's foreground points take the background rate.
+  REFLECTION_DROP: {MODE: threshold | random, E: {...}, T: {...}, Q: {...}}
+      Point arm (R11 / R11r, item 35g), on the raw scan as read (the velodyne origin is the sensor's): the share E of
+      the returns per range bin and height class that a nuScenes-like sensor would lose, darkest first (threshold) or
+      at random (count-matched twin). pcdet/datasets/reflection_drop.py; the boxes it empties fall to prepare_data's
+      recount, as for the other point arms.
 """
 import zlib
 
@@ -41,7 +46,7 @@ import numpy as np
 
 from ...utils import common_utils
 
-POINT_ARMS = ('RING_THIN', 'RANGE_KEEP')
+POINT_ARMS = ('RING_THIN', 'RANGE_KEEP', 'REFLECTION_DROP')
 ARMS = POINT_ARMS + ('PITCH_DEG', 'GT_DIM_SCALE', 'GT_IGNORE_BY_RANGE', 'REGION_THIN', 'RANGE_KEEP_FG_BG')
 
 
@@ -98,6 +103,9 @@ def apply_points(points, cfg, frame_id):
         out = np.array(points, copy=True)
         out[:, :3] = pitch_xyz(points[:, :3], pitch_of(cfg, frame_id))
         return out
+    if arm == 'REFLECTION_DROP':
+        from ..reflection_drop import keep_mask
+        return points[keep_mask(points[:, :3], points[:, 3], cfg['REFLECTION_DROP'], frame_id)[0]]
     return points
 
 

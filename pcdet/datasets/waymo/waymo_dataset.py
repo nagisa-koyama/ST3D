@@ -170,9 +170,15 @@ class WaymoDataset(DatasetTemplate):
         all_sequences_infos = [item for infos in sequence_infos for item in infos]
         return all_sequences_infos
 
-    def get_lidar(self, sequence_name, sample_idx, num_points_of_each_lidar=None):
+    def get_lidar(self, sequence_name, sample_idx, num_points_of_each_lidar=None, return_top_mask=False):
         lidar_file = self.data_path / sequence_name / ('%04d.npy' % sample_idx)
         point_features = np.load(lidar_file)  # (N, 7): [x, y, z, intensity, elongation, NLZ_flag]
+        # return_top_mask (TRAIN_FACTOR_SWAP.REFLECTION_DROP only; default False = unchanged): also return which of the
+        # returned points are the TOP lidar's (the first block of the stored order), carried through the same filters.
+        if return_top_mask:
+            assert num_points_of_each_lidar is not None and \
+                int(np.sum(num_points_of_each_lidar)) == len(point_features), 'per-lidar counts do not match the file'
+            is_top = np.arange(len(point_features)) < int(num_points_of_each_lidar[0])
 
         # LIDAR_INDICES (opt-in; absent = all five lidars, unchanged): keep only the listed lidars,
         # 0 = TOP, in the stored order (lidars sorted by name, each block row-major), sliced by the
@@ -187,10 +193,14 @@ class WaymoDataset(DatasetTemplate):
             for i in lidar_indices:
                 keep[starts[i]:ends[i]] = True
             point_features = point_features[keep]
+            if return_top_mask:
+                is_top = is_top[keep]
 
         points_all, NLZ_flag = point_features[:, 0:5], point_features[:, 5]
         points_all = points_all[NLZ_flag == -1]
         points_all[:, 3] = np.tanh(points_all[:, 3])
+        if return_top_mask:
+            return points_all, is_top[NLZ_flag == -1]
         return points_all
 
     def _top_calibration(self, path):
@@ -343,17 +353,28 @@ class WaymoDataset(DatasetTemplate):
         sequence_name = pc_info['lidar_sequence']
         sample_idx = pc_info['sample_idx']
         ring_label = None
+        swap = self.dataset_cfg.get('TRAIN_FACTOR_SWAP', None) if self.training else None
+        reflection_keep = None
         if self._ring_labels_from_order and self.training:
             points, ring_label = self.get_lidar_with_ring_labels(info)
+        elif swap is not None and swap.get('REFLECTION_DROP', None) is not None:
+            # REFLECTION_DROP needs the TOP block of the stored cloud. check_dataset_cfg (below) rules out every other
+            # training reader (MAX_SWEEPS > 1, RING_PATTERN, TRAIN_TOP_THIN, LIT_TRANSLATED), so this is the cloud
+            # get_lidar_with_sweeps would return, plus its TOP mask.
+            points, is_top = self.get_lidar(sequence_name, sample_idx, info.get('num_points_of_each_lidar', None),
+                                            return_top_mask=True)
         else:
             points = self.get_lidar_with_sweeps(info)
         # TRAIN_FACTOR_SWAP (ANALYSIS, training only; absent = unchanged): one generative factor of the TRAINING data set
         # to its nuScenes value, for the N->W factor-swap oracles (waymo_factor_swap.py; experiments_md 20261003_05 §5
         # item 24). Point arm here, on the stored cloud; box arms below, before SHIFT_COOR; the rest after the boxes.
-        swap = self.dataset_cfg.get('TRAIN_FACTOR_SWAP', None) if self.training else None
         if swap is not None:
             from . import waymo_factor_swap
             waymo_factor_swap.check_dataset_cfg(self.dataset_cfg, self.class_names)
+            if waymo_factor_swap.arm_of(swap) == 'REFLECTION_DROP':
+                calib = self._top_calibration(swap.REFLECTION_DROP.TOP_CALIB)[sequence_name]
+                reflection_keep = waymo_factor_swap.reflection_keep(points, is_top, calib['extrinsic'], swap,
+                                                                    info['frame_id'])
             points = waymo_factor_swap.apply_points(points, swap, info['frame_id'])
         if self.dataset_cfg.get('SHIFT_COOR', None):
             points[:, 0:3] += np.array(self.dataset_cfg.SHIFT_COOR, dtype=np.float32)
@@ -365,6 +386,8 @@ class WaymoDataset(DatasetTemplate):
         }
         if ring_label is not None:
             input_dict['waymo_ring_label'] = ring_label
+        if reflection_keep is not None:
+            input_dict['reflection_keep'] = reflection_keep     # applied (and popped) by waymo_factor_swap.finish
 
         if 'annos' in info:
             annos = info['annos']
@@ -422,6 +445,7 @@ class WaymoDataset(DatasetTemplate):
             if swap is not None:
                 input_dict = waymo_factor_swap.finish(input_dict, swap, self.class_names,
                                                       self.map_ontology_dataset_to_model, info['frame_id'])
+        assert 'reflection_keep' not in input_dict, 'REFLECTION_DROP needs a labelled training frame (finish applies it)'
 
             # for debug only
             # gt_boxes_mask = np.array([n in self.class_names for n in input_dict['gt_names']], dtype=np.bool_)

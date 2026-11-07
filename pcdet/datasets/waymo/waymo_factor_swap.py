@@ -24,6 +24,11 @@ swapped training set is a fixed dataset, like a recorded one. Exactly one arm pe
   REGION_THIN: {SIDE: foreground | background, KEEP: f}, BOX_MARGIN: m
       Point arm with boxes: OSENS-2's region thinning (osens2_utils.perturb) on the training cloud, with every box the
       loader keeps (all Waymo classes but 'unknown'), after SHIFT_COOR, points and boxes in the same frame.
+  REFLECTION_DROP: {MODE: threshold | random, E: {...}, T: {...}, Q: {...}, TOP_CALIB: <top_calib.pkl>}
+      Point arm (R11 / R11r, item 35g) on the TOP lidar's returns only (side lidars untouched): the share E per range
+      bin and height class that a nuScenes-like sensor would lose (pcdet/datasets/reflection_drop.py), classified about
+      the TOP's position (the segment's TOP extrinsic translation) in the vehicle frame, on the stored cloud before
+      SHIFT_COOR; the mask is applied in finish(), with the differential recount below.
 
 Waymo's stored num_points_in_gt (all returns, all five lidars) drives prepare_data's zero-point filter. An arm that can
 EMPTY a box gets a differential recount (recount_emptied): a box is dropped exactly when the oracle drops it (stored
@@ -32,13 +37,13 @@ recount (None) would also drop the boxes that are empty in the first-return clou
 on, a second change against the oracle. Foreground REGION_THIN gets it (background thinning keeps every point inside
 the enlarged boxes, so it cannot empty one); PITCH_DEG (rigid: points move with their box) and
 GT_DIM_SCALE (the box definition, on the objects the oracle trains on) keep the stored count (the target dump measures
-how many boxes either would empty).
+how many boxes either would empty). REFLECTION_DROP gets the differential recount too.
 """
 import numpy as np
 
 from ..kitti.kitti_factor_swap import frame_rng, ignore_labels, pitch_of, pitch_xyz, radius_bin, region_thin  # noqa: F401
 
-ARMS = ('PITCH_DEG', 'GT_DIM_SCALE', 'GT_IGNORE_BY_RANGE', 'REGION_THIN')
+ARMS = ('PITCH_DEG', 'GT_DIM_SCALE', 'GT_IGNORE_BY_RANGE', 'REGION_THIN', 'REFLECTION_DROP')
 ALLOWED_KEYS = ARMS + ('PITCH_PROB', 'PIVOT', 'BOX_MARGIN')
 # Keys that change the Waymo training cloud or labels in another way; a factor-swap row changes one factor only.
 EXCLUSIVE_DATASET_KEYS = ('RING_PATTERN', 'TRAIN_TOP_THIN', 'LIT_TRANSLATED', 'BEAM_DROP', 'BEAM_DISTILL',
@@ -55,6 +60,9 @@ def arm_of(cfg):
         assert cfg.get('PIVOT', None) is not None and len(cfg['PIVOT']) == 3, 'PITCH_DEG on Waymo needs PIVOT [x, y, z]'
     if arm == 'REGION_THIN':
         assert cfg.get('BOX_MARGIN', None) is not None, 'REGION_THIN needs BOX_MARGIN'
+    if arm == 'REFLECTION_DROP':
+        from ..reflection_drop import check_cfg
+        check_cfg(cfg['REFLECTION_DROP'])
     return arm
 
 
@@ -67,6 +75,10 @@ def check_dataset_cfg(dataset_cfg, class_names):
     assert not both, 'TRAIN_FACTOR_SWAP and %s both set' % both
     # __getitem__'s FOV crop filters gt_names / gt_boxes / num_points_in_gt but not the ignore arm's gt_classes.
     assert not dataset_cfg.get('FOV_POINTS_ONLY', False), 'TRAIN_FACTOR_SWAP is for the 360-degree Waymo cloud'
+    if swap.get('REFLECTION_DROP', None) is not None:
+        assert swap['REFLECTION_DROP'].get('TOP_CALIB', None), 'REFLECTION_DROP on Waymo needs TOP_CALIB (TOP position)'
+        assert dataset_cfg.get('LIDAR_INDICES', None) is None or 0 in dataset_cfg['LIDAR_INDICES'], \
+            'REFLECTION_DROP acts on the TOP lidar, which LIDAR_INDICES leaves out'
     assert not any(':' in c for c in class_names), 'TRAIN_FACTOR_SWAP expects plain model class names, not multi-head'
     named = list(swap.get('GT_DIM_SCALE', None) or {}) + \
         ([swap['GT_IGNORE_BY_RANGE']['CLASS']] if swap.get('GT_IGNORE_BY_RANGE', None) is not None else [])
@@ -141,11 +153,50 @@ def recount_emptied(stored, before, after):
     return out
 
 
+def reflection_keep(points, is_top, top_extrinsic, cfg, frame_id):
+    """REFLECTION_DROP's keep mask over the stored cloud (before SHIFT_COOR): the TOP returns classified about the TOP's
+    position (the extrinsic's translation, vehicle frame, z up), every other lidar's return kept."""
+    from ..reflection_drop import keep_mask
+    is_top = np.asarray(is_top, dtype=bool)
+    assert len(is_top) == len(points), 'REFLECTION_DROP: TOP mask and cloud differ in length'
+    origin = np.asarray(top_extrinsic, dtype=np.float64)[:3, 3]
+    keep = np.ones(len(points), dtype=bool)
+    keep[is_top] = keep_mask(np.asarray(points[is_top, :3], dtype=np.float64) - origin, points[is_top, 3],
+                             cfg['REFLECTION_DROP'], frame_id)[0]
+    return keep
+
+
+def emptied_counts(points, keep, boxes):
+    """(before, after) for recount_emptied when `keep` drops a few percent of the cloud, without counting the whole
+    cloud twice: a box can be emptied only if it holds a dropped point, so only those boxes are counted on the full
+    cloud. Exact for recount_emptied: before > 0 and after == 0 exactly where points_per_box would say so; elsewhere
+    `before` / `after` are 1 / 1 (a box with no dropped point) or the true counts."""
+    boxes = np.asarray(boxes)
+    before = np.ones(len(boxes), dtype=np.int64)
+    after = np.ones(len(boxes), dtype=np.int64)
+    if len(boxes) == 0 or keep.all():
+        return before, after
+    lost = points_per_box(points[~keep], boxes)
+    cand = lost > 0
+    if cand.any():
+        before[cand] = points_per_box(points, boxes[cand])
+        after[cand] = before[cand] - lost[cand]
+    return before, after
+
+
 def finish(input_dict, cfg, class_names, map_dataset_to_model, frame_id):
     """The arms that need the frame's points and boxes together (after SHIFT_COOR), on __getitem__'s input_dict:
-    REGION_THIN (with the differential recount) and GT_IGNORE_BY_RANGE (gt_classes / gt_scores from model names)."""
+    REGION_THIN (with the differential recount), REFLECTION_DROP (its mask from reflection_keep, with the same recount)
+    and GT_IGNORE_BY_RANGE (gt_classes / gt_scores from model names)."""
     arm = arm_of(cfg)
     boxes = input_dict.get('gt_boxes', None)
+    if arm == 'REFLECTION_DROP':
+        keep = input_dict.pop('reflection_keep')
+        assert boxes is not None, 'REFLECTION_DROP is for labelled training frames'
+        before, after = emptied_counts(input_dict['points'], keep, boxes)
+        input_dict['points'] = input_dict['points'][keep]
+        input_dict['num_points_in_gt'] = recount_emptied(input_dict.get('num_points_in_gt', None), before, after)
+        return input_dict
     if boxes is None:
         return input_dict
     if arm == 'REGION_THIN' and cfg['REGION_THIN']['SIDE'] == 'background' and float(cfg['BOX_MARGIN']) >= 0:

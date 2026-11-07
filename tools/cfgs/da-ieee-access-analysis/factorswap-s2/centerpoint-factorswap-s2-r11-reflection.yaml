@@ -1,0 +1,30 @@
+# ANALYSIS training row, FACTOR-SWAP S2: the KITTI oracle recipe 26843 (80.33 / 70.59, Car BEV / 3D moderate), with
+# ONE factor of its TRAINING data set to the nuScenes value (experiments_md 20261003_05 §5 item 35g; design fixed
+# 2026-11-07 13:11 JST, R11 approved by the user that day), training only (TRAIN_FACTOR_SWAP.REFLECTION_DROP,
+# pcdet/datasets/reflection_drop.py), scored on the target's UNPERTURBED val in-run (DATA_CONFIG_TAR is the oracle's).
+# Contribution = AP(oracle) - AP(this row), Car BEV R40 IoU 0.7, one seed; read if >= 3 AP. Target TRAIN labels train
+# this row: labelled analysis, never a method.
+# This arm: reflection characteristics (a sensor-device sub-factor, item 35a). R11, threshold model: in each (range
+# bin, height class) with E > 0 the returns with intensity < T are dropped and those at exactly T with probability Q,
+# so the darkest share E goes, as a sensor that loses its weakest returns first.
+# E = M1's excess drop e_T(b, c) = (h_nuS - h_T) / (1 - h_T) (job 32100, /home/koyama/data/reflection_m1/m1.json),
+# applied where e > 0 and both sensors have >= 2,000 eligible slots in the cell (else 0). Bins 0-10, 10-20, 20-30,
+# 30-40, 40-50, 50-60, 60-75 m (3D range about the sensor); classes ground |dz| <= 0.3 m, above-ground 0.3-3.0 m over
+# the frame's label-free ground plane; ego (< 3 m), beyond 75 m and outside both classes untouched.
+# Returns: KITTI HDL-64E, the whole raw scan about the velodyne origin (kitti_factor_swap point arm).
+# T / Q from /home/koyama/data/reflection_r11/r11_stats.json (tools/analysis/reflection_r11_stats.py, Slurm CPU job,
+# M1's drawn TRAIN frames). Expected dropped share of all returns 0.0361; untouched share 0.038 (on those frames).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-kitti2kitti-noros-zshift.yaml
+DATA_CONFIG:
+    TRAIN_FACTOR_SWAP:
+        REFLECTION_DROP:
+            MODE: threshold
+            E:
+                ground: [0.009445067887636478, 0.024909908653322974, 0.034209843822042216, 0.07267865585756202, 0.10036072206267344, 0.0, 0.0]
+                above: [0.06144725748081062, 0.06943740498750617, 0.05982423232251898, 0.043523233997496275, 0.0642240087529635, 0.1126836658459868, 0.14360393988102163]
+            T:
+                ground: [0.0, 0.0, 0.0, 0.0, 0.0, null, null]
+                above: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            Q:
+                ground: [0.161805855023789, 0.5545393058805203, 0.3005384789675883, 0.15468949248051367, 0.14961386503121718, null, null]
+                above: [0.2895929209490472, 0.8845241071510455, 0.6216717334383254, 0.1950605241027399, 0.1458856576467538, 0.16833592700474873, 0.16472862818380693]

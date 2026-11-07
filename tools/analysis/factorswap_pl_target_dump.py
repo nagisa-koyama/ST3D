@@ -396,6 +396,8 @@ def identity_cfg(cfg, path):
             swap.GT_IGNORE_BY_RANGE.KEEP = [1.0] * len(swap.GT_IGNORE_BY_RANGE.KEEP)
         elif arm == 'REGION_THIN':
             swap.REGION_THIN.KEEP = 1.0
+        elif arm == 'REFLECTION_DROP':      # item 35g's rows (their own checks: reflection_r11_target_dump.py)
+            swap.REFLECTION_DROP.E = {k: [0.0] * len(v) for k, v in swap.REFLECTION_DROP.E.items()}
         return c, 'TRAIN_FACTOR_SWAP %s at identity' % arm
     if dc.get('HIST_DIST_LYFT_PATH', None):
         dc.HIST_DIST_NUSCENES_PATH = dc.HIST_DIST_LYFT_PATH

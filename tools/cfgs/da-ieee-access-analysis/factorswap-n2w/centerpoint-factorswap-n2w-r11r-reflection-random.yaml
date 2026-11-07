@@ -1,0 +1,26 @@
+# ANALYSIS training row, FACTOR-SWAP N->W: the Waymo oracle recipe O2 31624 (65.63 Car BEV on Waymo val, every 5th
+# frame), with ONE factor of its TRAINING data set to the nuScenes value (experiments_md 20261003_05 §5 item 35g;
+# design fixed 2026-11-07 13:11 JST, R11 approved by the user that day), training only
+# (TRAIN_FACTOR_SWAP.REFLECTION_DROP, pcdet/datasets/reflection_drop.py), scored on the target's UNPERTURBED val
+# in-run (DATA_CONFIG_TAR is the oracle's). Contribution = AP(oracle) - AP(this row), Car BEV R40 IoU 0.7, one seed;
+# read if >= 3 AP. Target TRAIN labels train this row: labelled analysis, never a method.
+# This arm: reflection characteristics (a sensor-device sub-factor, item 35a). R11r, count-matched random twin of R11:
+# each return of a (range bin, height class) dropped with probability E, whatever its intensity; R11r - R11 separates
+# WHICH returns are lost from HOW MANY.
+# E = M1's excess drop e_T(b, c) = (h_nuS - h_T) / (1 - h_T) (job 32100, /home/koyama/data/reflection_m1/m1.json),
+# applied where e > 0 and both sensors have >= 2,000 eligible slots in the cell (else 0). Bins 0-10, 10-20, 20-30,
+# 30-40, 40-50, 50-60, 60-75 m (3D range about the sensor); classes ground |dz| <= 0.3 m, above-ground 0.3-3.0 m over
+# the frame's label-free ground plane; ego (< 3 m), beyond 75 m and outside both classes untouched.
+# Returns: Waymo TOP returns of the stored first-return cloud about the segment's TOP position (TOP_CALIB); the side
+# lidars untouched; differential recount of the boxes it empties (waymo_factor_swap).
+# T / Q from /home/koyama/data/reflection_r11/r11_stats.json (tools/analysis/reflection_r11_stats.py, Slurm CPU job,
+# M1's drawn TRAIN frames). Expected dropped share of all returns 0.0272; untouched share 0.089 (on those frames).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-waymo2waymo.yaml
+DATA_CONFIG:
+    TRAIN_FACTOR_SWAP:
+        REFLECTION_DROP:
+            MODE: random
+            E:
+                ground: [0.0, 0.0, 0.010057129272638013, 0.04951532547559351, 0.06622405185176483, 0.0, 0.0]
+                above: [0.028357834860383124, 0.05337118880427301, 0.04217672827384493, 0.023526548635950034, 0.04496007581919965, 0.09680739219436116, 0.13281921948554545]
+            TOP_CALIB: /home/koyama/data/waymo_top_calib/top_calib.pkl   # per-segment TOP extrinsic: the TOP position

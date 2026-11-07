@@ -21,6 +21,9 @@ dataset-agnostic functions are reused here unchanged (imports only; the KITTI an
   REGION_THIN: {SIDE: background | foreground, KEEP: f}, BOX_MARGIN: m
       OSENS-2's region thinning (osens2_utils.perturb) of the training cloud with every box the loader keeps (all
       annotated classes), points and boxes in the same (shifted) frame. KEEP >= 1 is the identity (no draw).
+  REFLECTION_DROP: {MODE: threshold | random, E: {...}, T: {...}, Q: {...}}         (PandaSet only; item 35g)
+      Applied in the PandaSet reader (pandaset_dataset._get_lidar_points), in ego axes about the fitted sensor origin
+      before the axis swap (pcdet/datasets/reflection_drop.py); nothing to do here. Lyft has no intensity (constant 100).
 
 Neither loader stores a per-box point count: prepare_data's zero-point filter counts the points of the cloud it is
 handed. So:
@@ -31,6 +34,8 @@ handed. So:
   - REGION_THIN background keeps every point inside the enlarged boxes, so prepare_data's recount equals the oracle's;
     foreground thinning's recount drops the oracle's empty boxes plus exactly those the arm emptied.
   - GT_IGNORE_BY_RANGE moves nothing.
+  - REFLECTION_DROP removes points in the reader: prepare_data's recount drops the oracle's empty boxes plus exactly those
+    the arm emptied (as foreground thinning).
 The loader pops 'num_points_in_gt' after prepare_data (as waymo_dataset does): its length is the pre-filter box count.
 
 Every draw is seeded by the FRAME KEY (and the arm), so a frame is cut the same way in every epoch and at every seed:
@@ -102,4 +107,5 @@ def apply(input_dict, cfg, class_names, map_dataset_to_model, frame_key, loader)
     elif arm == 'REGION_THIN':
         if float(cfg['REGION_THIN']['KEEP']) < 1.0:
             input_dict['points'] = region_thin(input_dict['points'], boxes, frame_key, cfg)
+    # REFLECTION_DROP: applied by the PandaSet reader already (see the module docstring)
     return input_dict
