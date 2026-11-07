@@ -74,13 +74,13 @@ def measure(cfg_file, n, out):
     from pcdet.config import cfg_from_yaml_file
     from pcdet.datasets import build_dataloader
     from pcdet.datasets.point_calibration import (calibration_reference, calibration_target_config,
-                                                  link_point_calibration)
+                                                  link_point_calibration, source_data_config)
     from pcdet.utils import common_utils
 
     cfg = EasyDict()
     cfg_from_yaml_file(cfg_file, cfg)
     logger = common_utils.create_logger()
-    dc = cfg.DATA_CONFIG
+    dc = source_data_config(cfg)    # DATA_CONFIG, or the single DATA_CONFIGS entry (Lyft-40 rows, item 37b)
     src, _, _ = build_dataloader(dataset_cfg=dc, class_names=cfg.CLASS_NAMES, batch_size=1, dist=False, workers=0,
                                  logger=logger, training=True, model_ontology=cfg.get('ONTOLOGY'))
     tcfg, split = calibration_target_config(cfg.DATA_CONFIG_TAR)

@@ -140,8 +140,20 @@ def calibration_target_config(target_cfg, split=None):
     return cfg, split
 
 
+def source_data_config(cfg):
+    """The one source block of a resolved config: DATA_CONFIG, or the only entry of DATA_CONFIGS (the multi-source form the
+    Lyft-40 rows use, e.g. DATA_CONFIGS.LYFT_40BEAM). A config with several sources has no single source view, so that
+    asserts (experiments_md 20261003_05 §5 item 37b)."""
+    if 'DATA_CONFIG' in cfg:
+        return cfg.DATA_CONFIG
+    blocks = list((cfg.get('DATA_CONFIGS', None) or {}).values())
+    assert len(blocks) == 1, 'expected DATA_CONFIG or exactly one DATA_CONFIGS entry, got %d' % len(blocks)
+    return blocks[0]
+
+
 def build_reference_source(cfg_file, logger=None):
-    """The SOURCE dataset of `cfg_file` (its DATA_CONFIG, CLASS_NAMES and ONTOLOGY), in training mode, as that row trains.
+    """The SOURCE dataset of `cfg_file` (its source block, see source_data_config; CLASS_NAMES and ONTOLOGY), in training
+    mode, as that row trains.
 
     Only `dataset[i]` is read, so no loader is iterated. Run from tools/, where config paths resolve.
     """
@@ -151,7 +163,7 @@ def build_reference_source(cfg_file, logger=None):
     from . import build_dataloader
     ref = EasyDict()
     cfg_from_yaml_file(cfg_file, ref)
-    dataset, _, _ = build_dataloader(dataset_cfg=ref.DATA_CONFIG, class_names=ref.CLASS_NAMES, batch_size=1,
+    dataset, _, _ = build_dataloader(dataset_cfg=source_data_config(ref), class_names=ref.CLASS_NAMES, batch_size=1,
                                      dist=False, workers=0, logger=logger, training=True,
                                      model_ontology=ref.get('ONTOLOGY', None))
     return dataset

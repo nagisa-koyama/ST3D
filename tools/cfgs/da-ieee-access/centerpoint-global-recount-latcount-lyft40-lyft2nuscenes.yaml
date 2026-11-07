@@ -1,0 +1,18 @@
+# Lyft 40-beam -> nuScenes, the COUNT-MATCHED control (row L_L40) of the scan-lattice arm
+# centerpoint-ringpattern-lyft40-lyft2nuscenes (P 30312 / 30363): the density twin C1-analog
+# (centerpoint-global-recount-lyft40-lyft2nuscenes, 30313 / 30364) with ONE change, what its per-bin thinning is matched to.
+# experiments_md 20261003_05 §5 item 37b (user 2026-11-08: the factor analysis is the training-time swap only; count-matched
+# structure L - P on every target), as P->N's L (item 29) and W->N's L_W (item 31e).
+#   - HIST_DIST_REFERENCE_CFG: the reference histogram is the lattice config's SOURCE in training mode (the same kept Lyft-40
+#     TRAIN frames under the lattice rule), not nuScenes TRAIN;
+#   - HIST_DIST_IN_GRID: both histograms count only points inside POINT_CLOUD_RANGE, z included.
+# Everything else is C1-analog's (the 13,926 exact-40-ring frames, the recount, 1,000 frames, 50 bins).
+# Scored on Lyft-40 val by an eval twin, as P and C1-analog (item 34, E2). Reading: structure beyond count = AP(L) - AP(P),
+# count part = AP(C1) - AP(L), paired by seed (T05 item 37).
+#
+# ANALYSIS (the factor-swap reading uses Lyft-40 val labels); the training itself reads Lyft (source) labels only.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-global-recount-lyft40-lyft2nuscenes.yaml
+DATA_CONFIGS:
+    LYFT_40BEAM:
+        HIST_DIST_REFERENCE_CFG: cfgs/da-ieee-access/centerpoint-ringpattern-lyft40-lyft2nuscenes.yaml
+        HIST_DIST_IN_GRID: True
