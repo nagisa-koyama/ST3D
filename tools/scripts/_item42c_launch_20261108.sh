@@ -5,7 +5,11 @@
 # Each row is its target's R7 row's recipe (config, layout, epochs): the R7r config is R7's with GT_IGNORE_BY_RANGE
 # replaced by GT_IGNORE_RANDOM {CLASS: Car, KEEP: R7's kept share} (checked against both R7 jobs' logged configs by
 # analysis/item42c_random_drop_check.py). Seed 666 passes no --seed (the default, as R7's seed-666 rows); 667 passes
-# --seed 667 (as R7's seed-667 rows); no --ddp_sampler_seed (R7's 2-GPU rows ran without it: compare within one layout).
+# --seed 667 (as R7's seed-667 rows). User policy 2026-11-09 ~01:50 JST (「2GPUで複数実行する場合はseedを変えてシャッフルすること」):
+# a 2-GPU row at a second seed also passes --ddp_sampler_seed (train.py, ST3D 4366f05), so its DDP frame order follows the
+# seed: Waymo / Pandar64 seed 667 pass `--seed 667 --ddp_sampler_seed`. Seed-666 rows and the 1-GPU Lyft-64 rows are
+# unchanged (1 GPU: --seed already sets the frame order). R7's 2-GPU seed-667 rows (31812, 32125) ran WITHOUT the flag
+# (seed 0 + epoch order at both seeds), so a 2-GPU R7r seed-667 row differs from its R7 twin in frame order too.
 # The IGNORE set is frame-seeded (frame key + box index + arm), so both seeds train on the same set.
 # Rows (R7 seed 666 / 667 jobs in brackets):
 #   waymo    (31621 / 31812)  KEEP 0.5647, 2 GPUs x 3, 7 epochs
@@ -41,9 +45,12 @@ Q=$(squeue -u koyama -h | wc -l)
 [ $((Q + NEED)) -le 20 ] || { echo "only $((20 - Q)) submissions left, need $NEED" >&2; exit 2; }
 STEM=$(basename $C .yaml | sed 's/^centerpoint-//')
 EXTRA=""; [ "$SEED" = 666 ] || EXTRA="--seed $SEED"
+# user policy 2026-11-09: a second-seed 2-GPU row shuffles by its seed
+[ "$SEED" = 666 ] || [ $R = l64 ] || EXTRA="$EXTRA --ddp_sampler_seed"
+SAMPLER=""; [ "$SEED" = 666 ] || [ $R = l64 ] || SAMPLER=" With --ddp_sampler_seed (user policy 2026-11-09; the R7 twin ran without it)."
 TAG=20261108_fs42c_${STEM}-seed$SEED
 H="Item 42c (T05 §5, design fixed 2026-11-08 22:40 JST; report 20261108_07), labelled ANALYSIS"
-T=$(EST_H=$EST WANDB_NOTES="$H: $N, seed $SEED (config $STEM): each Car label IGNORE (-99) with probability 1 - $K independent of range, $K = R7's kept share; frame-seeded set, same at both seeds. Twin of R7 job $R7J (same recipe and seed). Count part = O - R7r, range selectivity = R7r - R7, paired by seed." \
+T=$(EST_H=$EST WANDB_NOTES="$H: $N, seed $SEED (config $STEM): each Car label IGNORE (-99) with probability 1 - $K independent of range, $K = R7's kept share; frame-seeded set, same at both seeds. Twin of R7 job $R7J (same recipe and seed).$SAMPLER Count part = O - R7r, range selectivity = R7r - R7, paired by seed." \
   scripts/submit.sh --partition=a100,a6000_ada,a6000,rtx8000 $RES --exclude=node03 --job-name=f42c${TGT:0:1}s${SEED: -1} \
   scripts/run_sourceonly_2gpu.sh $C $TAG ${STEM}-seed$SEED $EXTRA < /dev/null | jid)
 [ -n "$T" ] || { echo "submission of $TGT seed $SEED failed" >&2; exit 3; }
