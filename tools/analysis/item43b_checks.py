@@ -3,8 +3,9 @@ info check behind the 43a own-input twins. CPU, ANALYSIS; nuScenes TRAIN / val l
 
     python analysis/item43b_checks.py identity <frames> <out.json>
         Rule 8: per platform block, L'_K's block with the calibration installed at RATE 1 in every bin (src = tgt) against
-        27468's block (no arm), training mode, the same seed per frame: points, gt_boxes, voxels, voxel coords and points
-        per voxel must be EXACTLY equal on every frame (>= 40 per block).
+        27468's block (no arm), training mode, the same seed per frame: points, voxels, voxel coords and points per voxel
+        must be EXACTLY equal on every frame (>= 40 per block), and gt_boxes too, except that the arm's recount may drop a
+        positive box the base itself holds with no point (listed as recount_only; anything else is a failure).
     python analysis/item43b_checks.py inert <frames> <out.json>
         The evaluation view of L'_K (DATA_CONFIG_TAR, eval mode) against the nuScenes oracle's: exactly equal frames.
     python analysis/item43b_checks.py emptied <n008|n015> <frames> <out.json>
@@ -15,8 +16,9 @@ info check behind the 43a own-input twins. CPU, ANALYSIS; nuScenes TRAIN / val l
         on this row it would read a no-op), and with the recount: no positive box left empty, the dropped boxes = the
         positives the thinning left empty.
     python analysis/item43b_checks.py infos <out.json>
-        The 200-sweep val infos (own-input twins) hold the same 6,019 frames, in the same order, with the same boxes,
-        names and lidar point counts as the 10-sweep val infos the oracle is scored on.
+        The 200-sweep val infos (own-input twins) hold the same 6,019 frames, in the same order, with the same boxes (to
+        1e-6; the two builds differ by float noise, first run 32416: 6,012 frames unequal under exact comparison), names
+        and lidar point counts as the 10-sweep val infos the oracle is scored on.
     python analysis/item43b_checks.py pooled <gate_n008.json> <gate_n015.json> <oracle.json>
         The per-platform arm_point_count_bins measurements of L'_K pooled by platform TRAIN frames (n008 15,695 / n015
         12,435), read against the single-sweep nuScenes source measured on the oracle config, by arm_point_count_bins.reading.
@@ -64,6 +66,7 @@ def same(a, b):
 
 
 def identity(n, out):
+    from pcdet.ops.roiaware_pool3d import roiaware_pool3d_utils
     lp, tc = cfg_of(G.LPRIME), cfg_of(G.TEACHER)
     res = {}
     for v, b in G.BLOCK.items():
@@ -73,6 +76,7 @@ def identity(n, out):
         ones = np.ones(lp.DATA_CONFIGS[b].HIST_DIST_BINS)
         arm.data_processor.set_hist_dist(ones, ones, max_dist=lp.DATA_CONFIGS[b].HIST_DIST_MAX_DIST)
         frames, bad = strided(len(arm), n), []
+        recount_only = []
         for j, i in enumerate(frames):
             np.random.seed(7000 + i)
             a = arm[i]
@@ -80,14 +84,23 @@ def identity(n, out):
             c = base[i]
             s = same(a, c)
             if not all(s.values()):
-                bad.append([int(i), s])
+                # The arm's recount (amendment A5) drops a POSITIVE box holding no point. At rate 1 that can only be a
+                # box the base row itself trains empty: accepted iff the arm's boxes are exactly the base's minus those.
+                held = roiaware_pool3d_utils.points_in_boxes_cpu(c['points'][:, :3], c['gt_boxes'][:, :7]).sum(1)
+                want = c['gt_boxes'][~((c['gt_boxes'][:, 7] > 0) & (held == 0))]
+                if all(v for k, v in s.items() if k != 'gt_boxes') and np.array_equal(a['gt_boxes'], want):
+                    recount_only.append([int(i), int(len(c['gt_boxes']) - len(want))])
+                else:
+                    bad.append([int(i), s])
             if j % 10 == 0:
                 print('identity %s frame %d / %d, %d points, %d boxes, equal %s' % (v, j, len(frames), len(a['points']),
                                                                                     len(a['gt_boxes']), s), flush=True)
-        res[v] = dict(frames=len(frames), unequal=bad, exact=not bad)
+        res[v] = dict(frames=len(frames), unequal=bad, exact=not bad, recount_only=recount_only)
     res['verdict'] = 'EXACT' if all(res[v]['exact'] for v in G.BLOCK) else 'DIFFERS'
     json.dump(res, open(out, 'w'), indent=1)
-    print('identity at rate 1:', res['verdict'], {v: (res[v]['frames'], len(res[v]['unequal'])) for v in G.BLOCK})
+    print('identity at rate 1:', res['verdict'], {v: (res[v]['frames'], len(res[v]['unequal'])) for v in G.BLOCK},
+          'frames differing only by the recount of an empty positive the base trains:',
+          {v: res[v]['recount_only'] for v in G.BLOCK})
 
 
 def inert(n, out):
@@ -178,19 +191,22 @@ def infos(out):
     root = '../data/nuscenes/v1.0-trainval/'
     a = pickle.load(open(root + 'nuscenes_infos_10sweeps_val.pkl', 'rb'))
     b = pickle.load(open(root + 'nuscenes_infos_200sweeps_val.pkl', 'rb'))
-    bad = []
+    bad, dmax = [], 0.0
     for i, (x, y) in enumerate(zip(a, b)):
-        ok = (x['token'] == y['token'] and x['lidar_path'] == y['lidar_path']
-              and np.array_equal(x['gt_boxes'], y['gt_boxes']) and list(x['gt_names']) == list(y['gt_names'])
+        g, h = np.asarray(x['gt_boxes']), np.asarray(y['gt_boxes'])
+        ok = (x['token'] == y['token'] and x['lidar_path'] == y['lidar_path'] and g.shape == h.shape
+              and np.allclose(g, h, rtol=0, atol=1e-6, equal_nan=True) and list(x['gt_names']) == list(y['gt_names'])
               and np.array_equal(x['num_lidar_pts'], y['num_lidar_pts']))
+        if g.shape == h.shape and len(g):
+            dmax = max(dmax, float(np.nanmax(np.abs(g - h))))
         if not ok:
             bad.append(i)
-    res = dict(n10=len(a), n200=len(b), unequal=bad[:50], n_unequal=len(bad),
+    res = dict(n10=len(a), n200=len(b), unequal=bad[:50], n_unequal=len(bad), max_abs_box_diff=dmax, tolerance=1e-6,
                sweeps10=int(np.median([len(x['sweeps']) for x in a])), sweeps200=int(np.median([len(y['sweeps']) for y in b])),
                verdict='SAME' if len(a) == len(b) and not bad else 'DIFFERS')
     json.dump(res, open(out, 'w'), indent=1)
-    print('val infos 10-sweep vs 200-sweep:', res['verdict'], res['n10'], res['n200'], 'median stored sweeps',
-          res['sweeps10'], res['sweeps200'])
+    print('val infos 10-sweep vs 200-sweep:', res['verdict'], res['n10'], res['n200'], 'max |box diff| %.2e' % dmax,
+          'median stored sweeps', res['sweeps10'], res['sweeps200'])
 
 
 def pooled(g8, g15, oracle):

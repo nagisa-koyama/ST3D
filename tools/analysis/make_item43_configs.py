@@ -42,7 +42,12 @@ OWN = {TEACHER: D + 'centerpoint-i43a-ownval-n15-10.yaml', WAYMO_DEPTH: D + 'cen
        PROC_DEPTH: D + 'centerpoint-i43a-ownval-n22-17.yaml'}
 ARM = {'HIST_DIST_ON_THE_FLY': True, 'HIST_DIST_FRAMES': 1000, 'HIST_DIST_BINS': 50, 'HIST_DIST_MAX_DIST': 75.0,
        'HIST_DIST_IN_GRID': True}
-THIN = [{'NAME': 'sample_points_hist_based', 'MIN_HIST_BIN_FRACTION': 0.01},
+# MIN_HIST_BIN_FRACTION 0.0 (amendment A7 of experiments_md 20261109_01, 2026-11-09 07:33 JST): the default guard (0.01) leaves a bin
+# uncorrected when the REFERENCE holds under 1% of its mean bin. The single-sweep reference holds ~1 point per frame at 0-1.5 m
+# (the keyframe's 1.5-m ego cut) where the accumulated source holds 2,204 / 1,264 (sweeps are cut at 1.0 m), so the guard kept
+# them all and the first gate (job 32416) read n008 DIFFER (0-5 m x1.28). Count matching needs the rate in every bin;
+# a bin with no reference point at all still keeps rate 1 (per_bin_sample_rate's tgt > 0 test).
+THIN = [{'NAME': 'sample_points_hist_based', 'MIN_HIST_BIN_FRACTION': 0.0},
         {'NAME': 'drop_empty_gt_boxes', 'MIN_POINTS': 1}]
 
 

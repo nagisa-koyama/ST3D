@@ -48,7 +48,7 @@ DATA_CONFIGS:
     - {NAME: mask_points_and_boxes_outside_range, REMOVE_OUTSIDE_BOXES: true}
     - NAME: shuffle_points
       SHUFFLE_ENABLED: {train: true, test: false}
-    - {NAME: sample_points_hist_based, MIN_HIST_BIN_FRACTION: 0.01}
+    - {NAME: sample_points_hist_based, MIN_HIST_BIN_FRACTION: 0.0}
     - {NAME: drop_empty_gt_boxes, MIN_POINTS: 1}
     - NAME: transform_points_to_voxels
       VOXEL_SIZE: [0.1, 0.1, 0.15]

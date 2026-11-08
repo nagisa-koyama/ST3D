@@ -8,7 +8,9 @@ nuScenes by accumulation. CPU only, no dataset files.
   the reference configs = the oracle recipe + VEHICLE; the own-input twins = the oracle + an accumulated DATA_CONFIG_TAR at
   the training config's per-platform depths.
 - The arm's processor at rate 1 is EXACTLY the teacher block's processor (points, order and labels; bug rule 8), and at a
-  rate below 1 it thins (the test fails without the arm).
+  rate below 1 it thins (the test fails without the arm), also in a bin the reference barely reaches (amendment A7 of
+  experiments_md 20261109_01: with the default MIN_HIST_BIN_FRACTION 0.01 the 0-1.5 m bin kept every accumulated point, and
+  the first gate, job 32416, read n008 DIFFER at 0-5 m).
 """
 import copy
 import sys
@@ -211,3 +213,19 @@ def test_arm_below_rate_one_thins_and_recounts(vehicle):
     from pcdet.ops.roiaware_pool3d import roiaware_pool3d_utils
     held = roiaware_pool3d_utils.points_in_boxes_cpu(out['points'][:, :3], out['gt_boxes'][:, :7]).sum(1)
     assert (held >= 1).all()                                                 # no positive left on empty space
+
+
+@pytest.mark.parametrize('vehicle', list(m43.BLOCK))
+def test_arm_thins_a_bin_the_reference_barely_reaches(vehicle):
+    blk = resolved(m43.LPRIME)['DATA_CONFIGS'][m43.BLOCK[vehicle]]
+    step = [p for p in blk['DATA_PROCESSOR'] if p['NAME'] == 'sample_points_hist_based'][0]
+    assert step['MIN_HIST_BIN_FRACTION'] == 0.0
+    arm = _processor(blk)
+    src, ref = np.full(50, 6500.0), np.full(50, 430.0)   # job 32416, n008: 325,525 / 21,547 in-grid points per frame
+    src[0], ref[0] = 2204.0, 1.0      # 0-1.5 m: accumulated 2,204, single sweep ~1, under 1% of the reference's mean bin
+    arm.set_hist_dist(src, ref, max_dist=75.0)
+    np.random.seed(0)
+    az = np.random.uniform(-np.pi, np.pi, 4000)
+    near = np.stack([1.2 * np.cos(az), 1.2 * np.sin(az), np.zeros(4000)], 1).astype(np.float32)
+    out = arm.forward({'points': near, 'gt_boxes': np.zeros((0, 8), dtype=np.float32)})
+    assert len(out['points']) < 20    # rate 1 / 2204, not 1 (the guard would keep all 4,000)
