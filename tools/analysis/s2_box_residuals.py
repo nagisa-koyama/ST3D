@@ -29,7 +29,13 @@ kitti_eval_cpu.load_official_eval):
 - `iso_bottom`: l, w, h all x s with the box BOTTOM kept fixed (camera `location` unchanged; LiDAR centre z moves
   down by (h - h') / 2), bbox re-projected. Optional extra.
 
+- `--heldout` (T05 §5 item 42b'): KITTI val split by frame-id parity; each half's median l / w / h ratios and z-centre
+  offset are fitted on the matched pairs of that half only and applied (LiDAR frame, about the centre, then converted to
+  the camera frame and the 2D box re-projected, as `measured_lwh(_z)`) to the OTHER half's boxes. Scored uncorrected, size
+  alone and size + height, on the even half, the odd half and pooled (all frames, each corrected by the other half's fit).
+
     python analysis/s2_box_residuals.py --out <json> NAME=<result.pkl> [NAME=<result.pkl> ...] [--scale 0.858369]
+        [--arms a,b,...] [--heldout] [--no-rescore]
 """
 import argparse
 import copy
@@ -181,6 +187,29 @@ def scale_det_lidar(d, scale_lwh, dz, info):
     return d
 
 
+def frame_parity(frame_id):
+    """0 for an even KITTI frame id, 1 for an odd one (the 42b' held-out split)."""
+    return int(frame_id) % 2
+
+
+def factors_from_residuals(res):
+    """(l, w, h scale, z shift) that remove the median size ratios and the median z-centre offset of `res`."""
+    med = {k: float(np.median(res[k])) for k in ('l_ratio', 'w_ratio', 'h_ratio', 'dz_centre')}
+    return (1.0 / med['l_ratio'], 1.0 / med['w_ratio'], 1.0 / med['h_ratio']), -med['dz_centre']
+
+
+def heldout_corrected(base, infos, factors, with_z):
+    """Each frame's detections corrected by the factors fitted on the OTHER parity half.
+
+    factors = {0: (scale_lwh, dz) fitted on the even frames, 1: ... on the odd frames}.
+    """
+    out = []
+    for d, info in zip(base, infos):
+        scale_lwh, dz = factors[1 - frame_parity(info['point_cloud']['lidar_idx'])]
+        out.append(scale_det_lidar(d, scale_lwh, dz if with_z else 0.0, info))
+    return out
+
+
 def parse_r40(text, cls='Car'):
     """{'0.7': {'bev': (e, m, h), '3d': ...}, '0.5': ...} from the evaluator's printed AP_R40 blocks for `cls`."""
     lines = text.splitlines()
@@ -197,7 +226,7 @@ def parse_r40(text, cls='Car'):
 
 def score(official, infos, dets):
     gt = [copy.deepcopy(i['annos']) for i in infos]
-    text, _ = official.get_official_eval_result(gt, dets, ['Car'])
+    text, _ = official.get_official_eval_result(gt, [copy.deepcopy(d) for d in dets], ['Car'])
     return parse_r40(text)
 
 
@@ -211,8 +240,12 @@ def main():
                         help='comma list of arms to score; also measured_lwh, measured_lwh_z (report 20261108_06 '
                              'amendment 1: each run divided by its OWN median l / w / h ratios about the centre, '
                              'and also lowered by its own median z-centre offset; target-label medians, analysis only)')
+    parser.add_argument('--heldout', action='store_true',
+                        help="42b' (T05 §5 item 42b'): fit the median size / z-centre correction on one frame-id parity "
+                             'half, apply it to the other half (both ways); score base, size alone and size + height on '
+                             'the even half, the odd half and pooled (target-label medians, analysis only)')
     args = parser.parse_args()
-    wanted = args.arms.split(',')
+    wanted = [a for a in args.arms.split(',') if a]
     official = load_official_eval()
     infos = pickle.load(open(INFOS, 'rb'))
     out = {'scale': args.scale, 'match_iou': MATCH_IOU, 'n_frames': len(infos), 'runs': {}}
@@ -227,7 +260,31 @@ def main():
         print(f'{label}: valid Car GT {n_gt}, matched {n_m}', flush=True)
         for k, v in row['residuals'].items():
             print(f'  {k:10s} median {v["median"]:+.4f}  IQR [{v["q25"]:+.4f}, {v["q75"]:+.4f}]', flush=True)
-        if not args.no_rescore:
+        if args.heldout:
+            base = [dets_by_id[i['point_cloud']['lidar_idx']] for i in infos]
+            parity = np.array([frame_parity(i['point_cloud']['lidar_idx']) for i in infos])
+            factors, fit = {}, {}
+            for p in (0, 1):
+                half = [i for i, q in zip(infos, parity) if q == p]
+                _, n_half, res_half = residuals_of(dets_by_id, half, official)
+                factors[p] = factors_from_residuals(res_half)
+                fit[('even', 'odd')[p]] = {'n_frames': len(half), 'n_matched': n_half,
+                                           'scale_lwh': factors[p][0], 'dz': factors[p][1]}
+            row['heldout_fit'] = fit
+            arms = {'base': base,
+                    'heldout_lwh': heldout_corrected(base, infos, factors, with_z=False),
+                    'heldout_lwh_z': heldout_corrected(base, infos, factors, with_z=True)}
+            splits = {'even': parity == 0, 'odd': parity == 1, 'pooled': np.ones(len(infos), bool)}
+            row['heldout_ap_r40_moderate'] = {}
+            for name, dets in arms.items():
+                for split, keep in splits.items():
+                    idx = np.flatnonzero(keep)
+                    ap = score(official, [infos[k] for k in idx], [dets[k] for k in idx])
+                    row['heldout_ap_r40_moderate'].setdefault(name, {})[split] = {
+                        iou: {m: v[m][1] for m in ('bev', '3d')} for iou, v in ap.items()}
+                    print(f'  {name:14s} {split:6s} IoU0.7 BEV {ap["0.7"]["bev"][1]:.4f} 3D {ap["0.7"]["3d"][1]:.4f} | '
+                          f'IoU0.5 BEV {ap["0.5"]["bev"][1]:.4f} 3D {ap["0.5"]["3d"][1]:.4f}', flush=True)
+        if not args.no_rescore and wanted:
             base = [dets_by_id[i['point_cloud']['lidar_idx']] for i in infos]
             # the re-projection reproduces the saved 2D boxes on the unscaled predictions
             dev = max((np.abs(project_bbox(d, i) - d['bbox']).max() if len(d['name']) else 0.0)

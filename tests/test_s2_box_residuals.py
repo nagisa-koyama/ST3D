@@ -109,3 +109,31 @@ def test_lidar_frame_arm_is_the_identity_at_unit_scale_and_moves_the_box_as_aske
     assert np.allclose(moved['dimensions'][0], [4.2 * 0.9, 0.8, 1.8 * 0.8], atol=1e-4)
     old_centre_y = det['location'][0, 1] - det['dimensions'][0, 1] / 2
     assert abs(moved['location'][0, 1] - (old_centre_y + 0.1 + 0.4)) < 5e-3  # Tr_velo_to_cam is nearly axis-aligned
+
+
+def test_frame_parity_splits_by_the_integer_frame_id():
+    assert sbr.frame_parity('000000') == 0 and sbr.frame_parity('000001') == 1
+    assert sbr.frame_parity('007480') == 0 and sbr.frame_parity('003769') == 1
+
+
+def test_factors_invert_the_median_ratios_and_negate_the_median_z_offset():
+    res = {'l_ratio': np.array([1.0, 1.1, 1.2]), 'w_ratio': np.array([0.8, 1.25, 2.0]),
+           'h_ratio': np.array([1.0, 1.0, 1.05]), 'dz_centre': np.array([0.1, 0.05, -0.2])}
+    scale, dz = sbr.factors_from_residuals(res)
+    assert np.allclose(scale, [1 / 1.1, 1 / 1.25, 1.0]) and np.isclose(dz, -0.05)
+
+
+def test_heldout_correction_uses_the_other_halfs_fit():
+    det_even, info_even = _lidar_det('000000')
+    det_odd, info_odd = _lidar_det('000001')
+    factors = {0: ((0.5, 0.5, 0.5), -0.2),   # fitted on the even half
+               1: ((2.0, 2.0, 2.0), +0.3)}   # fitted on the odd half
+    even_c, odd_c = sbr.heldout_corrected([det_even, det_odd], [info_even, info_odd], factors, with_z=True)
+    # the even frame takes the ODD half's fit and vice versa; same-half application would fail both
+    assert np.allclose(even_c['boxes_lidar'][0, 3:6], det_even['boxes_lidar'][0, 3:6] * 2.0, atol=1e-5)
+    assert np.isclose(even_c['boxes_lidar'][0, 2], det_even['boxes_lidar'][0, 2] + 0.3, atol=1e-6)
+    assert np.allclose(odd_c['boxes_lidar'][0, 3:6], det_odd['boxes_lidar'][0, 3:6] * 0.5, atol=1e-5)
+    assert np.isclose(odd_c['boxes_lidar'][0, 2], det_odd['boxes_lidar'][0, 2] - 0.2, atol=1e-6)
+    # size alone leaves z where it was
+    even_s, _ = sbr.heldout_corrected([det_even, det_odd], [info_even, info_odd], factors, with_z=False)
+    assert np.isclose(even_s['boxes_lidar'][0, 2], det_even['boxes_lidar'][0, 2], atol=1e-6)
