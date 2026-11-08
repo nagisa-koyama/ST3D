@@ -50,6 +50,9 @@ case $R in
 esac
 STEM=$(basename $C .yaml | sed 's/^centerpoint-//')
 EXTRA=""; [ "$SEED" = 666 ] || EXTRA="--seed $SEED"
+# User policy 2026-11-09: a second or later seed on 2 GPUs passes --ddp_sampler_seed (ST3D 4366f05), so the frame order
+# follows the seed. Rows submitted before this line (T05 §5 item 37f) ran without it; T05 marks them.
+case $R in w2|p2) [ "$SEED" = 666 ] || EXTRA="$EXTRA --ddp_sampler_seed" ;; esac
 TAG=20261108_fs37_${STEM}-seed$SEED
 H="Item 37$([ "$SEED" = 666 ] && echo d || echo f) (T05 §5, design fixed 2026-11-08 01:40 JST), labelled ANALYSIS"
 T=$(EST_H=$EST WANDB_NOTES="$H: $N, seed $SEED (config $STEM, the seed-666 row's recipe; frame-seeded cut). Term against the target oracle, paired by seed." \
