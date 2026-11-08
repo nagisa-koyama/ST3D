@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# experiments_md 20261003_05 §5 item 41d (design fixed 2026-11-09 02:05 JST): the exempt 1-GPU evaluations of one seed of the
+# experiments_md 20261003_05 §5 item 41d (design fixed 2026-11-09 01:14 JST): the exempt 1-GPU evaluations of one seed of the
 # S2 source-only control trained at 2 GPUs with SyncBN and a per-seed sampler, run as the afterany successor of its training job. Usage (from ST3D/tools, inside
 # an sbatch allocation with 1 GPU):
 #   bash scripts/_item41d_evals_20261109.sh <train jobid> <seed>
