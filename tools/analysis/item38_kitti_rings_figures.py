@@ -72,10 +72,8 @@ def fig_a(ap, out):
     fig, ax = plt.subplots(figsize=(7.4, 4.6))
     for row in ['O', 'R1', 'R2', 'R3', 'P_K', 'L_K']:
         if row in swap:
-            m = draw(ax, x, swap[row], COLOR[row], f'{NAME[row]} (seeds {seeds(swap[row])})')
-            ax.annotate(row, (x[-1], m[-1]), xytext=(6, 0), textcoords='offset points', va='center', color=INK2,
-                        fontsize=8.5)
-    ax.set_ylim(0, 100); ax.set_xlim(-0.3, len(labels) - 0.5)
+            draw(ax, x, swap[row], COLOR[row], f'{NAME[row]} (seeds {seeds(swap[row])})')
+    ax.set_ylim(0, 100); ax.set_xlim(-0.3, len(labels) - 0.7)
     finish(ax, labels, 'Car BEV AP_R40, moderate, IoU 0.7')
     ax.set_title('Per-range AP of the KITTI oracle and its line / density / pattern swaps', loc='left', fontsize=10.5)
     fig.text(0.01, 0.005, 'KITTI val, epoch 152, official evaluator per ring (out-of-ring GT ignored, out-of-ring '
@@ -97,9 +95,9 @@ def fig_a(ap, out):
     fig.supylabel('Car BEV AP_R40, moderate, IoU 0.7', fontsize=8.5, color=INK2)
     fig.suptitle('Per-range AP of the other KITTI factor swaps (blue) against the oracle O (gray)', x=0.01, ha='left',
                  fontsize=10.5)
-    fig.text(0.01, 0.005, 'KITTI val, epoch 152, official evaluator per ring. Thin: one seed; bold: mean.',
-             fontsize=7.5, color=MUTED)
-    fig.tight_layout(rect=(0, 0.03, 1, 0.95)); fig.savefig(out / 'fa2_ap_by_range_other_swaps.png'); plt.close(fig)
+    fig.text(0.01, 0.925, 'KITTI val, epoch 152, official evaluator per ring. Thin: one seed; bold: mean. Rows whose '
+             'pooled score is not reproduced within 0.02 AP are left out.', fontsize=7.5, color=MUTED)
+    fig.tight_layout(rect=(0, 0, 1, 0.91)); fig.savefig(out / 'fa2_ap_by_range_other_swaps.png'); plt.close(fig)
 
 
 def fig_b(den, out):
@@ -115,10 +113,10 @@ def fig_b(den, out):
     finish(ax, labels, 'median points per Car box (log)')
     n = ', '.join(str(r['n_boxes']) for r in next(iter(den['table'].values())))
     ax.set_title('Points per Car box by range: full KITTI and each training cut', loc='left', fontsize=10.5)
-    fig.text(0.01, 0.005, f'KITTI val, moderate-valid Car GT (boxes per ring: {n}); each cut is the training row\'s '
-             'own frame-seeded function applied to the val cloud.', fontsize=7.5, color=MUTED)
+    fig.text(0.01, 0.005, f'KITTI val, moderate-valid Car GT (boxes per ring: {n}).\nEach cut is the training '
+             'row\'s own frame-seeded function applied to the val cloud.', fontsize=7.5, color=MUTED)
     ax.legend(loc='lower left', fontsize=7.5)
-    fig.tight_layout(rect=(0, 0.03, 1, 1)); fig.savefig(out / 'fb_points_per_box_by_range.png'); plt.close(fig)
+    fig.tight_layout(rect=(0, 0.06, 1, 1)); fig.savefig(out / 'fb_points_per_box_by_range.png'); plt.close(fig)
 
 
 def fig_c(ap, out):
