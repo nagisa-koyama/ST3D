@@ -86,6 +86,26 @@ def sweep_min_range(schedule, sweep_age):
     return None
 
 
+def sweeps_for_vehicle(dataset_cfg, vehicle):
+    """The sweep depth of one frame: MAX_SWEEPS, or its capture vehicle's entry of MAX_SWEEPS_BY_VEHICLE.
+
+    MAX_SWEEPS_BY_VEHICLE (ANALYSIS, opt-in; absent = MAX_SWEEPS for every frame, unchanged) gives ONE nuScenes dataset
+    the per-platform depths that the accumulation rows train with as two DATA_CONFIGS blocks (e.g. 27468: Boston n008
+    15, Singapore n015 10), so that such a model can be scored on its own input over the whole val split in one AP
+    (experiments_md 20261003_05 §5 item 43a, own-input check). MAX_SWEEPS must be at least every entry: it sizes the
+    compensator and the info depth. A vehicle without an entry raises rather than falling back silently.
+    """
+    by_vehicle = dataset_cfg.get('MAX_SWEEPS_BY_VEHICLE', None)
+    if not by_vehicle:
+        return dataset_cfg.MAX_SWEEPS
+    if vehicle not in by_vehicle:
+        raise KeyError('MAX_SWEEPS_BY_VEHICLE has no entry for vehicle %r (entries: %s)' % (vehicle, sorted(by_vehicle)))
+    depth = int(by_vehicle[vehicle])
+    assert 1 <= depth <= int(dataset_cfg.MAX_SWEEPS), \
+        'MAX_SWEEPS_BY_VEHICLE %s=%d must lie in [1, MAX_SWEEPS=%s]' % (vehicle, depth, dataset_cfg.MAX_SWEEPS)
+    return depth
+
+
 def sweep_range_mask(points, sweep_age, schedule):
     """Boolean mask over `points` (anchor-frame xyz in the first 3 columns) for sweep_min_range."""
     r_min = sweep_min_range(schedule, sweep_age)
@@ -115,6 +135,14 @@ class NuScenesDataset(DatasetTemplate):
         )
         self.infos = []
         self.include_nuscenes_data(self.mode)
+        # MAX_SWEEPS_BY_VEHICLE (see sweeps_for_vehicle): the vehicle of every loaded frame, built once here so that
+        # forked workers share it; every frame's vehicle must have an entry (checked now, not at the first such frame).
+        self._vehicle_by_token = None
+        if self.dataset_cfg.get('MAX_SWEEPS_BY_VEHICLE', None):
+            log_of = self.sample_token_to_log()
+            self._vehicle_by_token = {info['token']: log_of[info['token']]['vehicle'] for info in self.infos}
+            for v in sorted(set(self._vehicle_by_token.values())):
+                self.logger.info('MAX_SWEEPS_BY_VEHICLE: %s -> %d sweeps' % (v, sweeps_for_vehicle(self.dataset_cfg, v)))
 
         # Per-object motion compensation. ON whenever this dataset accumulates, because
         # accumulation without it is a label-correlated artefact rather than a weaker version of
@@ -430,8 +458,12 @@ class NuScenesDataset(DatasetTemplate):
         # accumulated source still shows the detector sparse (single-sweep-like) positives beside dense ones
         # (hypothesis H8, experiments_md/20261008_07). Evaluation and an absent key use MAX_SWEEPS, unchanged.
         max_sweeps = self.dataset_cfg.MAX_SWEEPS
+        if self.dataset_cfg.get('MAX_SWEEPS_BY_VEHICLE', None):
+            max_sweeps = sweeps_for_vehicle(self.dataset_cfg, self._vehicle_by_token[info['token']])
         mix = self.dataset_cfg.get('SWEEP_COUNT_MIX', None)
         if mix and self.training:
+            assert not self.dataset_cfg.get('MAX_SWEEPS_BY_VEHICLE', None), \
+                'SWEEP_COUNT_MIX with MAX_SWEEPS_BY_VEHICLE is not implemented'
             assert mix == 'uniform', f'SWEEP_COUNT_MIX: unknown mode {mix!r}'
             max_sweeps = int(np.random.randint(1, int(max_sweeps) + 1))
         points = self.get_lidar_with_sweeps(index, max_sweeps=max_sweeps)
