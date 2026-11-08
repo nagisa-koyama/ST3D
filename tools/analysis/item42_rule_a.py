@@ -10,7 +10,12 @@ Rows: the 8 AdaBN results of item 42a (make_item42_configs.py --rule_a_json) and
 checkpoints (NO_ADABN_PKL below: item 34 E1 31983, item 37a 32267, O_P seed 667's in-run evaluation 32124), all spin val,
 360 deg, device 0.
 
-    python3 analysis/item42_rule_a.py --out /home/koyama/data/item42a/rule_a_iou.json   # inside a Slurm CPU job
+    python3 analysis/item42_rule_a.py --out /home/koyama/data/item42a/rule_a_iou.json [--only C1]   # inside a Slurm CPU job
+    python3 analysis/item42_rule_a.py --from_log logs/output_<job>_<name>.txt --out <json>          # a printed table -> JSON
+
+The JSON is rewritten after every scored row, so a job that hits its time limit keeps what it finished. Each scoring takes
+~7 min on one CPU (32414 did 12 of 16 rows, both protocols, in its 3 h). `--from_log` turns the table such a job printed
+back into the same JSON rows (it never rescored anything).
 
 Tests: tests/test_item42_rule_a.py.
 """
@@ -82,12 +87,41 @@ def rows():
     return out
 
 
+def label_of(r):
+    return '%s %s s%d (job %d)' % ('AdaBN' if r['adabn'] else 'no AdaBN', r['row'], r['seed'], r['job'])
+
+
+def from_log(text):
+    """Rows of a printed table ('<label> <protocol> <BEV@0.7> <3D@0.7> <BEV@0.5>') merged back into rows()' dicts."""
+    import re
+    got = {}
+    for line in text.splitlines():
+        m = re.match(r'^((?:AdaBN|no AdaBN) \S+ s\d+ \(job \d+\))\s+(as_scored|rule_A)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*$', line)
+        if m:
+            got.setdefault(m.group(1), {})[m.group(2)] = tuple(float(m.group(k)) for k in (3, 4, 5))
+    out = []
+    for r in rows():
+        cells = got.get(label_of(r), {})
+        if all(p in cells for p in PROTOCOLS):
+            r.update(cells)
+            out.append(r)
+    return out
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--out', required=True)
+    p.add_argument('--only', nargs='*', default=None, help='score only these rows (O, P, L, C1)')
+    p.add_argument('--from_log', default=None, help='convert a printed table to JSON instead of scoring')
     p.add_argument('--dry', action='store_true', help='list the rows and whether each result.pkl exists, then stop')
     args = p.parse_args()
-    rs = rows()
+    if args.from_log:
+        done = from_log(Path(args.from_log).read_text(errors='replace'))
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        json.dump(done, open(args.out, 'w'), indent=1)
+        print('%d complete rows from %s -> %s' % (len(done), args.from_log, args.out))
+        return
+    rs = [r for r in rows() if args.only is None or r['row'] in args.only]
     if args.dry:
         for r in rs:
             print(r['adabn'], r['row'], r['seed'], r['job'], os.path.exists(r['pkl']), r['pkl'])
@@ -99,8 +133,9 @@ def main():
     official = load_official_eval()
     gt = pep.gt_with_counts(0)
     print('%-34s %-10s %8s %8s %8s' % ('row', 'protocol', 'BEV@0.7', '3D@0.7', 'BEV@0.5'))
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     for r in rs:
-        label = '%s %s s%d (job %d)' % ('AdaBN' if r['adabn'] else 'no AdaBN', r['row'], r['seed'], r['job'])
+        label = label_of(r)
         if not os.path.exists(r['pkl']):
             print('%-34s missing %s' % (label, r['pkl']), flush=True)
             r['missing'] = True
@@ -109,8 +144,7 @@ def main():
         for proto in PROTOCOLS:
             r[proto] = score_both(pep.score, gt, dets, False, proto, official)
             print('%-34s %-10s %8.2f %8.2f %8.2f' % ((label, proto) + r[proto]), flush=True)
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    json.dump(rs, open(args.out, 'w'), indent=1)
+        json.dump([x for x in rs if all(pr in x for pr in PROTOCOLS)], open(args.out, 'w'), indent=1)  # after every row
     print('wrote', args.out)
     if any(r.get('missing') for r in rs):
         sys.exit(1)

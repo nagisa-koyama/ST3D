@@ -72,3 +72,25 @@ def test_rows_pair_every_pandar64_adabn_row_with_its_banked_evaluation():
     assert set(r42.NO_ADABN_PKL) == p_rows
     assert len(rows) == 16 and sum(r['adabn'] for r in rows) == 8
     assert len({r['pkl'] for r in rows}) == 16
+
+
+TABLE = """row                                protocol    BEV@0.7   3D@0.7  BEV@0.5
+AdaBN O s666 (job 26389)           as_scored     30.30    26.11    35.02
+AdaBN O s666 (job 26389)           rule_A        81.60    69.08    89.95
+no AdaBN O s666 (job 26389)        as_scored     30.33    26.12    34.99
+no AdaBN O s666 (job 26389)        rule_A        81.67    69.26    90.01
+AdaBN P s666 (job 28034)           as_scored     27.37    18.04    32.24
+slurmstepd: error: *** JOB 32414 ON node01 CANCELLED AT 2026-11-09T05:29:39 DUE TO TIME LIMIT ***
+"""
+
+
+def test_from_log_keeps_only_rows_with_both_protocols():
+    done = r42.from_log(TABLE)
+    assert [(r['adabn'], r['row'], r['seed']) for r in done] == [(True, 'O', 666), (False, 'O', 666)]
+    assert done[0]['rule_A'] == (81.60, 69.08, 89.95) and done[1]['as_scored'] == (30.33, 26.12, 34.99)
+    assert done[1]['pkl'] == str(r42.NO_ADABN_PKL[('O', 666, 26389)])
+
+
+def test_label_round_trip():
+    for r in r42.rows():
+        assert r42.from_log('%s rule_A 1.00 2.00 3.00\n%s as_scored 4.00 5.00 6.00\n' % (r42.label_of(r), r42.label_of(r)))

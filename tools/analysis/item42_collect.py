@@ -137,11 +137,13 @@ def wandb_ids(jobs):
     return out
 
 
-def rule_a_rows(path):
-    """(adabn, row, seed) -> {'as_scored': (bev07, 3d07, bev05), 'rule_A': (...)} from item42_rule_a.py's JSON."""
-    if not path or not Path(path).exists():
-        return {}
-    return {(r['adabn'], r['row'], r['seed']): r for r in json.load(open(path)) if 'rule_A' in r}
+def rule_a_rows(paths):
+    """(adabn, row, seed) -> {'as_scored': (bev07, 3d07, bev05), 'rule_A': (...)} from item42_rule_a.py's JSON file(s)."""
+    out = {}
+    for path in ([paths] if isinstance(paths, str) else (paths or [])):
+        if Path(path).exists():
+            out.update({(r['adabn'], r['row'], r['seed']): r for r in json.load(open(path)) if 'rule_A' in r})
+    return out
 
 
 def verdict(c):
@@ -208,7 +210,7 @@ def fmt(x, signed=False):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--jobs', nargs='+', default=[])
-    p.add_argument('--rule_a', default='/home/koyama/data/item42a/rule_a_iou.json')
+    p.add_argument('--rule_a', nargs='+', default=['/home/koyama/data/item42a/rule_a_iou.json'])
     p.add_argument('--json', default=None)
     args = p.parse_args()
     res, problems = collect(args.jobs, args.rule_a)
