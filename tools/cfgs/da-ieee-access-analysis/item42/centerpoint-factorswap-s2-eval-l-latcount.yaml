@@ -1,0 +1,11 @@
+# EVAL-ONLY twin of the KITTI oracle base for experiments_md 20261003_05 §5 item 42a' (design fixed 2026-11-08 22:40 JST,
+# before any number). KITTI val cut by L_K's own RANGE_KEEP (centerpoint-factorswap-s2-l-latcount.yaml; EDGES and RATE copied
+# exactly): L_K's training point count per 1.5-m bin (P_K's in-grid count). Same frame-seeded draw as training
+# (EVAL_FACTOR_SWAP -> kitti_factor_swap.apply_points, evaluation only), as item 33e's R3 twin. Scores L_K 32289 / 32290 at
+# epoch 152 WITHOUT AdaBN. Written by analysis/make_item42_configs.py; do not edit by hand. ANALYSIS.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-kitti2kitti-noros-zshift.yaml
+DATA_CONFIG_TAR:
+    EVAL_FACTOR_SWAP:
+        RANGE_KEEP:
+            EDGES: [0.0, 1.5, 3.0, 4.5, 6.0, 7.5, 9.0, 10.5, 12.0, 13.5, 15.0, 16.5, 18.0, 19.5, 21.0, 22.5, 24.0, 25.5, 27.0, 28.5, 30.0, 31.5, 33.0, 34.5, 36.0, 37.5, 39.0, 40.5, 42.0, 43.5, 45.0, 46.5, 48.0, 49.5, 51.0, 52.5, 54.0, 55.5, 57.0, 58.5, 60.0, 61.5, 63.0, 64.5, 66.0, 67.5, 69.0, 70.5, 72.0, 73.5, 75.0]
+            RATE: [0.2229, 0.1679, 0.1756, 0.1806, 0.1739, 0.1652, 0.1614, 0.1507, 0.1349, 0.1241, 0.1209, 0.1214, 0.1233, 0.1257, 0.1264, 0.1263, 0.1265, 0.127, 0.1259, 0.1279, 0.1273, 0.1267, 0.1271, 0.1275, 0.1288, 0.1287, 0.1289, 0.1292, 0.1299, 0.128, 0.1302, 0.1311, 0.1304, 0.1316, 0.129, 0.1311, 0.1314, 0.1325, 0.1347, 0.131, 0.1327, 0.139, 0.1422, 0.1429, 0.1428, 0.1446, 0.146, 0.1439, 0.1462, 0.1531]
