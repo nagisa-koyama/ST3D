@@ -1,0 +1,17 @@
+# ANALYSIS training row R7r, FACTOR-SWAP on lyft64 (experiments_md 20261003_05 §5 item 42c, design fixed 2026-11-08
+# 22:40 JST; report 20261108_07): the random label-drop twin of R7 (centerpoint-factorswap-lyft64-r7-labelrange.yaml,
+# jobs 32083 / 32127). O_L64, the Lyft oracle recipe 25769 on the 64-beam platform (centerpoint-factorswap-lyft64-oracle.yaml,
+# 30 epochs, 1 GPU x 6) with the same training-only slot (TRAIN_FACTOR_SWAP, pcdet/datasets/loader_factor_swap.py),
+# scored on the target's UNPERTURBED val in-run. Target TRAIN labels train this row: labelled analysis, never a method.
+# This arm: each Car box set to IGNORE (-99, R7's zero-weight footprint; never a negative) with probability 1 - KEEP,
+# INDEPENDENT of range. KEEP = R7's kept share of target Car supervision, kept_share_of_target_cars 0.6399926 in
+# /home/koyama/data/factorswap_lyft/stats_lyft64.json (tools/analysis/factorswap_pl_stats.py, Slurm CPU job 31955,
+# TRAIN split, the boxes the oracle trains on), rounded to 4 decimals as R7's KEEP. One draw per box from the frame key
+# (lidar file stem) and the arm, so both seeds train on the same IGNORE set. Readings: count part = O - R7r; range
+# selectivity = R7r - R7.
+_BASE_CONFIG_: cfgs/da-ieee-access-analysis/factorswap-lyft64/centerpoint-factorswap-lyft64-oracle.yaml
+DATA_CONFIG:
+  TRAIN_FACTOR_SWAP:
+    GT_IGNORE_RANDOM:
+      CLASS: Car
+      KEEP: 0.64

@@ -21,6 +21,12 @@ swapped training set is a fixed dataset, like a recorded one. Exactly one arm pe
       otherwise its label becomes IGNORE_CLASS_LABEL (-99), which CenterHead turns into a zero-weight footprint. Labels
       reach prepare_data as gt_classes / gt_scores computed from the MODEL names (kitti_factor_swap.ignore_labels
       indexes class_names by name: Waymo's raw 'Vehicle' is not a model class, so raw names would make every Car -99).
+  GT_IGNORE_RANDOM: {CLASS: <model class>, KEEP: k}                       (R7r, item 42c; on PandaSet / Lyft too)
+      Label arm, the random twin of GT_IGNORE_BY_RANGE: a box of CLASS stays supervised with probability KEEP whatever
+      its range; otherwise its label becomes IGNORE_CLASS_LABEL (-99), by the same route and in the same place as
+      GT_IGNORE_BY_RANGE (gt_classes / gt_scores from MODEL names; random_ignore_labels below). One uniform per box, in
+      the loader's box order, from the frame key and the arm (frame_rng(frame, 'GT_IGNORE_RANDOM')), so a frame drops the
+      same boxes in every epoch and at every training seed; KEEP 1 is the identity (draws are in [0, 1)).
   REGION_THIN: {SIDE: foreground | background, KEEP: f}, BOX_MARGIN: m
       Point arm with boxes: OSENS-2's region thinning (osens2_utils.perturb) on the training cloud, with every box the
       loader keeps (all Waymo classes but 'unknown'), after SHIFT_COOR, points and boxes in the same frame.
@@ -43,8 +49,9 @@ import numpy as np
 
 from ..kitti.kitti_factor_swap import frame_rng, ignore_labels, pitch_of, pitch_xyz, radius_bin, region_thin  # noqa: F401
 
-ARMS = ('PITCH_DEG', 'GT_DIM_SCALE', 'GT_IGNORE_BY_RANGE', 'REGION_THIN', 'REFLECTION_DROP')
+ARMS = ('PITCH_DEG', 'GT_DIM_SCALE', 'GT_IGNORE_BY_RANGE', 'REGION_THIN', 'REFLECTION_DROP', 'GT_IGNORE_RANDOM')
 ALLOWED_KEYS = ARMS + ('PITCH_PROB', 'PIVOT', 'BOX_MARGIN')
+LABEL_ARM_CLASS = ('GT_IGNORE_BY_RANGE', 'GT_IGNORE_RANDOM')     # label arms keyed by one MODEL class (CLASS)
 # Keys that change the Waymo training cloud or labels in another way; a factor-swap row changes one factor only.
 EXCLUSIVE_DATASET_KEYS = ('RING_PATTERN', 'TRAIN_TOP_THIN', 'LIT_TRANSLATED', 'BEAM_DROP', 'BEAM_DISTILL',
                           'USE_PSEUDO_LABEL')
@@ -63,7 +70,23 @@ def arm_of(cfg):
     if arm == 'REFLECTION_DROP':
         from ..reflection_drop import check_cfg
         check_cfg(cfg['REFLECTION_DROP'])
+    if arm == 'GT_IGNORE_RANDOM':
+        sub = cfg['GT_IGNORE_RANDOM']
+        assert set(sub.keys()) == {'CLASS', 'KEEP'}, 'GT_IGNORE_RANDOM takes CLASS and KEEP only, got %s' % list(sub)
+        assert isinstance(sub['CLASS'], str), 'GT_IGNORE_RANDOM.CLASS is one model class name'
+        keep = sub['KEEP']
+        assert np.isscalar(keep) and not isinstance(keep, (bool, str)) and 0.0 <= float(keep) <= 1.0, \
+            'GT_IGNORE_RANDOM.KEEP is one probability in [0, 1], got %r' % (keep,)
     return arm
+
+
+def label_arm_classes(cfg):
+    """The MODEL class names a factor-swap config names (GT_DIM_SCALE keys, the label arms' CLASS)."""
+    named = list(cfg.get('GT_DIM_SCALE', None) or {})
+    for arm in LABEL_ARM_CLASS:
+        if cfg.get(arm, None) is not None:
+            named.append(cfg[arm]['CLASS'])
+    return named
 
 
 def check_dataset_cfg(dataset_cfg, class_names):
@@ -80,10 +103,27 @@ def check_dataset_cfg(dataset_cfg, class_names):
         assert dataset_cfg.get('LIDAR_INDICES', None) is None or 0 in dataset_cfg['LIDAR_INDICES'], \
             'REFLECTION_DROP acts on the TOP lidar, which LIDAR_INDICES leaves out'
     assert not any(':' in c for c in class_names), 'TRAIN_FACTOR_SWAP expects plain model class names, not multi-head'
-    named = list(swap.get('GT_DIM_SCALE', None) or {}) + \
-        ([swap['GT_IGNORE_BY_RANGE']['CLASS']] if swap.get('GT_IGNORE_BY_RANGE', None) is not None else [])
+    named = label_arm_classes(swap)
     missing = [c for c in named if c not in class_names]
     assert not missing, 'TRAIN_FACTOR_SWAP names %s, which are not model classes %s' % (missing, class_names)
+
+
+def random_ignore_labels(names_model, class_names, cfg, frame_id):
+    """(gt_classes, gt_scores) of GT_IGNORE_RANDOM, by GT_IGNORE_BY_RANGE's route (kitti_factor_swap.ignore_labels): model
+    class index + 1, IGNORE_CLASS_LABEL for a CLASS box whose draw u >= KEEP (and as the placeholder for names outside
+    class_names, which prepare_data's class filter removes). u is box i's entry of one uniform stream per frame and arm,
+    so box i's draw does not depend on the boxes after it, on the range, or on the global numpy state."""
+    from ...utils import common_utils
+    sub = cfg['GT_IGNORE_RANDOM']
+    keep = float(sub['KEEP'])
+    names_model = np.asarray(names_model)
+    classes = np.array([class_names.index(n) + 1 if n in class_names else common_utils.IGNORE_CLASS_LABEL
+                        for n in names_model], dtype=np.int32)
+    target = names_model == sub['CLASS']
+    if target.any():
+        u = frame_rng(frame_id, 'GT_IGNORE_RANDOM').random(len(names_model))
+        classes[target & (u >= keep)] = common_utils.IGNORE_CLASS_LABEL
+    return classes, np.ones(len(names_model), dtype=np.float32)
 
 
 def model_names(names, map_dataset_to_model):
@@ -212,4 +252,8 @@ def finish(input_dict, cfg, class_names, map_dataset_to_model, frame_id):
         names = model_names(input_dict['gt_names'], map_dataset_to_model)
         input_dict['gt_classes'], input_dict['gt_scores'] = ignore_labels(boxes, names, list(class_names), cfg,
                                                                           frame_id)
+    elif arm == 'GT_IGNORE_RANDOM':
+        names = model_names(input_dict['gt_names'], map_dataset_to_model)
+        input_dict['gt_classes'], input_dict['gt_scores'] = random_ignore_labels(names, list(class_names), cfg,
+                                                                                 frame_id)
     return input_dict

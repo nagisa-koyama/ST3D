@@ -394,6 +394,8 @@ def identity_cfg(cfg, path):
             swap.GT_DIM_SCALE = {k: 1.0 for k in swap.GT_DIM_SCALE}
         elif arm == 'GT_IGNORE_BY_RANGE':
             swap.GT_IGNORE_BY_RANGE.KEEP = [1.0] * len(swap.GT_IGNORE_BY_RANGE.KEEP)
+        elif arm == 'GT_IGNORE_RANDOM':     # item 42c's R7r rows (their own checks: item42c_random_drop_check.py)
+            swap.GT_IGNORE_RANDOM.KEEP = 1.0
         elif arm == 'REGION_THIN':
             swap.REGION_THIN.KEEP = 1.0
         elif arm == 'REFLECTION_DROP':      # item 35g's rows (their own checks: reflection_r11_target_dump.py)

@@ -19,6 +19,9 @@ dataset-agnostic functions are reused here unchanged (imports only; the KITTI an
       A box of CLASS in horizontal-radius bin b stays supervised with probability KEEP[b], else its label becomes
       IGNORE_CLASS_LABEL (-99, a zero-weight CenterHead footprint). Labels reach prepare_data as gt_classes /
       gt_scores computed from MODEL names (raw 'car' / 'Pickup Truck' are not model classes).
+  GT_IGNORE_RANDOM: {CLASS: <model class>, KEEP: k}                       (R7r, item 42c)
+      GT_IGNORE_BY_RANGE's random twin: a box of CLASS stays supervised with probability KEEP whatever its range, else
+      -99, by the same route (waymo_factor_swap.random_ignore_labels, one uniform per box from the frame key and arm).
   REGION_THIN: {SIDE: background | foreground, KEEP: f}, BOX_MARGIN: m
       OSENS-2's region thinning (osens2_utils.perturb) of the training cloud with every box the loader keeps (all
       annotated classes), points and boxes in the same (shifted) frame. KEEP >= 1 is the identity (no draw).
@@ -34,7 +37,7 @@ handed. So:
     points_in_boxes_cpu call prepare_data would otherwise make.
   - REGION_THIN background keeps every point inside the enlarged boxes, so prepare_data's recount equals the oracle's;
     foreground thinning's recount drops the oracle's empty boxes plus exactly those the arm emptied.
-  - GT_IGNORE_BY_RANGE moves nothing.
+  - GT_IGNORE_BY_RANGE and GT_IGNORE_RANDOM move nothing.
   - REFLECTION_DROP removes points in the reader: prepare_data's recount drops the oracle's empty boxes plus exactly those
     the arm emptied (as foreground thinning).
 The loader pops 'num_points_in_gt' after prepare_data (as waymo_dataset does): its length is the pre-filter box count.
@@ -47,12 +50,12 @@ import numpy as np
 from .kitti.kitti_factor_swap import ignore_labels, region_thin
 from .waymo import waymo_factor_swap as wfs
 
-ARMS = wfs.ARMS                     # ('PITCH_DEG', 'GT_DIM_SCALE', 'GT_IGNORE_BY_RANGE', 'REGION_THIN')
+ARMS = wfs.ARMS                     # ('PITCH_DEG', ..., 'REFLECTION_DROP', 'GT_IGNORE_RANDOM'): all on PandaSet
 LOADER_ARMS = {
     'pandaset': ARMS,
     # Lyft had no pitch row in item 34 (its sensor x points backward); item 37d adds one, with the angle's sign set by the
-    # config (PITCH_DEG about +x; see the docstring).
-    'lyft': ('PITCH_DEG', 'GT_DIM_SCALE', 'GT_IGNORE_BY_RANGE', 'REGION_THIN'),
+    # config (PITCH_DEG about +x; see the docstring). Item 42c adds GT_IGNORE_RANDOM (R7r).
+    'lyft': ('PITCH_DEG', 'GT_DIM_SCALE', 'GT_IGNORE_BY_RANGE', 'REGION_THIN', 'GT_IGNORE_RANDOM'),
 }
 # Keys that change the training cloud or labels in another way (or the frame the hook assumes); one factor per row.
 EXCLUSIVE_DATASET_KEYS = {
@@ -75,8 +78,7 @@ def check_dataset_cfg(dataset_cfg, class_names, loader):
     both = [k for k in EXCLUSIVE_DATASET_KEYS[loader] if dataset_cfg.get(k, None)]
     assert not both, 'TRAIN_FACTOR_SWAP and %s both set' % both
     assert not any(':' in c for c in class_names), 'TRAIN_FACTOR_SWAP expects plain model class names, not multi-head'
-    named = list(swap.get('GT_DIM_SCALE', None) or {}) + \
-        ([swap['GT_IGNORE_BY_RANGE']['CLASS']] if swap.get('GT_IGNORE_BY_RANGE', None) is not None else [])
+    named = wfs.label_arm_classes(swap)
     missing = [c for c in named if c not in class_names]
     assert not missing, 'TRAIN_FACTOR_SWAP names %s, which are not model classes %s' % (missing, class_names)
 
@@ -106,6 +108,10 @@ def apply(input_dict, cfg, class_names, map_dataset_to_model, frame_key, loader)
         names = wfs.model_names(input_dict['gt_names'], map_dataset_to_model)
         input_dict['gt_classes'], input_dict['gt_scores'] = ignore_labels(boxes, names, list(class_names), cfg,
                                                                           frame_key)
+    elif arm == 'GT_IGNORE_RANDOM':
+        names = wfs.model_names(input_dict['gt_names'], map_dataset_to_model)
+        input_dict['gt_classes'], input_dict['gt_scores'] = wfs.random_ignore_labels(names, list(class_names), cfg,
+                                                                                     frame_key)
     elif arm == 'REGION_THIN':
         if float(cfg['REGION_THIN']['KEEP']) < 1.0:
             input_dict['points'] = region_thin(input_dict['points'], boxes, frame_key, cfg)

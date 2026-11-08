@@ -1,0 +1,16 @@
+# ANALYSIS training row R7r, FACTOR-SWAP N->W (experiments_md 20261003_05 §5 item 42c, design fixed 2026-11-08 22:40 JST;
+# report 20261108_07): the random label-drop twin of R7 (centerpoint-factorswap-n2w-r7-labelrange.yaml, jobs 31621 /
+# 31812). The Waymo oracle recipe 26398 (65.92 / 51.77 Car BEV / 3D on Waymo val) with the same training-only slot, scored
+# on UNPERTURBED Waymo val in-run (DATA_CONFIG_TAR is the oracle's). Waymo TRAIN labels train this row: labelled analysis,
+# never a method.
+# This arm: each Car box set to IGNORE (-99, R7's zero-weight footprint; never a negative) with probability 1 - KEEP,
+# INDEPENDENT of range. KEEP = R7's kept share of Waymo Car supervision, kept_share_of_waymo_cars 0.5647311 in
+# /home/koyama/data/factorswap_n2w/stats.json (CPU job 31454, every TRAIN frame at SAMPLED_INTERVAL 2, the boxes the
+# oracle trains on), rounded to 4 decimals as R7's KEEP. One draw per box from the frame id and the arm, so both seeds
+# train on the same IGNORE set. Readings: count part = O - R7r; range selectivity = R7r - R7.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-waymo2waymo.yaml
+DATA_CONFIG:
+    TRAIN_FACTOR_SWAP:
+        GT_IGNORE_RANDOM:
+            CLASS: Car
+            KEEP: 0.5647
