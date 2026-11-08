@@ -72,12 +72,22 @@ def rotate_iou_cpu(boxes, qboxes, criterion=-1):
     return iou * (area_b + area_q) / (1.0 + iou)  # the intersection, which is what criterion 2 returns
 
 
-def load_official_eval():
+def load_official_eval(real_kernel=False):
     """eval.py under a private module name, with the IoU kernel swapped for `rotate_iou_cpu`.
 
     Private name for the reason tests/test_kitti_ap_truncation.py gives: binding the package's
     `eval` attribute would defeat test_kitti_eval_class_mapping.py's stub in the same process.
+    `real_kernel=True` (GPU node only) keeps the CUDA kernel, so the in-run evaluation is reproduced exactly;
+    the CPU op agrees with it to 1e-3 in IoU, which can flip a pair at the 0.7 threshold (item 38).
     """
+    if real_kernel:
+        spec = importlib.util.spec_from_file_location(
+            _PACKAGE + '._eval_cuda', TOOLS.parent / 'pcdet/datasets/kitti/kitti_object_eval_python/eval.py')
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        assert module.rotate_iou_gpu_eval is not rotate_iou_cpu, 'the CUDA kernel was stubbed in this process'
+        return module
     rotate_iou = _PACKAGE + '.rotate_iou'
     if rotate_iou not in sys.modules:  # the real module compiles a CUDA kernel at import
         stub = types.ModuleType(rotate_iou)

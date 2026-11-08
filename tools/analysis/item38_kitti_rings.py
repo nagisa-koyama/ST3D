@@ -5,7 +5,9 @@
     python item38_kitti_rings.py density OUT.json       # median points per moderate-valid Car GT box per ring, per cut
 
 `ap` scores [0, inf) through the same ring path first; a row whose pooled BEV moderate differs from its logged value
-beyond the printed digit (0.0002) is flagged `reproduced: false` and must not be read. `density` cuts KITTI VAL clouds with each
+by more than 0.02 AP is flagged `reproduced: false` and must not be read (item 38 amendment of 11:06 JST: the CPU IoU
+op agrees with the CUDA kernel to 1e-3, so a pair at IoU 0.7 can flip; one flip moves AP by about 0.01).
+`reproduced_exact` keeps the printed-digit result beside it. `density` cuts KITTI VAL clouds with each
 training row's own frame-seeded `kitti_factor_swap.apply_points`, so the same boxes are counted under every cut.
 """
 import argparse
@@ -22,6 +24,7 @@ import numpy as np
 TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS)); sys.path.insert(0, str(TOOLS / 'analysis'))
 LOGS = TOOLS / 'logs'
+TOL = 0.02   # item 38 amendment (11:06 JST): within two borderline IoU flips of the logged pooled value
 RINGS = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0), (30.0, 40.0), (40.0, 70.4)]   # item 38: 50-70.4 had 66 GT, merged
 S2 = 'cfgs/da-ieee-access-analysis/factorswap-s2/centerpoint-factorswap-s2-%s.yaml'
 CUTS = {'R1 (32 lines)': S2 % 'r1-lines', 'R3 (density)': S2 % 'r3-density',
@@ -90,21 +93,29 @@ def cmd_manifest(args):
         print(r['group'], r['row'], r['seed'], r['job'], r['status'], r.get('wandb'), r.get('logged_bev'))
 
 
-def _score(row):
+def _score_init(real_kernel):
     os.environ.setdefault('NUMBA_NUM_THREADS', '1')
     import kitti_eval_cpu
-    rings = kitti_eval_cpu.evaluate_rings(row['result'], [(0.0, float('inf'))] + RINGS)
+    _score.official = kitti_eval_cpu.load_official_eval(real_kernel=real_kernel)
+
+
+def _score(row):
+    import kitti_eval_cpu
+    rings = kitti_eval_cpu.evaluate_rings(row['result'], [(0.0, float('inf'))] + RINGS, official=_score.official)
     pooled = rings[0]
-    ok = row['logged_bev'] is not None and abs(pooled['bev'] - row['logged_bev']) < 0.0002
+    diff = None if row['logged_bev'] is None else pooled['bev'] - row['logged_bev']
+    ok = diff is not None and abs(diff) <= TOL
     print(f"{row['row']} {row['seed']} pooled {pooled['bev']:.4f} logged {row['logged_bev']} -> {ok}", flush=True)
-    return dict(row, pooled=pooled, rings=rings[1:], reproduced=bool(ok))
+    return dict(row, pooled=pooled, rings=rings[1:], diff=diff, reproduced=bool(ok),
+                reproduced_exact=bool(diff is not None and abs(diff) < 0.0002))
 
 
 def cmd_ap(args):
     rows = [r for r in json.load(open(args.manifest)) if r['status'] == 'ok']
-    with mp.get_context('spawn').Pool(args.workers) as pool:
+    with mp.get_context('spawn').Pool(args.workers, initializer=_score_init, initargs=(args.real_kernel,)) as pool:
         out = pool.map(_score, rows, chunksize=1)
-    json.dump({'rings': RINGS, 'rows': out}, open(args.out, 'w'), indent=1)
+    json.dump({'rings': RINGS, 'kernel': 'cuda' if args.real_kernel else 'cpu', 'rows': out}, open(args.out, 'w'),
+              indent=1)
 
 
 def _density_frame(info):
@@ -169,6 +180,7 @@ def main():
     sub = p.add_subparsers(dest='cmd', required=True)
     m = sub.add_parser('manifest'); m.add_argument('out')
     a = sub.add_parser('ap'); a.add_argument('manifest'); a.add_argument('out'); a.add_argument('--workers', type=int, default=8)
+    a.add_argument('--real-kernel', action='store_true', help='GPU node: the official CUDA IoU kernel (exact)')
     d = sub.add_parser('density'); d.add_argument('out'); d.add_argument('--workers', type=int, default=8)
     args = p.parse_args()
     {'manifest': cmd_manifest, 'ap': cmd_ap, 'density': cmd_density}[args.cmd](args)
