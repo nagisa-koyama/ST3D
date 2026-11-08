@@ -1,0 +1,8 @@
+# EVAL-ONLY twin of the S2 source-only control's evaluation config, experiments_md 20261108_03 §2 B2 (T05 §5 item 39;
+# design fixed 2026-11-08 11:13 JST, before any number). KITTI val thinned to nuScenes' lattice: P_K's RING_THIN pattern arm
+# (centerpoint-factorswap-s2-p-pattern.yaml, copied exactly; rings nearest the 1.33 deg lattice, one point per kept ring per
+# 0.332 deg bin, frame-seeded phases). Evaluation only. Scores the control seeds 25743 / 31818 / 32207 at epoch 20. ANALYSIS.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-nuscenes2kitti.yaml
+DATA_CONFIG_TAR:
+    EVAL_FACTOR_SWAP:
+        RING_THIN: {MODE: pattern, SPACING_DEG: 1.33, AZ_RES_DEG: 0.332}

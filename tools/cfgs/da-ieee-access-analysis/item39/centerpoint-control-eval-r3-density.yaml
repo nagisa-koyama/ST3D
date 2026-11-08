@@ -1,0 +1,11 @@
+# EVAL-ONLY twin of the S2 source-only control's evaluation config, experiments_md 20261108_03 §2 B2 (T05 §5 item 39;
+# design fixed 2026-11-08 11:13 JST, before any number). KITTI val cut by R3's own RANGE_KEEP (centerpoint-factorswap-s2-r3-density.yaml; EDGES and RATE copied exactly):
+# nuScenes' per-1.5-m-bin density (T05 item 24), i.e. about the control's own training density.
+# Same frame-seeded draw as training (EVAL_FACTOR_SWAP -> kitti_factor_swap.apply_points, evaluation only, raw scan).
+# Scores the control seeds 25743 / 31818 / 32207 at epoch 20. ANALYSIS.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-nuscenes2kitti.yaml
+DATA_CONFIG_TAR:
+    EVAL_FACTOR_SWAP:
+        RANGE_KEEP:
+            EDGES: [0, 1.5, 3, 4.5, 6, 7.5, 9, 10.5, 12, 13.5, 15, 16.5, 18, 19.5, 21, 22.5, 24, 25.5, 27, 28.5, 30, 31.5, 33, 34.5, 36, 37.5, 39, 40.5, 42, 43.5, 45, 46.5, 48, 49.5, 51, 52.5, 54, 55.5, 57, 58.5, 60, 61.5, 63, 64.5, 66, 67.5, 69, 70.5, 72, 73.5, 75]
+            RATE: [1, 0.5281, 0.3754, 0.1928, 0.1874, 0.1838, 0.188, 0.1913, 0.1719, 0.1446, 0.1378, 0.1452, 0.1564, 0.1658, 0.1796, 0.1845, 0.1881, 0.1916, 0.2041, 0.2105, 0.2144, 0.2255, 0.2444, 0.2402, 0.2346, 0.2469, 0.2423, 0.2484, 0.2533, 0.2324, 0.2402, 0.253, 0.2289, 0.2415, 0.2407, 0.2288, 0.2384, 0.2476, 0.2319, 0.2541, 0.2392, 0.2205, 0.2256, 0.2314, 0.2183, 0.2119, 0.2079, 0.2012, 0.1771, 0.2821]
