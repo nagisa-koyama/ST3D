@@ -137,10 +137,62 @@ def fig_c(ap, out):
     fig.tight_layout(rect=(0, 0.03, 1, 1)); fig.savefig(out / 'fc_ap_by_range_control_teacher.png'); plt.close(fig)
 
 
+def spread(runs, key='bev'):
+    c = curve(runs, key)
+    return np.nanmax(c, 0) - np.nanmin(c, 0)
+
+
+def fig_d(ap, out):
+    """Seed spread per ring, each model on full KITTI val and on the val cut its own way (or another way).
+
+    Colour follows the CLOUD the model is scored on, as in fig_b: full KITTI, R1's 32 lines, R3's density.
+    """
+    labels = ['0', '10', '20', '30', '40+']
+    x = np.arange(len(labels))
+    rows = defaultdict(list)
+    for r in ap['rows']:
+        if r['reproduced']:
+            rows[(r['group'], r['row'])].append(r)
+    full, line, dens = ('full KITTI val', SLOT[0]), ("R1's 32-line val", SLOT[1]), ("R3's density val", SLOT[3])
+    panels = [
+        ('R1, 32 lines', [(('swap', 'R1'), full), (('own-cut 33d', 'R1 on 32-line val'), line)]),
+        ('R3, density', [(('swap', 'R3'), full), (('own-cut 33e', 'R3 on own-density val'), dens)]),
+        ('O, oracle (full KITTI)', [(('swap', 'O'), full), (('own-cut 33d', 'O on 32-line val'), line),
+                                    (('own-cut 33e', 'O on own-density val'), dens)]),
+        ('nuScenes control, epoch 20', [(('transfer', 'control'), full)]),
+    ]
+    fig, axes = plt.subplots(1, 4, figsize=(10.4, 3.6), sharey=True)
+    seen = {}
+    for ax, (title, series) in zip(axes, panels):
+        n = []
+        for key, (name, color) in series:
+            if key not in rows:
+                continue
+            runs = rows[key]
+            n.append(len(runs))
+            h, = ax.plot(x, spread(runs), color=color, lw=2.2, marker='o', ms=6, mec=SURFACE, mew=1.2, label=name)
+            seen.setdefault(name, h)
+        ax.axhline(3, color=MUTED, lw=0.9, ls=(0, (3, 3)), zorder=1)
+        ax.set_title(f"{title} ({'/'.join(str(k) for k in sorted(set(n)))} seeds)", loc='left', fontsize=8.5)
+        ax.set_xticks(x); ax.set_xticklabels(labels); ax.tick_params(length=0)
+    axes[0].set_ylabel('seed spread, max - min (BEV AP)')
+    axes[0].annotate('3 AP', (x[-1], 3), xytext=(0, 3), textcoords='offset points', ha='right', va='bottom',
+                     color=MUTED, fontsize=7.5)
+    fig.supxlabel('ring of box-centre range (m; 40+ = 40-70.4)', fontsize=8.5, color=INK2, y=0.07)
+    fig.legend(list(seen.values()), list(seen.keys()), loc='upper right', ncol=3, fontsize=7.5,
+               title='scored on', title_fontsize=7.5)
+    fig.suptitle('Seed spread per range ring: on full KITTI val and on the val cut each way', x=0.01, ha='left',
+                 fontsize=10.5)
+    fig.text(0.01, 0.005, 'Car BEV AP_R40, moderate, IoU 0.7, official evaluator per ring. Spread over every '
+             'seed that exists (O: 2; R1, R3, control: 3). The 0-10 m ring holds 501 GT.', fontsize=7.5,
+             color=MUTED)
+    fig.tight_layout(rect=(0, 0.1, 1, 0.88)); fig.savefig(out / 'fd_seed_spread_by_range.png'); plt.close(fig)
+
+
 def main():
     ap, den, out = json.load(open(sys.argv[1])), json.load(open(sys.argv[2])), Path(sys.argv[3])
     out.mkdir(parents=True, exist_ok=True)
-    fig_a(ap, out); fig_b(den, out); fig_c(ap, out)
+    fig_a(ap, out); fig_b(den, out); fig_c(ap, out); fig_d(ap, out)
 
 
 if __name__ == '__main__':
