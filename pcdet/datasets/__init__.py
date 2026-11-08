@@ -137,8 +137,34 @@ def assert_target_labels_are_not_used(cfg, target_is_trained, logger=None):
                     'pseudo-labels' if pseudo else 'unsupervised (labels never read)')
 
 
+def build_sampler(subset, dist, training, sampler_seed=None, num_replicas=None, rank=None):
+    """The sampler build_dataloader passes to its DataLoader (None on one GPU).
+
+    Under DDP the TRAINING order comes from torch's DistributedSampler, which seeds its permutation
+    with `seed + epoch` and defaults to seed 0. Until 2026-11-08 nothing passed a seed, so every DDP
+    run saw the same frame order and the same rank split at every `--seed` (added 2026-09-29,
+    `907e02a`): a 2-GPU second seed varied only the initial weights and the augmentation draws. On
+    one GPU the DataLoader shuffles from the global RNG, which `--seed` sets, so there the order did
+    vary. `sampler_seed=None` keeps that historical DDP sampler exactly; an int (train.py
+    `--ddp_sampler_seed` passes `--seed`) seeds the order. experiments_md T05 item 40.
+
+    `num_replicas` / `rank` default to the process group's; tests pass them to run without one.
+    """
+    if not dist:
+        return None
+    if training:
+        if sampler_seed is None:
+            return torch.utils.data.distributed.DistributedSampler(subset, num_replicas=num_replicas, rank=rank)
+        return torch.utils.data.distributed.DistributedSampler(subset, num_replicas=num_replicas, rank=rank,
+                                                               seed=int(sampler_seed))
+    if num_replicas is None or rank is None:
+        rank, num_replicas = common_utils.get_dist_info()
+    return DistributedSampler(subset, num_replicas, rank, shuffle=False)
+
+
 def build_dataloader(dataset_cfg, class_names, batch_size, dist, root_path=None, workers=4,
-                     logger=None, training=True, merge_all_iters_to_one_epoch=False, total_epochs=0, model_ontology=None, force_no_shuffle=None, use_subset=False):
+                     logger=None, training=True, merge_all_iters_to_one_epoch=False, total_epochs=0, model_ontology=None, force_no_shuffle=None, use_subset=False,
+                     sampler_seed=None):
 
     dataset = __all__[dataset_cfg.DATASET](
         dataset_cfg=dataset_cfg,
@@ -159,14 +185,7 @@ def build_dataloader(dataset_cfg, class_names, batch_size, dist, root_path=None,
     # IndexError in a worker. Single-GPU runs were never affected (no sampler).
     length = len(dataset) if not use_subset else min(16, len(dataset))
     subset = Subset(dataset, indices=list(range(length)))
-    if dist:
-        if training:
-            sampler = torch.utils.data.distributed.DistributedSampler(subset)
-        else:
-            rank, world_size = common_utils.get_dist_info()
-            sampler = DistributedSampler(subset, world_size, rank, shuffle=False)
-    else:
-        sampler = None
+    sampler = build_sampler(subset, dist, training, sampler_seed=sampler_seed)
     # `sampler is None`, NOT `is not None`. A sampler and shuffle=True are mutually exclusive in
     # DataLoader, so the DataLoader's own shuffling is only available when no sampler is passed;
     # under DDP the DistributedSampler does the shuffling instead (its default is shuffle=True,
@@ -179,6 +198,14 @@ def build_dataloader(dataset_cfg, class_names, batch_size, dist, root_path=None,
     shuffle = (sampler is None) and training
     if force_no_shuffle is not None:
         shuffle = shuffle and not force_no_shuffle
+    if logger is not None and training:
+        if sampler is None:
+            logger.info('train sampler: none (one GPU); DataLoader shuffle=%s from the global RNG, which --seed sets'
+                        % shuffle)
+        elif sampler_seed is None:
+            logger.info('train sampler: DistributedSampler, default seed 0 (--seed not applied to the frame order)')
+        else:
+            logger.info('train sampler: DistributedSampler seed=%d (frame order follows --seed)' % int(sampler_seed))
     if logger is not None:
         logger.info(f'Total number of samples: {length}, using subset: {use_subset}')
     dataloader = DataLoader(

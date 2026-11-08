@@ -26,6 +26,11 @@ from train_utils.train_utils import train_model
 from train_utils.train_st_utils import train_model_st, self_training_iters_per_epoch, student_is_teacher
 
 
+def train_sampler_seed(args):
+    """The seed for the training DistributedSampler: --seed with --ddp_sampler_seed, else None (seed 0)."""
+    return args.seed if getattr(args, 'ddp_sampler_seed', False) else None
+
+
 def parse_config():
     parser = argparse.ArgumentParser(description='arg parser')
     parser.add_argument('--cfg_file', type=str, default=None, help='specify the config for training')
@@ -48,6 +53,12 @@ def parse_config():
     # The seed --fix_random_seed installs. 666 is what every run so far used, so a second seed of a
     # row means passing a different value here; omitting it reproduces the historical behaviour.
     parser.add_argument('--seed', type=int, default=666, help='seed used with --fix_random_seed')
+    # Opt-in (absent = the historical behaviour): under DDP the training DistributedSampler orders
+    # frames by its own seed (default 0) + epoch, so without this flag --seed never changes the frame
+    # order or the rank split of a 2-GPU run. With it, the sampler gets --seed. One GPU is unaffected:
+    # there the DataLoader already shuffles from the RNG --seed sets. experiments_md T05 item 40.
+    parser.add_argument('--ddp_sampler_seed', action='store_true', default=False,
+                        help='pass --seed to the training DistributedSampler (DDP frame order)')
     parser.add_argument('--ckpt_save_interval', type=int, default=1, help='number of training epochs')
     # Default falls back to LOCAL_RANK env var, not a hardcoded 0. Modern torch.distributed.launch
     # /torchrun (torch>=2.x) no longer passes --local_rank to the child process: by default it
@@ -220,7 +231,8 @@ def main():
             total_epochs=args.epochs,
             model_ontology=source_model_ontology,
             use_subset=args.use_subset,
-            force_no_shuffle=args.no_shuffle
+            force_no_shuffle=args.no_shuffle,
+            sampler_seed=train_sampler_seed(args)
         )
         dataset = dict(dataset_class=source_set, loader=source_loader, sampler=source_sampler)
         source_datasets.append(dataset)
@@ -234,7 +246,8 @@ def main():
             dist_train, workers=args.workers, logger=logger, training=True,
             model_ontology=cfg.get('ONTOLOGY', None),
             use_subset=args.use_subset,
-            force_no_shuffle=args.no_shuffle
+            force_no_shuffle=args.no_shuffle,
+            sampler_seed=train_sampler_seed(args)
         )
     else:
         target_set = target_loader = target_sampler = None
