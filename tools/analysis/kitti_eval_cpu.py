@@ -17,6 +17,12 @@ tests/test_kitti_eval_cpu.py, which runs the real kernel under numba's CUDA simu
 `--split-ground Z` also scores each result on the frames whose road 4-8 m ahead (5th percentile of
 point z in a 4 m corridor, raw LiDAR frame) sits below / above Z. The estimate reads points only, no
 labels. It exists for experiments_md/20260930_07: the KITTI oracle loses cars on downhill frames.
+
+`--rings 0,10,20,...` also scores Car per ring of box-centre range in the LiDAR x-y plane (experiments_md
+20261003_05 §5 item 38), Waymo-style and through the evaluator's own ignore path: a Car GT outside the ring is
+relabelled Van, which `clean_data` treats as Car's neighbouring class (ignored: a detection matched to it is
+neither TP nor FP), and detections outside the ring are dropped. A detection just inside a ring can therefore
+match a GT just outside, which is then ignored. A ring with no valid GT gets no AP (n/a).
 """
 import argparse
 import copy
@@ -100,6 +106,64 @@ def evaluate(result_pkl, keep_frame=None, classes=('Car',), infos_pkl=INFOS, off
     return len(gt), ap
 
 
+def ring_view(gt_anno, dt_anno, lo, hi):
+    """Copies of one frame's GT and detections restricted to the ring lo <= range < hi (module docstring).
+
+    Range is the box centre's distance in the LiDAR x-y plane. GT rows past `gt_boxes_lidar` are DontCare (the
+    infos store them last, without a LiDAR box); they are left as they are.
+    """
+    gt, dt = copy.deepcopy(gt_anno), copy.deepcopy(dt_anno)
+    n = len(gt['gt_boxes_lidar'])
+    names = np.array(gt['name'], dtype=object)
+    assert all(nm == 'DontCare' for nm in names[n:]), 'GT rows without a LiDAR box must be DontCare'
+    if n:
+        r = np.hypot(gt['gt_boxes_lidar'][:, 0], gt['gt_boxes_lidar'][:, 1])
+        names[:n][(names[:n] == 'Car') & ~((r >= lo) & (r < hi))] = 'Van'
+    gt['name'] = names.astype(str)
+    nd = len(dt['name'])
+    r = np.hypot(dt['boxes_lidar'][:, 0], dt['boxes_lidar'][:, 1]) if nd else np.zeros(0)
+    keep = (r >= lo) & (r < hi)
+    for k, v in dt.items():
+        if isinstance(v, np.ndarray) and v.ndim >= 1 and len(v) == nd:
+            dt[k] = v[keep]
+    return gt, dt
+
+
+def _bev05_moderate(text):
+    """Car BEV moderate at IoU 0.5 from the evaluator's printed result (its dict keeps IoU 0.7 only)."""
+    lines = text.splitlines()
+    i = lines.index('Car AP_R40@0.70, 0.50, 0.50:')
+    bev = [ln for ln in lines[i + 1:i + 5] if ln.startswith('bev')][0]
+    return float(bev.split(':')[1].split(',')[1])
+
+
+def evaluate_rings(result_pkl, rings, infos_pkl=INFOS, official=None):
+    """Per ring [lo, hi): {'lo', 'hi', 'n_gt' (moderate-valid Car GT), 'bev', 'bev_easy', 'bev_hard', '3d', 'bev05'}.
+
+    Car only: the Van relabelling is Car's ignore path and means nothing for another class.
+    """
+    official = official or load_official_eval()
+    dets = {d['frame_id']: d for d in pickle.load(open(result_pkl, 'rb'))}
+    infos = pickle.load(open(infos_pkl, 'rb'))
+    out = []
+    for lo, hi in rings:
+        gt, dt = [], []
+        for info in infos:
+            g, d = ring_view(info['annos'], dets[info['point_cloud']['lidar_idx']], lo, hi)
+            gt.append(g); dt.append(d)
+        n_gt = sum(official.clean_data(g, d, 0, 1)[0] for g, d in zip(gt, dt))
+        row = {'lo': lo, 'hi': hi, 'n_gt': int(n_gt)}
+        if n_gt == 0:
+            row.update(bev=None, bev_easy=None, bev_hard=None, **{'3d': None}, bev05=None)
+        else:
+            text, ap = official.get_official_eval_result(gt, dt, ['Car'])
+            row.update(bev=float(ap['Car_bev/moderate_R40']), bev_easy=float(ap['Car_bev/easy_R40']),
+                       bev_hard=float(ap['Car_bev/hard_R40']), **{'3d': float(ap['Car_3d/moderate_R40'])},
+                       bev05=_bev05_moderate(text))
+        out.append(row)
+    return out
+
+
 def road_height_ahead(frame_id):
     """5th percentile of point z, 4-8 m straight ahead in a 4 m corridor; raw LiDAR frame, no labels."""
     pts = np.fromfile(VELODYNE / f'{frame_id}.bin', dtype=np.float32).reshape(-1, 4)
@@ -111,8 +175,21 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('results', nargs='+', help='<label>=<result.pkl>')
     parser.add_argument('--split-ground', type=float, default=None, metavar='Z')
+    parser.add_argument('--rings', default=None, metavar='E0,E1,...',
+                        help='ring edges in m; also scores Car per ring [E_i, E_i+1), plus [0, inf) first')
     args = parser.parse_args()
     official = load_official_eval()
+    if args.rings is not None:
+        edges = [float(e) for e in args.rings.split(',')]
+        rings = [(0.0, float('inf'))] + list(zip(edges[:-1], edges[1:]))
+        for item in args.results:
+            label, path = item.split('=', 1)
+            print(label)
+            for row in evaluate_rings(path, rings, official=official):
+                ap = 'n/a' if row['bev'] is None else (f"BEV {row['bev']:.4f}  3D {row['3d']:.4f}  "
+                                                       f"BEV@0.5 {row['bev05']:.4f}")
+                print(f"  [{row['lo']:g}, {row['hi']:g}) m  n_gt {row['n_gt']}  {ap}", flush=True)
+        return
     ground = None
     if args.split_ground is not None:
         ids = [i['point_cloud']['lidar_idx'] for i in pickle.load(open(INFOS, 'rb'))]
