@@ -22,6 +22,13 @@ the oracle, R7 and R7r configs go through the TRAINING loader on strided TRAIN f
 Any failed check exits 1. ANALYSIS (target TRAIN labels are read); CPU; run as a Slurm CPU job from ST3D/tools:
 
     python analysis/item42c_random_drop_check.py --target waymo|pandaset|lyft64
+
+--full-pass (added 2026-11-08 23:09 JST after the 300-frame flatness check failed in one PandaSet bin; report 20261108_07
+§2.3) instead runs R7r and R7 over EVERY training frame (augmentation off, --workers processes) and reports the kept share
+of Car supervision that each training row actually sees, in total and per 10 m bin. A prepared box of R7 / R7r is a Car
+iff its label is 1 or -99 (non-class placeholders are removed by the class filter; checked in 5 above). Criteria, fixed
+before it ran: R7r's total within +-0.005 of KEEP; every R7r bin with >= MIN_BIN boxes within 3 binomial SE of KEEP; R7
+and R7r see the same Car box population per bin.
 """
 import argparse
 import contextlib
@@ -399,12 +406,102 @@ def eval_checks(o_cfg, r_cfg):
     check(same, 'R7r\'s training block built for evaluation: frame 0 identical, no gt_classes (key training-gated)')
 
 
+# ------------------------------------------------------------------------------------------------- --full-pass
+_DS, _EDGES = None, None
+
+
+def _init_worker():
+    torch.set_num_threads(1)
+
+
+def _count_chunk(idx):
+    """(Car boxes per bin, kept per bin, frames with a label outside {1, 2, 3, -99}) over frames idx of _DS."""
+    nb = len(_EDGES) - 1
+    n_car, kept, bad = np.zeros(nb, np.int64), np.zeros(nb, np.int64), 0
+    for i in idx:
+        np.random.seed(0)
+        b = _DS[int(i)]['gt_boxes']
+        lab = b[:, -1].astype(int)
+        bad += int(not np.isin(lab, [1, 2, 3, IGN]).all())
+        car = (lab == 1) | (lab == IGN)
+        rb = np.clip(np.searchsorted(_EDGES, np.hypot(b[car, 0], b[car, 1]), side='right') - 1, 0, nb - 1)
+        n_car += np.bincount(rb, minlength=nb)
+        kept += np.bincount(rb[lab[car] == 1], minlength=nb)
+    return n_car, kept, bad
+
+
+def full_counts(cfg, edges, workers):
+    import multiprocessing as mp
+    global _DS, _EDGES
+    _DS, _EDGES = build(cfg, cfg.DATA_CONFIG, aug_off=True), list(edges)
+    n = len(_DS)
+    chunks = np.array_split(np.arange(n), workers * 32)
+    t = time.time()
+    with mp.get_context('fork').Pool(workers, initializer=_init_worker) as pool:
+        res = pool.map(_count_chunk, chunks, chunksize=1)
+    _DS = None
+    n_car = sum(r[0] for r in res)
+    kept = sum(r[1] for r in res)
+    bad = sum(r[2] for r in res)
+    print('  %s: %d frames in %.0f s' % (cfg.DATA_CONFIG.TRAIN_FACTOR_SWAP and list(cfg.DATA_CONFIG.TRAIN_FACTOR_SWAP)[0],
+                                        n, time.time() - t), flush=True)
+    return n_car, kept, bad, n
+
+
+def full_pass(T, r_cfg, r7_cfg, workers):
+    print('=' * 118 + '\nFULL PASS: R7r and R7 over every TRAIN frame, augmentation off, %d workers' % workers)
+    k = float(r_cfg.DATA_CONFIG.TRAIN_FACTOR_SWAP.GT_IGNORE_RANDOM.KEEP)
+    edges = list(r7_cfg.DATA_CONFIG.TRAIN_FACTOR_SWAP.GT_IGNORE_BY_RANGE.EDGES)
+    keep7 = np.asarray(r7_cfg.DATA_CONFIG.TRAIN_FACTOR_SWAP.GT_IGNORE_BY_RANGE.KEEP, dtype=np.float64)
+    nr, kr, br, fr = full_counts(r_cfg, edges, workers)
+    n7, k7, b7, f7 = full_counts(r7_cfg, edges, workers)
+    check(fr == f7, 'R7r and R7 train on the same %d frames' % fr)
+    check(br == 0 and b7 == 0, 'every prepared label in {1, 2, 3, -99} (%d / %d frames off)' % (br, b7))
+    check(np.array_equal(nr, n7), 'R7 and R7r see the same Car box population per bin (%d boxes)' % nr.sum())
+    tot = nr.sum()
+    sr, s7 = kr.sum() / tot, k7.sum() / tot
+    path, key = T['stats']
+    k_stats = json.load(open(path))['label_range'][key]
+    print('  kept share of Car supervision over the whole training set: R7r %.4f (KEEP %.4f, SE %.4f), R7 %.4f '
+          '(its expected share %.4f); supervised Cars R7r %d, R7 %d, oracle %d'
+          % (sr, k, np.sqrt(k * (1 - k) / tot), s7, k_stats, kr.sum(), k7.sum(), tot))
+    check(abs(sr - k) <= 0.005, 'R7r total kept share %.4f within +-0.005 of KEEP %.4f' % (sr, k))
+    print('  %-10s %8s %8s %8s %8s %8s' % ('bin (m)', 'n Car', 'R7r', '|dev|/SE', 'R7', 'R7 KEEP'))
+    zs = []
+    for j in range(len(edges) - 1):
+        z = abs(kr[j] / nr[j] - k) / np.sqrt(k * (1 - k) / nr[j]) if nr[j] else float('nan')
+        print('  %4g-%-5g %8d %8.4f %8.2f %8.4f %8.4f' % (edges[j], edges[j + 1], nr[j], kr[j] / max(nr[j], 1), z,
+                                                        k7[j] / max(n7[j], 1), keep7[j]))
+        if nr[j] >= MIN_BIN:
+            zs.append(z)
+    chi = float(np.sum(np.square(zs)))
+    try:
+        from scipy.stats import chi2
+        p = float(chi2.sf(chi, len(zs)))
+    except ImportError:
+        p = float('nan')
+    print('  sum of squared z over %d bins (chi-square against KEEP, %d df): %.2f, p = %.3f' % (len(zs), len(zs), chi, p))
+    check(all(z <= 3 for z in zs), 'R7r flat over range on the whole training set: every bin within 3 SE of KEEP')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--target', required=True, choices=sorted(TARGETS))
+    ap.add_argument('--full-pass', action='store_true')
+    ap.add_argument('--workers', type=int, default=4)
     args = ap.parse_args()
     T = TARGETS[args.target]
     o_cfg, r7_cfg, r_cfg = load(T['oracle']), load(T['r7']), load(T['r7r'])
+    if args.full_pass:
+        full_pass(T, r_cfg, r7_cfg, args.workers)
+        print('=' * 118)
+        if FAILS:
+            print('FAILED CHECKS (%d):' % len(FAILS))
+            for f in FAILS:
+                print('  ' + f)
+            raise SystemExit(1)
+        print('FULL PASS CHECKS PASSED (%s)' % args.target)
+        return
     print('item 42c R7r checks, target %s\n  oracle %s\n  R7     %s\n  R7r    %s\n  R7r TRAIN_FACTOR_SWAP %s'
           % (args.target, T['oracle'], T['r7'], T['r7r'], json.loads(json.dumps(r_cfg.DATA_CONFIG.TRAIN_FACTOR_SWAP))))
     k = config_checks(T, r_cfg)
