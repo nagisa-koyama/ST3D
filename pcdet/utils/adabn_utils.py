@@ -64,6 +64,53 @@ def train_split_stats_loader(dataset_cfg, class_names, model_ontology, frames, b
                       collate_fn=ds.collate_batch, pin_memory=True)
 
 
+def proportional_counts(lengths, frames):
+    """Frames per block in proportion to block size, summing to min(frames, sum(lengths)) (largest remainder).
+
+    A per-platform source (DATA_CONFIGS) is sampled in training by block size, so its statistics are read the same
+    way (experiments_md T05 §5 item 46)."""
+    total = sum(lengths)
+    frames = min(frames, total)
+    raw = [frames * n / total for n in lengths]
+    counts = [min(int(r), n) for r, n in zip(raw, lengths)]
+    order = sorted(range(len(lengths)), key=lambda i: raw[i] - int(raw[i]), reverse=True)
+    for i in order:
+        if sum(counts) >= frames:
+            break
+        if counts[i] < lengths[i]:
+            counts[i] += 1
+    return counts
+
+
+def strided(n, frames):
+    """`frames` indices spread over range(n) by a fixed stride, as train_split_stats_loader takes them."""
+    stride = max(1, n // max(frames, 1))
+    return list(range(0, n, stride))[:frames]
+
+
+def multi_block_stats_loader(dataset_cfgs, class_names, model_ontology, frames, batch_size, workers, logger=None):
+    """Like train_split_stats_loader over several TRAIN splits (a per-platform source), frames in proportion to
+    each split's size. The blocks follow one another (no batch mixes two platforms), as in training, where each
+    source batch comes from one platform's loader."""
+    from torch.utils.data import ConcatDataset
+    from pcdet.datasets import __all__ as DATASETS  # local: pcdet.datasets imports this package
+    sets = []
+    for dataset_cfg in dataset_cfgs:
+        block = copy.deepcopy(dataset_cfg)
+        block.DATA_SPLIT['test'] = block.DATA_SPLIT['train']
+        if 'INFO_PATH' in block:
+            block.INFO_PATH['test'] = block.INFO_PATH['train']
+        sets.append(DATASETS[block.DATASET](dataset_cfg=block, class_names=class_names, root_path=None,
+                                            training=False, logger=logger, model_ontology=model_ontology))
+    counts = proportional_counts([len(d) for d in sets], frames)
+    subsets = [Subset(d, strided(len(d), c)) for d, c in zip(sets, counts) if c > 0]
+    if logger is not None:
+        logger.info('[adabn] statistics from %s frames of %s train splits (%s), in proportion to size, no labels'
+                    % ('+'.join(str(len(s)) for s in subsets), len(sets), '+'.join(str(len(d)) for d in sets)))
+    return DataLoader(ConcatDataset(subsets), batch_size=batch_size, shuffle=False, num_workers=workers,
+                      collate_fn=sets[0].collate_batch, pin_memory=True)
+
+
 @torch.no_grad()
 def reestimate_bn(model, loader, logger=None, mix=1.0, to_gpu=True, layers=None):
     """Reset every BN layer, re-estimate as a cumulative average over `loader`, optionally mix.

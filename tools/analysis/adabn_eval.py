@@ -49,7 +49,8 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--cfg_file', required=True)
     p.add_argument('--ckpt', required=True)
-    p.add_argument('--stats', choices=['none', 'target', 'source'], default='target')
+    p.add_argument('--stats', choices=['none', 'target', 'source', 'source_all'], default='target',
+                   help='source_all: every block of a per-platform source (DATA_CONFIGS), frames in proportion to size')
     p.add_argument('--stats_frames', type=int, default=1000, help='frames of the train split, strided')
     p.add_argument('--stats_batch', type=int, default=4)
     p.add_argument('--mix', type=float, default=1.0)
@@ -125,8 +126,13 @@ def main():
 
     summary = {}
     if args.stats != 'none':
-        loader = adabn_utils.train_split_stats_loader(stats_dataset_block(args.stats), cfg.CLASS_NAMES, ontology,
-                                                      args.stats_frames, args.stats_batch, args.workers, logger)
+        if args.stats == 'source_all':
+            blocks = list(cfg.DATA_CONFIGS.values()) if cfg.get('DATA_CONFIGS', None) else [cfg.DATA_CONFIG]
+            loader = adabn_utils.multi_block_stats_loader(blocks, cfg.CLASS_NAMES, ontology, args.stats_frames,
+                                                          args.stats_batch, args.workers, logger)
+        else:
+            loader = adabn_utils.train_split_stats_loader(stats_dataset_block(args.stats), cfg.CLASS_NAMES, ontology,
+                                                          args.stats_frames, args.stats_batch, args.workers, logger)
         mask_diag = None
         if args.bev_mask == 'cone':
             block = eval_dataset_config()

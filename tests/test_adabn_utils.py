@@ -118,3 +118,16 @@ def test_layer_filter_matching_nothing_is_an_error():
     import pytest
     with pytest.raises(ValueError):
         adabn_utils.reestimate_bn(Two().eval(), _loader(1.0, n=1), to_gpu=False, layers=r'^nope$')
+
+
+def test_proportional_counts_follow_block_size_and_sum_to_frames():
+    # T05 item 46: a per-platform source is read in proportion to its blocks, as training samples it
+    assert adabn_utils.proportional_counts([15695, 12435], 1000) == [558, 442]
+    assert sum(adabn_utils.proportional_counts([13926, 3402], 1000)) == 1000
+    assert adabn_utils.proportional_counts([3, 5], 1000) == [3, 5]  # fewer frames than asked: all of them
+    assert adabn_utils.proportional_counts([10], 4) == [4]
+
+
+def test_strided_matches_the_single_block_loader():
+    assert adabn_utils.strided(3712, 1000) == list(range(0, 3712, 3))[:1000]
+    assert adabn_utils.strided(5, 1000) == [0, 1, 2, 3, 4]
