@@ -199,10 +199,13 @@ def main(argv=None):
                                     clip_grad=opt.get('CLIP_GRAD', None), log_every=int(opt.get('LOG_EVERY', 50)),
                                     log_fn=log_fn, logger=logger, max_iters=max_iters)
         t_train = time.time() - t0
+        peak_gib = torch.cuda.max_memory_allocated(device) / 2 ** 30      # sizes the batch per GPU for S2
+        torch.cuda.reset_peak_memory_stats(device)
         row = {'epoch': epoch, 'train_s': t_train, 'data_s': tr['data_s'], 'step_s': tr['step_s'],
-               'train/loss_epoch': tr['loss'], 'iters': tr['iters']}
-        logger.info('epoch %d: loss %.4f, %d iterations, %.0f s (data wait %.0f s, steps %.0f s)'
-                    % (epoch, tr['loss'], tr['iters'], t_train, tr['data_s'], tr['step_s']))
+               'train/loss_epoch': tr['loss'], 'iters': tr['iters'], 'peak_mem_gib': peak_gib}
+        logger.info('epoch %d: loss %.4f, %d iterations, %.0f s (data wait %.0f s, steps %.0f s), peak GPU memory '
+                    '%.1f GiB (rank %d)' % (epoch, tr['loss'], tr['iters'], t_train, tr['data_s'], tr['step_s'],
+                                            peak_gib, rank))
         last = epoch == epochs - 1
         if last or (eval_every > 0 and (epoch + 1) % eval_every == 0):
             t1 = time.time()
@@ -222,7 +225,7 @@ def main(argv=None):
                     log_fn({k: v for k, v in metrics.items() if not isinstance(v, list)})
         if log_fn is not None:
             log_fn({'train/loss_epoch': tr['loss'], 'time/train_s': t_train, 'time/data_s': tr['data_s'],
-                    'time/step_s': tr['step_s'], 'train/epoch': epoch})
+                    'time/step_s': tr['step_s'], 'train/epoch': epoch, 'gpu/peak_mem_gib': peak_gib})
         timing.append(row)
         if rank == 0 and (last or (save_every > 0 and (epoch + 1) % save_every == 0)):
             engine.save_checkpoint(ckpt_dir / ('checkpoint_epoch_%d.pth' % (epoch + 1)), model, optimizer, scheduler,
