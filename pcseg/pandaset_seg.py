@@ -127,7 +127,9 @@ class PandasetSeg(torch.utils.data.Dataset):
     def __getitem__(self, index):
         coord, strength, segment, key = self.load(index)
         if self.training:
-            rng = np.random.default_rng(np.random.randint(0, 2 ** 31 - 1))   # per-epoch draw; workers seeded upstream
+            # A fresh draw per sample and epoch from numpy's global RNG, which torch reseeds in every DataLoader worker
+            # (base_seed + worker_id; tests/test_pcseg_engine.py guards it).
+            rng = np.random.default_rng(np.random.randint(0, 2 ** 31 - 1))
             if self.aug is not None:
                 coord = augment(coord, rng, self.aug)
         else:
