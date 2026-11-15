@@ -42,7 +42,7 @@ from eval_utils import eval_utils  # noqa: E402
 from pcdet.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_file  # noqa: E402
 from pcdet.datasets import build_dataloader  # noqa: E402
 from pcdet.models import build_network  # noqa: E402
-from pcdet.utils import adabn_utils, common_utils  # noqa: E402
+from pcdet.utils import adabn_masked, adabn_utils, common_utils  # noqa: E402
 
 
 def parse_args():
@@ -63,6 +63,11 @@ def parse_args():
                         "their saved statistics. First layer only: '^backbone_3d\\.conv_input\\.1$'")
     p.add_argument('--layers_name', default='sel', help='short name for --layers, used in the output tag')
     p.add_argument('--save_stats', action='store_true', help='also write saved/new BN statistics to bn_stats.npz')
+    p.add_argument('--bev_mask', choices=['none', 'cone'], default='none',
+                   help="cone: every BatchNorm2d takes its target statistics only over BEV cells inside the target "
+                        "sensor's published field of view (pcdet/utils/adabn_masked.py; T05 item 45)")
+    p.add_argument('--bev_mask_fov', type=float, default=None, help='full cone angle; default EVAL_FOV_DEGREE')
+    p.add_argument('--bev_mask_heading', type=float, default=None, help='cone heading; default EVAL_FOV_HEADING or 0')
     p.add_argument('--set', dest='set_cfgs', default=None, nargs=argparse.REMAINDER)
     return p.parse_args()
 
@@ -94,15 +99,18 @@ def main():
         cfg_from_list(args.set_cfgs, cfg)
 
     epoch_id = ''.join(c for c in Path(args.ckpt).stem if c.isdigit()) or 'no_number'
+    if args.bev_mask != 'none' and (args.stats != 'target' or args.layers):
+        raise SystemExit('--bev_mask needs --stats target and every layer (no --layers)')
     tag = args.eval_tag or (f'stats_{args.stats}_mix{args.mix:g}_n{args.stats_frames}'
-                            + (f'_layers-{args.layers_name}' if args.layers else ''))
+                            + (f'_layers-{args.layers_name}' if args.layers else '')
+                            + (f'_bev{args.bev_mask}' if args.bev_mask != 'none' else ''))
     out_dir = cfg.ROOT_DIR / 'output' / cfg.EXP_GROUP_PATH / cfg.TAG / args.extra_tag / 'eval' / f'epoch_{epoch_id}' / tag
     out_dir.mkdir(parents=True, exist_ok=True)
     logger = common_utils.create_logger(out_dir / f'log_adabn_{datetime.datetime.now():%Y%m%d-%H%M%S}.txt', rank=0)
     wandb.init(config=vars(cfg), project='st3d', name=args.run_name, notes=common_utils.wandb_notes_with_job_id(),
                tags=common_utils.wandb_tags(cfg, 'adabn_eval', cfg_file=args.cfg_file))
     wandb.config.update({'adabn': dict(stats=args.stats, stats_frames=args.stats_frames, mix=args.mix, ckpt=args.ckpt,
-                                       layers=args.layers)})
+                                       layers=args.layers, bev_mask=args.bev_mask)})
     for k, v in vars(args).items():
         logger.info(f'{k:16} {v}')
     log_config_to_file(cfg, logger=logger)
@@ -119,14 +127,27 @@ def main():
     if args.stats != 'none':
         loader = adabn_utils.train_split_stats_loader(stats_dataset_block(args.stats), cfg.CLASS_NAMES, ontology,
                                                       args.stats_frames, args.stats_batch, args.workers, logger)
-        saved = adabn_utils.reestimate_bn(model, loader, logger, mix=1.0, layers=args.layers)
+        mask_diag = None
+        if args.bev_mask == 'cone':
+            block = eval_dataset_config()
+            fov = args.bev_mask_fov if args.bev_mask_fov is not None else block.get('EVAL_FOV_DEGREE', None)
+            heading = args.bev_mask_heading if args.bev_mask_heading is not None else block.get('EVAL_FOV_HEADING', 0.0)
+            if fov is None:
+                raise SystemExit('--bev_mask cone: no --bev_mask_fov and no EVAL_FOV_DEGREE in the eval dataset config')
+            logger.info(f'[adabn] BEV mask: cone of {float(fov):g} deg about heading {float(heading):g} deg over '
+                        f'POINT_CLOUD_RANGE {list(block.POINT_CLOUD_RANGE)}, every BatchNorm2d')
+            saved, mask_diag = adabn_masked.reestimate_bn_bev_masked(
+                model, loader, adabn_masked.cone_mask_fn(block.POINT_CLOUD_RANGE, float(fov), float(heading)), logger)
+            wandb.config.update({'adabn_bev_mask': dict(fov=float(fov), heading=float(heading), layers=mask_diag)})
+        else:
+            saved = adabn_utils.reestimate_bn(model, loader, logger, mix=1.0, layers=args.layers)
         gap = adabn_utils.bn_gap(model, saved)
         summary = adabn_utils.summarise_gap(gap)
         for k, v in summary.items():
             logger.info(f'[adabn] BN gap {k:14s} layers={v["layers"]:3d} mean_shift={v["mean_shift"]:.3f} '
                         f'|log sd ratio|={v["log_sd_ratio"]:.3f} max={v["max_abs_log_sd_ratio"]:.2f} '
                         f'sd<0.1x={v["frac_sd_collapse"]:.4f}')
-        json.dump(dict(per_layer=gap, summary=summary, frames=len(loader.dataset)),
+        json.dump(dict(per_layer=gap, summary=summary, frames=len(loader.dataset), bev_mask=mask_diag),
                   open(out_dir / 'bn_gap.json', 'w'), indent=1)
         if args.save_stats:
             arrays = {}
