@@ -121,6 +121,10 @@ def main():
         dataset_cfg=eval_dataset_config(), class_names=cfg.CLASS_NAMES, batch_size=args.batch_size,
         dist=False, workers=args.workers, logger=logger, training=False, model_ontology=ontology)
     model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=test_set)
+    if cfg.get('SELF_TRAIN', None) and cfg.SELF_TRAIN.get('DSNORM', None):  # as test.py: a per-domain-BN checkpoint
+        from pcdet.models.model_utils.dsnorm import DSNorm  # its statistics are re-estimated in the TARGET set
+        model = DSNorm.convert_dsnorm(model)
+        logger.info('[adabn] per-domain BN (SELF_TRAIN.DSNORM): evaluated with the TARGET statistics set')
     model.load_params_from_file(filename=args.ckpt, logger=logger, to_cpu=False)
     model.cuda()
 
