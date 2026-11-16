@@ -13,7 +13,8 @@ import pytest
 import torch
 
 from pcseg import IGNORE
-from pcseg.class_map import ClassMap, build_class_map, PANDASET_RAW_TO_NAME_DRAFT
+from pcseg.class_map import (ClassMap, build_class_map, PANDASET_SCALR17_RAW_TO_NAME, PANDASET_SCALR17_NAMES,
+                             PANDASET_3DLP8_RAW_TO_NAME)
 from pcseg.grid_sample import grid_sample
 from pcseg.losses_metrics import ce_loss, ConfusionMatrix
 from pcseg.pandaset_seg import augment, collate, key_seed
@@ -48,13 +49,44 @@ def test_class_map_rejects_unused_model_class():
         ClassMap(['a', 'b'], {1: 'a'})
 
 
-def test_pandaset_draft_map_covers_classes_json():
-    cm = build_class_map('pandaset_nus16_draft')
-    assert sorted(PANDASET_RAW_TO_NAME_DRAFT) == list(range(0, 43))   # classes.json 1..42, plus the stored 0
+@pytest.mark.parametrize('name, table', [('pandaset_scalr17', PANDASET_SCALR17_RAW_TO_NAME),
+                                         ('pandaset_3dlp8', PANDASET_3DLP8_RAW_TO_NAME)])
+def test_pandaset_maps_cover_classes_json(name, table):
+    cm = build_class_map(name)
+    assert sorted(table) == list(range(0, 43))                        # classes.json 1..42, plus the stored 0
     out = cm(np.arange(0, 43))
     assert out[0] == IGNORE and out.min() == IGNORE and out.max() == cm.num_classes - 1
     with pytest.raises(ValueError):
         cm(np.array([43]))
+
+
+# ScaLR's MAPPING_CLASS (valeoai/ScaLR datasets/pandaset_for_scalr.py at 53c474d), as published: raw id -> ScaLR class id,
+# 0 = noise (ignore), train id = class id - 1. Transcribed independently of class_map.py's table.
+SCALR_MAPPING_CLASS = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 5, 6: 16, 7: 1, 8: 6, 9: 6, 10: 6, 11: 7, 12: 17, 13: 10, 14: 12,
+                       15: 12, 16: 12, 17: 15, 18: 11, 19: 15, 20: 15, 21: 15, 22: 0, 23: 13, 24: 0, 25: 0, 26: 14, 27: 15,
+                       28: 15, 29: 15, 30: 4, 31: 4, 32: 0, 33: 0, 34: 9, 35: 3, 36: 2, 37: 9, 38: 2, 39: 3, 40: 0, 41: 8,
+                       42: 8}
+SCALR_CLASS_NAME = ['road', 'traffic sign', 'barrier', 'pedestrian', 'vegetation', 'road marking', 'sidewalk', 'manmade',
+                    'traffic cone', 'car', 'motorcycle', 'truck', 'bus', 'bicycle', 'oth. vehicle', 'ground', 'driveway']
+# 3DLabelProp's "pandaset" target_to_common (JulesSanchez/3DLabelProp mapping/sk.py at 202127f), as published.
+TDLP_TARGET_TO_COMMON = {0: -1, 1: -1, 2: -1, 3: -1, 4: -1, 5: 6, 6: 4, 7: 2, 8: 2, 9: 2, 10: 2, 11: 3, 12: 2, 13: 7, 14: 7,
+                         15: 7, 16: 7, 17: 7, 18: 0, 19: 7, 20: 7, 21: 0, 22: 7, 23: 7, 24: 0, 25: 0, 26: 0, 27: -1, 28: -1,
+                         29: -1, 30: 1, 31: 1, 32: -1, 33: -1, 34: 5, 35: 5, 36: 5, 37: 5, 38: 5, 39: 5, 40: 5, 41: 5, 42: 5}
+
+
+def test_scalr17_map_equals_published():
+    cm = build_class_map('pandaset_scalr17')
+    assert [n.replace('_', ' ') for n in PANDASET_SCALR17_NAMES] == [
+        n.replace('oth. vehicle', 'other vehicle') for n in SCALR_CLASS_NAME]
+    raw = np.arange(0, 43)
+    expect = np.array([SCALR_MAPPING_CLASS[r] - 1 for r in raw])
+    assert np.array_equal(cm(raw), np.where(expect < 0, IGNORE, expect))
+
+
+def test_3dlp8_map_equals_published():
+    cm = build_class_map('pandaset_3dlp8')
+    raw = np.arange(0, 43)
+    assert np.array_equal(cm(raw), np.array([TDLP_TARGET_TO_COMMON[r] for r in raw]))
 
 
 # --- grid sampling ------------------------------------------------------------------------------------------------------

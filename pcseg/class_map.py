@@ -51,64 +51,70 @@ class ClassMap:
         return out
 
 
-# --- PandaSet (42 classes, dataset/<seq>/annotations/semseg/classes.json) -> a nuScenes-16-like set ---------------------
-# DRAFT, open item O2 of episodes/20261116_01: to be approved by the user before the first training. The rule: follow the
-# nuScenes lidarseg definitions where they exist (pick-ups are trucks, scooters are motorcycles, emergency vehicles,
-# personal mobility, pushable objects and animals are ignored), so that a later nuScenes pair reuses the map; weather
-# and sensor artefacts (smoke, exhaust, spray, reflection) are ignored. One map serves both PandaSet sensors.
-PANDASET_NAMES_DRAFT = [
-    'barrier', 'bicycle', 'bus', 'car', 'construction_vehicle', 'motorcycle', 'pedestrian', 'traffic_cone', 'trailer',
-    'truck', 'driveable_surface', 'other_flat', 'sidewalk', 'terrain', 'manmade', 'vegetation',
+# --- PandaSet maps taken from published work ------------------------------------------------------------------------
+# O2 of episodes/20261116_01 (the user, 2026-11-16: 「先行研究のマッピングを参考とする」). Raw ids are PandaSet's
+# (dataset/<seq>/annotations/semseg/classes.json 1..42, plus the stored 0, which classes.json omits: 19 of 22.06 M points
+# in 5 of 130 sampled frames, 2026-11-16). IGNORE replaces each source's own ignore value. Class names are the source's,
+# lower-cased with '_' for spaces and punctuation; the index order is the source's. One map serves both sensors.
+#
+# ScaLR 17 (Puy et al., CVPR 2024; github.com/valeoai/ScaLR datasets/pandaset_for_scalr.py MAPPING_CLASS and CLASS_NAME,
+# file at 0b310a8 2024-02-17, read at main 53c474d): the only published nuScenes-style PandaSet map, applied by its
+# authors to Pandar64 and PandarGT alike. Their train id is MAPPING_CLASS - 1; their 0 ('noise') becomes 255 = ignore.
+# The P1 training map.
+PANDASET_SCALR17_NAMES = [
+    'road', 'traffic_sign', 'barrier', 'pedestrian', 'vegetation', 'road_marking', 'sidewalk', 'manmade', 'traffic_cone',
+    'car', 'motorcycle', 'truck', 'bus', 'bicycle', 'other_vehicle', 'ground', 'driveway',
 ]
-PANDASET_RAW_TO_NAME_DRAFT = {
-    0: None,                        # not in classes.json, but present: 19 of 22.06 M points in 5 of 130 sampled frames
-                                    # (every 3rd semseg sequence x frames 0/20/40/60/79, 2026-11-16); treated as unlabelled
-    1: None,                        # Smoke
-    2: None,                        # Exhaust
-    3: None,                        # Spray or rain
-    4: None,                        # Reflection
-    5: 'vegetation',                # Vegetation
-    6: 'terrain',                   # Ground
-    7: 'driveable_surface',         # Road
-    8: 'driveable_surface',         # Lane Line Marking
-    9: 'driveable_surface',         # Stop Line Marking
-    10: 'driveable_surface',        # Other Road Marking
-    11: 'sidewalk',                 # Sidewalk
-    12: 'other_flat',               # Driveway
-    13: 'car',                      # Car
-    14: 'truck',                    # Pickup Truck (nuScenes: pick-ups are vehicle.truck)
-    15: 'truck',                    # Medium-sized Truck
-    16: 'truck',                    # Semi-truck
-    17: 'trailer',                  # Towed Object
-    18: 'motorcycle',               # Motorcycle
-    19: 'construction_vehicle',     # Other Vehicle - Construction Vehicle
-    20: None,                       # Other Vehicle - Uncommon
-    21: None,                       # Other Vehicle - Pedicab
-    22: None,                       # Emergency Vehicle (nuScenes lidarseg-16 ignores vehicle.emergency.*)
-    23: 'bus',                      # Bus
-    24: None,                       # Personal Mobility Device
-    25: 'motorcycle',               # Motorized Scooter
-    26: 'bicycle',                  # Bicycle
-    27: None,                       # Train
-    28: None,                       # Trolley
-    29: None,                       # Tram / Subway
-    30: 'pedestrian',               # Pedestrian
-    31: 'pedestrian',               # Pedestrian with Object
-    32: None,                       # Animals - Bird
-    33: None,                       # Animals - Other
-    34: 'barrier',                  # Pylons
-    35: 'barrier',                  # Road Barriers
-    36: 'manmade',                  # Signs
-    37: 'traffic_cone',             # Cones
-    38: 'manmade',                  # Construction Signs
-    39: 'barrier',                  # Temporary Construction Barriers
-    40: None,                       # Rolling Containers (nuScenes: movable_object.pushable_pullable, ignored)
-    41: 'manmade',                  # Building
-    42: 'manmade',                  # Other Static Object
+PANDASET_SCALR17_RAW_TO_NAME = {
+    0: None,                                                  # stored 0 ('Noise' in ScaLR)
+    1: None, 2: None, 3: None, 4: None,                       # Smoke, Exhaust, Spray or rain, Reflection
+    5: 'vegetation',                                          # Vegetation
+    6: 'ground',                                              # Ground
+    7: 'road',                                                # Road
+    8: 'road_marking', 9: 'road_marking', 10: 'road_marking',  # Lane Line / Stop Line / Other Road Marking
+    11: 'sidewalk',                                           # Sidewalk
+    12: 'driveway',                                           # Driveway
+    13: 'car',                                                # Car
+    14: 'truck', 15: 'truck', 16: 'truck',                    # Pickup Truck, Medium-sized Truck, Semi-truck
+    17: 'other_vehicle',                                      # Towed Object
+    18: 'motorcycle',                                         # Motorcycle
+    19: 'other_vehicle', 20: 'other_vehicle', 21: 'other_vehicle',  # Construction Vehicle, Uncommon, Pedicab
+    22: None,                                                 # Emergency Vehicle
+    23: 'bus',                                                # Bus
+    24: None, 25: None,                                       # Personal Mobility Device, Motorized Scooter
+    26: 'bicycle',                                            # Bicycle
+    27: 'other_vehicle', 28: 'other_vehicle', 29: 'other_vehicle',  # Train, Trolley, Tram / Subway
+    30: 'pedestrian', 31: 'pedestrian',                       # Pedestrian, Pedestrian with Object
+    32: None, 33: None,                                       # Animals - Bird, Animals - Other
+    34: 'traffic_cone',                                       # Pylons
+    35: 'barrier',                                            # Road Barriers
+    36: 'traffic_sign',                                       # Signs
+    37: 'traffic_cone',                                       # Cones
+    38: 'traffic_sign',                                       # Construction Signs
+    39: 'barrier',                                            # Temporary Construction Barriers
+    40: None,                                                 # Rolling Containers
+    41: 'manmade', 42: 'manmade',                             # Building, Other Static Object
+}
+
+# 3DLabelProp 8 (Sanchez et al., ICCV 2023; github.com/JulesSanchez/3DLabelProp mapping/sk.py "pandaset"
+# target_to_common, identical in mapping/ns.py, files at 25d4636 2023-07-11, read at 202127f; applied by its authors to
+# PandaFF and Panda64 alike, and reused by TTYD, ECCV 2024): the coarse common set of the cross-dataset generalisation
+# literature. For cross-dataset rows; a coarse map removes most of the convention term (20261027_04).
+PANDASET_3DLP8_NAMES = [
+    'two_wheeled', 'pedestrian', 'driveable_ground', 'sidewalk', 'other_ground', 'manmade', 'vegetation', 'four_wheeled',
+]
+PANDASET_3DLP8_RAW_TO_NAME = {
+    **{r: None for r in (0, 1, 2, 3, 4, 27, 28, 29, 32, 33)},   # noise / weather, rail vehicles, animals
+    **{5: 'vegetation', 6: 'other_ground', 11: 'sidewalk', 30: 'pedestrian', 31: 'pedestrian'},
+    **{r: 'driveable_ground' for r in (7, 8, 9, 10, 12)},     # road, the three markings, driveway
+    **{r: 'four_wheeled' for r in (13, 14, 15, 16, 17, 19, 20, 22, 23)},
+    **{r: 'two_wheeled' for r in (18, 21, 24, 25, 26)},        # motorcycle, pedicab, PMD, scooter, bicycle
+    **{r: 'manmade' for r in range(34, 43)},                   # pylons .. other static object
 }
 
 MAPS = {
-    'pandaset_nus16_draft': lambda: ClassMap(PANDASET_NAMES_DRAFT, PANDASET_RAW_TO_NAME_DRAFT),
+    'pandaset_scalr17': lambda: ClassMap(PANDASET_SCALR17_NAMES, PANDASET_SCALR17_RAW_TO_NAME),
+    'pandaset_3dlp8': lambda: ClassMap(PANDASET_3DLP8_NAMES, PANDASET_3DLP8_RAW_TO_NAME),
 }
 
 

@@ -13,7 +13,7 @@ DATA:
   ROOT: /home/koyama/data/pandaset/dataset
   LIDAR_DEVICE: 0                   # 0 Pandar64, 1 PandarGT
   SHIFT_COOR: [0.0, 0.0, 0.30]      # the detection family's PandaSet value (da_pandaset_dataset.yaml)
-  CLASS_MAP: pandaset_nus16_draft   # O2 OPEN: replaced by the approved map before the first oracle (S2)
+  CLASS_MAP: pandaset_scalr17       # ScaLR's published 17-class map (pcseg/class_map.py; O2, 20261116_01 §6)
   GRID_SIZE: 0.05
   # The detection split (dataset_configs/pandaset_dataset.yaml SEQUENCES), verbatim; sequences without semseg are
   # skipped and listed in the log. tests/test_pcseg_engine.py checks both lists against the detection config.

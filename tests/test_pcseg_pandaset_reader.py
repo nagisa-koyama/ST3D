@@ -44,7 +44,7 @@ def test_frames_enough():
 
 @pytest.mark.parametrize('device', [0, 1])
 def test_reader_identical_to_st3d(device):
-    cm = build_class_map('pandaset_nus16_draft')
+    cm = build_class_map('pandaset_scalr17')
     n_ign, n_all, n_zero = 0, 0, 0
     for seq, frame in _frames():
         ref, pose_devkit = _st3d_points(seq, frame, device)
@@ -77,7 +77,7 @@ def test_dataset_eval_sample_round_trip():
     label is recovered from the inverse map only where its voxel is label-pure."""
     seqs = [s for s in VAL if has_semseg(ROOT, s)][:2] + ['045']     # 045 has no semseg: must be skipped, not read
     cfg = {'ROOT': ROOT, 'SEQUENCES': seqs, 'LIDAR_DEVICE': 0, 'SHIFT_COOR': [0.0, 0.0, 1.8],
-           'CLASS_MAP': 'pandaset_nus16_draft', 'GRID_SIZE': 0.05}
+           'CLASS_MAP': 'pandaset_scalr17', 'GRID_SIZE': 0.05}
     ds = PandasetSeg(cfg, training=False)
     assert ds.skipped == ['045'] and len(ds.sequences) == 2
     assert len(ds) == 80 * len(ds.sequences)
