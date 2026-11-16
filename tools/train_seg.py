@@ -230,8 +230,12 @@ def main(argv=None):
             for n_ in names:
                 logger.info('    %-20s IoU %.4f' % (n_, metrics['val_point/iou/' + n_]))
             if rank == 0:
-                engine.write_json(output_dir / ('eval_epoch_%d.json' % epoch),
-                                  dict(metrics, epoch=epoch, matrices={k: v.tolist() for k, v in mats.items()}))
+                # Named by epochs completed, as the checkpoint of the same weights (checkpoint_epoch_<epoch + 1>.pth);
+                # 'epoch' inside stays the 0-based loop index.
+                engine.write_json(output_dir / ('eval_epoch_%d.json' % (epoch + 1)),
+                                  dict(metrics, epoch=epoch, epochs_done=epoch + 1,
+                                       checkpoint='checkpoint_epoch_%d.pth' % (epoch + 1),
+                                       matrices={k: v.tolist() for k, v in mats.items()}))
                 if log_fn is not None:
                     log_fn({k: v for k, v in metrics.items() if not isinstance(v, list)})
         if log_fn is not None:
