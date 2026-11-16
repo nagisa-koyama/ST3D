@@ -38,7 +38,8 @@ def load_index(path):
 
 class NuScenesSeg(torch.utils.data.Dataset):
     """cfg keys: ROOT (detection tree holding samples/), LIDARSEG_ROOT, INDEX (from pcseg_nuscenes_index.py), SPLIT
-    ('train' / 'val'), SHIFT_COOR, CLASS_MAP, GRID_SIZE, AUG (training only; None = no augmentation)."""
+    ('train' / 'val'), SHIFT_COOR, CLASS_MAP, GRID_SIZE, AUG (training only; None = no augmentation), and SCENES
+    (optional: keep only these scene names of the split, for smokes; names absent from the split go to `skipped`)."""
 
     def __init__(self, cfg, training, logger=None):
         self.cfg, self.training = cfg, training
@@ -50,8 +51,13 @@ class NuScenesSeg(torch.utils.data.Dataset):
         index = load_index(cfg['INDEX'])
         self.split = cfg['SPLIT']
         self.frames = index[self.split]
-        self.sequences = sorted({r[3] for r in self.frames})                  # scenes; train_seg checks the count
         self.skipped = []
+        scenes = cfg.get('SCENES', None)
+        if scenes:
+            present = {r[3] for r in self.frames}
+            self.skipped = [s for s in scenes if s not in present]
+            self.frames = [r for r in self.frames if r[3] in set(scenes)]
+        self.sequences = sorted({r[3] for r in self.frames})                  # scenes; train_seg checks the count
         if logger is not None:
             logger.info('NuScenesSeg (%s, split %s): %d scenes, %d frames, index %s'
                         % ('train' if training else 'eval', self.split, len(self.sequences), len(self.frames),

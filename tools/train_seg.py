@@ -59,13 +59,21 @@ def load_cfg(cfg_file, set_cfgs=None):
 
 
 def build_datasets(cfg, logger=None):
-    from pcseg.pandaset_seg import PandasetSeg
     d = cfg.DATA
-    if d.NAME != 'PandasetSeg':
+    if d.NAME == 'PandasetSeg':
+        from pcseg.pandaset_seg import PandasetSeg
+        common = {k: d[k] for k in ('ROOT', 'LIDAR_DEVICE', 'SHIFT_COOR', 'CLASS_MAP', 'GRID_SIZE')}
+        sets = {'train': PandasetSeg(dict(common, SEQUENCES=d.SPLITS.train, AUG=d.get('AUG', None)), True, logger),
+                'val': PandasetSeg(dict(common, SEQUENCES=d.SPLITS.val), False, logger)}
+    elif d.NAME == 'NuScenesSeg':
+        from pcseg.nuscenes_seg import NuScenesSeg
+        common = {k: d[k] for k in ('ROOT', 'LIDARSEG_ROOT', 'INDEX', 'SHIFT_COOR', 'CLASS_MAP', 'GRID_SIZE')}
+        scenes = d.get('SCENES', None) or {}
+        sets = {'train': NuScenesSeg(dict(common, SPLIT='train', SCENES=scenes.get('train', None),
+                                          AUG=d.get('AUG', None)), True, logger),
+                'val': NuScenesSeg(dict(common, SPLIT='val', SCENES=scenes.get('val', None)), False, logger)}
+    else:
         raise ValueError('unknown DATA.NAME %s' % d.NAME)
-    common = {k: d[k] for k in ('ROOT', 'LIDAR_DEVICE', 'SHIFT_COOR', 'CLASS_MAP', 'GRID_SIZE')}
-    sets = {'train': PandasetSeg(dict(common, SEQUENCES=d.SPLITS.train, AUG=d.get('AUG', None)), True, logger),
-            'val': PandasetSeg(dict(common, SEQUENCES=d.SPLITS.val), False, logger)}
     for split, n in (d.get('EXPECT_SEQUENCES', None) or {}).items():
         if len(sets[split].sequences) != int(n):
             raise ValueError('%s: %d sequences with semseg, config expects %d (skipped %s)'

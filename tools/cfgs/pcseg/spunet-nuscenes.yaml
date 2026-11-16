@@ -1,0 +1,45 @@
+# pcseg M1 on nuScenes-lidarseg: the reproduction gate G0 (experiments_md episodes/20261116_01 §5).
+# Pointcept's SpUNet-v1m1 nuScenes recipe AS PUBLISHED (configs/nuscenes/semseg-spunet-v1m1-0-base.py at 77f87ab).
+# Reference: MinkUNet 73.3 mIoU on nuScenes val (PTv3 paper Table 7); pass >= 71.3 under Pointcept's TTA protocol.
+# The LAST epoch is the number read (pre-declared, as P1); Pointcept keeps its best epoch on val instead.
+# Launch (total batch 12, as Pointcept):
+#   ENTRY=train_seg.py BATCH=12 EST_H=<h> WANDB_NOTES="..." \
+#     scripts/submit.sh --job-name=<x> scripts/run_sourceonly_2gpu.sh cfgs/pcseg/spunet-nuscenes.yaml [tag] [run_name]
+PCSEG: True
+
+DATA:
+  NAME: NuScenesSeg
+  ROOT: /home/koyama/data/nuscenes_full_v_1_0/v1.0-trainval      # the detection tree: read only (samples/LIDAR_TOP)
+  LIDARSEG_ROOT: /home/koyama/data/nuscenes_lidarseg_v1_0        # kept apart from the detection tree (O1)
+  INDEX: /home/koyama/data/pcseg/nuscenes_lidarseg_index_v1.json  # tools/analysis/pcseg_nuscenes_index.py (job 33184)
+  SHIFT_COOR: [0.0, 0.0, 0.0]       # Pointcept: points in the LIDAR_TOP frame, unshifted
+  CLASS_MAP: nuscenes_lidarseg16    # the devkit's challenge classes in Pointcept's order (pcseg/class_map.py)
+  GRID_SIZE: 0.05
+  EXPECT_SEQUENCES: {train: 700, val: 150}   # scenes (nuscenes.utils.splits)
+  AUG: {ROTATE_Z_PROB: 0.5, SCALE: [0.9, 1.1], FLIP_PROB: 0.5, JITTER: [0.005, 0.02]}
+
+MODEL:
+  NAME: SpUNet
+  IN_CHANNELS: 4                    # x, y, z, intensity / 255
+  CHANNELS: [32, 64, 128, 256, 256, 128, 96, 96]
+  LAYERS: [2, 3, 4, 6, 2, 2, 2, 2]
+
+OPTIMIZATION:
+  BATCH_SIZE: 12                    # TOTAL across ranks; --batch_size overrides
+  NUM_EPOCHS: 50
+  LR: 0.002
+  WEIGHT_DECAY: 0.005
+  PCT_START: 0.04
+  DIV_FACTOR: 10.0
+  FINAL_DIV_FACTOR: 100.0
+  AMP: True                         # training only; evaluation is fp32 (engine.evaluate)
+  NUM_WORKERS: 8                    # per rank
+  EVAL_BATCH_PER_GPU: 4
+  SAVE_EVERY: 5
+  MAX_CKPT: 3
+  LOG_EVERY: 50
+
+EVAL:
+  EVERY: 5                          # the LAST epoch is always scored, and it is the number read (pre-declared)
+
+TARGET_DUMP_FRAMES: 4

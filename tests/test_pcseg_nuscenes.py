@@ -159,3 +159,48 @@ def test_dataset_samples_train_and_eval():
     assert np.array_equal(ev[0]['grid_coord'], s['grid_coord'])          # eval voxel draw is fixed per frame
     t = tr[0]
     assert t['feat'].shape[1] == 4 and t['feat'].dtype == np.float32 and 'inverse' not in t
+
+
+TOOLS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools')
+
+
+def _load(name):
+    import sys
+    sys.path.insert(0, TOOLS)
+    import train_seg
+    cwd = os.getcwd()
+    os.chdir(TOOLS)
+    try:
+        return train_seg, train_seg.load_cfg('cfgs/pcseg/%s.yaml' % name)
+    finally:
+        os.chdir(cwd)
+
+
+def test_nuscenes_configs_resolve_to_the_pointcept_recipe():
+    _, base = _load('spunet-nuscenes')
+    _, smoke = _load('spunet-nuscenes-smoke')
+    _, pandaset = _load('spunet-pandaset64')
+    assert base.MODEL == pandaset.MODEL and base.DATA.AUG == pandaset.DATA.AUG        # one recipe for both datasets
+    for k in ('BATCH_SIZE', 'NUM_EPOCHS', 'LR', 'WEIGHT_DECAY', 'PCT_START', 'DIV_FACTOR', 'FINAL_DIV_FACTOR', 'AMP'):
+        assert base.OPTIMIZATION[k] == pandaset.OPTIMIZATION[k], k
+    assert base.DATA.CLASS_MAP == 'nuscenes_lidarseg16' and list(base.DATA.SHIFT_COOR) == [0.0, 0.0, 0.0]
+    assert 'CONE' not in base.EVAL
+    assert smoke.MODEL == base.MODEL and smoke.DATA.AUG == base.DATA.AUG and smoke.OPTIMIZATION.BATCH_SIZE == 12
+    assert smoke.DATA.INDEX == base.DATA.INDEX and smoke.OPTIMIZATION.NUM_EPOCHS == 2
+
+
+@pytest.mark.skipif(not _have_data, reason='nuScenes data or the pcseg index absent')
+def test_build_datasets_nuscenes():
+    train_seg, smoke = _load('spunet-nuscenes-smoke')
+    sets = train_seg.build_datasets(smoke)                    # checks EXPECT_SEQUENCES {train: 2, val: 1}
+    assert len(sets['train']) == 80 and len(sets['val']) == 40
+    assert sets['train'].aug is not None and sets['val'].aug is None
+    _, base = _load('spunet-nuscenes')
+    full = train_seg.build_datasets(base)                     # 700 / 150 scenes
+    assert len(full['train']) == 28130 and len(full['val']) == 6019
+    import copy
+    bad = copy.deepcopy(smoke)
+    bad.DATA.SCENES.val = ['scene-0003', 'scene-0001']        # scene-0001 is a TRAIN scene: skipped from val
+    bad.DATA.EXPECT_SEQUENCES.val = 2
+    with pytest.raises(ValueError, match=r"config expects 2 \(skipped \['scene-0001'\]\)"):
+        train_seg.build_datasets(bad)
