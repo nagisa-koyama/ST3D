@@ -150,8 +150,15 @@ def metrics_from_matrix(mat, class_names, prefix):
 
 
 @torch.no_grad()
-def evaluate(model, loader, class_names, device, amp=True, shift=(0.0, 0.0, 0.0), cone=None):
+def evaluate(model, loader, class_names, device, shift=(0.0, 0.0, 0.0), cone=None):
     """Score `loader` (an eval PandasetSeg loader: samples carry inverse / origin_segment / origin_coord).
+
+    Always in fp32, never under autocast, as Pointcept's evaluator and tester do (`with torch.no_grad()` only). Under
+    autocast, spconv 2.3.8 in eval mode crashes the SpUNet (smoke 33127, probe 33180): the 5^3 stem (kernel volume
+    125 > 32) uses the Native algorithm, whose autograd Function casts its inputs to fp16, so the stem emits fp16
+    features; the next conv uses implicit GEMM, which in eval mode calls ops.implicit_gemm directly with the fp32
+    weights uncast, and the tuner finds no fp16-feature / fp32-weight kernel ("can't find suitable algorithm for 0").
+    In training both kinds go through autograd Functions that cast, which is why training ran.
 
     cone: None or (fov_deg, heading_deg); adds a point-level matrix restricted to that cone.
     Returns (metrics dict, {'point', 'voxel'[, 'cone']} summed confusion matrices as int64 numpy)."""
@@ -164,8 +171,7 @@ def evaluate(model, loader, class_names, device, amp=True, shift=(0.0, 0.0, 0.0)
     n_frames = 0
     for batch in loader:
         b = to_device(batch, device)
-        with torch.autocast('cuda', enabled=amp):
-            logits = model(b)
+        logits = model(b)
         pred_vox = logits.float().argmax(1)
         pred_pt = pred_vox[b['inverse'].to(device)].cpu().numpy()
         mats['voxel'].update(pred_vox.cpu().numpy(), batch['segment'].numpy())

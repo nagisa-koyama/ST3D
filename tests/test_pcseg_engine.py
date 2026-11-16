@@ -3,7 +3,8 @@ handling, on CPU with stand-in models.
 
 - evaluate(): per-point predictions come from each point's OWN frame's voxels through the shifted inverse map, for a
   batch of several frames, against a per-frame brute force; IGNORE never lands in the matrix; the cone matrix uses
-  ST3D's cone convention (DatasetTemplate.extract_fov_gt).
+  ST3D's cone convention (DatasetTemplate.extract_fov_gt). It never enters autocast (smoke 33127: spconv's eval
+  path crashes the SpUNet under it; the GPU check is test_pcseg_core.py::test_evaluate_runs_spunet_on_gpu).
 - ShardSampler: every eval frame exactly once across ranks.
 - DataLoader workers draw distinct, torch-seeded numpy streams (torch reseeds numpy per worker; pcseg relies on it).
 - OneCycle: Pointcept's lr shape (start lr/10, peak at 4%, end lr/1000).
@@ -80,7 +81,7 @@ def test_evaluate_matches_per_frame_brute_force():
     ds = _EvalSet()
     loader = torch.utils.data.DataLoader(ds, batch_size=3, collate_fn=collate, shuffle=False)
     names = ['c%d' % k for k in range(NC)]
-    metrics, mats = engine.evaluate(_HashModel(), loader, names, torch.device('cpu'), amp=False, cone=(60.0, 0.0))
+    metrics, mats = engine.evaluate(_HashModel(), loader, names, torch.device('cpu'), cone=(60.0, 0.0))
     bp, bv, bc = _brute(ds, _HashModel(), cone=(60.0, 0.0))
     assert np.array_equal(mats['point'], bp)
     assert np.array_equal(mats['voxel'], bv)
@@ -98,9 +99,32 @@ def test_evaluate_shards_sum_to_whole():
     for r in range(3):
         loader = torch.utils.data.DataLoader(ds, batch_size=2, collate_fn=collate,
                                              sampler=engine.ShardSampler(len(ds), r, 3))
-        _, mats = engine.evaluate(_HashModel(), loader, names, torch.device('cpu'), amp=False)
+        _, mats = engine.evaluate(_HashModel(), loader, names, torch.device('cpu'))
         total = mats['point'] if total is None else total + mats['point']
     assert np.array_equal(total, _brute(ds, _HashModel())[0])
+
+
+def test_evaluate_never_enters_autocast(monkeypatch):
+    """Smoke 33127 died in its first validation pass: evaluate() ran the SpUNet under autocast, which spconv's eval
+    path cannot do (engine.evaluate docstring). On CPU, autocast('cuda') is a disabled no-op, so record the requests
+    instead: evaluate() must never ask for an enabled autocast, and the model must see grad mode off."""
+    requests, grad_seen = [], []
+    real = torch.autocast
+
+    def recording_autocast(*a, **k):
+        requests.append(k.get('enabled', True))
+        return real(*a, **k)
+
+    class _Probe(_HashModel):
+        def forward(self, batch):
+            grad_seen.append(torch.is_grad_enabled())
+            return super().forward(batch)
+
+    monkeypatch.setattr(torch, 'autocast', recording_autocast)
+    loader = torch.utils.data.DataLoader(_EvalSet(n=3), batch_size=2, collate_fn=collate, shuffle=False)
+    engine.evaluate(_Probe(), loader, ['c%d' % k for k in range(NC)], torch.device('cpu'))
+    assert not any(requests), requests
+    assert grad_seen and not any(grad_seen)
 
 
 def test_shard_sampler_partitions():

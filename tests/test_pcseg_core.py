@@ -1,5 +1,6 @@
 """pcseg core (experiments_md episodes/20261116_01 §7): the IGNORE sentinel (-1) against every consumer, grid sampling's
-index contract, collate offsets, and the SpUNet port against Pointcept's original source.
+index contract, collate offsets, and the SpUNet port against Pointcept's original source. On CUDA only: the port's
+forward against Pointcept's, and evaluate() running the SpUNet (the smoke 33127 eval crash).
 
 Sentinel coverage (bug_prevention_checklist rule 1): class map (raises on undeclared / negative / out-of-range raw ids,
 maps declared-ignored ids to -1), ce_loss (ignored points add nothing; all-ignored is finite with zero gradient),
@@ -263,3 +264,54 @@ def test_spunet_port_matches_pointcept():
         a, b = ours(batch), orig(batch)
     assert a.shape == (len(batch['feat']), 16)
     assert torch.allclose(a, b, atol=1e-5)
+
+
+def _spunet_eval_case(dev, n_frames=3):
+    """The P1 SpUNet (17 classes) and an eval loader of synthetic frames in PandasetSeg's eval-sample format."""
+    from pcseg.spunet import SpUNet
+    nc = 17
+    torch.manual_seed(0)
+    model = SpUNet(in_channels=4, num_classes=nc, channels=(32, 64, 128, 256, 256, 128, 96, 96),
+                   layers=(2, 3, 4, 6, 2, 2, 2, 2)).to(dev)
+    rng = np.random.default_rng(3)
+    samples = []
+    for i in range(n_frames):
+        c = _cloud(20000, seed=10 + i) * 10
+        idx, grid, inv = grid_sample(c, 0.05, rng)
+        seg = rng.integers(0, nc, size=len(c))
+        seg[rng.random(len(c)) < 0.05] = IGNORE
+        feat = np.concatenate([c[idx], rng.random((len(idx), 1), dtype=np.float32)], 1)
+        samples.append({'grid_coord': grid, 'feat': feat, 'segment': seg[idx], 'frame_key': 'g%d' % i,
+                        'inverse': inv, 'origin_segment': seg, 'origin_coord': c})
+    loader = torch.utils.data.DataLoader(samples, batch_size=2, collate_fn=collate, shuffle=False)
+    return model, loader, ['c%d' % k for k in range(nc)], samples
+
+
+def test_evaluate_runs_spunet_on_gpu():
+    """Smoke 33127 trained an epoch, then crashed in its first validation pass: evaluate() ran the SpUNet under autocast,
+    and spconv's eval path cannot (engine.evaluate docstring; probe 33180). evaluate() at its defaults must run the real
+    SpUNet on CUDA and put every non-ignored point and voxel in the matrices exactly once."""
+    from pcseg import engine
+    if not torch.cuda.is_available():
+        pytest.skip('needs CUDA (spconv)')
+    dev = torch.device('cuda')
+    model, loader, names, samples = _spunet_eval_case(dev)
+    metrics, mats = engine.evaluate(model, loader, names, dev, cone=(60.0, 0.0))
+    assert metrics['val/frames'] == len(samples)
+    assert mats['point'].sum() == sum(int((s['origin_segment'] >= 0).sum()) for s in samples)
+    assert mats['voxel'].sum() == sum(int((s['segment'] >= 0).sum()) for s in samples)
+    assert 0 < mats['cone'].sum() < mats['point'].sum()
+
+
+def test_gpu_eval_case_reproduces_the_autocast_crash():
+    """Keeps test_evaluate_runs_spunet_on_gpu discriminating: the same case under autocast (what evaluate() did before
+    the fix) must still crash. If a new spconv build makes this pass, the hazard is gone; say so in 20261116_01 before
+    allowing autocast in evaluate()."""
+    from pcseg import engine
+    if not torch.cuda.is_available():
+        pytest.skip('needs CUDA (spconv)')
+    dev = torch.device('cuda')
+    model, loader, names, _ = _spunet_eval_case(dev, n_frames=1)
+    with pytest.raises(RuntimeError, match='suitable algorithm'):
+        with torch.autocast('cuda'):
+            engine.evaluate(model, loader, names, dev)

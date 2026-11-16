@@ -209,12 +209,15 @@ def main(argv=None):
         last = epoch == epochs - 1
         if last or (eval_every > 0 and (epoch + 1) % eval_every == 0):
             t1 = time.time()
-            metrics, mats = engine.evaluate(model, val_loader, names, device, amp=amp, shift=shift, cone=cone)
+            metrics, mats = engine.evaluate(model, val_loader, names, device, shift=shift, cone=cone)  # fp32
             row['eval_s'] = time.time() - t1
+            row['peak_eval_mem_gib'] = torch.cuda.max_memory_allocated(device) / 2 ** 30
+            torch.cuda.reset_peak_memory_stats(device)
             last_metrics = dict(metrics, epoch=epoch)
-            logger.info('epoch %d eval (%.0f s, %d frames): point mIoU %.4f, voxel mIoU %.4f%s'
-                        % (epoch, row['eval_s'], metrics['val/frames'], metrics['val_point/miou'],
-                           metrics['val_voxel/miou'],
+            logger.info('epoch %d eval (%.0f s, %d frames, fp32, peak GPU memory %.1f GiB): point mIoU %.4f, '
+                        'voxel mIoU %.4f%s'
+                        % (epoch, row['eval_s'], metrics['val/frames'], row['peak_eval_mem_gib'],
+                           metrics['val_point/miou'], metrics['val_voxel/miou'],
                            ', cone mIoU %.4f' % metrics['val_cone/miou'] if cone is not None else ''))
             for n_ in names:
                 logger.info('    %-20s IoU %.4f' % (n_, metrics['val_point/iou/' + n_]))
