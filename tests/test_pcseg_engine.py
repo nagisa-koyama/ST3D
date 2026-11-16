@@ -287,10 +287,23 @@ def test_pcseg_configs_resolve_and_use_the_detection_split():
     assert set(smoke.DATA.SPLITS.train) <= set(det['train']) and set(smoke.DATA.SPLITS.val) <= set(det['val'])
 
 
+def test_pandargt_oracle_config_differs_from_pandar64_only_in_the_device():
+    """The two P1 oracles (20261116_01 §6) must be one recipe on two sensors."""
+    p64, pgt = _load('spunet-pandaset64'), _load('spunet-pandasetgt')
+    assert p64.DATA.LIDAR_DEVICE == 0 and pgt.DATA.LIDAR_DEVICE == 1
+    a, b = dict(p64), dict(pgt)
+    a['DATA'], b['DATA'] = dict(p64.DATA), dict(pgt.DATA)
+    for d in (a, b):
+        d['DATA'].pop('LIDAR_DEVICE')
+        d.pop('TAG', None)
+        d.pop('_BASE_CONFIG_', None)
+    assert a == b
+
+
 @pytest.mark.skipif(not os.path.isdir('/home/koyama/data/pandaset/dataset'), reason='PandaSet absent')
 def test_expected_semseg_counts_hold():
     from pcseg.pandaset_seg import has_semseg
-    for name in ('spunet-pandaset64', 'spunet-pandaset64-smoke'):
+    for name in ('spunet-pandaset64', 'spunet-pandaset64-smoke', 'spunet-pandasetgt'):
         c = _load(name)
         for split, n in c.DATA.EXPECT_SEQUENCES.items():
             assert sum(has_semseg(c.DATA.ROOT, s) for s in c.DATA.SPLITS[split]) == n, (name, split)
