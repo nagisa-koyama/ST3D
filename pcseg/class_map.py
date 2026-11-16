@@ -112,9 +112,40 @@ PANDASET_3DLP8_RAW_TO_NAME = {
     **{r: 'manmade' for r in range(34, 43)},                   # pylons .. other static object
 }
 
+# --- nuScenes-lidarseg 16 (the reproduction gate G0, episodes/20261116_01 §5) -----------------------------------------
+# The official lidarseg challenge classes: nuscenes-devkit python-sdk/nuscenes/eval/lidarseg/utils.py LidarsegClassMapper
+# (get_fine2coarse, get_coarse2idx; file at c44366d 2021-08-03), in Pointcept's index order (pointcept/datasets/nuscenes.py
+# get_learning_map, Pointcept at 77f87ab), which is the devkit's coarse index - 1. Raw ids are the `index` of the
+# lidarseg tree's v1.0-trainval/category.json (0..31). tests/test_pcseg_nuscenes.py checks both sources.
+NUSCENES_LIDARSEG16_NAMES = [
+    'barrier', 'bicycle', 'bus', 'car', 'construction_vehicle', 'motorcycle', 'pedestrian', 'traffic_cone', 'trailer',
+    'truck', 'driveable_surface', 'other_flat', 'sidewalk', 'terrain', 'manmade', 'vegetation',
+]
+NUSCENES_LIDARSEG16_RAW_TO_NAME = {
+    0: None, 1: None,                                         # noise, animal
+    2: 'pedestrian', 3: 'pedestrian', 4: 'pedestrian',        # human.pedestrian.adult / child / construction_worker
+    5: None,                                                  # human.pedestrian.personal_mobility
+    6: 'pedestrian',                                          # human.pedestrian.police_officer
+    7: None, 8: None,                                         # human.pedestrian.stroller / wheelchair
+    9: 'barrier',                                             # movable_object.barrier
+    10: None, 11: None,                                       # movable_object.debris / pushable_pullable
+    12: 'traffic_cone',                                       # movable_object.trafficcone
+    13: None,                                                 # static_object.bicycle_rack
+    14: 'bicycle', 15: 'bus', 16: 'bus', 17: 'car',           # vehicle.bicycle, bus.bendy, bus.rigid, car
+    18: 'construction_vehicle',                               # vehicle.construction
+    19: None, 20: None,                                       # vehicle.emergency.ambulance / police
+    21: 'motorcycle', 22: 'trailer', 23: 'truck',             # vehicle.motorcycle, trailer, truck
+    24: 'driveable_surface', 25: 'other_flat', 26: 'sidewalk', 27: 'terrain',   # flat.*
+    28: 'manmade',                                            # static.manmade
+    29: None,                                                 # static.other
+    30: 'vegetation',                                         # static.vegetation
+    31: None,                                                 # vehicle.ego
+}
+
 MAPS = {
     'pandaset_scalr17': lambda: ClassMap(PANDASET_SCALR17_NAMES, PANDASET_SCALR17_RAW_TO_NAME),
     'pandaset_3dlp8': lambda: ClassMap(PANDASET_3DLP8_NAMES, PANDASET_3DLP8_RAW_TO_NAME),
+    'nuscenes_lidarseg16': lambda: ClassMap(NUSCENES_LIDARSEG16_NAMES, NUSCENES_LIDARSEG16_RAW_TO_NAME),
 }
 
 
