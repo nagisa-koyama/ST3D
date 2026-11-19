@@ -33,6 +33,7 @@ OPTIMIZATION:
   DIV_FACTOR: 10.0
   FINAL_DIV_FACTOR: 100.0
   AMP: True                         # training only; evaluation is fp32 (engine.evaluate)
+  SYNC_BN: True                     # world > 1: BN statistics over the GLOBAL batch, as on one GPU; inert at one rank
   NUM_WORKERS: 8                    # per rank
   EVAL_BATCH_PER_GPU: 4
   SAVE_EVERY: 5

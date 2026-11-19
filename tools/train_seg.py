@@ -177,8 +177,14 @@ def main(argv=None):
 
     # --- model and optimisation ---
     model = build_model(cfg, class_map.num_classes).to(device)
+    model, n_sync = engine.convert_sync_bn(model, opt, world)
     if world > 1:
-        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model) if opt.get('SYNC_BN', False) else model
+        if n_sync:
+            logger.info('SYNC_BN: %d BatchNorm layers synchronised across %d ranks (statistics over the global batch)'
+                        % (n_sync, world))
+        else:
+            logger.warning('SYNC_BN off at %d ranks: BatchNorm statistics are per GPU (%d frames), so the run '
+                           'depends on the GPU count' % (world, bs))
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device.index])
     logger.info('model %s: %d parameters' % (cfg.MODEL.NAME, sum(p.numel() for p in model.parameters())))
     optimizer = engine.build_optimizer(model, opt)

@@ -53,6 +53,19 @@ class ShardSampler(torch.utils.data.Sampler):
         return len(self.idx)
 
 
+def convert_sync_bn(model, opt_cfg, world):
+    """OPTIMIZATION.SYNC_BN: at world > 1, every BatchNorm becomes a SyncBatchNorm, so the batch statistics are taken
+    over the GLOBAL batch, as on one GPU (20261116_01 §8.3). Call it before DistributedDataParallel.
+
+    Returns (model, number of layers converted). At one rank it returns the model unchanged: there torch's
+    SyncBatchNorm would fall back to F.batch_norm anyway, and the one-GPU rows (G0 33189, the oracles 33191 / 33192)
+    keep the code path they ran. The state_dict keys are those of BatchNorm, so checkpoints load either way."""
+    if world <= 1 or not opt_cfg.get('SYNC_BN', False):
+        return model, 0
+    n = sum(isinstance(m, torch.nn.modules.batchnorm._BatchNorm) for m in model.modules())
+    return torch.nn.SyncBatchNorm.convert_sync_batchnorm(model), n
+
+
 # --- optimisation ---------------------------------------------------------------------------------------------------
 
 def build_optimizer(model, opt_cfg):

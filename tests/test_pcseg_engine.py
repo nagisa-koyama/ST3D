@@ -11,6 +11,9 @@ handling, on CPU with stand-in models.
 - target_dump: raises on a voxel label its points do not carry.
 - checkpoint round trip; non-finite loss raises.
 - configs: _BASE_CONFIG_ resolves, the splits equal the detection split, the semseg counts are as expected.
+- SYNC_BN: on in every training config; at two ranks every BatchNorm of the SpUNet becomes a SyncBatchNorm with
+  unchanged checkpoint keys; at one rank or when off the model is untouched. (Equivalence with one GPU on CUDA:
+  tools/analysis/pcseg_syncbn_check.py.)
 """
 import os
 import sys
@@ -307,3 +310,50 @@ def test_expected_semseg_counts_hold():
         c = _load(name)
         for split, n in c.DATA.EXPECT_SEQUENCES.items():
             assert sum(has_semseg(c.DATA.ROOT, s) for s in c.DATA.SPLITS[split]) == n, (name, split)
+
+
+# --- SYNC_BN (20261116_01 §8.3, user 2026-11-19: no dependence on the GPU count) ------------------------------------
+
+PCSEG_TRAIN_CONFIGS = ('spunet-nuscenes', 'spunet-nuscenes-smoke', 'spunet-pandaset64', 'spunet-pandaset64-smoke',
+                       'spunet-pandasetgt')
+
+
+@pytest.mark.parametrize('name', PCSEG_TRAIN_CONFIGS)
+def test_every_pcseg_training_config_syncs_batchnorm(name):
+    """A multi-GPU row must take BN statistics over the global batch, as a one-GPU row does."""
+    assert _load(name).OPTIMIZATION.SYNC_BN is True
+
+
+def _p1_spunet():
+    from pcseg.spunet import SpUNet
+    torch.manual_seed(0)
+    return SpUNet(in_channels=4, num_classes=17, channels=(32, 64, 128, 256, 256, 128, 96, 96),
+                  layers=(2, 3, 4, 6, 2, 2, 2, 2))
+
+
+def test_sync_bn_converts_every_batchnorm_and_keeps_checkpoint_keys():
+    """At two ranks every BatchNorm of the real SpUNet becomes a SyncBatchNorm with the same eps / momentum, and the
+    state_dict is unchanged in keys, shapes and values, so test_seg.py (plain BatchNorm) loads checkpoints strictly."""
+    from torch.nn.modules.batchnorm import _BatchNorm
+    model = _p1_spunet()
+    ref = {k: v.clone() for k, v in model.state_dict().items()}
+    bns = [(n, m.eps, m.momentum, m.num_features) for n, m in model.named_modules() if isinstance(m, _BatchNorm)]
+    assert len(bns) > 30
+    synced, n = engine.convert_sync_bn(model, {'SYNC_BN': True}, world=2)
+    assert n == len(bns)
+    after = [(n_, m.eps, m.momentum, m.num_features) for n_, m in synced.named_modules() if isinstance(m, _BatchNorm)]
+    assert after == bns
+    assert all(isinstance(m, torch.nn.SyncBatchNorm) for _, m in synced.named_modules() if isinstance(m, _BatchNorm))
+    sd = synced.state_dict()
+    assert list(sd) == list(ref) and all(torch.equal(sd[k], ref[k]) for k in ref)
+    _p1_spunet().load_state_dict(sd, strict=True)
+
+
+@pytest.mark.parametrize('opt,world', [({'SYNC_BN': True}, 1), ({}, 2), ({'SYNC_BN': False}, 2)])
+def test_sync_bn_leaves_the_model_alone_at_one_rank_or_when_off(opt, world):
+    from torch.nn.modules.batchnorm import _BatchNorm
+    model = _p1_spunet()
+    out, n = engine.convert_sync_bn(model, opt, world)
+    assert out is model and n == 0
+    assert not any(isinstance(m, torch.nn.SyncBatchNorm) for m in out.modules())
+    assert any(isinstance(m, _BatchNorm) for m in out.modules())
