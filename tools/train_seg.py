@@ -186,6 +186,10 @@ def main(argv=None):
             logger.warning('SYNC_BN off at %d ranks: BatchNorm statistics are per GPU (%d frames), so the run '
                            'depends on the GPU count' % (world, bs))
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device.index])
+    global_mean = bool(opt.get('GLOBAL_LOSS_MEAN', False))
+    if world > 1:
+        logger.info('GLOBAL_LOSS_MEAN %s: %s' % (global_mean, 'every point weighs 1 / N over all ranks, as on one GPU'
+                                                 if global_mean else "each rank's own mean, averaged (Pointcept)"))
     logger.info('model %s: %d parameters' % (cfg.MODEL.NAME, sum(p.numel() for p in model.parameters())))
     optimizer = engine.build_optimizer(model, opt)
     scheduler = engine.build_scheduler(optimizer, opt, iters_per_epoch * epochs)
@@ -211,7 +215,7 @@ def main(argv=None):
         t0 = time.time()
         tr = engine.train_one_epoch(model, train_loader, optimizer, scheduler, scaler, epoch, device, amp=amp,
                                     clip_grad=opt.get('CLIP_GRAD', None), log_every=int(opt.get('LOG_EVERY', 50)),
-                                    log_fn=log_fn, logger=logger, max_iters=max_iters)
+                                    log_fn=log_fn, logger=logger, max_iters=max_iters, global_mean=global_mean)
         t_train = time.time() - t0
         peak_gib = torch.cuda.max_memory_allocated(device) / 2 ** 30      # sizes the batch per GPU for S2
         torch.cuda.reset_peak_memory_stats(device)

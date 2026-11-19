@@ -14,6 +14,9 @@ handling, on CPU with stand-in models.
 - SYNC_BN: on in every training config; at two ranks every BatchNorm of the SpUNet becomes a SyncBatchNorm with
   unchanged checkpoint keys; at one rank or when off the model is untouched. (Equivalence with one GPU on CUDA:
   tools/analysis/pcseg_syncbn_check.py.)
+- GLOBAL_LOSS_MEAN: on in every training config; at one rank train_loss IS ce_loss; two gloo ranks with unequal point
+  counts take the same SGD step through train_one_epoch as one process on all frames (also when one rank holds only
+  IGNORE), and the per-rank mean does not.
 """
 import os
 import sys
@@ -357,3 +360,112 @@ def test_sync_bn_leaves_the_model_alone_at_one_rank_or_when_off(opt, world):
     assert out is model and n == 0
     assert not any(isinstance(m, torch.nn.SyncBatchNorm) for m in out.modules())
     assert any(isinstance(m, _BatchNorm) for m in out.modules())
+
+
+# --- GLOBAL_LOSS_MEAN (20261116_01 §8.3; user 2026-11-19: on, in semseg only) ----------------------------------------
+
+@pytest.mark.parametrize('name', PCSEG_TRAIN_CONFIGS)
+def test_every_pcseg_training_config_uses_the_global_loss_mean(name):
+    assert _load(name).OPTIMIZATION.GLOBAL_LOSS_MEAN is True
+
+
+@pytest.mark.parametrize('all_ignored', [False, True])
+@pytest.mark.parametrize('global_mean', [False, True])
+def test_train_loss_at_one_rank_is_ce_loss(global_mean, all_ignored):
+    """One rank (no process group): train_loss is ce_loss itself, so one-GPU rows keep G0's code path; the -1 sentinel
+    is masked, and an all-ignored batch gives a finite zero loss with zero gradient."""
+    from pcseg.losses_metrics import ce_loss
+    g = torch.Generator().manual_seed(0)
+    logits = torch.randn(50, NC, generator=g, requires_grad=True)
+    target = torch.randint(0, NC, (50,), generator=g)
+    target[::7] = IGNORE
+    if all_ignored:
+        target[:] = IGNORE
+    a = engine.train_loss(logits, target, global_mean)
+    assert torch.equal(a, ce_loss(logits, target)) and torch.isfinite(a)
+    a.backward()
+    assert torch.isfinite(logits.grad).all() and (not all_ignored or not logits.grad.any())
+
+
+class _ListSet(torch.utils.data.Dataset):
+    def __init__(self, samples):
+        self.samples = samples
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, i):
+        return self.samples[i]
+
+
+def _gm_samples(ignore_first_two):
+    """Four frames of unequal size (300 + 50 i points); optionally frames 0 and 1 are all IGNORE (so a rank holds
+    no labelled point)."""
+    ds = _TrainSet(n=4)
+    out = [ds[i] for i in range(4)]
+    if ignore_first_two:
+        for s in out[:2]:
+            s['segment'] = np.full_like(s['segment'], IGNORE)
+    return out
+
+
+def _gm_step(samples, global_mean):
+    """One SGD step (lr 1, so the update IS the gradient) of the linear stand-in through train_one_epoch on one batch
+    of `samples`; returns the updated parameters."""
+    torch.manual_seed(0)
+    model = _LinearModel()
+    if engine.dist_on():
+        model = torch.nn.parallel.DistributedDataParallel(model)
+    opt = torch.optim.SGD(model.parameters(), lr=1.0)
+    sch = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: 1.0)
+    loader = torch.utils.data.DataLoader(_ListSet(samples), batch_size=len(samples), collate_fn=collate)
+    scaler = torch.amp.GradScaler('cuda', enabled=False)
+    st = engine.train_one_epoch(model, loader, opt, sch, scaler, 0, torch.device('cpu'), amp=False, log_every=0,
+                                global_mean=global_mean)
+    m = model.module if hasattr(model, 'module') else model
+    return torch.cat([p.detach().flatten() for p in m.parameters()]), st['loss']
+
+
+def _gm_worker(rank, init_file, out_dir):
+    import torch.distributed as dist
+    dist.init_process_group('gloo', init_method='file://%s' % init_file, rank=rank, world_size=2)
+    try:
+        res = {}
+        for ign in (False, True):
+            mine = _gm_samples(ign)[2 * rank:2 * rank + 2]
+            for gm in (False, True):
+                res[(ign, gm)] = _gm_step(mine, gm)
+        torch.save(res, os.path.join(out_dir, 'rank%d.pt' % rank))
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.fixture(scope='module')
+def gm_ranks(tmp_path_factory):
+    import multiprocessing
+    import torch.distributed as dist
+    if not dist.is_gloo_available():
+        pytest.skip('gloo backend not available')
+    d = tmp_path_factory.mktemp('gm')
+    ctx = multiprocessing.get_context('spawn')
+    procs = [ctx.Process(target=_gm_worker, args=(r, str(d / 'init'), str(d))) for r in range(2)]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join(timeout=300)
+    assert all(p.exitcode == 0 for p in procs), [p.exitcode for p in procs]
+    return [torch.load(d / ('rank%d.pt' % r), weights_only=False) for r in range(2)]
+
+
+@pytest.mark.parametrize('ignore_first_two', [False, True])
+def test_global_loss_mean_makes_two_ranks_equal_one(gm_ranks, ignore_first_two):
+    """Two gloo ranks, frames {0,1} and {2,3} with unequal point counts, DDP, through train_one_epoch. With
+    GLOBAL_LOSS_MEAN the update equals one process's on all four frames, and so does the logged loss; with the
+    per-rank mean it does not (the power check). Also when every point on rank 0 is IGNORE."""
+    ref, ref_loss = _gm_step(_gm_samples(ignore_first_two), False)
+    (g0, l0), (g1, l1) = gm_ranks[0][(ignore_first_two, True)], gm_ranks[1][(ignore_first_two, True)]
+    assert torch.equal(g0, g1)
+    assert torch.allclose(g0, ref, rtol=0, atol=1e-6), float((g0 - ref).abs().max())
+    assert abs(l0 - ref_loss) < 1e-5 and abs(l1 - ref_loss) < 1e-5
+    r0, _ = gm_ranks[0][(ignore_first_two, False)]
+    assert float((r0 - ref).abs().max()) > 1e-3

@@ -16,6 +16,7 @@ import time
 import numpy as np
 import torch
 import torch.distributed as dist
+import torch.nn.functional as F
 
 from . import IGNORE
 from .losses_metrics import ce_loss, ConfusionMatrix
@@ -66,6 +67,27 @@ def convert_sync_bn(model, opt_cfg, world):
     return torch.nn.SyncBatchNorm.convert_sync_batchnorm(model), n
 
 
+def train_loss(logits, target, global_mean=False):
+    """The training cross-entropy over non-ignored points.
+
+    Plain (`ce_loss`, Pointcept's): each rank's mean over its OWN points. DDP then averages the ranks' gradients, so at
+    W ranks a point on rank r weighs 1 / (W n_r), which depends on how the points split between the GPUs.
+    OPTIMIZATION.GLOBAL_LOSS_MEAN (pcseg only; user 2026-11-19, 20261116_01 §8.3): the sum over the rank's points,
+    times W, over the all-reduced global count N, so after DDP's average every point weighs 1 / N, as on one GPU.
+    At one rank it IS ce_loss (G0's code path). Every rank must call it every step (the count is all-reduced)."""
+    _, world = rank_world()
+    if not global_mean or world == 1:
+        return ce_loss(logits, target)
+    valid = target >= 0
+    n = all_reduce_sum(valid.sum().to(torch.float64))
+    if float(n) == 0:
+        return logits.sum() * 0.0
+    if not bool(valid.any()):
+        return logits.sum() * 0.0                 # this rank's points are all ignored: zero gradient, others count
+    s = F.cross_entropy(logits[valid], target[valid], reduction='sum')
+    return s * (world / n.to(s.dtype))
+
+
 # --- optimisation ---------------------------------------------------------------------------------------------------
 
 def build_optimizer(model, opt_cfg):
@@ -84,8 +106,10 @@ def to_device(batch, device, keys=MODEL_KEYS):
 
 
 def train_one_epoch(model, loader, optimizer, scheduler, scaler, epoch, device, amp=True, clip_grad=None,
-                    log_every=50, log_fn=None, logger=None, max_iters=None):
-    """One pass over `loader`. Returns {loss, iters, data_s, step_s, frames}. Raises on a non-finite loss."""
+                    log_every=50, log_fn=None, logger=None, max_iters=None, global_mean=False):
+    """One pass over `loader`. Returns {loss, iters, data_s, step_s, frames}. Raises on a non-finite loss.
+    global_mean: OPTIMIZATION.GLOBAL_LOSS_MEAN (train_loss); the logged loss is then the global mean."""
+    _, world = rank_world()
     model.train()
     if hasattr(loader.sampler, 'set_epoch'):
         loader.sampler.set_epoch(epoch)
@@ -100,7 +124,7 @@ def train_one_epoch(model, loader, optimizer, scheduler, scaler, epoch, device, 
         t_data += t0 - end
         with torch.autocast('cuda', enabled=amp):
             logits = model(batch)
-        loss = ce_loss(logits.float(), batch['segment'])
+        loss = train_loss(logits.float(), batch['segment'], global_mean)
         if not torch.isfinite(loss):
             raise FloatingPointError('non-finite loss %s at epoch %d iteration %d (%s)'
                                      % (float(loss), epoch, it, batch['frame_key']))
@@ -112,7 +136,10 @@ def train_one_epoch(model, loader, optimizer, scheduler, scaler, epoch, device, 
         scaler.step(optimizer)
         scaler.update()
         scheduler.step()
-        lv = float(loss)                       # synchronises, so t_step is the real step time
+        if global_mean and world > 1:          # rank r holds s_r W / N: the sum over ranks / W is the global mean
+            lv = float(all_reduce_sum(loss.detach().clone())) / world
+        else:
+            lv = float(loss)                   # synchronises, so t_step is the real step time
         end = time.time()
         t_step += end - t0
         loss_sum += lv
