@@ -1,5 +1,6 @@
-"""pcseg SYNC_BN equivalence check on ONE GPU (experiments_md episodes/20261116_01 §8.3; user 2026-11-19: remove the
-dependence on the GPU count).
+"""pcseg SYNC_BN / GLOBAL_LOSS_MEAN equivalence check (experiments_md episodes/20261116_01 §8.3; user 2026-11-19: remove
+the dependence on the GPU count). --backend gloo: both ranks on ONE GPU (job 33824); --backend nccl: rank r on cuda:r,
+the two-GPU path (the DDP smoke, §8.4).
 
 Question: does a two-rank run with OPTIMIZATION.SYNC_BN compute what a one-rank run computes on the same global batch?
 
@@ -13,8 +14,10 @@ initialisation, in four arms:
 Each arm runs in fp32 and under autocast (AMP, as training). Every BN momentum is set to 1, so after a forward the
 running buffers ARE that forward's batch mean and unbiased variance. Recorded per arm: those statistics for every BN
 layer, the logits of all four frames, and the parameter gradients of two losses:
-  'rank'   each rank's mean CE (engine.train_one_epoch's loss), averaged over ranks by DDP;
-  'global' sum CE / global point count, times the world size (DDP averages): the one-rank mean, exactly.
+  'rank'   each rank's mean CE (engine.train_loss without GLOBAL_LOSS_MEAN), averaged over ranks by DDP;
+  'global' sum CE / global point count, times the world size (DDP averages): the one-rank mean, exactly. Up to job
+           33824 (ST3D 8d044d3) the script computed it with its own formula; since GLOBAL_LOSS_MEAN (411962e) it calls
+           engine.train_loss(global_mean=True), which all-reduces the count, i.e. the production path.
 Comparisons use rel(a, ref) = max|a - ref| / max|ref| per tensor, then the maximum over tensors.
 
 Readings (pre-declared in 20261116_01 §8.3 before the job):
@@ -26,8 +29,9 @@ Readings (pre-declared in 20261116_01 §8.3 before the job):
   Not a reading: the 'rank' gradients' difference from ref, i.e. the loss-weighting dependence left after SYNC_BN.
 PASS = R1-R3 and R5 hold and R4 is met.
 
-Run from ST3D/tools in the container on a 1-GPU allocation:
-  python analysis/pcseg_syncbn_check.py --cfg cfgs/pcseg/spunet-nuscenes.yaml --out /home/koyama/data/pcseg/syncbn_check
+Run from ST3D/tools in the container on a 1-GPU (gloo) or 2-GPU (nccl) allocation:
+  python analysis/pcseg_syncbn_check.py --cfg cfgs/pcseg/spunet-nuscenes.yaml --backend gloo \
+      --out /home/koyama/data/pcseg/syncbn_check/<job>
 (inside the container the data tree is /storage; --out is written as given).
 """
 import argparse
@@ -43,13 +47,11 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-import torch.nn.functional as F
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # tools/
 import _init_path  # noqa: F401,E402
 import train_seg  # noqa: E402
 from pcseg import engine  # noqa: E402
-from pcseg.losses_metrics import ce_loss  # noqa: E402
 from pcseg.pandaset_seg import collate  # noqa: E402
 
 BN = torch.nn.modules.batchnorm._BatchNorm
@@ -59,7 +61,7 @@ def bn_layers(model):
     return [(n, m) for n, m in model.named_modules() if isinstance(m, BN)]
 
 
-def run_arm(model, batch, n_global, world, amp):
+def run_arm(model, batch, amp):
     """Two forwards (one per loss) on `batch`; returns numpy copies of BN statistics, logits, gradients."""
     inner = model.module if hasattr(model, 'module') else model
     for _, m in bn_layers(inner):
@@ -72,11 +74,7 @@ def run_arm(model, batch, n_global, world, amp):
             logits = model(batch)
         logits = logits.float()
         seg = batch['segment']
-        if kind == 'rank':
-            loss = ce_loss(logits, seg)
-        else:
-            valid = seg >= 0
-            loss = F.cross_entropy(logits[valid], seg[valid], reduction='sum') / n_global * world
+        loss = engine.train_loss(logits, seg, global_mean=(kind == 'global'))   # = ce_loss in a lone process
         loss.backward()
         out['grad_' + kind] = {n: p.grad.detach().float().cpu().numpy().copy() for n, p in inner.named_parameters()}
         out['loss_' + kind] = float(loss)
@@ -90,22 +88,24 @@ def run_arm(model, batch, n_global, world, amp):
     return out
 
 
-def to_cuda(batch):
-    return engine.to_device(batch, torch.device('cuda', 0))
+def to_cuda(batch, dev=0):
+    return engine.to_device(batch, torch.device('cuda', dev))
 
 
-def child(rank, world, port, cfg_file, nc, state_path, samples, n_global, sync, amp, out_path):
+def child(rank, world, port, backend, cfg_file, nc, state_path, samples, sync, amp, out_path):
     os.environ['MASTER_ADDR'], os.environ['MASTER_PORT'] = '127.0.0.1', str(port)
-    torch.cuda.set_device(0)
-    dist.init_process_group('gloo', rank=rank, world_size=world)
+    dev = rank if backend == 'nccl' else 0
+    torch.cuda.set_device(dev)
+    dist.init_process_group(backend, rank=rank, world_size=world)
     model = train_seg.build_model(train_seg.load_cfg(cfg_file), nc)
     model.load_state_dict(torch.load(state_path, weights_only=True))
-    model = model.to(torch.device('cuda', 0))
+    model = model.to(torch.device('cuda', dev))
     model, n_sync = engine.convert_sync_bn(model, {'SYNC_BN': sync}, world)        # as train_seg.py
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[0])
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[dev])
     per = len(samples) // world
-    batch = to_cuda(collate(samples[rank * per:(rank + 1) * per]))
-    out = run_arm(model, batch, n_global, world, amp)
+    batch = to_cuda(collate(samples[rank * per:(rank + 1) * per]), dev)
+    out = run_arm(model, batch, amp)
+    out['gpu'] = torch.cuda.get_device_name(dev)
     out['n_sync_reported'] = n_sync
     out['points_valid'] = int((batch['segment'] >= 0).sum())
     if rank != 0:
@@ -144,6 +144,7 @@ def main():
     p.add_argument('--cfg', default='cfgs/pcseg/spunet-nuscenes.yaml')
     p.add_argument('--frames', type=int, nargs=4, default=[0, 7000, 14000, 21000])
     p.add_argument('--seed', type=int, default=0)
+    p.add_argument('--backend', choices=['gloo', 'nccl'], default='gloo')
     p.add_argument('--out', required=True)
     args = p.parse_args()
     t0 = time.time()
@@ -158,15 +159,16 @@ def main():
         samples = [ds[i] for i in args.frames]
         keys = [s['frame_key'] for s in samples]
         n_valid = [int((s['segment'] >= 0).sum()) for s in samples]
-        n_global = sum(n_valid)
         print('frames', keys, 'valid voxels', n_valid, flush=True)
         torch.manual_seed(args.seed)
         model0 = train_seg.build_model(cfg, nc)
         state_path = os.path.join(tmp, 'init.pth')
         torch.save(model0.state_dict(), state_path)
 
-        res = {'cfg': args.cfg, 'frames': keys, 'valid_voxels': n_valid, 'torch': torch.__version__,
-               'gpu': torch.cuda.get_device_name(0), 'readings': {}}
+        if args.backend == 'nccl' and torch.cuda.device_count() < 2:
+            raise SystemExit('--backend nccl needs two visible GPUs')
+        res = {'cfg': args.cfg, 'backend': args.backend, 'frames': keys, 'valid_voxels': n_valid,
+               'torch': torch.__version__, 'gpu': torch.cuda.get_device_name(0), 'readings': {}}
         ok = True
         for amp in (False, True):
             tag = 'amp' if amp else 'fp32'
@@ -175,13 +177,13 @@ def main():
                 m = train_seg.build_model(cfg, nc)
                 m.load_state_dict(model0.state_dict())
                 m = m.cuda()
-                arms[name] = run_arm(m, to_cuda(collate(samples)), n_global, 1, amp)
+                arms[name] = run_arm(m, to_cuda(collate(samples)), amp)
                 del m
                 torch.cuda.empty_cache()
             for name, sync in (('sync', True), ('nosync', False)):
                 outp = os.path.join(tmp, '%s_%s_rank%%d.pth' % (tag, name))
-                mp.spawn(child, args=(2, free_port(), args.cfg, nc, state_path, samples, n_global, sync, amp, outp),
-                         nprocs=2, join=True)
+                mp.spawn(child, args=(2, free_port(), args.backend, args.cfg, nc, state_path, samples, sync, amp,
+                                      outp), nprocs=2, join=True)
                 arms[name] = [torch.load(outp % r, weights_only=False) for r in range(2)]
             ref, ref2, sync, nosync = arms['ref'], arms['ref2'], arms['sync'], arms['nosync']
             n0 = len(sync[0]['logits'])                     # rank 0's voxels = the first rows of ref's batch
@@ -189,6 +191,7 @@ def main():
                 'n_bn': ref['n_bn'], 'sync_layers': [s['sync_layers'] for s in sync],
                 'nosync_sync_layers': [s['sync_layers'] for s in nosync],
                 'rank_valid_voxels': [s['points_valid'] for s in sync],
+                'rank_gpus': [s['gpu'] for s in sync],
                 'floor_bn': rel_bn(ref2['bn'], ref['bn']), 'floor_logits': rel(ref2['logits'], ref['logits']),
                 'floor_grad': rel_dict(ref2['grad_global'], ref['grad_global']),
                 'sync_bn': max(rel_bn(s['bn'], ref['bn']) for s in sync),
