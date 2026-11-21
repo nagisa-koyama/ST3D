@@ -1,0 +1,102 @@
+# ST3D++ ROW "S", S2 (nuScenes -> KITTI) (experiments_md 20261003_05 §5 item 51; user 2026-11-22 「(a) で」: Q1 (a), the
+# classification score only).
+#
+# ST3D++ (Yang et al., TPAMI 2022) on our CenterPoint, in our protocol. Built from the genuine-ST3D row 28650's config
+# (centerpoint-st3d-genuine-legal-nuscenes2kitti.yaml: start 25743, TEACHER_IS_STUDENT, 15 passes in 30 epochs, memory
+# consistency 0.1 + voting 2 / 3, its label-free cuts from job 28641, 30 epochs, LR 0.0015, epoch follows the target)
+# with what the released ST3D++ nuScenes -> KITTI Car config (CVMI-Lab/ST3D @ 8100ff4,
+# secondiou_st3d++_ros_car.yaml) adds or changes:
+#   - SASD: the labelled source in every iteration (SRC.USE_DATA / USE_GRAD) with DSNorm (SELF_TRAIN.DSNORM). Evaluation
+#     and pseudo-labelling use the target statistics; both start as copies of 25743's.
+#   - The source's per-domain loss weights: released [cls, box, iou] = [0, 1, 0] for Car; CenterHead takes per-class
+#     heatmap factors and a box factor (SEP_LOSS_WEIGHTS), Car 0 and Pedestrian / Cyclist 1 (their released configs set
+#     none); the target all 1. The source keeps 25743's own augmentation.
+#   - ST3D++'s target augmentation: object scaling [0.9, 1.1], object rotation p 1.0 +-pi/4, flip, world rotation
+#     +-pi/4, world scaling [0.95, 1.05].
+#   - CDA (PROG_AUG) OFF, as released for nuScenes -> KITTI Car (28650 had it ON).
+#   - VOTE_ON_EMPTY OFF: the released early return (a class with no prediction in a frame never forgets that frame's
+#     boxes), which is what the released single-class models do (28650 had it ON). KEEP_CLASS and UNION_CLASSES stay ON:
+#     with three classes they reproduce the per-class models.
+#   - Score: the heatmap classification score (Q1 (a)): CenterHead has no IoU head, so HQTM's IoU part is absent
+#     (disclosed). The released 0.5 / 0.2 lie on SECOND-IoU's IoU-dominated scale and are replaced, as in 28650, by the
+#     family's label-free rules for 25743 (job 28641).
+# UDA-legal: the released ROS [0.75, 1.0] (label-influenced) and SN are not used; nothing is tuned on our target results;
+# the third-party recipe values are used as released (decision F) and disclosed. Final epoch read.
+# Launch: scripts/submit.sh ... run_sourceonly_2gpu.sh <this cfg> <tag> <run> --pretrained_model <25743 ep20 host path>
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-nuscenes2kitti.yaml
+
+DATA_CONFIG_TAR:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_kitti_dataset.yaml
+    USE_PSEUDO_LABEL: True
+    DATA_AUGMENTOR:
+        DISABLE_AUG_LIST: ['placeholder']
+        AUG_CONFIG_LIST:
+            - NAME: random_object_scaling
+              SCALE_UNIFORM_NOISE: [0.9, 1.1]
+            - NAME: random_object_rotation
+              ROT_PROB: 1.0
+              ROT_UNIFORM_NOISE: [-0.78539816, 0.78539816]
+            - NAME: random_world_flip
+              ALONG_AXIS_LIST: ['x', 'y']
+            - NAME: random_world_rotation
+              WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+            - NAME: random_world_scaling
+              WORLD_SCALE_RANGE: [0.95, 1.05]
+
+OPTIMIZATION:
+    NUM_EPOCHS: 30
+    LR: 0.0015
+
+SELF_TRAIN:
+    TEACHER_IS_STUDENT: True
+    DSNORM: True
+    FROZEN_TEACHER_SINGLE_PASS: False
+    EPOCH_FOLLOWS: target
+    # Job 28641 (scripts/_genuine_st3d_cuts.sh), teacher 25743 epoch 20, pre-declared rules, nothing chosen here:
+    #   rule B on nuScenes val, 1 sweep (source-val precision >= 0.50): Car 0.20, Pedestrian 0.33, Cyclist 0.41
+    #   rule A on KITTI train (background-plateau upper half-maximum; plateau mode 0.407 / 0.407 / 0.349):
+    #       NEG_THRESH Car 0.589, Pedestrian 0.511, Cyclist 0.482
+    # Each rule-B cut is below its NEG_THRESH, so (plateau_neg_thresh.py step 6) SCORE_THRESH is raised to NEG_THRESH:
+    # no ignore band from the thresholds. Memory voting is then the only source of ignore regions.
+    SCORE_THRESH: [0.589, 0.511, 0.482]
+    NEG_THRESH: [0.589, 0.511, 0.482]
+    UPDATE_PSEUDO_LABEL: [0]
+    UPDATE_PSEUDO_LABEL_INTERVAL: 2
+    INIT_PS: None
+
+    SRC:
+        USE_DATA: True
+        USE_GRAD: True
+        LOSS_WEIGHT: 1.0
+        BACKWARD_TOGETHER: True
+        SEP_LOSS_WEIGHTS:
+            HM_CLASS_WEIGHTS: [0.0, 1.0, 1.0]
+            LOC_WEIGHT: 1.0
+
+    TAR:
+        USE_DATA: True
+        LOSS_WEIGHT: 1.0
+        BACKWARD_TOGETHER: True
+
+    PROG_AUG:
+        ENABLED: False
+        UPDATE_AUG: [5, 10, 20, 25]
+        SCALE: 1.1
+
+    MEMORY_ENSEMBLE:
+        ENABLED: True
+        NAME: consistency_ensemble
+        IOU_THRESH: 0.1
+        UNION_CLASSES: True
+        NMS_CONFIG:
+            NMS_TYPE: nms_gpu
+            MULTI_CLASSES_NMS: False
+            NMS_PRE_MAXSIZE: 512
+            NMS_POST_MAXSIZE: 100
+            NMS_THRESH: 0.1
+        MEMORY_VOTING:
+            ENABLED: True
+            IGNORE_THRESH: 2
+            RM_THRESH: 3
+            KEEP_CLASS: True
+            VOTE_ON_EMPTY: False
