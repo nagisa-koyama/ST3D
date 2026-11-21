@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Item 49b amendment (experiments_md 20261003_05 §5 item 49b, 2026-11-22 03:20 JST, procedure only, before any number):
+# Item 49b amendment (experiments_md 20261003_05 §5 item 49b, 2026-11-22 03:08 JST, procedure only, before any number):
 # E2 (34828) runs at ~1.2-1.7 s/it on node02 (28283, its seed-667 twin, ran 0.44 s/it on node06) and is projected past its
 # 30 h limit at about epoch 17-18. By the standing rule a row that hits its limit is RESUMED, not retrained (T14; precedent
 # 32630): this script, chained afterany:34828, resumes it from its last checkpoint with the same command plus --ckpt.

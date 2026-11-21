@@ -1,4 +1,4 @@
-# DTS source model D0 (experiments_md 20261003_05 §5 item 51; user 2026-11-22 ~02:55 JST 「(a) で」: DTS and ST3D++ re-run on
+# DTS source model D0 (experiments_md 20261003_05 §5 item 51; user 2026-11-22 「(a) で」, received 02:44-02:57 JST: DTS and ST3D++ re-run on
 # CenterPoint from the single-sweep source, nuScenes -> KITTI first).
 #
 # = 25743's recipe (centerpoint-sourceonly-nuscenes.yaml: 1 sweep, x y z, default ROS Car [0.85, 1.20], 20 epochs,
