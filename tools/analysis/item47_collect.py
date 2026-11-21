@@ -30,15 +30,15 @@ B_IN_RUN = {('BW', 'P'): (36.12, 36.30), ('BW', 'L'): (30.55, 30.78), ('BW', 'C1
 
 
 def wandb_ids(jobs):
+    """Row tag -> W&B run id from wandb's closing 'View run <name> at: .../runs/<id>' line (name and id on one line; the
+    stdout log). Segmenting stderr by 'setting up run' mislabelled rows (fixed 2026-11-21 before the report)."""
     out = {}
+    pat = re.compile(r'View run (i47[A-Z]+_\w+?_(?:none2|none|target)_s\d+_\d+) at: https://wandb\.ai/nagisa/st3d/runs/([a-z0-9]+)')
     for j in jobs:
-        for log in (TOOLS / 'logs').glob('error_%s_*.txt' % j):
-            text = log.read_text(errors='replace').replace('\r', '\n')
-            for seg in text.split('wandb: setting up run ')[1:]:
-                rid = seg.split('\n', 1)[0].strip()
-                m = re.search(r'\b(i47[A-Z]+_\w+?_(?:none2|none|target)_s\d+_\d+)\b', seg)
-                if m and m.group(1) not in out:
-                    out[m.group(1)] = rid
+        for log in (TOOLS / 'logs').glob('output_%s_*.txt' % j):
+            text = re.sub(r'\x1b\[[0-9;]*m', '', log.read_text(errors='replace').replace('\r', '\n'))
+            for m in pat.finditer(text):
+                out.setdefault(m.group(1), m.group(2))
     return out
 
 
