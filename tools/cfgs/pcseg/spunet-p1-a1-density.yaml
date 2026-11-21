@@ -1,0 +1,13 @@
+# pcseg S3a arm a1, Pandar64 -> PandarGT: in-cone point density per range bin (experiments_md episodes/20261116_01 §8.9).
+# The PandarGT oracle's recipe with its TRAIN set thinned to Pandar64's in-cone density: each PandarGT point is kept with
+# rate[b] = min(1, rho_Pandar64(b) / rho_PandarGT(b)) of its planar range bin b (0-300 m, 1.5 m bins), rho = in-cone
+# points per frame of each sensor's TRAIN split (label-free). Points outside the cone (0.4-0.8% of PandarGT's) are thinned
+# at the same per-bin rate. A frame-keyed fixed draw: the same thinned frame in every epoch (pcseg/factor_ops.py DENSITY).
+# term_a1 = mIoU(PandarGT oracle) - mIoU(this row), both on the UNPERTURBED PandarGT val, in the cone.
+# ANALYSIS row: trained on target labels (uda_legality_rule.md, analysis exception).
+# Magnitude: tools/analysis/pcseg_factor_stats.py -> pcseg_factor_tables.py (file provenance inside).
+_BASE_CONFIG_: cfgs/pcseg/spunet-pandasetgt.yaml
+
+DATA:
+  FACTOR_SWAP:
+    DENSITY: {RATES: /home/koyama/data/pcseg/factor_stats/a1_density_rate_pandargt_to_pandar64.json}

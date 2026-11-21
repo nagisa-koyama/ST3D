@@ -1,0 +1,8 @@
+# Reliance form of arm a4 (experiments_md episodes/20261116_01 §8.7 item 2): the Pandar64 oracle's config with its VAL
+# intensities mapped to PandarGT's response by a4's operator (same table). No training: score the UNPERTURBED Pandar64
+# oracle's checkpoint with tools/test_seg.py on this config.
+_BASE_CONFIG_: cfgs/pcseg/spunet-pandaset64.yaml
+
+DATA:
+  EVAL_PERTURB:
+    INTENSITY: {TABLE: /home/koyama/data/pcseg/factor_stats/a4_intensity_pandar64_to_pandargt_rings.npz}

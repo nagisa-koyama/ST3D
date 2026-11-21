@@ -1,0 +1,8 @@
+# Reliance form of arm a1 (experiments_md episodes/20261116_01 §8.7 item 2): the PandarGT oracle's config with its VAL set
+# thinned by a1's operator (pcseg/factor_ops.py DENSITY, same rate file). No training: score the UNPERTURBED PandarGT
+# oracle's checkpoint with tools/test_seg.py on this config. The scored points are the kept val points.
+_BASE_CONFIG_: cfgs/pcseg/spunet-pandasetgt.yaml
+
+DATA:
+  EVAL_PERTURB:
+    DENSITY: {RATES: /home/koyama/data/pcseg/factor_stats/a1_density_rate_pandargt_to_pandar64.json}

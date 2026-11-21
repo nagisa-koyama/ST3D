@@ -89,7 +89,8 @@ def key_seed(key, salt=0):
 
 class PandasetSeg(torch.utils.data.Dataset):
     """cfg keys: ROOT (dir holding the sequence dirs), SEQUENCES, LIDAR_DEVICE, SHIFT_COOR, CLASS_MAP, GRID_SIZE,
-    AUG (training only; None = no augmentation)."""
+    AUG (training only; None = no augmentation), FACTOR_OPS (optional: a factor-swap block, pcseg/factor_ops.py;
+    train_seg.py passes DATA.FACTOR_SWAP to the train set and DATA.EVAL_PERTURB to the val set)."""
 
     def __init__(self, cfg, training, logger=None):
         self.cfg, self.training = cfg, training
@@ -99,6 +100,12 @@ class PandasetSeg(torch.utils.data.Dataset):
         self.class_map = build_class_map(cfg['CLASS_MAP'])
         self.grid_size = float(cfg['GRID_SIZE'])
         self.aug = cfg.get('AUG', None) if training else None
+        ops = cfg.get('FACTOR_OPS', None)
+        if ops is None:
+            self.factor_ops = None
+        else:
+            from .factor_ops import FactorOps
+            self.factor_ops = FactorOps(ops, self.device, self.shift)
         seqs = list(cfg['SEQUENCES'])
         self.sequences = [s for s in seqs if has_semseg(self.root, s)]
         self.skipped = [s for s in seqs if s not in self.sequences]
@@ -108,6 +115,9 @@ class PandasetSeg(torch.utils.data.Dataset):
             logger.info('PandasetSeg (%s, device %d): %d sequences with semseg, %d frames; skipped without semseg: %s'
                         % ('train' if training else 'eval', self.device, len(self.sequences), len(self.frames),
                            self.skipped))
+            if self.factor_ops is not None:
+                logger.info('PandasetSeg (%s, device %d): factor ops, a fixed frame-keyed counterfactual set: %s'
+                            % ('train' if training else 'eval', self.device, self.factor_ops.describe()))
 
     def __len__(self):
         return len(self.frames)
@@ -122,7 +132,13 @@ class PandasetSeg(torch.utils.data.Dataset):
         seq, frame = self.frames[index]
         points, raw, _ = read_frame(self.root, seq, frame, self.device, self.pose(seq, frame))
         coord = points[:, :3] + self.shift
-        return coord, points[:, 3:4], self.class_map(raw), frame_key(seq, frame)
+        key = frame_key(seq, frame)
+        if self.factor_ops is None:
+            return coord, points[:, 3:4], self.class_map(raw), key
+        # Factor ops (20261116_01 §8.9): a keep index and the transformed intensity of the kept points; the labels
+        # follow by the SAME index, here, before augmentation and voxelization. The ops never see a label.
+        idx, intensity = self.factor_ops(coord, points[:, 3], key)
+        return coord[idx], intensity[:, None], self.class_map(raw[idx]), key
 
     def __getitem__(self, index):
         coord, strength, segment, key = self.load(index)

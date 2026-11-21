@@ -1,0 +1,12 @@
+# pcseg S3a arm a2, Pandar64 -> PandarGT: intensity response (experiments_md episodes/20261116_01 §8.9, §8.7 item 3).
+# The PandarGT oracle's recipe with its TRAIN intensities mapped to Pandar64's response: per range ring,
+# x -> F_Pandar64^-1(F_PandarGT(x)), detection's map_intensity_to_reference, quantiles of each sensor's IN-CONE TRAIN
+# points (label-free), the integer intensities dequantised over one step with a frame-keyed draw (pcseg/factor_ops.py
+# INTENSITY). Every PandarGT point is mapped, in the cone or not. Points and labels are unchanged.
+# term_a2 = mIoU(PandarGT oracle) - mIoU(this row), both on the UNPERTURBED PandarGT val, in the cone.
+# ANALYSIS row: trained on target labels (uda_legality_rule.md, analysis exception).
+_BASE_CONFIG_: cfgs/pcseg/spunet-pandasetgt.yaml
+
+DATA:
+  FACTOR_SWAP:
+    INTENSITY: {TABLE: /home/koyama/data/pcseg/factor_stats/a2_intensity_pandargt_to_pandar64_rings.npz}

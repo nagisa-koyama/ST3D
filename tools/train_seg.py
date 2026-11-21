@@ -63,9 +63,19 @@ def build_datasets(cfg, logger=None):
     if d.NAME == 'PandasetSeg':
         from pcseg.pandaset_seg import PandasetSeg
         common = {k: d[k] for k in ('ROOT', 'LIDAR_DEVICE', 'SHIFT_COOR', 'CLASS_MAP', 'GRID_SIZE')}
-        sets = {'train': PandasetSeg(dict(common, SEQUENCES=d.SPLITS.train, AUG=d.get('AUG', None)), True, logger),
-                'val': PandasetSeg(dict(common, SEQUENCES=d.SPLITS.val), False, logger)}
+        train_cfg = dict(common, SEQUENCES=d.SPLITS.train, AUG=d.get('AUG', None))
+        val_cfg = dict(common, SEQUENCES=d.SPLITS.val)
+        # Factor swaps (pcseg/factor_ops.py, 20261116_01 §8.9): FACTOR_SWAP changes the TRAIN set only (the term's
+        # arm, scored on the unperturbed val); EVAL_PERTURB changes the VAL set only (the reliance form). Absent: the
+        # dataset configs are today's, key for key.
+        if d.get('FACTOR_SWAP', None) is not None:
+            train_cfg['FACTOR_OPS'] = dict(d.FACTOR_SWAP)
+        if d.get('EVAL_PERTURB', None) is not None:
+            val_cfg['FACTOR_OPS'] = dict(d.EVAL_PERTURB)
+        sets = {'train': PandasetSeg(train_cfg, True, logger), 'val': PandasetSeg(val_cfg, False, logger)}
     elif d.NAME == 'NuScenesSeg':
+        if d.get('FACTOR_SWAP', None) is not None or d.get('EVAL_PERTURB', None) is not None:
+            raise ValueError('FACTOR_SWAP / EVAL_PERTURB are implemented for PandasetSeg only')
         from pcseg.nuscenes_seg import NuScenesSeg
         common = {k: d[k] for k in ('ROOT', 'LIDARSEG_ROOT', 'INDEX', 'SHIFT_COOR', 'CLASS_MAP', 'GRID_SIZE')}
         scenes = d.get('SCENES', None) or {}

@@ -1,0 +1,12 @@
+# pcseg S3a arm a3, PandarGT -> Pandar64: field of view (experiments_md episodes/20261116_01 §8.9).
+# The Pandar64 oracle's recipe trained on its in-cone points only: PandarGT's 60 deg cone at heading 0, engine.cone_mask's
+# convention, the SAME cone as the evaluation's (EVAL.CONE; tests/test_pcseg_factor_ops.py checks they agree) (pcseg/
+# factor_ops.py CONE). Labels are cut by the same mask.
+# term_a3 = mIoU(Pandar64 oracle) - mIoU(this row), both on the UNPERTURBED Pandar64 val; the cone matrix is the one
+# comparable with PandarGT, the full-frame one shows what the rest of the frame loses.
+# ANALYSIS row: trained on target labels (uda_legality_rule.md, analysis exception).
+_BASE_CONFIG_: cfgs/pcseg/spunet-pandaset64.yaml
+
+DATA:
+  FACTOR_SWAP:
+    CONE: {FOV_DEG: 60.0, HEADING_DEG: 0.0}
