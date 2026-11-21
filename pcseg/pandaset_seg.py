@@ -90,7 +90,9 @@ def key_seed(key, salt=0):
 class PandasetSeg(torch.utils.data.Dataset):
     """cfg keys: ROOT (dir holding the sequence dirs), SEQUENCES, LIDAR_DEVICE, SHIFT_COOR, CLASS_MAP, GRID_SIZE,
     AUG (training only; None = no augmentation), FACTOR_OPS (optional: a factor-swap block, pcseg/factor_ops.py;
-    train_seg.py passes DATA.FACTOR_SWAP to the train set and DATA.EVAL_PERTURB to the val set)."""
+    train_seg.py passes DATA.FACTOR_SWAP to the train set and DATA.EVAL_PERTURB to the val set). A RENDER entry in that
+    block (pcseg/render_cache.py) replaces each frame's cloud by its cached re-render first; the block's other
+    operators then act on the rendered cloud."""
 
     def __init__(self, cfg, training, logger=None):
         self.cfg, self.training = cfg, training
@@ -101,7 +103,14 @@ class PandasetSeg(torch.utils.data.Dataset):
         self.grid_size = float(cfg['GRID_SIZE'])
         self.aug = cfg.get('AUG', None) if training else None
         ops = cfg.get('FACTOR_OPS', None)
-        if ops is None:
+        ops = None if ops is None else dict(ops)
+        render = None if ops is None else ops.pop('RENDER', None)
+        if render is None:
+            self.render = None
+        else:
+            from .render_cache import RenderCache
+            self.render = RenderCache(render, self.device)
+        if not ops:
             self.factor_ops = None
         else:
             from .factor_ops import FactorOps
@@ -115,6 +124,9 @@ class PandasetSeg(torch.utils.data.Dataset):
             logger.info('PandasetSeg (%s, device %d): %d sequences with semseg, %d frames; skipped without semseg: %s'
                         % ('train' if training else 'eval', self.device, len(self.sequences), len(self.frames),
                            self.skipped))
+            if self.render is not None:
+                logger.info('PandasetSeg (%s, device %d): %s'
+                            % ('train' if training else 'eval', self.device, self.render.describe()))
             if self.factor_ops is not None:
                 logger.info('PandasetSeg (%s, device %d): factor ops, a fixed frame-keyed counterfactual set: %s'
                             % ('train' if training else 'eval', self.device, self.factor_ops.describe()))
@@ -130,7 +142,15 @@ class PandasetSeg(torch.utils.data.Dataset):
     def load(self, index):
         """Points (shifted) and model-class labels of one frame, before augmentation and voxelization."""
         seq, frame = self.frames[index]
-        points, raw, _ = read_frame(self.root, seq, frame, self.device, self.pose(seq, frame))
+        if self.render is None:
+            points, raw, _ = read_frame(self.root, seq, frame, self.device, self.pose(seq, frame))
+        else:
+            # The cached re-render (20261116_01 §8.9): new coordinates, and the intensity and raw label of the source
+            # point each came from, read here by its (frame, index). The cache holds no label.
+            def read(g):
+                pts, lab, _ = read_frame(self.root, seq, g, self.device, self.pose(seq, g))
+                return pts, lab
+            points, raw = self.render.load(read, seq, frame)
         coord = points[:, :3] + self.shift
         key = frame_key(seq, frame)
         if self.factor_ops is None:

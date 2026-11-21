@@ -43,10 +43,26 @@ class PoseTrack:
         self.pos = np.array([[p['position'][k] for k in 'xyz'] for p in poses], dtype=np.float64)
 
     def _at(self, times):
-        from scipy.spatial.transform import Slerp
-        t = np.clip(np.asarray(times, dtype=np.float64), self.times[0], self.times[-1])
-        rot = Slerp(self.times, self.rot)(t)
-        pos = np.stack([np.interp(t, self.times, self.pos[:, k]) for k in range(3)], axis=1)
+        """Pose at each time: linear position and slerp rotation between poses; BEYOND either end, the end segment's
+        constant velocity and body-frame angular velocity. A scan can start before the first pose: Pandar64 frame 0
+        spans the 100 ms before its pose time, so holding the end pose (the earlier clip) placed it up to one frame's
+        travel off (20261116_01 §8.9, b1/b2 preparation)."""
+        from scipy.spatial.transform import Rotation, Slerp
+        t = np.atleast_1d(np.asarray(times, dtype=np.float64))
+        tc = np.clip(t, self.times[0], self.times[-1])
+        rot = Slerp(self.times, self.rot)(tc)
+        pos = np.stack([np.interp(tc, self.times, self.pos[:, k]) for k in range(3)], axis=1)
+        quat = None
+        for m, (i, j), e in ((t < self.times[0], (0, 1), 0), (t > self.times[-1], (-2, -1), -1)):
+            if not m.any():
+                continue
+            s = (t[m] - self.times[e]) / (self.times[j] - self.times[i])
+            pos[m] = self.pos[e] + s[:, None] * (self.pos[j] - self.pos[i])
+            w = (self.rot[i].inv() * self.rot[j]).as_rotvec()
+            quat = rot.as_quat() if quat is None else quat
+            quat[m] = (self.rot[e] * Rotation.from_rotvec(s[:, None] * w)).as_quat()
+        if quat is not None:
+            rot = Rotation.from_quat(quat)
         return rot, pos
 
     def ego_static(self, xyz_world, frame):
