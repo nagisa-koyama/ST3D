@@ -368,6 +368,19 @@ class KittiDataset(DatasetTemplate):
 
         return ap_result_str, ap_dict
 
+    def _attach_ring_labels(self, data_dict, ring_cfg):
+        """Append the ring labels __getitem__ recovered from the stored order (DTS_VIEWS), instead of the base class's
+        elevation clustering, which mixes KITTI's interleaved laser blocks. BEAM_DISTILL / BEAM_DROP keep the base class's
+        behaviour, unchanged."""
+        if self.dataset_cfg.get('DTS_VIEWS', None) is None:
+            return super()._attach_ring_labels(data_dict, ring_cfg)
+        label = data_dict.pop('kitti_ring_label', None)
+        assert label is not None and len(label) == len(data_dict['points']), \
+            'KITTI ring labels come from the stored order in __getitem__ (set only for DTS_VIEWS)'
+        points = data_dict['points']
+        data_dict['points'] = np.concatenate([points, label.reshape(-1, 1).astype(points.dtype)], axis=1)
+        return data_dict
+
     def __len__(self):
         if self._merge_all_iters_to_one_epoch:
             return len(self.kitti_infos) * self.total_epochs
@@ -384,6 +397,15 @@ class KittiDataset(DatasetTemplate):
         sample_idx = info['point_cloud']['lidar_idx']
 
         points = self.get_lidar(sample_idx)
+        # DTS_VIEWS (training only): each point's laser ring from the stored order, before any crop or shift
+        # (kitti_rings.rings_from_order; label-free, as released DTS's kitti_beam_id.py), attached by the
+        # _attach_ring_labels override below for the per-beam drop of DTS's two views (experiments_md T05 §5 item 51).
+        dts_ring = None
+        if self.training and self.dataset_cfg.get('DTS_VIEWS', None) is not None:
+            from .kitti_rings import rings_from_order
+            dts_ring = rings_from_order(points[:, :3])[0]
+            assert dts_ring.max(initial=0) < self.dataset_cfg.DTS_VIEWS.NUM_BEAMS, \
+                'frame %s: %d rings from the stored order' % (sample_idx, dts_ring.max() + 1)
         # EVAL_RING_THIN (ANALYSIS, evaluation only; absent = unchanged): cut the evaluation scan's pattern by its laser
         # rings, recovered from the stored order before any crop or shift (kitti_rings.py): lines, columns, azimuth bins,
         # their count-matched random controls, or a render to another sensor's pattern. The KITTI arm of the
@@ -424,6 +446,8 @@ class KittiDataset(DatasetTemplate):
             pts_rect = calib.lidar_to_rect(points[:, 0:3])
             fov_flag = self.get_fov_flag(pts_rect, img_shape, calib)
             points = points[fov_flag]
+            if dts_ring is not None:
+                dts_ring = dts_ring[fov_flag]
 
         if self.dataset_cfg.get('SHIFT_COOR', None):
             points[:, 0:3] += np.array(self.dataset_cfg.SHIFT_COOR, dtype=np.float32)
@@ -434,6 +458,10 @@ class KittiDataset(DatasetTemplate):
             'calib': calib,
             'image_shape': img_shape
         }
+        if dts_ring is not None:
+            assert swap is None and not self.dataset_cfg.get('REMOVE_ORIGIN_GTS', None), \
+                'DTS_VIEWS ring labels follow the points only through steps that keep rows in order'
+            input_dict['kitti_ring_label'] = dts_ring
 
         if 'annos' in info:
             annos = info['annos']

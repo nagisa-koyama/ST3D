@@ -1,0 +1,10 @@
+# SMOKE ONLY (experiments_md T05 §5 item 51): row D's code path for one epoch from 25743 with 25743's cuts (job 28641),
+# before D0 exists. Not a result; never read.
+_BASE_CONFIG_: cfgs/da-ieee-access/item51/centerpoint-dts-nuscenes2kitti.yaml
+
+OPTIMIZATION:
+    NUM_EPOCHS: 1
+
+SELF_TRAIN:
+    SCORE_THRESH: [0.589, 0.511, 0.482]
+    NEG_THRESH: [0.589, 0.511, 0.482]

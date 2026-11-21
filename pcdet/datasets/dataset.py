@@ -223,6 +223,14 @@ class DatasetTemplate(torch_data.Dataset):
         self.beam_drop_cfg = self.dataset_cfg.get('BEAM_DROP', None)
         assert self.beam_distill_cfg is None or self.beam_drop_cfg is None, \
             'BEAM_DISTILL and BEAM_DROP both drop rings from the same cloud; set one of them'
+        # DTS_VIEWS {NUM_BEAMS, KEEP_PROB, TEACHER_KEEP_PROB} (training only; absent = unchanged): DTS's two views of
+        # one target frame (experiments_md T05 §5 item 51, row D) - a student view with each beam kept with probability
+        # KEEP_PROB and a teacher view with its own independent mask (TEACHER_KEEP_PROB; null = the whole cloud), both
+        # split after ONE augmentation draw (see _split_for_dts). Ring labels must come from the stored point order
+        # (a dataset override of _attach_ring_labels: KITTI, Waymo), never from elevation clustering.
+        self.dts_views_cfg = self.dataset_cfg.get('DTS_VIEWS', None)
+        assert self.dts_views_cfg is None or (self.beam_distill_cfg is None and self.beam_drop_cfg is None), \
+            'DTS_VIEWS, BEAM_DISTILL and BEAM_DROP all drop rings from the same cloud; set one of them'
         self.beam_centroids = None
         self.total_epochs = 0
         self._merge_all_iters_to_one_epoch = False
@@ -546,6 +554,11 @@ class DatasetTemplate(torch_data.Dataset):
             # print("data_dict[gt_names] in prepare_data after multi-head label update", data_dict['gt_names'])
 
         ring_cfg = self.beam_distill_cfg if self.beam_distill_cfg is not None else self.beam_drop_cfg
+        if ring_cfg is None:
+            ring_cfg = getattr(self, 'dts_views_cfg', None)  # getattr: datasets built without __init__ (test stubs)
+            if ring_cfg is not None:
+                assert type(self)._attach_ring_labels is not DatasetTemplate._attach_ring_labels, \
+                    'DTS_VIEWS needs ring labels from the stored point order (%s has no override)' % type(self).__name__
         if ring_cfg is not None and self.training:
             data_dict = self._attach_ring_labels(data_dict, ring_cfg)
 
@@ -617,6 +630,8 @@ class DatasetTemplate(torch_data.Dataset):
         # LiDAR Distillation: one augmented cloud, two beam resolutions.
         if self.beam_distill_cfg is not None and self.training:
             return self._split_for_beam_distillation(data_dict)
+        if getattr(self, 'dts_views_cfg', None) is not None and self.training:
+            return self._split_for_dts(data_dict)
         if self.beam_drop_cfg is not None and self.training:
             ring, data_dict['points'] = self._pop_ring_labels(data_dict['points'])
             data_dict['points'] = data_dict['points'][beam_downsample_utils.random_ring_subset_mask(
@@ -724,6 +739,34 @@ class DatasetTemplate(torch_data.Dataset):
         # Student first, so that if the pair is ever logged the order matches the loss's argument
         # order. The teacher runs the UNTOUCHED cloud - it is the high-beam model.
         return _stream(student_points), _stream(data_dict['points'])
+
+    def _split_for_dts(self, data_dict):
+        """(student, teacher) views of ONE augmented target frame for DTS (DTS_VIEWS; item 51 row D).
+
+        Released DTS (kitti_dataset_mt.py) reads the frame once, augments the student copy and leaves the teacher copy
+        un-augmented, then matches the two views' boxes after an inverse transform that is applied to another tensor
+        (the frame mismatch item 51 corrects). Splitting after the augmentor, as _split_for_beam_distillation does, puts
+        both views in one pose, so the graph nodes compare like with like; the departure is that the teacher's view is
+        augmented too. Each view draws its own per-beam Bernoulli mask (dts_utils.beam_keep_mask); points without a
+        beam (ring < 0) stay in both. Both views keep the same gt_boxes (the pseudo-labels).
+        """
+        from ..utils.dts_utils import beam_keep_mask
+        ring, points = self._pop_ring_labels(data_dict['points'])
+        cfg = self.dts_views_cfg
+        student = points[beam_keep_mask(ring, cfg.NUM_BEAMS, cfg.KEEP_PROB)]
+        tp = cfg.get('TEACHER_KEEP_PROB', None)
+        teacher = points if tp is None else points[beam_keep_mask(ring, cfg.NUM_BEAMS, tp)]
+
+        def _stream(pts):
+            stream = dict(data_dict)
+            stream['points'] = pts.copy()
+            for key in ('gt_boxes', 'gt_names', 'gt_classes', 'gt_scores'):
+                if stream.get(key, None) is not None:
+                    stream[key] = stream[key].copy()
+            stream = self.point_feature_encoder.forward(stream)
+            return self.data_processor.forward(data_dict=stream)
+
+        return _stream(student), _stream(teacher)
 
     @staticmethod
     def collate_batch(batch_list, _unused=False):

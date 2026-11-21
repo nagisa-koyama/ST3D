@@ -162,6 +162,15 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                 target_batch = next(dataloader_iter)
                 print('new iters')
 
+            # SELF_TRAIN.DTS (item 51 row D; absent = unchanged): the target dataset's DTS_VIEWS yields (student,
+            # teacher) views of one frame; the student view trains, the teacher view feeds the EMA teacher's graph.
+            dts_cfg = cfg.SELF_TRAIN.get('DTS', None)
+            teacher_batch = None
+            if dts_cfg is not None:
+                assert isinstance(target_batch, list) and len(target_batch) == 2, \
+                    'SELF_TRAIN.DTS needs DATA_CONFIG_TAR.DTS_VIEWS (a (student, teacher) pair per frame)'
+                target_batch, teacher_batch = target_batch
+
             target_batch['domain_label'] = 1
 
             if cfg.SELF_TRAIN.get('DSNORM', None):
@@ -173,6 +182,11 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
             # parameters for save pseudo label on the fly
             st_loss, st_tb_dict, st_disp_dict, st_dann_loss = model_func(model, target_batch)
             st_loss = cfg.SELF_TRAIN.TAR.get('LOSS_WEIGHT', 1.0) * st_loss
+            if dts_cfg is not None:
+                from pcdet.utils import dts_utils
+                oga, oga_tb = dts_utils.oga_from_batches(model, ema_model, target_batch, teacher_batch, dts_cfg)
+                st_loss = st_loss + oga
+                st_tb_dict.update(oga_tb)
             st_loss_meter.update(st_loss.item())
             st_loss_list.append(st_loss)
 
@@ -302,6 +316,9 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
         clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
         optimizer.step()
         accumulated_iter += 1
+        if cfg.SELF_TRAIN.get('DTS', None) is not None:
+            from pcdet.utils import dts_utils
+            dts_utils.ema_update(ema_model, model, float(cfg.SELF_TRAIN.DTS.get('EMA_MODEL_ALPHA', 0.999)))
 
         # log to wandb and console
         if rank == 0:
@@ -447,6 +464,18 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
                    source_samplers=None, target_sampler=None, lr_warmup_scheduler=None, ckpt_save_interval=1,
                    max_ckpt_save_num=50, merge_all_iters_to_one_epoch=False, logger=None, ema_model=None):
     accumulated_iter = start_iter
+
+    # SELF_TRAIN.DTS (item 51 row D): the EMA teacher of DTS's graph alignment, a copy of the student as it starts.
+    # Separate from model_teacher, which makes the epoch-0 pseudo-labels (FROZEN_TEACHER_SINGLE_PASS). It is not
+    # checkpointed, so a resumed run would restart it from the resumed student: refused.
+    if cfg.SELF_TRAIN.get('DTS', None) is not None:
+        from pcdet.utils import dts_utils
+        assert start_epoch == 0, 'SELF_TRAIN.DTS: the EMA teacher is not checkpointed; resuming is not supported'
+        assert ema_model is None, 'SELF_TRAIN.DTS builds its own EMA teacher'
+        ema_model = dts_utils.make_ema_teacher(model)
+        if logger is not None:
+            logger.info('self-training: DTS - EMA teacher (alpha %s) copied from the student; OGA on'
+                        % cfg.SELF_TRAIN.DTS.get('EMA_MODEL_ALPHA', 0.999))
 
     if model_teacher is None:
         model_teacher = model  # Sharrow copy to share the memory.
