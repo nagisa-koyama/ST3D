@@ -85,7 +85,8 @@ def _neighbours(filled):
 
 def fill_continuous(img, k_rows=4, dr_max=0.3, thetas=None, span_max_deg=None, h_fill=False):
     """Fill empty cells lying on one continuous surface; returns (filled image, which cells were filled, and for each
-    filled cell the row of its lower neighbour - the source of its non-xyz attributes).
+    filled cell the (row, column) of the z-buffer cell whose point supplies its non-xyz attributes: the lower neighbour
+    for a vertical fill, the left neighbour's source for a horizontal one; -1 elsewhere).
 
     Declared rule (20261009_01 §2.3): an empty cell is filled when the nearest filled cells BELOW and ABOVE it in the
     same column both exist, each within k_rows rows, and their ranges agree within dr_max; the range is linear in row
@@ -106,19 +107,25 @@ def fill_continuous(img, k_rows=4, dr_max=0.3, thetas=None, span_max_deg=None, h
         ok &= (thetas[ab] - thetas[bl]) <= np.radians(span_max_deg)
     with np.errstate(invalid='ignore'):
         ok &= np.abs(ra - rb) <= dr_max
-    out = img.copy(); src = np.full(img.shape, -1, np.int64)
+    out = img.copy(); src = np.full(img.shape, -1, np.int64); src_col = np.full(img.shape, -1, np.int64)
     if ok.any():
         w = ((r - below) / np.maximum(above - below, 1))[ok]
         out[ok] = rb[ok] + w * (ra[ok] - rb[ok])
-        src[ok] = bl[ok]
+        src[ok] = bl[ok]; src_col[ok] = cols[ok]
     new = ok.copy()
     if h_fill:
+        # A horizontally filled cell takes its attributes from its LEFT neighbour's source point: that neighbour is a
+        # z-buffer cell (source = itself) or a vertical fill (source = its lower neighbour). Until 2026-11-21 the cell got
+        # its own row as source, read the empty z-buffer index -1 and carried input point 0's attributes (latent: no
+        # config set H_FILL; experiments_md 20261116_01 §8.9, 20261121_03 §6).
+        own = np.where(filled, r.repeat(n_cols, 1), src); own_col = np.where(filled, cols, src_col)
         f2 = np.isfinite(out); left = np.roll(out, 1, axis=1); right = np.roll(out, -1, axis=1)
         okh = ~f2 & np.isfinite(left) & np.isfinite(right)
         with np.errstate(invalid='ignore'):
             okh &= np.abs(left - right) <= dr_max
-        out[okh] = ((left + right) / 2)[okh]; src[okh] = r.repeat(n_cols, 1)[okh]; new |= okh
-    return out, new, src
+        out[okh] = ((left + right) / 2)[okh]
+        src[okh] = np.roll(own, 1, axis=1)[okh]; src_col[okh] = np.roll(own_col, 1, axis=1)[okh]; new |= okh
+    return out, new, src, src_col
 
 
 def from_lattice(img, height, thetas, n_cols):
@@ -140,15 +147,17 @@ def rerender(points, spec, fill='rule', k_rows=4, dr_max=0.3, span_max_deg=None,
     row, col, rng, valid = to_lattice(points[:, :3], h, thetas, n_cols)
     img, idx = zbuffer(row, col, rng, valid, len(thetas), n_cols)
     if fill == 'rule':
-        img2, new, src = fill_continuous(img, k_rows, dr_max, thetas, span_max_deg, h_fill)
+        img2, new, src, src_col = fill_continuous(img, k_rows, dr_max, thetas, span_max_deg, h_fill)
     elif fill == 'none':
-        img2, new, src = img, np.zeros(img.shape, bool), np.full(img.shape, -1, np.int64)
+        img2, new = img, np.zeros(img.shape, bool)
+        src = src_col = np.full(img.shape, -1, np.int64)
     else:
         raise ValueError(f'unknown FILL {fill!r} (rule | none)')
     xyz, rows, cols = from_lattice(img2, h, thetas, n_cols)
     is_new = new[rows, cols]
     pidx = idx[rows, cols]
-    pidx[is_new] = idx[src[rows, cols][is_new], cols[is_new]]
-    out = points[np.maximum(pidx, 0)].copy()
+    pidx[is_new] = idx[src[rows, cols][is_new], src_col[rows, cols][is_new]]
+    assert (pidx >= 0).all(), 'a rendered cell has no source point (rerender_utils fill bookkeeping)'
+    out = points[pidx].copy()
     out[:, :3] = xyz.astype(points.dtype)
     return out, is_new

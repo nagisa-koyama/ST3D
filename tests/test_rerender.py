@@ -144,3 +144,28 @@ def test_waymo_top_spec_is_the_median_lattice():
     assert len(s['thetas']) == 64 and s['n_cols'] == 2650 and s['height'] == 2.184
     assert np.all(np.diff(s['thetas']) > 0)
     assert np.isclose(np.degrees(s['thetas'][0]), -17.61, atol=0.02) and np.isclose(np.degrees(s['thetas'][-1]), 2.33, atol=0.02)
+
+
+def test_horizontal_fill_carries_the_left_neighbours_attributes():
+    # Defect found 2026-11-21 by the LiDAR semseg session (experiments_md 20261116_01 §8.9; fix in 20261121_03 §6): an
+    # h-filled cell took its own row as source, read the empty z-buffer index -1, and carried INPUT POINT 0's columns.
+    # Point 0 is far from the filled cell and has a distinct value, so the old code fails here.
+    pts = [ray_point(40, 700, 25.0, extra=(1.0,)), ray_point(20, 100, 30.0, extra=(5.0,)),
+           ray_point(20, 102, 30.1, extra=(6.0,))]
+    out, filled = R.rerender(np.array(pts, np.float32), SPEC, h_fill=True)
+    assert filled.sum() == 1
+    assert out[filled][0, 3] == 5.0                                  # the left neighbour's, not point 0's 1.0
+
+
+def test_horizontal_fill_next_to_a_vertical_fill_takes_that_fills_source():
+    # column 100 and 102 are filled vertically between rows 18 and 22; column 101 is then filled horizontally, each cell
+    # from its left neighbour's source: rows 18-21 from (18, 100), row 22 from (22, 100); never point 0.
+    pts = [ray_point(40, 700, 25.0, extra=(1.0,)),
+           ray_point(18, 100, 30.0, extra=(5.0,)), ray_point(22, 100, 30.0, extra=(7.0,)),
+           ray_point(18, 102, 30.0, extra=(6.0,)), ray_point(22, 102, 30.0, extra=(8.0,))]
+    out, filled = R.rerender(np.array(pts, np.float32), SPEC, h_fill=True)
+    row, col, _, _ = R.to_lattice(out[:, :3], SPEC['height'], SPEC['thetas'], SPEC['n_cols'])
+    h = filled & (col == 101)
+    assert sorted(row[h].tolist()) == [18, 19, 20, 21, 22]
+    assert dict(zip(row[h].tolist(), out[h][:, 3].tolist())) == {18: 5.0, 19: 5.0, 20: 5.0, 21: 5.0, 22: 7.0}
+    assert 1.0 not in out[filled][:, 3]
