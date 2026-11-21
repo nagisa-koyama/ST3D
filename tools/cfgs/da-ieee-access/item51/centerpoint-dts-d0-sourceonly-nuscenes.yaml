@@ -1,0 +1,17 @@
+# DTS source model D0 (experiments_md 20261003_05 §5 item 51; user 2026-11-22 ~02:55 JST 「(a) で」: DTS and ST3D++ re-run on
+# CenterPoint from the single-sweep source, nuScenes -> KITTI first).
+#
+# = 25743's recipe (centerpoint-sourceonly-nuscenes.yaml: 1 sweep, x y z, default ROS Car [0.85, 1.20], 20 epochs,
+#   2 GPUs x 3, final epoch) + DTS's source-side random beam re-sampling (RBRS) up-sampling, as released
+#   (DTS secondiou_old_anchor_ros_rbrs.yaml:13-16: BEAM 32, pair probability 0.5, PHI_THRESHOLD 0.03 rad).
+#   Departure, disclosed: rings from nuScenes' stored ring index about the sensor origin, not a KMeans of elevation about
+#   the SHIFT_COOR-shifted origin (pcdet/utils/dts_utils.py). DTS's ROS [0.75, 1.0] is NOT used (label-influenced,
+#   uda_legality_rule.md decision C); DTS's 50 epochs and "best model" selection are replaced by 25743's 20 / final.
+# Up-sampling is applied in training only (nuscenes_dataset.get_lidar_with_sweeps); evaluation is 25743's.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-nuscenes.yaml
+
+DATA_CONFIG:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_nuscenes_dataset.yaml
+    TRAIN_BEAM_UPSAMPLE:
+        BEAM_PROB: 0.5
+        PHI_THRESHOLD: 0.03

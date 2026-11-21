@@ -395,6 +395,15 @@ class NuScenesDataset(DatasetTemplate):
             from ...utils.beam_downsample_utils import ring_thin_mask
             rng = eval_cut_rng(info['lidar_path'], thin.get('DRAW', None))
             points = points[ring_thin_mask(points, points[:, 4], thin.MODE, stride=thin.get('STRIDE', 2), rng=rng)]
+        # TRAIN_BEAM_UPSAMPLE {BEAM_PROB, PHI_THRESHOLD} (training only; absent = unchanged): DTS's RBRS up-sampling of the
+        # source keyframe, by its stored ring index and about the sensor origin (pcdet/utils/dts_utils.py; experiments_md
+        # T05 §5 item 51, the DTS source model D0). Ego returns go first, so no new point pairs an ego hit with the scene.
+        up = self.dataset_cfg.get('TRAIN_BEAM_UPSAMPLE', None)
+        if up is not None and self.training:
+            assert max_sweeps <= 1, 'TRAIN_BEAM_UPSAMPLE interpolates the rings of one scan'
+            from ...utils.dts_utils import ring_upsample
+            points = self.remove_ego_points(points, center_radius=1.5)
+            points = ring_upsample(points, points[:, 4], up.BEAM_PROB, up.PHI_THRESHOLD, n_rings=32)
         points = points[:, :4]
         if not self._eval_keep_ego_points():
             points = self.remove_ego_points(points, center_radius=1.5)

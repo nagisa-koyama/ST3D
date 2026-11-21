@@ -231,7 +231,7 @@ def get_corner_loss_lidar(pred_bbox3d: torch.Tensor, gt_bbox3d: torch.Tensor):
     return corner_loss.mean(dim=1)
 
 
-def neg_loss_cornernet(pred, gt, mask=None):
+def neg_loss_cornernet(pred, gt, mask=None, class_weights=None):
     """
     Refer to https://github.com/tianweiy/CenterPoint.
     Modified focal loss. Exactly the same as CornerNet. Runs faster and costs a little bit more memory
@@ -239,6 +239,9 @@ def neg_loss_cornernet(pred, gt, mask=None):
         pred: (batch x c x h x w)
         gt: (batch x c x h x w)
         mask: (batch x h x w)
+        class_weights: None (unchanged), or c per-class factors on each channel's positive and negative terms; the
+            normaliser (all positives) is unchanged, so all-ones equals None. ST3D++'s per-domain classification weight
+            on CenterHead (SEP_LOSS_WEIGHTS, experiments_md T05 §5 item 51).
     Returns:
     """
     pos_inds = gt.eq(1).float()
@@ -250,6 +253,11 @@ def neg_loss_cornernet(pred, gt, mask=None):
 
     pos_loss = torch.log(pred) * torch.pow(1 - pred, 2) * pos_inds
     neg_loss = torch.log(1 - pred) * torch.pow(pred, 2) * neg_weights * neg_inds
+    if class_weights is not None:
+        w = pred.new_tensor(class_weights).view(1, -1, 1, 1)
+        assert w.shape[1] == pred.shape[1], 'class_weights: one factor per heatmap channel'
+        pos_loss = pos_loss * w
+        neg_loss = neg_loss * w
 
     if mask is not None:
         mask = mask[:, None, :, :].float()

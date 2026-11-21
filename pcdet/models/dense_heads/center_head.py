@@ -306,17 +306,44 @@ class CenterHead(nn.Module):
         y = torch.clamp(x.sigmoid(), min=1e-4, max=1 - 1e-4)
         return y
 
+    def parse_sep_loss_weights(self, sep):
+        """SEP_LOSS_WEIGHTS for CenterHead -> (per-head lists of heatmap class weights, box-loss factor), or
+        (None, None) when absent. ST3D++ (experiments_md T05 §5 item 51) weights the source batch's [cls, box, iou]
+        losses; CenterHead has no IoU loss and one heatmap channel per class, so it takes a dict
+        {HM_CLASS_WEIGHTS: one factor per class, in CLASS_NAMES_EACH_HEAD order; LOC_WEIGHT: factor}. A list (the
+        SECOND-IoU format) is refused: CenterPoint ignored it silently before, which would hide a wrong config."""
+        if sep is None:
+            return None, None
+        if not isinstance(sep, dict):
+            raise ValueError('CenterHead SEP_LOSS_WEIGHTS takes {HM_CLASS_WEIGHTS: [...], LOC_WEIGHT: x}, got %r '
+                             '(the [cls, box, iou] list is SECOND-IoU\'s format)' % (sep,))
+        assert set(sep.keys()) <= {'HM_CLASS_WEIGHTS', 'LOC_WEIGHT'}, 'SEP_LOSS_WEIGHTS: unknown key in %r' % (sep,)
+        flat = [float(w) for w in sep.get('HM_CLASS_WEIGHTS', [1.0] * sum(len(c) for c in self.class_names_each_head))]
+        assert len(flat) == sum(len(c) for c in self.class_names_each_head), \
+            'SEP_LOSS_WEIGHTS.HM_CLASS_WEIGHTS: one factor per class of the head'
+        per_head, i = [], 0
+        for names in self.class_names_each_head:
+            per_head.append(flat[i:i + len(names)])
+            i += len(names)
+        return per_head, float(sep.get('LOC_WEIGHT', 1.0))
+
     def get_loss(self):
         pred_dicts = self.forward_ret_dict['pred_dicts']
         target_dicts = self.forward_ret_dict['target_dicts']
 
         tb_dict = {}
         loss = 0
+        hm_class_weights, loc_factor = self.parse_sep_loss_weights(self.forward_ret_dict.get('sep_loss_weights', None))
 
         for idx, pred_dict in enumerate(pred_dicts):
             pred_dict['hm'] = self.sigmoid(pred_dict['hm'])
-            hm_loss = self.hm_loss_func(
-                pred_dict['hm'], target_dicts['heatmaps'][idx], mask=target_dicts['heatmap_masks'][idx])
+            if hm_class_weights is None:
+                hm_loss = self.hm_loss_func(
+                    pred_dict['hm'], target_dicts['heatmaps'][idx], mask=target_dicts['heatmap_masks'][idx])
+            else:
+                hm_loss = loss_utils.neg_loss_cornernet(
+                    pred_dict['hm'], target_dicts['heatmaps'][idx], mask=target_dicts['heatmap_masks'][idx],
+                    class_weights=hm_class_weights[idx])
             hm_loss *= self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['cls_weight']
 
             target_boxes = target_dicts['target_boxes'][idx]
@@ -327,6 +354,8 @@ class CenterHead(nn.Module):
             )
             loc_loss = (reg_loss * reg_loss.new_tensor(self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['code_weights'])).sum()
             loc_loss = loc_loss * self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['loc_weight']
+            if loc_factor is not None:
+                loc_loss = loc_loss * loc_factor
 
             loss += hm_loss + loc_loss
             tb_dict['hm_loss_head_%d' % idx] = hm_loss.item()
@@ -426,6 +455,9 @@ class CenterHead(nn.Module):
         # previous batch's predictions to get_domain_adversarial_loss().
         self.forward_ret_dict.pop('domain_preds', None)
         self.forward_ret_dict.pop('domain_label', None)
+        # SEP_LOSS_WEIGHTS: per-domain loss weights the self-training loop stamps on a batch (ST3D++'s SASD; absent =
+        # unchanged). Set on every forward, so one batch's weights never reach the next batch's loss.
+        self.forward_ret_dict['sep_loss_weights'] = data_dict.get('SEP_LOSS_WEIGHTS', None)
         if self.domain_discriminator is not None and 'domain_label' in data_dict:
             self.forward_ret_dict['domain_label'] = data_dict['domain_label']
             self.forward_ret_dict['domain_preds'] = dann_utils.domain_predictions(
