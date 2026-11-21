@@ -5,7 +5,8 @@
 # (configs/nuscenes/semseg-spunet-v1m1-0-base.py at 77f87ab): never tuned on PandaSet results.
 # Launch (total batch 12, as Pointcept):
 #   ENTRY=train_seg.py BATCH=12 EST_H=<h> WANDB_NOTES="..." \
-#     scripts/submit.sh --job-name=<x> scripts/run_sourceonly_2gpu.sh cfgs/pcseg/spunet-pandaset64.yaml [tag] [run_name]
+#     scripts/submit.sh --nice=100 --job-name=<x> scripts/run_seg.sh cfgs/pcseg/spunet-pandaset64.yaml [tag] [run_name]
+# (from the seg worktree's tools/; run_seg.sh defaults ENTRY to train_seg.py)
 PCSEG: True
 
 DATA:
@@ -38,7 +39,9 @@ MODEL:
 
 OPTIMIZATION:
   BATCH_SIZE: 12                    # TOTAL across ranks; --batch_size overrides
-  NUM_EPOCHS: 50
+  NUM_EPOCHS: 391                   # STEP BUDGET, not epochs, is the constant (the detection paper's rule; experiments_md
+                                    # 20261116_01 §8.6): the nuScenes recipe's 50 x 2,344 = 117,200 steps / 300 iterations
+                                    # per epoch (3,600 frames at batch 12) = 390.7 -> 391 (117,300 steps)
   LR: 0.002
   WEIGHT_DECAY: 0.005
   PCT_START: 0.04
@@ -49,12 +52,13 @@ OPTIMIZATION:
   GLOBAL_LOSS_MEAN: True            # world > 1: CE sum / GLOBAL point count, not the per-rank mean; inert at one rank
   NUM_WORKERS: 8                    # per rank
   EVAL_BATCH_PER_GPU: 4
-  SAVE_EVERY: 5
+  SAVE_EVERY: 13                    # 470 MB per checkpoint: 31 saves over 391 epochs, not 78; the last is always saved
   MAX_CKPT: 3
   LOG_EVERY: 50
 
 EVAL:
-  EVERY: 5                          # the LAST epoch is always scored, and it is the number reported (pre-declared)
+  EVERY: 39                         # 11,700 steps, as the nuScenes recipe's every 5 epochs (11,720); the LAST epoch is
+                                    # always scored, and it is the number reported (pre-declared)
   CONE: {FOV_DEG: 60.0, HEADING_DEG: 0.0}   # PandarGT's cone, as EVAL_FOV_FILTER in detection; an extra matrix
 
 TARGET_DUMP_FRAMES: 4

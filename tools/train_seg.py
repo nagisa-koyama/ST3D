@@ -2,7 +2,7 @@
 
 Launched through the detection launcher unchanged, which freezes the code into the job's scratch and handles DDP:
 
-    ENTRY=train_seg.py BATCH=<total batch> scripts/submit.sh ... scripts/run_sourceonly_2gpu.sh cfgs/pcseg/<x>.yaml [tag] [run_name]
+    ENTRY=train_seg.py BATCH=<total batch> scripts/submit.sh ... scripts/run_seg.sh cfgs/pcseg/<x>.yaml [tag] [run_name]
 
 It takes the launcher's arguments (--cfg_file, --batch_size TOTAL across ranks, --fix_random_seed, --run_name,
 --extra_tag, --launcher, --tcp_port) and never imports a pcdet dataset, model or the detection evaluation. Its end

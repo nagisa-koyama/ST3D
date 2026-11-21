@@ -4,7 +4,7 @@
 # The LAST epoch is the number read (pre-declared, as P1); Pointcept keeps its best epoch on val instead.
 # Launch (total batch 12, as Pointcept):
 #   ENTRY=train_seg.py BATCH=12 EST_H=<h> WANDB_NOTES="..." \
-#     scripts/submit.sh --job-name=<x> scripts/run_sourceonly_2gpu.sh cfgs/pcseg/spunet-nuscenes.yaml [tag] [run_name]
+#     scripts/submit.sh --job-name=<x> scripts/run_seg.sh cfgs/pcseg/spunet-nuscenes.yaml [tag] [run_name]
 PCSEG: True
 
 DATA:

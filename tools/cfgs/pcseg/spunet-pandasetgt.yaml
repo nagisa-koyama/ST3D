@@ -4,7 +4,7 @@
 # detection family's PandaSet value: both devices' points are in the same ego frame, and da_pandaset_flash_dataset.yaml
 # inherits the same 0.30.
 #   ENTRY=train_seg.py BATCH=12 EST_H=<h> WANDB_NOTES="..." \
-#     scripts/submit.sh --job-name=<x> scripts/run_sourceonly_2gpu.sh cfgs/pcseg/spunet-pandasetgt.yaml [tag] [run_name]
+#     scripts/submit.sh --nice=100 --job-name=<x> scripts/run_seg.sh cfgs/pcseg/spunet-pandasetgt.yaml [tag] [run_name]
 _BASE_CONFIG_: cfgs/pcseg/spunet-pandaset64.yaml
 
 DATA:

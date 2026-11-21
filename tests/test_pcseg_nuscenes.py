@@ -176,13 +176,24 @@ def _load(name):
         os.chdir(cwd)
 
 
+NUSCENES_TRAIN_FRAMES = 28130
+PANDASET_TRAIN_FRAMES = 45 * 80
+
+
 def test_nuscenes_configs_resolve_to_the_pointcept_recipe():
     _, base = _load('spunet-nuscenes')
     _, smoke = _load('spunet-nuscenes-smoke')
     _, pandaset = _load('spunet-pandaset64')
     assert base.MODEL == pandaset.MODEL and base.DATA.AUG == pandaset.DATA.AUG        # one recipe for both datasets
-    for k in ('BATCH_SIZE', 'NUM_EPOCHS', 'LR', 'WEIGHT_DECAY', 'PCT_START', 'DIV_FACTOR', 'FINAL_DIV_FACTOR', 'AMP'):
+    for k in ('BATCH_SIZE', 'LR', 'WEIGHT_DECAY', 'PCT_START', 'DIV_FACTOR', 'FINAL_DIV_FACTOR', 'AMP'):
         assert base.OPTIMIZATION[k] == pandaset.OPTIMIZATION[k], k
+    # Step budget, not epochs, is the constant (the detection paper's rule; experiments_md 20261116_01 §8.6). Frame
+    # counts as logged by G0 33189 (28,130) and the P1 oracles 33191 / 33192 (3,600 = 45 sequences x 80); drop_last.
+    steps = base.OPTIMIZATION.NUM_EPOCHS * (NUSCENES_TRAIN_FRAMES // base.OPTIMIZATION.BATCH_SIZE)
+    per_epoch = PANDASET_TRAIN_FRAMES // pandaset.OPTIMIZATION.BATCH_SIZE
+    assert steps == 117200 and per_epoch == 300
+    assert pandaset.OPTIMIZATION.NUM_EPOCHS == round(steps / per_epoch) == 391
+    assert pandaset.EVAL.EVERY * per_epoch == 11700        # as the nuScenes recipe's every 5 epochs (11,720 steps)
     assert base.DATA.CLASS_MAP == 'nuscenes_lidarseg16' and list(base.DATA.SHIFT_COOR) == [0.0, 0.0, 0.0]
     assert 'CONE' not in base.EVAL
     assert smoke.MODEL == base.MODEL and smoke.DATA.AUG == base.DATA.AUG and smoke.OPTIMIZATION.BATCH_SIZE == 12
