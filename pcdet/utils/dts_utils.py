@@ -234,7 +234,9 @@ def oga_from_batches(model, ema_model, student_batch, teacher_batch, cfg):
         t_head = ema_model.dense_head
         t_nodes = decode_nodes(t_head, t_head.forward_ret_dict['pred_dicts'], tn.TOPK, tn.NMS_THRESH, tn.POST_MAX, False)
         t_feat = tb['spatial_features_2d']
-    s_feat = student_batch['spatial_features_2d']
+    # The student's map from the head itself: under DDP the forward ran on a copy of student_batch (smoke 34914).
+    s_feat = head.forward_ret_dict.pop('spatial_features_2d', None)
+    assert s_feat is not None, 'SELF_TRAIN.DTS: the student batch must carry DTS_KEEP_BEV (train_st_utils sets it)'
     args = (head.point_cloud_range, head.voxel_size, head.feature_map_stride, g)
     student = [(b, l, bev_box_pool(s_feat[k], b, *args)) for k, (b, l) in enumerate(s_nodes)]
     teacher = [(b, l, bev_box_pool(t_feat[k], b, *args)) for k, (b, l) in enumerate(t_nodes)]

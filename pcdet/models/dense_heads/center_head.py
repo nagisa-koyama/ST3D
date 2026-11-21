@@ -458,6 +458,12 @@ class CenterHead(nn.Module):
         # SEP_LOSS_WEIGHTS: per-domain loss weights the self-training loop stamps on a batch (ST3D++'s SASD; absent =
         # unchanged). Set on every forward, so one batch's weights never reach the next batch's loss.
         self.forward_ret_dict['sep_loss_weights'] = data_dict.get('SEP_LOSS_WEIGHTS', None)
+        # DTS_KEEP_BEV (stamped on a batch by the self-training loop for SELF_TRAIN.DTS; absent = unchanged): keep this
+        # forward's BEV map for DTS's graph loss. Under DDP the module receives a COPY of the batch dict, so the caller
+        # cannot read the map back from its own dict (smoke 34914: KeyError 'spatial_features_2d').
+        self.forward_ret_dict.pop('spatial_features_2d', None)
+        if self.training and data_dict.get('DTS_KEEP_BEV', False):
+            self.forward_ret_dict['spatial_features_2d'] = spatial_features_2d
         if self.domain_discriminator is not None and 'domain_label' in data_dict:
             self.forward_ret_dict['domain_label'] = data_dict['domain_label']
             self.forward_ret_dict['domain_preds'] = dann_utils.domain_predictions(

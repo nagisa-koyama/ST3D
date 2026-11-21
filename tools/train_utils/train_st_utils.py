@@ -170,6 +170,7 @@ def train_one_epoch_st(model, optimizer, source_readers, target_loader, model_fu
                 assert isinstance(target_batch, list) and len(target_batch) == 2, \
                     'SELF_TRAIN.DTS needs DATA_CONFIG_TAR.DTS_VIEWS (a (student, teacher) pair per frame)'
                 target_batch, teacher_batch = target_batch
+                target_batch['DTS_KEEP_BEV'] = True   # CenterHead keeps the student's BEV map for the graph loss
 
             target_batch['domain_label'] = 1
 

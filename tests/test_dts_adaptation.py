@@ -147,3 +147,46 @@ def test_decode_nodes_returns_raw_logits_of_the_peaks(monkeypatch):
     pd['hm'] = torch.clamp(hm.sigmoid(), 1e-4, 1 - 1e-4)
     (_, logits2), = d.decode_nodes(head, [pd], topk=5, nms_thresh=0.8, post_max=512, hm_is_prob=True)
     assert torch.allclose(logits2, logits, atol=1e-4)
+
+
+def test_oga_reads_the_student_map_from_the_head_not_the_callers_batch(monkeypatch):
+    """Smoke 34914: under DDP the model's forward runs on a COPY of the batch dict, so the student's
+    spatial_features_2d is never in the caller's dict. The pre-fix oga_from_batches read it from there (KeyError)."""
+    from pcdet.models import load_data_to_gpu  # noqa: F401  (the function oga_from_batches imports)
+    feat = torch.randn(1, 4, 40, 50, requires_grad=True)
+    nodes_ = [(torch.tensor([box(3.0, 4.0)]), torch.tensor([1.0]))]
+    monkeypatch.setattr(d, 'decode_nodes', lambda *a, **k: nodes_)
+    head = EasyDict(point_cloud_range=[0.0, 0.0, -2.0, 20.0, 16.0, 4.0], voxel_size=[0.1, 0.1, 0.15], feature_map_stride=4,
+                    forward_ret_dict={'pred_dicts': [], 'spatial_features_2d': feat})
+    model = EasyDict(dense_head=head)
+    ema = EasyDict(module_list=[], dense_head=EasyDict(forward_ret_dict={'pred_dicts': []}))
+    student_batch = {'batch_size': 1}                      # what the caller holds after a DDP forward
+    teacher_batch = {'batch_size': 1, 'spatial_features_2d': feat.detach() + 0.1}
+    cfg = EasyDict(CFG, STUDENT_NODES={'TOPK': 9, 'NMS_THRESH': 0.8, 'POST_MAX': 5},
+                   TEACHER_NODES={'TOPK': 9, 'NMS_THRESH': 0.7, 'POST_MAX': 5})
+    loss, tb = d.oga_from_batches(model, ema, student_batch, teacher_batch, cfg)
+    assert tb['oga_pairs'] == 1 and 'spatial_features_2d' not in head.forward_ret_dict  # popped: not kept to the next step
+    loss.backward()
+    assert feat.grad is not None and feat.grad.abs().sum() > 0
+    with pytest.raises(AssertionError):
+        d.oga_from_batches(model, ema, student_batch, teacher_batch, cfg)  # no map kept: refused, not silent
+
+
+def test_center_head_keeps_the_bev_map_only_when_the_batch_asks():
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_center_head_ignore_regions import FMAP, _head
+    for ask in (True, False):
+        head = _head()
+        head.forward_ret_dict = {'spatial_features_2d': 'stale'}
+        head.shared_conv = torch.nn.Identity()
+        head.domain_discriminator = None
+        head.heads_list = []
+        head.training = True
+        m = torch.zeros(1, 1, *FMAP)
+        try:
+            head.forward({'spatial_features_2d': m, 'DTS_KEEP_BEV': ask} if ask else {'spatial_features_2d': m})
+        except (IndexError, KeyError):
+            pass  # the stub has no heads; the map is kept before they are needed
+        assert (head.forward_ret_dict.get('spatial_features_2d') is m) == ask
