@@ -274,8 +274,13 @@ def sensor_coords_at(track, xyz_world, times, origin, rot):
 def assign_time_aware(track, xyz_world, lattice, origin, rot, time_of_direction, t0, n_iter=2):
     """Cell and sensor-frame coordinates of world points as the sensor would see them at the firing time of the ray
     they fall on. `time_of_direction(az_deg, el_deg)` is the frame's firing time per direction (e.g. the time of the
-    nearest real return); start from time t0 and iterate n_iter times. Returns (cell, q, times)."""
-    times = np.full(len(xyz_world), float(t0))
+    nearest real return); start from t0 (one time, or one per point) and iterate n_iter times. Returns (cell, q, times).
+
+    Start from each point's own capture time where it is known. A PandarGT frame scans its top rows twice, one scan
+    period (~96 ms) apart, so a static point there has two self-consistent firing times; from a common start (the
+    frame's median time) 0.5-3.7% of a frame's own points converged to the other pass and lost their ray (20261116_01
+    §8.9). From the capture time the solution nearest that time wins, and a frame rendered onto its own rays is exact."""
+    times = np.broadcast_to(np.asarray(t0, dtype=np.float64), (len(xyz_world),)).copy()
     q = sensor_coords_at(track, xyz_world, times, origin, rot)
     for _ in range(n_iter):
         az, el, _ = angles_deg(q)

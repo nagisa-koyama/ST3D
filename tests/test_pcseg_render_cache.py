@@ -216,3 +216,27 @@ def test_dedup_scans_keeps_one_copy_closest_to_the_frame():
     assert dedup_scans(1, src) == ([1, 2], [0])
     assert dedup_scans(2, {g: src[g] for g in (1, 2)}) == ([1, 2], [])
     assert dedup_scans(5, {4: scan(0.4), 5: scan(0.5), 6: scan(0.6)}) == ([4, 5, 6], [])
+
+
+def test_time_search_from_capture_time_is_exact_on_a_doubly_scanned_band(tmp_path):
+    """PandarGT scans its top rows twice per frame, ~96 ms apart. A static wall seen by both passes, rendered onto the
+    frame's own rays: started from each point's capture time every point keeps its own ray. From the frame's median
+    time (the code this replaces, which took one scalar start) some points converge to the other pass."""
+    from pcseg.render import PoseTrack, TemplateLattice, angles_deg, assign_time_aware, nearest_time, to_sensor, zbuffer
+    track = PoseTrack(write_track(tmp_path, [0.0, 0.1, 0.2, 0.3], [[0, 10.0 * t, 0] for t in (0, .1, .2, .3)],
+                                  [0, 0, 0, 0]), 'seq')                # 10 m/s along PandaSet's forward axis (world y)
+    rng = np.random.default_rng(0)
+    n = 400
+    wall = np.c_[rng.uniform(-6, 6, 2 * n), np.full(2 * n, 25.0), rng.uniform(-1, 3, 2 * n)]
+    t = np.r_[rng.uniform(0.000, 0.010, n), rng.uniform(0.096, 0.106, n)]   # pass A, pass B
+    O, R = np.zeros(3), np.eye(3)
+    az, el, _ = angles_deg(to_sensor(track.ego_at(wall, t), O, R))
+    L = TemplateLattice(np.c_[az, el], 0.075)
+    tof = nearest_time(az, el, t)
+    cell, q, times = assign_time_aware(track, wall, L, O, R, tof, t)
+    np.testing.assert_array_equal(cell, np.arange(2 * n))
+    np.testing.assert_allclose(times, t)
+    cells, win = zbuffer(cell, np.linalg.norm(q, axis=1))
+    assert len(cells) == 2 * n
+    cell_m, _, _ = assign_time_aware(track, wall, L, O, R, tof, float(np.median(t)))
+    assert (cell_m != np.arange(2 * n)).any()                          # the common start is not exact here

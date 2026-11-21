@@ -18,6 +18,8 @@ Fixed before any row (declared in 20261116_01 §8.9 before this script ran):
     published vertical resolution between channels 6 and 54; the fitted table's 48 densest gaps are 0.161-0.2 deg).
     PandarGT: 0.15 deg / 2 (its median line spacing, measured on TRAIN clouds by pcseg_render_sensor_model.py; Hesai
     publishes none). The render study's 0.07 deg was chosen, not derived, and is not used here;
+  - firing time: each source point's search starts at its own capture time (assign_time_aware). Where several firing
+    times fit (PandarGT scans its top rows twice per frame) the one nearest the capture time wins;
   - labels: the z-buffer winner's (pcseg.render.carry_labels), applied at LOAD time by index; no fill, so no -1 index.
   - `mixed` (stored, never read by the loader): another valid class among the cell's candidates within
     max(0.5 m, 2%) of the winner's range. A diagnostic of the winner rule, from the SOURCE labels only.
@@ -99,8 +101,9 @@ def target_model(kind, track, f, xyz, t, models, DAZ):
     return L, O, R, nearest_time(az, el, t), float(np.median(t)), q, extra
 
 
-def render_frame(track, f, L, O, R, time_of, t0, xyz_in):
-    cell, q, times = assign_time_aware(track, xyz_in, L, O, R, time_of, t0)
+def render_frame(track, f, L, O, R, time_of, t_in, xyz_in):
+    """t_in: each source point's own capture time, the start of its firing-time search (pcseg.render.assign_time_aware)."""
+    cell, q, times = assign_time_aware(track, xyz_in, L, O, R, time_of, t_in)
     rng = np.linalg.norm(q, axis=1)
     cells, win = zbuffer(cell, rng)
     p = from_sensor(L.rays(cells) * rng[win][:, None], O, R)
@@ -173,13 +176,14 @@ def run_seq(job):
         gs, dup = dedup_scans(f, src_all)
         src = {g: src_all[g] for g in gs}
         xyz_in = np.concatenate([src[g][0] for g in gs])
+        t_in = np.concatenate([src[g][1] for g in gs])
         lab_in = np.concatenate([src[g][2] for g in gs])
         off_in = np.concatenate([np.full(len(src[g][0]), g - f, np.int8) for g in gs])
         idx_in = np.concatenate([np.arange(len(src[g][0]), dtype=np.int32) for g in gs])
         n_src = np.array([len(src[f + o][0]) if (f + o) in src else -1 for o in OFFSETS], dtype=np.int32)
         xyz_t, t_t = src[f][:2] if tgt_device == SOURCE_DEVICE else get(tgt_device, f)
         L, O, R, time_of, t0, q_real, extra = target_model(kind, track, f, xyz_t, t_t, models, DAZ)
-        cell, rng, cells, win, xyz_out = render_frame(track, f, L, O, R, time_of, t0, xyz_in)
+        cell, rng, cells, win, xyz_out = render_frame(track, f, L, O, R, time_of, t_in, xyz_in)
         mixed = mixed_flag(cell, rng, lab_in, cells, win)
         np.savez(os.path.join(out, seq, '%02d.npz' % f), src_off=off_in[win], src_idx=idx_in[win],
                  xyz=xyz_out.astype(np.float32), n_src=n_src, mixed=mixed)
@@ -191,7 +195,7 @@ def run_seq(job):
                **fill_stats(track, f, L, q_real, xyz_t, cells, xyz_out)}
         if K > 0 and f % 10 == 0:
             m0 = off_in == 0
-            _, _, c0, _, x0 = render_frame(track, f, L, O, R, time_of, t0, xyz_in[m0])
+            _, _, c0, _, x0 = render_frame(track, f, L, O, R, time_of, t_in[m0], xyz_in[m0])
             row['depth1'] = fill_stats(track, f, L, q_real, xyz_t, c0, x0)
         rows.append(row)
     print('%s: %d frames in %.0fs' % (seq, len(frames), time.time() - t_start), flush=True)
