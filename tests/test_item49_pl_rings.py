@@ -27,3 +27,10 @@ def test_classify():
 def test_result_dirs_follow_item46_tags():
     assert str(m.result_dir('PL', 'src')).endswith('centerpoint-accum-legaldepth-st3d-nuscenes2kitti/i46_Ps2_src/eval/epoch_20/i46_Ps2_src')
     assert str(m.result_dir('T', 'none')).endswith('centerpoint-accum-legaldepth-nuscenes2kitti/i46_Ts2_none/eval/epoch_20/i46_Ts2_none')
+
+
+def test_seed_667_rows_share_the_teacher_and_use_the_49b_tags():
+    assert str(m.result_dir('T', 'none', 667)) == str(m.result_dir('T', 'none', 666))  # 27468 is the teacher of both seeds
+    assert str(m.result_dir('E', 'src', 667)).endswith('/i46_E2s2_src/eval/epoch_20/i46_E2s2_src')
+    assert str(m.result_dir('PL', 'none', 667)).endswith('/i46_P2s2_none/eval/epoch_20/i46_P2s2_none')
+    assert m.JOB[667]['PL'] == 28283 and m.JOB[667]['T'] == 27468
