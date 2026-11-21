@@ -1,0 +1,9 @@
+# EVAL-ONLY twin for experiments_md 20261003_05 §5 item 47 (design fixed 2026-11-21 19:30 JST, before any number): the
+# KITTI O row scored on S', the target's own clouds thinned to nuScenes' lattice by P's own training cut (P_K's TRAIN_FACTOR_SWAP RING_THIN pattern, copied exactly; frame-seeded phases), with and
+# without full AdaBN on S' TRAIN clouds (adabn_eval.py --stats target reads this DATA_CONFIG_TAR's train split in the
+# eval-mode view, so the statistics clouds are thinned the same way). Base: the row's item 42a eval config, unchanged.
+# Written by analysis/make_item47_configs.py; do not edit by hand. ANALYSIS (target labels score only).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-kitti2kitti-noros-zshift.yaml
+DATA_CONFIG_TAR:
+    EVAL_FACTOR_SWAP:
+        RING_THIN: {MODE: pattern, SPACING_DEG: 1.33, AZ_RES_DEG: 0.332}
