@@ -5,9 +5,8 @@
 # Waymo) with the Waymo target, from the same start 25743. What differs from the N->K config:
 #   - DATA_CONFIG_TAR is Waymo (a full block on da_waymo_dataset.yaml, never KITTI's), all five lidars as in every N->W row,
 #     target train SAMPLED_INTERVAL 10 (15.8k frames, as the N->W pseudo-labelling rows); an epoch is one pass over them;
-#   - CUTS: the family's label-free rules for 25743, rule A re-derived on Waymo train (SAMPLED_INTERVAL 10); rule B (source
-#     val) is 25743's from job 28641 (Car 0.20, Pedestrian 0.33, Cyclist 0.41). Added in SELF_TRAIN below once the Waymo cut
-#     job has run; without them this config does not start.
+#   - CUTS: the family's label-free rules for 25743, rule A re-derived on Waymo train (SAMPLED_INTERVAL 10, job 35133); rule
+#     B (source val) is 25743's from job 28641. In SELF_TRAIN below.
 # Everything else (SASD / DSNorm, source SEP weights, ST3D++ target augmentation, CDA off, memory, VOTE_ON_EMPTY off, 30
 # epochs at LR 0.0015) is the N->K config's, copied verbatim. UDA-legal as the N->K row; final epoch read.
 # Launch: scripts/submit.sh ... run_sourceonly_2gpu.sh <this cfg> <tag> <run> --pretrained_model <25743 ep20>
@@ -41,6 +40,16 @@ SELF_TRAIN:
     DSNORM: True
     FROZEN_TEACHER_SINGLE_PASS: False
     EPOCH_FOLLOWS: target
+    # Job 35133 (scripts/_legal_chain_step2_waymo.sh through item51/centerpoint-dts-nuscenes2waymo.yaml's target block, eval
+    # mode), teacher 25743 epoch 20, pre-declared rules, nothing chosen here:
+    #   rule B on nuScenes val, 1 sweep (job 28641, source-val precision >= 0.50): Car 0.20, Pedestrian 0.33, Cyclist 0.41
+    #   rule A on Waymo train, SAMPLED_INTERVAL 10 (15,809 frames; plateau mode 0.469 / 0.469 / 0.349):
+    #       NEG_THRESH Car 0.629, Pedestrian 0.575, Cyclist 0.482
+    # Each rule-B cut is below its NEG_THRESH, so (plateau_neg_thresh.py step 6) SCORE_THRESH is raised to NEG_THRESH:
+    # no ignore band from the thresholds. (25743 on Waymo is the BN-collapsed start: 445 boxes per frame at floor 0.0001,
+    # 436 of them Pedestrian.)
+    SCORE_THRESH: [0.629, 0.575, 0.482]
+    NEG_THRESH: [0.629, 0.575, 0.482]
     UPDATE_PSEUDO_LABEL: [0]
     UPDATE_PSEUDO_LABEL_INTERVAL: 2
     INIT_PS: None

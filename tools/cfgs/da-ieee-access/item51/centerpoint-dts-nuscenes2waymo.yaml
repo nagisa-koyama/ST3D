@@ -9,9 +9,8 @@
 #   - DTS_VIEWS over the TOP lidar's 64 rows (Waymo's published beam count), labels from the stored row order
 #     (waymo_rings.ring_labelled_points, per-segment TOP_CALIB); points of the four side lidars carry ring -1 and stay in
 #     both views (released DTS has no multi-lidar target);
-#   - CUTS: the family's label-free rules for D0, rule A re-derived on Waymo train (SAMPLED_INTERVAL 10); rule B (source
-#     val) is D0's from job 34915. Added in SELF_TRAIN below once the Waymo cut job has run; without them this config does
-#     not start.
+#   - CUTS: the family's label-free rules for D0, rule A re-derived on Waymo train (SAMPLED_INTERVAL 10, job 35134); rule B
+#     (source val) is D0's from job 34915. In SELF_TRAIN below.
 # Everything else (augmentation, 10 epochs at LR 0.0015, epoch-0 pseudo-labels, EMA teacher, OGA constants and nodes,
 # MODEL_TEACHER) is the N->K config's, copied verbatim. UDA-legal as the N->K row; final epoch read.
 # Launch: run_sourceonly_2gpu.sh <this cfg> <tag> <run> --pretrained_model <D0 ep20> --pretrained_model_teacher <D0 ep20>
@@ -49,6 +48,15 @@ SELF_TRAIN:
     TEACHER_IS_STUDENT: False
     FROZEN_TEACHER_SINGLE_PASS: True
     EPOCH_FOLLOWS: target
+    # Job 35134 (scripts/_legal_chain_step2_waymo.sh through this config's target block, eval mode), teacher D0 epoch 20,
+    # pre-declared rules, nothing chosen here:
+    #   rule B on nuScenes val, 1 sweep (job 34915, source-val precision >= 0.50): Car 0.20, Pedestrian 0.31, Cyclist 0.35
+    #   rule A on Waymo train, SAMPLED_INTERVAL 10 (15,809 frames; plateau mode 0.133 / 0.133 / 0.133):
+    #       NEG_THRESH Car 0.214, Pedestrian 0.229, Cyclist 0.189
+    # Car's rule-B cut is below its NEG_THRESH and is raised to it (plateau_neg_thresh.py step 6); Pedestrian and Cyclist
+    # keep their rule-B cuts and carry an ignore band (both DTS views keep the negative labels, tests/test_dts_adaptation.py).
+    SCORE_THRESH: [0.214, 0.31, 0.35]
+    NEG_THRESH: [0.214, 0.229, 0.189]
     UPDATE_PSEUDO_LABEL: [0]
     UPDATE_PSEUDO_LABEL_INTERVAL: 100
     INIT_PS: None
