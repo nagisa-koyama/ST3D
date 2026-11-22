@@ -206,6 +206,23 @@ def assign_movers(cub, scans, usable, margin=2.0, interpolate=True, shell=0.0):
                         'movers': len(tracks)}
 
 
+def in_stationary_boxes(cub, scans, candidates, shell):
+    """Mask of `candidates` lying inside a STATIONARY cuboid of their own frame and device set, enlarged by `shell`.
+    Movable-class points outside every such box and outside every mover are UNBOXED: an object no cuboid places
+    (20261121_02 §6.2: unannotated pedestrians smeared along sidewalks on val 011)."""
+    out = np.zeros(len(scans), dtype=bool)
+    order, bounds = _by_frame(scans.frame)
+    for r in np.flatnonzero(cub.stationary):
+        f = cub.frame[r]
+        idx = order[bounds[f]:bounds[f + 1]]
+        idx = idx[candidates[idx] & ~out[idx] & np.isin(scans.dev[idx], cub.devices(r))]
+        idx = idx[_near(scans.xyz[idx], cub.centre[r], cub.dims[r], shell)]
+        if len(idx):
+            m = inside(to_box(scans.xyz[idx], cub.centre[r], cub.yaw[r]), cub.dims[r] + 2 * shell)
+            out[idx[m]] = True
+    return out
+
+
 def placement_rows(cub, frame_t, mode):
     """{uid: cuboid row in frame_t} where each mover uid's points go. mode 'own', or 'p64' (PandarGT-only uuids go to
     their Pandar64 sibling's frame-t cuboid when it exists). Returns (rows, number of 'p64' fallbacks to own)."""

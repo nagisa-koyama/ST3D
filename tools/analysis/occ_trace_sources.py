@@ -8,7 +8,13 @@ cuboids (its device's set):
   near_mover      within 1 m of a mover's box at the point's time, but outside box + shell; with its time offset
                   from the cuboid time and the mover's sensor_id;
   no_cuboid       neither.
-Reported by raw class and by range from the sensor. GT data, analysis only. Run as a CPU Slurm job.
+Reported by raw class and by range from the sensor.
+
+--cuboid-time: which time a mover cuboid represents. For every in-track mover cuboid, its own devices' movable-class
+points of that frame within 2 m are tested against the box posed by the uuid's track at each point's time, with the
+cuboid times set to (a) the median time of the points inside it (pcocc's rule), (b) the frame time, (c) the frame time
+minus 50 ms. The hypothesis that puts the most points inside the unpadded boxes fits the annotation best; reported per
+cuboid sensor_id. GT data, analysis only. Run as a CPU Slurm job.
 """
 import argparse
 import collections
@@ -31,15 +37,58 @@ from pcocc.scans import sensor_origins, stale_frames                         # n
 ROOT = '/home/koyama/data/pandaset/dataset'
 
 
+def cuboid_time_test(sg):
+    s, cub = sg.scans, sg.cub
+    movable = sg.base & np.isin(s.raw, RAW_MOVABLE)
+    order = np.argsort(s.frame, kind='stable')
+    bounds = np.searchsorted(s.frame[order], np.arange(81))
+    rows = np.flatnonzero(~cub.stationary & cub.in_track)
+    hyps = {'median_point_time': cub.time.copy(), 'frame_time': cub.frame_times[cub.frame].copy(),
+            'frame_time_minus_50ms': cub.frame_times[cub.frame] - 0.05}
+    saved = cub.time
+    res = {}
+    for name, times in hyps.items():
+        cub.time = times
+        tracks = {}
+        cnt = collections.defaultdict(lambda: [0, 0])
+        for r in rows:
+            u = int(cub.uid[r])
+            if u not in tracks:
+                tracks[u] = Track(cub, u)
+            f = cub.frame[r]
+            idx = order[bounds[f]:bounds[f + 1]]
+            idx = idx[movable[idx] & np.isin(s.dev[idx], cub.devices(r))]
+            c0 = cub.centre[r]
+            r_xy = 0.5 * np.hypot(cub.dims[r][0], cub.dims[r][1]) + 2.0
+            idx = idx[np.hypot(s.xyz[idx, 0] - c0[0], s.xyz[idx, 1] - c0[1]) <= r_xy]
+            if not len(idx):
+                continue
+            c, yaw = tracks[u].at(s.t[idx])
+            m = inside(to_box(s.xyz[idx], c, yaw), cub.dims[r])
+            k = int(cub.sensor[r])
+            cnt[k][0] += int(m.sum())
+            cnt[k][1] += int(len(idx))
+        res[name] = {str(k): {'inside': v[0], 'near': v[1]} for k, v in sorted(cnt.items())}
+    cub.time = saved
+    return res
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--seq', required=True)
     ap.add_argument('--out', required=True)
+    ap.add_argument('--cuboid-time', action='store_true')
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     cm = build_class_map('pandaset_scalr17')
     sg = SequenceGT(ROOT, args.seq, PANDASET_GRID, cm, sensor_origins(), stale_frames())
     s, cub = sg.scans, sg.cub
+    if args.cuboid_time:
+        res = {'seq': args.seq, 'cuboid_time_test': cuboid_time_test(sg)}
+        with open(os.path.join(args.out, 'cuboid_time_%s.json' % args.seq), 'w') as f:
+            json.dump(res, f, indent=1)
+        print(json.dumps(res, indent=1))
+        return
     cand = sg.base & np.isin(s.raw, RAW_MOVABLE) & (sg.mover < 0)
     rng = np.linalg.norm(s.xyz - sg.origin, axis=1)
     kind = np.full(len(s), '', dtype=object)

@@ -264,3 +264,18 @@ def test_mover_shell_takes_movable_points_only():
     assert m5.tolist() == [0, 0, -1, 0, -1]
     with pytest.raises(AssertionError):
         assign_movers(_OneMover(), sc, usable, shell=2.5)
+
+
+def test_in_stationary_boxes_and_unboxed():
+    from pcocc.movers import in_stationary_boxes
+    cub = _OneMover()
+    cub.stationary = np.array([True])
+    #        inside      0.15 m out (shell 0.2)   0.4 m out     other frame
+    xyz = [[0, 0, 0], [2.15, 0, 0], [2.4, 0, 0], [0, 0, 0]]
+    sc = _Scans(xyz, [30, 30, 30, 30])
+    sc.frame[3] = 1
+    cand = np.ones(4, dtype=bool)
+    assert in_stationary_boxes(cub, sc, cand, 0.2).tolist() == [True, True, False, False]
+    assert in_stationary_boxes(cub, sc, cand, 0.0).tolist() == [True, False, False, False]
+    cand[0] = False
+    assert in_stationary_boxes(cub, sc, cand, 0.2).tolist() == [False, True, False, False]
