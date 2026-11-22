@@ -74,9 +74,36 @@ def test_st3dpp_is_28650_plus_the_stated_changes():
     assert s.CLASS_NAMES == ['Car', 'Pedestrian', 'Cyclist'] and s.DATA_CONFIG.MAX_SWEEPS == 1
 
 
-@pytest.mark.parametrize('rel', ['cfgs/da-ieee-access/item51/centerpoint-st3dpp-nuscenes2kitti.yaml'])
+@pytest.mark.parametrize('rel', ['cfgs/da-ieee-access/item51/centerpoint-st3dpp-nuscenes2kitti.yaml',
+                                 'cfgs/da-ieee-access/item51/centerpoint-st3dpp-nuscenes2waymo.yaml'])
 def test_sep_weights_are_in_centerhead_format_and_cover_the_head(rel):
     s = resolve(rel)
     sep = s.SELF_TRAIN.SRC.SEP_LOSS_WEIGHTS
     assert isinstance(sep, dict) and len(sep.HM_CLASS_WEIGHTS) == sum(len(c) for c in s.MODEL.DENSE_HEAD.CLASS_NAMES_EACH_HEAD)
     assert 'SEP_LOSS_WEIGHTS' not in s.SELF_TRAIN.TAR
+
+
+# N->W (user 2026-11-22 「1 yes」): each N->W row is its N->K twin with the target block swapped exactly as the source-only
+# pair swaps it (sourceonly-nuscenes2kitti -> sourceonly-nuscenes2waymo), plus the pseudo-labelling rows' target train
+# SAMPLED_INTERVAL 10 and, for DTS, the TOP calibration its ring labels need. Cuts are per target, so they are excluded.
+CUTS = ('SELF_TRAIN.SCORE_THRESH', 'SELF_TRAIN.NEG_THRESH')
+
+
+def _target_swap():
+    return diff(resolve('cfgs/da-ieee-access/centerpoint-sourceonly-nuscenes2kitti.yaml'),
+                resolve('cfgs/da-ieee-access/centerpoint-sourceonly-nuscenes2waymo.yaml'))
+
+
+@pytest.mark.parametrize('row,extra', [
+    ('st3dpp', {}),
+    ('dts', {'DATA_CONFIG_TAR.DTS_VIEWS.TOP_CALIB': (None, '/home/koyama/data/waymo_top_calib/top_calib.pkl')}),
+])
+def test_nuscenes2waymo_row_is_its_kitti_twin_with_the_target_swapped(row, extra):
+    k = resolve('cfgs/da-ieee-access/item51/centerpoint-%s-nuscenes2kitti.yaml' % row)
+    w = resolve('cfgs/da-ieee-access/item51/centerpoint-%s-nuscenes2waymo.yaml' % row)
+    d = {key: v for key, v in diff(k, w).items() if key not in CUTS}
+    expected = dict(_target_swap())
+    expected['DATA_CONFIG_TAR.SAMPLED_INTERVAL.train'] = (None, 10)
+    expected.update(extra)
+    assert d == expected
+    assert w.DATA_CONFIG_TAR.DATASET == 'WaymoDataset' and (w.DATA_CONFIG_TAR.get('MAX_SWEEPS', 1) or 1) == 1

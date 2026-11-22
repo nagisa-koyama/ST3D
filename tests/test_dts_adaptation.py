@@ -3,6 +3,9 @@
 boxes_iou3d_gpu and nms_gpu are CUDA ops; here they are replaced by CPU stand-ins (axis-aligned BEV IoU, keep-all NMS), so
 these tests check the port's arithmetic and plumbing. The real ops run in the GPU smoke.
 """
+import textwrap
+from pathlib import Path
+
 import numpy as np
 import pytest
 import torch
@@ -225,3 +228,48 @@ def test_split_for_dts_keeps_ignore_labels_identical_in_both_views():
     assert view_rows(s) <= set(map(tuple, pts[:, :4].tolist()))
     s['gt_boxes'][0, 7] = 99  # the views own their arrays: one cannot change the other or the caller's dict
     assert t['gt_boxes'][0, 7] == 1 and dd['gt_boxes'][0, 7] == 1
+
+
+def test_waymo_dts_views_take_the_order_recovered_top_rows(monkeypatch):
+    """Waymo has no elevation-clustered rings (its TOP rows are 0.14 deg apart): with DTS_VIEWS set, the dataset must read
+    ring labels from the stored row order (get_lidar_with_ring_labels, via DTS_VIEWS.TOP_CALIB) and refuse a config
+    without TOP_CALIB; absent DTS_VIEWS (and BEAM_DISTILL / BEAM_DROP), nothing changes."""
+    from pcdet.datasets.waymo import waymo_dataset as wd
+    from pcdet.datasets.waymo import waymo_rings
+
+    def make(views):
+        ds = wd.WaymoDataset.__new__(wd.WaymoDataset)
+        cfg = EasyDict({'MAX_SWEEPS': 1})
+        if views is not None:
+            cfg.DTS_VIEWS = EasyDict(views)
+        ds.dataset_cfg, ds.beam_distill_cfg, ds.beam_drop_cfg = cfg, None, None
+        ds.dts_views_cfg = cfg.get('DTS_VIEWS', None)
+        ds.ring_pattern_cfg = None
+        return ds
+
+    def init_ring_block(ds):
+        # The ring block of WaymoDataset.__init__, run on its own (the full __init__ reads the dataset from disk).
+        src = Path(wd.__file__).read_text()
+        start = src.index('        ring_cfg = self.beam_distill_cfg if self.beam_distill_cfg is not None else self.beam_drop_cfg\n')
+        end = src.index('    def set_split(self, split):')
+        block = textwrap.dedent(src[start:end])
+        exec(compile(block, wd.__file__, 'exec'), {'np': np}, {'self': ds})
+
+    ds = make(None)
+    init_ring_block(ds)
+    assert ds._ring_labels_from_order is False and ds._ring_cfg is None
+
+    ds = make({'NUM_BEAMS': 64, 'KEEP_PROB': 0.75, 'TOP_CALIB': '/x/top_calib.pkl'})
+    init_ring_block(ds)
+    assert ds._ring_labels_from_order is True and ds._ring_cfg is ds.dts_views_cfg
+    seen = {}
+    monkeypatch.setattr(ds, '_top_calibration', lambda path: seen.setdefault('path', path) and {'seg': 'CAL'})
+    monkeypatch.setattr(ds, '_raw_frame', lambda info: 'RAW')
+    monkeypatch.setattr(waymo_rings, 'ring_labelled_points', lambda raw, n, calib: (raw, n, calib))
+    out = ds.get_lidar_with_ring_labels({'point_cloud': {'lidar_sequence': 'seg'}, 'num_points_of_each_lidar': [5]})
+    assert out == ('RAW', [5], 'CAL') and seen['path'] == '/x/top_calib.pkl'
+
+    with pytest.raises(AssertionError):
+        init_ring_block(make({'NUM_BEAMS': 64, 'KEEP_PROB': 0.75}))  # no TOP_CALIB
+    with pytest.raises(AssertionError):
+        init_ring_block(make({'NUM_BEAMS': 32, 'KEEP_PROB': 0.75, 'TOP_CALIB': '/x'}))  # not Waymo's 64 rows

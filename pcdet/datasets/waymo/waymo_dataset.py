@@ -74,6 +74,11 @@ class WaymoDataset(DatasetTemplate):
         # compensation moves a point's apparent inclination by more than the 0.14 deg row spacing). They are computed
         # in __getitem__ and attached by the `_attach_ring_labels` override below.
         ring_cfg = self.beam_distill_cfg if self.beam_distill_cfg is not None else self.beam_drop_cfg
+        if ring_cfg is None:
+            # DTS_VIEWS (item 51 row D, experiments_md 20261003_05 §5; absent = unchanged): DTS's two views drop whole TOP
+            # rows, so they take the same order-recovered labels; side-lidar points carry -1 and stay in both views.
+            ring_cfg = getattr(self, 'dts_views_cfg', None)
+        self._ring_cfg = ring_cfg
         self._ring_labels_from_order = ring_cfg is not None
         if self._ring_labels_from_order:
             assert self.ring_pattern_cfg is None, 'RING_PATTERN and BEAM_DISTILL / BEAM_DROP both thin the TOP rows'
@@ -256,10 +261,9 @@ class WaymoDataset(DatasetTemplate):
         return self._region_box_table[frame_id]
 
     def get_lidar_with_ring_labels(self, info):
-        """(points, ring label per point) for BEAM_DISTILL / BEAM_DROP: TOP rows from the stored order, side lidars -1."""
+        """(points, ring label per point) for BEAM_DISTILL / BEAM_DROP / DTS_VIEWS: TOP rows from the stored order, side lidars -1."""
         from .waymo_rings import ring_labelled_points
-        ring_cfg = self.beam_distill_cfg if self.beam_distill_cfg is not None else self.beam_drop_cfg
-        calib = self._top_calibration(ring_cfg.TOP_CALIB)[info['point_cloud']['lidar_sequence']]
+        calib = self._top_calibration(self._ring_cfg.TOP_CALIB)[info['point_cloud']['lidar_sequence']]
         return ring_labelled_points(self._raw_frame(info), info['num_points_of_each_lidar'], calib)
 
     def _attach_ring_labels(self, data_dict, ring_cfg):

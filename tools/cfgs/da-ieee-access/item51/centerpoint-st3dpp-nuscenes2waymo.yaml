@@ -1,0 +1,83 @@
+# ST3D++ ROW "S", nuScenes -> Waymo (experiments_md 20261003_05 §5 item 51; user 2026-11-22 「(a) で」 (Q1 (a): the
+# classification score only; Q3 (a): N->W after N->K was read) and 「1 yes」 (11-22, go-ahead for N->W after N->K).
+#
+# The N->K row S recipe (centerpoint-st3dpp-nuscenes2kitti.yaml; neither ST3D repo has an ST3D++ recipe for nuScenes ->
+# Waymo) with the Waymo target, from the same start 25743. What differs from the N->K config:
+#   - DATA_CONFIG_TAR is Waymo (a full block on da_waymo_dataset.yaml, never KITTI's), all five lidars as in every N->W row,
+#     target train SAMPLED_INTERVAL 10 (15.8k frames, as the N->W pseudo-labelling rows); an epoch is one pass over them;
+#   - CUTS: the family's label-free rules for 25743, rule A re-derived on Waymo train (SAMPLED_INTERVAL 10); rule B (source
+#     val) is 25743's from job 28641 (Car 0.20, Pedestrian 0.33, Cyclist 0.41). Added in SELF_TRAIN below once the Waymo cut
+#     job has run; without them this config does not start.
+# Everything else (SASD / DSNorm, source SEP weights, ST3D++ target augmentation, CDA off, memory, VOTE_ON_EMPTY off, 30
+# epochs at LR 0.0015) is the N->K config's, copied verbatim. UDA-legal as the N->K row; final epoch read.
+# Launch: scripts/submit.sh ... run_sourceonly_2gpu.sh <this cfg> <tag> <run> --pretrained_model <25743 ep20>
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-nuscenes2waymo.yaml
+
+DATA_CONFIG_TAR:
+    _BASE_CONFIG_: cfgs/da-ieee-access/da_waymo_dataset.yaml
+    USE_PSEUDO_LABEL: True
+    SAMPLED_INTERVAL: {'train': 10, 'test': 5}
+    DATA_AUGMENTOR:
+        DISABLE_AUG_LIST: ['placeholder']
+        AUG_CONFIG_LIST:
+            - NAME: random_object_scaling
+              SCALE_UNIFORM_NOISE: [0.9, 1.1]
+            - NAME: random_object_rotation
+              ROT_PROB: 1.0
+              ROT_UNIFORM_NOISE: [-0.78539816, 0.78539816]
+            - NAME: random_world_flip
+              ALONG_AXIS_LIST: ['x', 'y']
+            - NAME: random_world_rotation
+              WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+            - NAME: random_world_scaling
+              WORLD_SCALE_RANGE: [0.95, 1.05]
+
+OPTIMIZATION:
+    NUM_EPOCHS: 30
+    LR: 0.0015
+
+SELF_TRAIN:
+    TEACHER_IS_STUDENT: True
+    DSNORM: True
+    FROZEN_TEACHER_SINGLE_PASS: False
+    EPOCH_FOLLOWS: target
+    UPDATE_PSEUDO_LABEL: [0]
+    UPDATE_PSEUDO_LABEL_INTERVAL: 2
+    INIT_PS: None
+
+    SRC:
+        USE_DATA: True
+        USE_GRAD: True
+        LOSS_WEIGHT: 1.0
+        BACKWARD_TOGETHER: True
+        SEP_LOSS_WEIGHTS:
+            HM_CLASS_WEIGHTS: [0.0, 1.0, 1.0]
+            LOC_WEIGHT: 1.0
+
+    TAR:
+        USE_DATA: True
+        LOSS_WEIGHT: 1.0
+        BACKWARD_TOGETHER: True
+
+    PROG_AUG:
+        ENABLED: False
+        UPDATE_AUG: [5, 10, 20, 25]
+        SCALE: 1.1
+
+    MEMORY_ENSEMBLE:
+        ENABLED: True
+        NAME: consistency_ensemble
+        IOU_THRESH: 0.1
+        UNION_CLASSES: True
+        NMS_CONFIG:
+            NMS_TYPE: nms_gpu
+            MULTI_CLASSES_NMS: False
+            NMS_PRE_MAXSIZE: 512
+            NMS_POST_MAXSIZE: 100
+            NMS_THRESH: 0.1
+        MEMORY_VOTING:
+            ENABLED: True
+            IGNORE_THRESH: 2
+            RM_THRESH: 3
+            KEEP_CLASS: True
+            VOTE_ON_EMPTY: False
