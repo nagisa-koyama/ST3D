@@ -3,7 +3,8 @@
 
 For frame t, in its normative ego frame (read_frame's), on `grid`:
 - OCCUPANCY from the window's points of the GT's device(s), in range (2.5-70 m from their sensor at capture time), not
-  stale, not Reflection; transient classes (Smoke, Exhaust, Spray or rain) only from frame t itself. Static points are
+  stale, not Reflection; transient classes (Smoke, Exhaust, Spray or rain) and UNBOXED movable-class points (in no
+  mover and no stationary cuboid: objects no cuboid can place) only from frame t itself. Static points are
   moved world -> frame t; mover points (movers.assign_movers) are placed at their uuid's frame-t cuboid and dropped when
   it has none. Labels by majority vote (vote.py).
 - VISIBILITY from the measured rays of the same device(s) (raycast.py): from the sensor at the point's capture time to
@@ -17,7 +18,7 @@ import numpy as np
 
 from . import EMPTY
 from .grid import cone_voxels
-from .movers import Cuboids, assign_movers, place, placement_rows, time_cuboids
+from .movers import RAW_MOVABLE, Cuboids, assign_movers, in_stationary_boxes, place, placement_rows, time_cuboids
 from .poses import Poses
 from .raycast import traverse
 from .scans import PANDAR64, PANDARGT, SequenceScans
@@ -25,11 +26,15 @@ from .vote import vote
 
 GTS = {'g64': (PANDAR64,), 'ggt': (PANDARGT,), 'gu': (PANDAR64, PANDARGT)}
 RANGE_CUT = (2.5, 70.0)                    # jbehley/voxelizer semantic_kitti.cfg: min range 2.5, max range 70
+# Mover shell (m), chosen 2026-11-22 by the rule declared in experiments_md 20261121_02 §6.2 before the sweep ran
+# (jobs 34959 / 34960, val 097 + 011, frames 10/30/50/70): GU vehicle traces 10,704 / 6,092 / 5,195 / 5,121 / 5,048 at
+# 0 / 0.1 / 0.2 / 0.3 / 0.5 m; 0.2 is the smallest within 10% of 0.5; stationary vehicle voxels unchanged at every s.
+MOVER_SHELL = 0.2
 
 
 class SequenceGT:
     def __init__(self, root, seq, grid, class_map, origins, stale, range_cut=RANGE_CUT, movers=True, frames=None,
-                 log=print):
+                 log=print, interpolate=True, shell=MOVER_SHELL, unboxed_transient=True):
         t0 = time.time()
         self.seq, self.grid, self.num_classes = seq, grid, class_map.num_classes
         self.scans = s = SequenceScans(root, seq, class_map, stale=stale, frames=frames)
@@ -52,13 +57,24 @@ class SequenceGT:
         if movers:
             self.cub = Cuboids(root, seq, self.poses.times, frames=frames)
             self.stats.update(time_cuboids(self.cub, s, usable=~s.stale))
-            self.mover, self.box, st = assign_movers(self.cub, s, usable=self.base)
+            self.mover, self.box, st = assign_movers(self.cub, s, usable=self.base, interpolate=interpolate,
+                                                     shell=shell)
+            self.stats['mover_shell_m'] = shell
             self.stats.update(st)
             self.stats['sibling_unknown'] = self.cub.sibling_unknown
+            # movable-class points no cuboid places (neither a mover nor inside a stationary box + shell): treated as
+            # transient, i.e. occupying only from frame t itself (20261121_02 §6.2, declared before the full build)
+            cand = self.base & np.isin(s.raw, RAW_MOVABLE) & (self.mover < 0)
+            self.unboxed = cand & ~in_stationary_boxes(self.cub, s, cand, shell)
+            self.stats['unboxed_movable_points'] = int(self.unboxed.sum())
         else:
             self.cub = None
             self.mover = np.full(len(s), -1, dtype=np.int64)
             self.box = None
+            self.unboxed = np.zeros(len(s), dtype=bool)
+        self.unboxed_transient = unboxed_transient
+        self.frame_only = s.transient | (self.unboxed if unboxed_transient else False)
+        self.stats['unboxed_transient'] = unboxed_transient
         self.stats['load_s'] = round(time.time() - t0, 2)
         log('%s: %d points loaded in %.1f s' % (seq, len(s), time.time() - t0))
 
@@ -67,7 +83,7 @@ class SequenceGT:
     def _occupancy_points(self, t, devices, window, mode):
         """(xyz in frame t's ego frame [M, 3], cls [M]) of the points that occupy, and diagnostics."""
         s = self.scans
-        m = self.base & np.isin(s.dev, devices) & window & (~s.transient | (s.frame == t))
+        m = self.base & np.isin(s.dev, devices) & window & (~self.frame_only | (s.frame == t))
         static = m & (self.mover < 0)
         xyz = [s.xyz[static]]
         cls = [s.cls[static]]

@@ -23,6 +23,7 @@ import pandas as pd
 from pcseg.pandaset_seg import N_FRAMES
 
 PANDAR64, PANDARGT = 0, 1
+RAW_MOVABLE = tuple(range(13, 34))        # PandaSet Car (13) ... Animals - Other (33): the classes a shell may take
 
 
 def wrap(a):
@@ -154,10 +155,16 @@ class Track:
         return c, wrap(yaw)
 
 
-def assign_movers(cub, scans, usable, margin=2.0):
+def assign_movers(cub, scans, usable, margin=2.0, interpolate=True, shell=0.0):
     """Per point: mover uid (-1 none) and box coordinates [N, 3] (NaN for non-movers), using each point's pose
     interpolated at its capture time. `usable`: points that may join a mover (not stale). margin (m): pre-filter
-    radius beyond the frame cuboid's half-diagonal (>= 100 ms of motion at 20 m/s)."""
+    radius beyond the frame cuboid's half-diagonal (>= 100 ms of motion at 20 m/s). interpolate=False uses each
+    frame's cuboid as annotated, for every point of that frame (the 'without' arm of check 9, analysis only).
+    shell (m): a point within the box enlarged by `shell` on every side also joins the mover if its raw class is
+    movable (RAW_MOVABLE): a mover's own side points just outside a tight box, never the road under it (20261121_02
+    §6.2, check 5)."""
+    assert 0.0 <= shell < margin
+    movable = np.isin(scans.raw, RAW_MOVABLE)
     n = len(scans)
     mover = np.full(n, -1, dtype=np.int64)
     box = np.full((n, 3), np.nan)
@@ -177,9 +184,14 @@ def assign_movers(cub, scans, usable, margin=2.0):
         idx = idx[_near(scans.xyz[idx], cub.centre[r], cub.dims[r], margin)]
         if not len(idx):
             continue
-        c, yaw = tracks[u].at(scans.t[idx])
+        if interpolate:
+            c, yaw = tracks[u].at(scans.t[idx])
+        else:
+            c, yaw = cub.centre[r], cub.yaw[r]
         q = to_box(scans.xyz[idx], c, yaw)
         m = inside(q, cub.dims[r])
+        if shell > 0:
+            m |= inside(q, cub.dims[r] + 2 * shell) & movable[idx]
         if not m.any():
             continue
         idx, q = idx[m], q[m]
@@ -192,6 +204,23 @@ def assign_movers(cub, scans, usable, margin=2.0):
         best[idx[win]] = dist[win]
     return mover, box, {'mover_points': int((mover >= 0).sum()), 'mover_overlap_points': conflicts,
                         'movers': len(tracks)}
+
+
+def in_stationary_boxes(cub, scans, candidates, shell):
+    """Mask of `candidates` lying inside a STATIONARY cuboid of their own frame and device set, enlarged by `shell`.
+    Movable-class points outside every such box and outside every mover are UNBOXED: an object no cuboid places
+    (20261121_02 §6.2: unannotated pedestrians smeared along sidewalks on val 011)."""
+    out = np.zeros(len(scans), dtype=bool)
+    order, bounds = _by_frame(scans.frame)
+    for r in np.flatnonzero(cub.stationary):
+        f = cub.frame[r]
+        idx = order[bounds[f]:bounds[f + 1]]
+        idx = idx[candidates[idx] & ~out[idx] & np.isin(scans.dev[idx], cub.devices(r))]
+        idx = idx[_near(scans.xyz[idx], cub.centre[r], cub.dims[r], shell)]
+        if len(idx):
+            m = inside(to_box(scans.xyz[idx], cub.centre[r], cub.yaw[r]), cub.dims[r] + 2 * shell)
+            out[idx[m]] = True
+    return out
 
 
 def placement_rows(cub, frame_t, mode):
