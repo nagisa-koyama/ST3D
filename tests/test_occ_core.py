@@ -295,3 +295,40 @@ def test_uuid_siblings_rule():
     assert s2.tolist() == const.tolist() and v2 == 0
     with pytest.raises(ValueError):
         uuid_siblings(np.array([0, 0]), np.array([3, 4]))
+
+
+def test_time_cuboids_tie_leaves_the_frame_timed_cuboid_out_of_the_track():
+    """P1 024 (20261121_02 §6.3): a cuboid with no points keeps its frame time t0; the next frame's cuboid holds one
+    point captured at exactly t0. Before the tie rule Track raised 'cuboid times not increasing'."""
+    from pcocc.movers import Track, time_cuboids
+
+    class Cub(_OneMover):
+        def __init__(self):
+            super().__init__()
+            self.stationary = np.array([False, False])
+            self.uid = np.array([0, 0])
+            self.frame = np.array([0, 1])
+            self.sensor = np.array([-1, -1])
+            self.centre = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+            self.yaw = np.zeros(2)
+            self.dims = np.array([[4.0, 2.0, 1.5]] * 2)
+            self.time = np.array([0.0, 0.1])                     # frame times
+            self.in_track = np.ones(2, dtype=bool)
+
+    class Sc(_Scans):
+        stale_frames = {0: set(), 1: set()}
+
+    cub = Cub()
+    sc = Sc([[30.0, 0.0, 0.0], [1.0, 0.0, 0.0]], [13, 13], frame=1, t=0.0)    # frame 1's only box point at t = 0.0
+    sc.frame[0] = 0                                                          # frame 0: a point far from its box
+    st = time_cuboids(cub, sc, usable=np.ones(2, dtype=bool))
+    assert cub.time.tolist() == [0.0, 0.0]
+    assert cub.in_track.tolist() == [False, True] and st['tied_frame_timed_cuboids_out_of_track'] == 1
+    c, _ = Track(cub, 0).at([0.0, 0.05])
+    np.testing.assert_allclose(c, [[1, 0, 0], [1, 0, 0]])
+    # no tie: nothing changes
+    cub2 = Cub()
+    sc2 = Sc([[30.0, 0.0, 0.0], [1.0, 0.0, 0.0]], [13, 13], frame=1, t=0.12)
+    sc2.frame[0] = 0
+    st2 = time_cuboids(cub2, sc2, usable=np.ones(2, dtype=bool))
+    assert cub2.in_track.all() and st2['tied_frame_timed_cuboids_out_of_track'] == 0 and cub2.time.tolist() == [0.0, 0.12]

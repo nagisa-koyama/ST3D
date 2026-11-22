@@ -6,7 +6,8 @@
 - Device d's points use the cuboids with `cuboids.sensor_id` in {-1, d}.
 - A cuboid's TIME is the median capture time of the points of its own device(s) inside it in its frame (the frame time
   when it holds none): moving objects in the overlap carry one cuboid per sensor, linked as siblings, about 0.3 m
-  apart, so each follows its own sensor's capture.
+  apart, so each follows its own sensor's capture. When a frame-timed cuboid ties a point-timed one of its uuid, the
+  frame-timed one leaves the track (time_cuboids).
 - A point's box pose is interpolated at the point's own time between the two cuboids of its uuid whose times bracket
   it: position linear, yaw the short way; beyond the ends the end segment extrapolates; one cuboid is held fixed.
   PandarGT cuboids (sensor_id 1) of a STALE frame (census) stay out of the track: their frame's points are a copy of
@@ -142,6 +143,7 @@ def time_cuboids(cub, scans, usable):
     cuboids out). `usable` [N]: points that may time a cuboid (not stale). Returns diagnostics."""
     order, bounds = _by_frame(scans.frame)
     n_timed = n_both = 0
+    timed = np.zeros(len(cub.time), dtype=bool)
     for r in np.flatnonzero(~cub.stationary):
         f = cub.frame[r]
         if cub.sensor[r] == PANDARGT and f in scans.stale_frames[PANDARGT]:
@@ -154,10 +156,29 @@ def time_cuboids(cub, scans, usable):
         m = inside(q, cub.dims[r])
         if m.any():
             cub.time[r] = float(np.median(scans.t[idx[m]]))
+            timed[r] = True
             n_timed += 1
             if cub.sensor[r] == -1 and len(np.unique(scans.dev[idx[m]])) > 1:
                 n_both += 1
-    return {'movers_timed_by_points': n_timed, 'shared_movers_with_both_devices': n_both}
+    # Ties. A cuboid with no points keeps its frame time; the next frame's cuboid can hold a single point captured at
+    # exactly that instant (the first point of its scan), and the two cuboids of one track then share a time (P1 024: a
+    # barely seen car, 0-1 points per frame; 20261121_02 §6.3). Rule: on a tie between one point-timed cuboid and
+    # frame-timed ones, the point-timed one stays and the frame-timed ones leave the track (placement still uses them).
+    # Any other tie still raises in Track. A sequence without a tie is unchanged.
+    n_tie = 0
+    rows = np.flatnonzero(~cub.stationary & cub.in_track)
+    for u in np.unique(cub.uid[rows]):
+        r = rows[cub.uid[rows] == u]
+        t = cub.time[r]
+        vals, cnt = np.unique(t, return_counts=True)
+        for v in vals[cnt > 1]:
+            tied = r[t == v]
+            if int(timed[tied].sum()) == 1:
+                drop = tied[~timed[tied]]
+                cub.in_track[drop] = False
+                n_tie += len(drop)
+    return {'movers_timed_by_points': n_timed, 'shared_movers_with_both_devices': n_both,
+            'tied_frame_timed_cuboids_out_of_track': n_tie}
 
 
 class Track:
