@@ -154,10 +154,11 @@ class Track:
         return c, wrap(yaw)
 
 
-def assign_movers(cub, scans, usable, margin=2.0):
+def assign_movers(cub, scans, usable, margin=2.0, interpolate=True):
     """Per point: mover uid (-1 none) and box coordinates [N, 3] (NaN for non-movers), using each point's pose
     interpolated at its capture time. `usable`: points that may join a mover (not stale). margin (m): pre-filter
-    radius beyond the frame cuboid's half-diagonal (>= 100 ms of motion at 20 m/s)."""
+    radius beyond the frame cuboid's half-diagonal (>= 100 ms of motion at 20 m/s). interpolate=False uses each
+    frame's cuboid as annotated, for every point of that frame (the 'without' arm of check 9, analysis only)."""
     n = len(scans)
     mover = np.full(n, -1, dtype=np.int64)
     box = np.full((n, 3), np.nan)
@@ -177,7 +178,10 @@ def assign_movers(cub, scans, usable, margin=2.0):
         idx = idx[_near(scans.xyz[idx], cub.centre[r], cub.dims[r], margin)]
         if not len(idx):
             continue
-        c, yaw = tracks[u].at(scans.t[idx])
+        if interpolate:
+            c, yaw = tracks[u].at(scans.t[idx])
+        else:
+            c, yaw = cub.centre[r], cub.yaw[r]
         q = to_box(scans.xyz[idx], c, yaw)
         m = inside(q, cub.dims[r])
         if not m.any():

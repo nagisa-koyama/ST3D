@@ -29,7 +29,7 @@ RANGE_CUT = (2.5, 70.0)                    # jbehley/voxelizer semantic_kitti.cf
 
 class SequenceGT:
     def __init__(self, root, seq, grid, class_map, origins, stale, range_cut=RANGE_CUT, movers=True, frames=None,
-                 log=print):
+                 log=print, interpolate=True):
         t0 = time.time()
         self.seq, self.grid, self.num_classes = seq, grid, class_map.num_classes
         self.scans = s = SequenceScans(root, seq, class_map, stale=stale, frames=frames)
@@ -52,7 +52,7 @@ class SequenceGT:
         if movers:
             self.cub = Cuboids(root, seq, self.poses.times, frames=frames)
             self.stats.update(time_cuboids(self.cub, s, usable=~s.stale))
-            self.mover, self.box, st = assign_movers(self.cub, s, usable=self.base)
+            self.mover, self.box, st = assign_movers(self.cub, s, usable=self.base, interpolate=interpolate)
             self.stats.update(st)
             self.stats['sibling_unknown'] = self.cub.sibling_unknown
         else:
