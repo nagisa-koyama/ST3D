@@ -129,11 +129,22 @@ mkdir -p "$SCRATCH" || { echo "cannot create scratch dir $SCRATCH" >&2; exit 1; 
 
 SNAP=$SCRATCH/ST3D
 mkdir -p "$SNAP"
+# rsync exit 24 = "some source files vanished" during the copy, and it is not an error here: any git fetch, push or gc in
+# the shared checkout writes and removes `.git/objects/pack/tmp_pack_*` while a job is copying the tree. Under
+# `set -e` it killed rows 35179 / 35181 before training (2026-11-22 14:28, a fetch before a push). The snapshot is still
+# the tree as it stood. Every other non-zero exit still stops the job (tests/test_launcher_snapshot.py).
+rsync_rc=0
 rsync -a \
   --exclude='/output/' --exclude='/wandb/' --exclude='/build/' \
   --exclude='tools/wandb/' --exclude='tools/logs/' \
   --exclude='*.sif' --exclude='.nfs*' --exclude='pcdet.egg-info/' \
-  "$REPO/" "$SNAP/"
+  "$REPO/" "$SNAP/" || rsync_rc=$?
+if [ "$rsync_rc" -eq 24 ]; then
+    echo "=== rsync: files vanished during the snapshot (exit 24, a concurrent git operation); continuing ==="
+elif [ "$rsync_rc" -ne 0 ]; then
+    echo "code snapshot failed: rsync exit $rsync_rc" >&2
+    exit "$rsync_rc"
+fi
 echo "=== code frozen at $(git -C "$REPO" rev-parse --short HEAD) -> $SNAP ==="
 
 # --- optional: stage the dataset on the node's local SSD ----------------------------------------
