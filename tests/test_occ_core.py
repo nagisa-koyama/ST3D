@@ -216,3 +216,51 @@ def test_track_excludes_out_of_track_cuboids():
     cub.in_track[1] = False
     c, _ = Track(cub, 0).at([1.0])
     np.testing.assert_allclose(c, [[1, 0, 0]])
+
+
+class _Scans:
+    def __init__(self, xyz, raw, frame=0, dev=0, t=0.0):
+        n = len(xyz)
+        self.xyz = np.asarray(xyz, dtype=np.float64)
+        self.raw = np.asarray(raw)
+        self.frame = np.full(n, frame, dtype=np.int16)
+        self.dev = np.full(n, dev, dtype=np.int8)
+        self.t = np.full(n, t)
+
+    def __len__(self):
+        return len(self.t)
+
+
+class _OneMover:
+    """movers.Cuboids stand-in: one moving 4 x 2 x 1.5 m box at the origin in frame 0, sensor -1."""
+    def __init__(self):
+        self.stationary = np.array([False])
+        self.uid = np.array([0])
+        self.frame = np.array([0])
+        self.sensor = np.array([-1])
+        self.centre = np.zeros((1, 3))
+        self.yaw = np.zeros(1)
+        self.dims = np.array([[4.0, 2.0, 1.5]])
+        self.time = np.zeros(1)
+        self.in_track = np.ones(1, dtype=bool)
+
+    def devices(self, row):
+        return (0, 1)
+
+
+def test_mover_shell_takes_movable_points_only():
+    from pcocc.movers import assign_movers
+    #        inside        car point 0.15 m out   road point 0.15 m out   car point 0.4 m out    far car point
+    xyz = [[0, 0, 0], [0, 1.15, 0], [0, -1.15, -0.5], [2.4, 0, 0], [9, 9, 0]]
+    raw = [13, 13, 7, 13, 13]
+    sc = _Scans(xyz, raw)
+    usable = np.ones(len(xyz), dtype=bool)
+    m0, box0, _ = assign_movers(_OneMover(), sc, usable, shell=0.0)
+    assert m0.tolist() == [0, -1, -1, -1, -1]
+    m2, box2, _ = assign_movers(_OneMover(), sc, usable, shell=0.2)
+    assert m2.tolist() == [0, 0, -1, -1, -1]
+    np.testing.assert_allclose(box2[1], [0, 1.15, 0])
+    m5, _, _ = assign_movers(_OneMover(), sc, usable, shell=0.5)
+    assert m5.tolist() == [0, 0, -1, 0, -1]
+    with pytest.raises(AssertionError):
+        assign_movers(_OneMover(), sc, usable, shell=2.5)

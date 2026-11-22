@@ -109,6 +109,44 @@ def check5(sg, t, gts, cm, traces=None):
     return res
 
 
+def stationary_vehicle_voxels(sg, t, gts, cm):
+    """Vehicle-class voxels whose centre lies inside a STATIONARY frame-t cuboid, per GT: a shell that drags parked
+    cars beside movers would lower it."""
+    veh = [cm.names.index(n) + 1 for n in ('car', 'truck', 'bus', 'other_vehicle', 'motorcycle', 'bicycle')]
+    cub = sg.cub
+    rows = np.flatnonzero((cub.frame == t) & cub.stationary)
+    out = {}
+    for g, (label, _) in gts.items():
+        ijk, w = voxel_centres_world(sg, t, np.isin(label, veh))
+        hit = np.zeros(len(w), dtype=bool)
+        for r in rows:
+            hit |= inside(to_box(w, cub.centre[r], cub.yaw[r]), cub.dims[r])
+        out[g] = int(hit.sum())
+    return out
+
+
+def sweep(args, cm):
+    """20261121_02 §6.2: the mover shell s in args.shells; per s, check-5 traces and stationary vehicle voxels."""
+    res = {'seq': args.seq, 'frames': args.frames, 'shells': args.shells, 'per_shell': {}}
+    for sh in args.shells:
+        t0 = time.time()
+        sg = SequenceGT(ROOT, args.seq, PANDASET_GRID, cm, sensor_origins(), stale_frames(), shell=sh)
+        per = {}
+        for t in args.frames:
+            gts, _ = sg.frame(t)
+            per[t] = {'traces': check5(sg, t, gts, cm), 'stationary_vehicle_voxels': stationary_vehicle_voxels(
+                sg, t, gts, cm)}
+        tot = {g: sum(per[t]['traces'][g]['vehicle']['outside_every_cuboid_by_more_than_a_voxel'] for t in per)
+               for g in GTS}
+        st = {g: sum(per[t]['stationary_vehicle_voxels'][g] for t in per) for g in GTS}
+        res['per_shell'][str(sh)] = {'mover_points': sg.stats['mover_points'], 'frames': per,
+                                     'vehicle_traces_sum': tot, 'stationary_vehicle_voxels_sum': st,
+                                     'seconds': round(time.time() - t0, 1)}
+        print('shell %.2f: mover points %d, vehicle traces %s, stationary vehicle voxels %s' % (
+            sh, sg.stats['mover_points'], tot, st), flush=True)
+    return res
+
+
 def check6(sg, t, gts, cm):
     from scipy import ndimage
     cub = sg.cub
@@ -228,10 +266,17 @@ def main():
     ap.add_argument('--gt-dir', required=True)
     ap.add_argument('--frames', nargs='+', type=int, default=[10, 30, 50, 70])
     ap.add_argument('--out', default=None)
+    ap.add_argument('--shells', nargs='*', type=float, default=None,
+                    help='run only the mover-shell sweep over these shells (m); --gt-dir is then unused')
     args = ap.parse_args()
     out_dir = args.out or os.path.join(args.gt_dir, 'checks')
     os.makedirs(out_dir, exist_ok=True)
     cm = build_class_map('pandaset_scalr17')
+    if args.shells:
+        res = sweep(args, cm)
+        with open(os.path.join(out_dir, 'shell_sweep_%s.json' % args.seq), 'w') as f:
+            json.dump(res, f, indent=1)
+        return
     t0 = time.time()
     sg = SequenceGT(ROOT, args.seq, PANDASET_GRID, cm, sensor_origins(), stale_frames())
     res = {'seq': args.seq, 'frames': args.frames, 'gt_dir': args.gt_dir, 'sequence_stats': sg.stats}

@@ -23,6 +23,7 @@ import pandas as pd
 from pcseg.pandaset_seg import N_FRAMES
 
 PANDAR64, PANDARGT = 0, 1
+RAW_MOVABLE = tuple(range(13, 34))        # PandaSet Car (13) ... Animals - Other (33): the classes a shell may take
 
 
 def wrap(a):
@@ -154,11 +155,16 @@ class Track:
         return c, wrap(yaw)
 
 
-def assign_movers(cub, scans, usable, margin=2.0, interpolate=True):
+def assign_movers(cub, scans, usable, margin=2.0, interpolate=True, shell=0.0):
     """Per point: mover uid (-1 none) and box coordinates [N, 3] (NaN for non-movers), using each point's pose
     interpolated at its capture time. `usable`: points that may join a mover (not stale). margin (m): pre-filter
     radius beyond the frame cuboid's half-diagonal (>= 100 ms of motion at 20 m/s). interpolate=False uses each
-    frame's cuboid as annotated, for every point of that frame (the 'without' arm of check 9, analysis only)."""
+    frame's cuboid as annotated, for every point of that frame (the 'without' arm of check 9, analysis only).
+    shell (m): a point within the box enlarged by `shell` on every side also joins the mover if its raw class is
+    movable (RAW_MOVABLE): a mover's own side points just outside a tight box, never the road under it (20261121_02
+    §6.2, check 5)."""
+    assert 0.0 <= shell < margin
+    movable = np.isin(scans.raw, RAW_MOVABLE)
     n = len(scans)
     mover = np.full(n, -1, dtype=np.int64)
     box = np.full((n, 3), np.nan)
@@ -184,6 +190,8 @@ def assign_movers(cub, scans, usable, margin=2.0, interpolate=True):
             c, yaw = cub.centre[r], cub.yaw[r]
         q = to_box(scans.xyz[idx], c, yaw)
         m = inside(q, cub.dims[r])
+        if shell > 0:
+            m |= inside(q, cub.dims[r] + 2 * shell) & movable[idx]
         if not m.any():
             continue
         idx, q = idx[m], q[m]
