@@ -1,0 +1,15 @@
+# pcseg S3b arm b1, Pandar64 -> PandarGT: the lines factor (experiments_md episodes/20261116_01 §8.9, §8.10).
+# The PandarGT oracle's recipe with its TRAIN set replaced by PandarGT re-rendered onto Pandar64's generic ring lattice:
+# the cached time-aware depth-3 z-buffer render `gt_on_p64ring` (pcseg/render_cache.py; footprint 0.0835 deg, no fill;
+# built by tools/analysis/pcseg_render_cache.py, checked by job 34884). Labels and intensities follow each rendered
+# point's (frame, index); the cache holds no label. Pandar64 rings outside PandarGT's elevation FOV stay empty (bundled,
+# declared in §8.9).
+#   term_b1 = mIoU(b0 identity arm) - mIoU(this row), both on the UNPERTURBED PandarGT val, in the cone;
+#   b2 (§8.7 item 4): this row's checkpoint rescored with test_seg.py on spunet-pandaset64.yaml (Pandar64 val);
+#   b2's correction = mIoU(this row on Pandar64 val) - mIoU(b0 on Pandar64 val).
+# ANALYSIS row: trained on target labels (uda_legality_rule.md, analysis exception).
+_BASE_CONFIG_: cfgs/pcseg/spunet-pandasetgt.yaml
+
+DATA:
+  FACTOR_SWAP:
+    RENDER: {CACHE: /home/koyama/data/pcseg/render_cache/v1/gt_on_p64ring}

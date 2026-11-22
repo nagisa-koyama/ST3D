@@ -1,0 +1,13 @@
+# pcseg S3b arm b0, the identity-render arm of b1 (experiments_md episodes/20261116_01 §8.7 item 1, §8.9, §8.10).
+# The PandarGT oracle's recipe with its TRAIN set replaced by PandarGT re-rendered onto its OWN rays: the cached
+# time-aware depth-3 z-buffer render `gt_on_gtrays` (pcseg/render_cache.py; built by tools/analysis/pcseg_render_cache.py,
+# checked by job 34885). Labels and intensities follow each rendered point's (frame, index); the cache holds no label.
+# It carries the same render pipeline as b1 and differs from it only in the lattice, so
+#   term_b1 = mIoU(this row) - mIoU(b1), both on the UNPERTURBED PandarGT val, in the cone;
+# the render pipeline's own cost, mIoU(PandarGT oracle) - mIoU(this row), is a reading, not a term.
+# ANALYSIS row: trained on target labels (uda_legality_rule.md, analysis exception).
+_BASE_CONFIG_: cfgs/pcseg/spunet-pandasetgt.yaml
+
+DATA:
+  FACTOR_SWAP:
+    RENDER: {CACHE: /home/koyama/data/pcseg/render_cache/v1/gt_on_gtrays}
