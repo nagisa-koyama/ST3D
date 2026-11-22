@@ -62,6 +62,7 @@ class SequenceGT:
             self.stats['mover_shell_m'] = shell
             self.stats.update(st)
             self.stats['sibling_unknown'] = self.cub.sibling_unknown
+            self.stats['sibling_varies_uuids'] = self.cub.sibling_varies
             # movable-class points no cuboid places (neither a mover nor inside a stationary box + shell): treated as
             # transient, i.e. occupying only from frame t itself (20261121_02 §6.2, declared before the full build)
             cand = self.base & np.isin(s.raw, RAW_MOVABLE) & (self.mover < 0)

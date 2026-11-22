@@ -279,3 +279,19 @@ def test_in_stationary_boxes_and_unboxed():
     assert in_stationary_boxes(cub, sc, cand, 0.0).tolist() == [True, False, False, False]
     cand[0] = False
     assert in_stationary_boxes(cub, sc, cand, 0.2).tolist() == [False, True, False, False]
+
+
+def test_uuid_siblings_rule():
+    """A uuid's sibling is its most frequent known per-row link (20261121_02 §6.3): constant rows are unchanged,
+    intermittent links fill the uuid, '-' / absent (-1) never vote, ties raise."""
+    from pcocc.movers import uuid_siblings
+    uid = np.array([0, 0, 0, 1, 1, 1, 2, 2, 3, 3, 3])
+    row = np.array([5, 5, 5, -1, 7, -1, -1, -1, 8, 9, 9])
+    sib, varies = uuid_siblings(uid, row)
+    assert sib.tolist() == [5, 5, 5, 7, 7, 7, -1, -1, 9, 9, 9]
+    assert varies == 2
+    const = np.array([4, 4, -1, -1, 6, 6])
+    s2, v2 = uuid_siblings(np.array([0, 0, 1, 1, 2, 2]), const)
+    assert s2.tolist() == const.tolist() and v2 == 0
+    with pytest.raises(ValueError):
+        uuid_siblings(np.array([0, 0]), np.array([3, 4]))

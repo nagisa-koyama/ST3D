@@ -1,7 +1,8 @@
 """Moving objects: which points belong to a mover, their box-relative coordinates, and where they go in frame t
 (experiments_md 20261121_02 §3 "movers" and §5.1 item 2, refined 2026-11-22).
 
-- A mover is a cuboid `uuid` with `stationary` False (checked constant over a sequence on 097 / 043 / 011 / 003).
+- A mover is a cuboid `uuid` with `stationary` False (constant within every uuid on all 60 P1 sequences, as is
+  `sensor_id`).
 - Device d's points use the cuboids with `cuboids.sensor_id` in {-1, d}.
 - A cuboid's TIME is the median capture time of the points of its own device(s) inside it in its frame (the frame time
   when it holds none): moving objects in the overlap carry one cuboid per sensor, linked as siblings, about 0.3 m
@@ -13,7 +14,8 @@
 - Membership and box coordinates use that interpolated pose; the box frame is the devkit's center_box_to_corners
   (yaw about world z; |x| <= dx / 2, |y| <= dy / 2, |z| <= dz / 2).
 - Placement at frame t: at the uuid's own frame-t cuboid ('own'), or, for PandarGT points in GU ('p64'), at the
-  frame-t cuboid of the uuid's Pandar64 sibling, falling back to its own (counted).
+  frame-t cuboid of the uuid's Pandar64 sibling, falling back to its own (counted). A uuid's sibling is its most
+  frequent known per-row link (uuid_siblings): PandaSet records the link on some frames only.
 """
 import os
 
@@ -68,15 +70,16 @@ class Cuboids:
         self.uid = codes.astype(np.int64)
         self.sensor = df['cuboids.sensor_id'].to_numpy().astype(np.int64)
         sib = df['cuboids.sibling_id'].to_numpy()
-        self.sibling = np.array([code_of.get(s, -1) if s != '-' else -1 for s in sib], dtype=np.int64)
+        self.sibling_row = np.array([code_of.get(s, -1) if s != '-' else -1 for s in sib], dtype=np.int64)
         self.sibling_unknown = int(sum(1 for s in sib if s != '-' and s not in code_of))
+        self.sibling, self.sibling_varies = uuid_siblings(self.uid, self.sibling_row, seq)
         self.stationary = df['stationary'].to_numpy().astype(bool)
         self.centre = df[['position.x', 'position.y', 'position.z']].to_numpy(dtype=np.float64)
         self.yaw = df['yaw'].to_numpy(dtype=np.float64)
         self.dims = df[['dimensions.x', 'dimensions.y', 'dimensions.z']].to_numpy(dtype=np.float64)
         self.label = df['label'].to_numpy()
         self.frame_times = np.asarray(frame_times, dtype=np.float64)
-        # per-uuid constancy the design relies on
+        # per-uuid constancy the design relies on (the sibling is per-uuid by construction, uuid_siblings)
         for name, arr in (('sensor_id', self.sensor), ('stationary', self.stationary), ('sibling', self.sibling)):
             per = pd.Series(arr).groupby(self.uid).nunique()
             if (per > 1).any():
@@ -91,6 +94,36 @@ class Cuboids:
     def devices(self, row):
         s = self.sensor[row]
         return (PANDAR64, PANDARGT) if s == -1 else (int(s),)
+
+
+def uuid_siblings(uid, sibling_row, seq=''):
+    """Per-row sibling codes -> one sibling per uuid (broadcast back to its rows), and the number of uuids whose rows
+    disagree.
+
+    PandaSet records the sibling link per cuboid row, and intermittently. On 11 of the 60 P1 sequences a uuid carries
+    it on some frames only (often frame 0 or 79), or names a uuid absent from the sequence on the rest. The linked
+    pairs co-locate on every common frame: centre distance median <= 0.62 m, max <= 1.38 m (experiments_md 20261121_02
+    §6.3). Rule: a uuid's sibling is its most frequent KNOWN sibling (code >= 0; '-' and absent uuids are -1 and are
+    ignored), or -1 when it has none. A tie raises (none on P1). The result equals the row value wherever that is
+    constant within the uuid, so sequences without the quirk are unchanged."""
+    uid = np.asarray(uid, dtype=np.int64)
+    sibling_row = np.asarray(sibling_row, dtype=np.int64)
+    out = np.full(len(uid), -1, dtype=np.int64)
+    varies = 0
+    for u in np.unique(uid):
+        m = uid == u
+        rows = sibling_row[m]
+        if len(np.unique(rows)) > 1:
+            varies += 1
+        known = rows[rows >= 0]
+        if not len(known):
+            continue
+        vals, cnt = np.unique(known, return_counts=True)
+        top = np.flatnonzero(cnt == cnt.max())
+        if len(top) > 1:
+            raise ValueError('%s: uuid code %d has tied siblings %s' % (seq, int(u), vals[top].tolist()))
+        out[m] = vals[top[0]]
+    return out, varies
 
 
 def _by_frame(frame):

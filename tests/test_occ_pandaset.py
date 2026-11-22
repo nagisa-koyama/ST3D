@@ -85,6 +85,29 @@ def test_pose_track_round_trip_and_frame_times():
     np.testing.assert_allclose(p[0], 2 * poses.pos[0] - poses.pos[1], atol=1e-9)
 
 
+
+@pytest.mark.parametrize('seq', [s for s in P1_TRAIN + P1_VAL if has_semseg(ROOT, s)])
+def test_cuboids_load_on_every_p1_sequence(seq):
+    """Cuboids loads on all 60 P1 sequences (up to ST3D 73b019e the sibling constancy check stopped 11 of
+    them: 027 first). sensor_id and stationary are constant within every uuid; the sibling equals the row value
+    wherever that is constant within the uuid (so sequences without the quirk are unchanged), and is a known uuid
+    the uuid links to otherwise."""
+    from pcocc.movers import Cuboids
+    import pandas as pd
+    cub = Cuboids(ROOT, seq, Poses(ROOT, seq).times)
+    const = pd.Series(cub.sibling_row).groupby(cub.uid).transform('nunique').to_numpy() == 1
+    assert np.array_equal(cub.sibling[const], cub.sibling_row[const])
+    for u in np.unique(cub.uid[~const]):
+        m = cub.uid == u
+        assert cub.sibling[m][0] in set(cub.sibling_row[m][cub.sibling_row[m] >= 0].tolist())
+    assert cub.sibling_varies == int(len(np.unique(cub.uid[~const])))
+    assert (cub.sibling_varies > 0) == (seq in {'003', '027', '078', '021', '113', '002', '119', '064', '019', '023',
+                                                '024'})
+    if seq == '027':
+        u = cub.uuid_names.index(next(x for x in cub.uuid_names if x.startswith('adbe97')))
+        e = cub.uuid_names.index(next(x for x in cub.uuid_names if x.startswith('e84999')))
+        assert set(cub.sibling[cub.uid == u].tolist()) == {e}
+
 def _reference_pose_at(poses, times):
     """pcocc's own pose interpolation as it stood at ST3D c233e3c, before pcocc.poses became an adapter over
     pcseg.render.PoseTrack: the reference the swap must reproduce."""
