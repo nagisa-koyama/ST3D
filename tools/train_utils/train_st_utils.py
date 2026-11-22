@@ -463,7 +463,8 @@ def _foreground_class_ids(data_cfg, class_names):
 def train_model_st(model, model_teacher, optimizer, source_loaders, target_loader, model_func, lr_scheduler, optim_cfg,
                    start_epoch, total_epochs, start_iter, rank, tb_log, ckpt_save_dir, ps_label_dir,
                    source_samplers=None, target_sampler=None, lr_warmup_scheduler=None, ckpt_save_interval=1,
-                   max_ckpt_save_num=50, merge_all_iters_to_one_epoch=False, logger=None, ema_model=None):
+                   max_ckpt_save_num=50, merge_all_iters_to_one_epoch=False, logger=None, ema_model=None,
+                   resume_ckpt=None):
     accumulated_iter = start_iter
 
     # SELF_TRAIN.DTS (item 51 row D): the EMA teacher of DTS's graph alignment, a copy of the student as it starts.
@@ -579,11 +580,15 @@ def train_model_st(model, model_teacher, optimizer, source_loaders, target_loade
             for name, n in zip(cfg.CLASS_NAMES, pm_counts['gt_replaced'].tolist()):
                 wandb.log({'train/ps_labels_gt_replaced_{}'.format(name): int(n)})
     else:
-        # for continue training.
-        # if already exist generated pseudo label result
-        ps_pkl = self_training_utils.check_already_exsit_pseudo_label(ps_label_dir, start_epoch)
+        # for continue training: this run's ps_label dir, else the checkpoint run's (a resume gets a new W&B dir;
+        # self_training_utils.resume_pseudo_labels). A resumed run that holds its labels counts them as generated, so
+        # FROZEN_TEACHER_SINGLE_PASS skips what the uninterrupted run skipped (item 49b, job 34902).
+        ps_pkl, ps_labels_generated = self_training_utils.resume_pseudo_labels(ps_label_dir, start_epoch, resume_ckpt)
         if ps_pkl is not None:
             logger.info('==> Loading pseudo labels from {}'.format(ps_pkl))
+        elif start_epoch > 0 and logger is not None:
+            logger.warning('self-training resumed at epoch %d with NO pseudo-labels (none in %s or the checkpoint run)'
+                           % (start_epoch, ps_label_dir))
 
     # The target dataset must CARRY the pseudo-label dict, not merely share a module with it.
     # Under DDP the loader workers are spawned, and a spawned worker re-imports

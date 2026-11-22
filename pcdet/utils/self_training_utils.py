@@ -64,6 +64,30 @@ def check_already_exsit_pseudo_label(ps_label_dir, start_epoch):
     return None
 
 
+def resume_pseudo_labels(ps_label_dir, start_epoch, ckpt=None):
+    """Pseudo-labels for a self-training run that continues at `start_epoch`: (pkl loaded or None, labels in hand).
+
+    train.py gives every run a NEW W&B directory, and ps_label_dir lives in it, so a run resumed with --ckpt starts with an
+    empty ps_label dir. Its pseudo-labels are in the checkpoint's run (<run>/files/ckpt/x.pth -> <run>/files/ps_label).
+    When this run's own dir has none, every rank reads the checkpoint run's latest ps_label_e<k>.pkl with k <= start_epoch,
+    and rank 0 copies it here for the record. Before this (experiments_md 20261003_05 §5 item 49b, job 34902, 2026-11-22),
+    the resumed row started with an empty pseudo-label dict and its first regeneration raised KeyError in the memory ensemble.
+
+    `labels in hand` is True for a resumed run (start_epoch > 0) that holds its labels, so FROZEN_TEACHER_SINGLE_PASS goes
+    on skipping the regenerations the uninterrupted run skipped. At start_epoch 0 it stays False (INIT_PS rows still run
+    their epoch-0 pass, as before).
+    """
+    ps_pkl = check_already_exsit_pseudo_label(ps_label_dir, start_epoch)
+    if ps_pkl is None and ckpt is not None and start_epoch > 0:
+        prev = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(str(ckpt)))), 'ps_label')
+        if os.path.isdir(prev) and os.path.abspath(prev) != os.path.abspath(str(ps_label_dir)):
+            ps_pkl = check_already_exsit_pseudo_label(prev, start_epoch)
+            if ps_pkl is not None and cfg.get('LOCAL_RANK', 0) == 0:
+                import shutil
+                shutil.copy2(ps_pkl, os.path.join(str(ps_label_dir), os.path.basename(ps_pkl)))
+    return ps_pkl, (ps_pkl is not None and start_epoch > 0)
+
+
 def save_pseudo_label_epoch(model, val_loader, rank, leave_pbar, ps_label_dir, cur_epoch):
     """
     Generate pseudo label with given model.

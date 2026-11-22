@@ -511,6 +511,8 @@ def main():
     # Passed only when asked for, because train_model_st does not take it - a distillation run and a
     # self-training run are different trainers, and DISTILL is refused alongside SELF_TRAIN below.
     train_func_kwargs = {}
+    if cfg.get('SELF_TRAIN', None) and args.ckpt is not None:
+        train_func_kwargs['resume_ckpt'] = args.ckpt   # its run holds the pseudo-labels (resume_pseudo_labels)
     if cfg.get('DISTILL', None):
         assert not cfg.get('SELF_TRAIN', None), (
             'DISTILL and SELF_TRAIN cannot both be set: they need different trainers, and the '
