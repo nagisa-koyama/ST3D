@@ -190,3 +190,38 @@ def test_center_head_keeps_the_bev_map_only_when_the_batch_asks():
         except (IndexError, KeyError):
             pass  # the stub has no heads; the map is kept before they are needed
         assert (head.forward_ret_dict.get('spatial_features_2d') is m) == ask
+
+
+def test_split_for_dts_keeps_ignore_labels_identical_in_both_views():
+    """Sentinels through the DTS split (bug-prevention rule 1): D0's cuts give Pedestrian / Cyclist an ignore band, so the
+    target's pseudo-labels carry NEGATIVE class labels (self_training_utils) and IGNORE_CLASS_LABEL -99. Both views must
+    keep every box and its label exactly; neither view may drop, sign-flip or re-index one."""
+    from pcdet.datasets.dataset import DatasetTemplate
+    from pcdet.utils import common_utils
+
+    class _Identity:
+        def forward(self, data_dict=None, **kw):
+            return data_dict if data_dict is not None else kw
+
+    ds = DatasetTemplate.__new__(DatasetTemplate)
+    ds.dts_views_cfg = EasyDict({'NUM_BEAMS': 64, 'KEEP_PROB': 0.75, 'TEACHER_KEEP_PROB': 0.75})
+    ds.point_feature_encoder = _Identity()
+    ds.data_processor = _Identity()
+    rng = np.random.RandomState(0)
+    pts = np.concatenate([rng.rand(2000, 4).astype(np.float32), rng.randint(-1, 64, (2000, 1)).astype(np.float32)], 1)
+    labels = np.array([1, -1, 2, -2, 3, -3, common_utils.IGNORE_CLASS_LABEL], dtype=np.int32)
+    boxes = np.concatenate([rng.rand(7, 7).astype(np.float32), labels.reshape(-1, 1).astype(np.float32)], 1)
+    dd = {'points': pts, 'gt_boxes': boxes.copy(), 'gt_classes': labels.copy(), 'gt_scores': np.linspace(0.2, 0.9, 7),
+          'gt_names': np.array(['Car', 'Car', 'Pedestrian', 'Pedestrian', 'Cyclist', 'Cyclist', 'Misc'])}
+    np.random.seed(0)
+    s, t = ds._split_for_dts(dd)
+    for view in (s, t):
+        assert np.array_equal(view['gt_boxes'], boxes)
+        assert np.array_equal(view['gt_boxes'][:, 7].astype(np.int32), labels)
+        assert np.array_equal(view['gt_classes'], labels)
+        assert view['points'].shape[1] == 4  # the ring column is stripped
+    view_rows = lambda v: set(map(tuple, v['points'].tolist()))
+    assert view_rows(s) != view_rows(t)  # two independent beam masks
+    assert view_rows(s) <= set(map(tuple, pts[:, :4].tolist()))
+    s['gt_boxes'][0, 7] = 99  # the views own their arrays: one cannot change the other or the caller's dict
+    assert t['gt_boxes'][0, 7] == 1 and dd['gt_boxes'][0, 7] == 1

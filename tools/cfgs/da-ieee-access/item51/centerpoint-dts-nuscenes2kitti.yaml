@@ -19,8 +19,7 @@
 #     7 x 7 pool of the BEV map (student not detached, Q2 (a)); the released object loss kept the last sample only and
 #     is averaged over the batch here (pcdet/utils/dts_utils.py).
 #   - CUTS: the released 0.6 / 0.6 act on SECOND-IoU's IoU score and do not transfer to a heatmap peak; the family's
-#     label-free rules re-derived for D0 (scripts/_item51_cuts_n2k.sh), added below once that job has run. Without them
-#     this config does not start (self-training reads SELF_TRAIN.SCORE_THRESH).
+#     label-free rules re-derived for D0 (scripts/_item51_cuts_n2k.sh, job 34915), in SELF_TRAIN below.
 # UDA-legal: DTS's ROS [0.75, 1.0] and "best model" selection are not used; the third-party recipe values are used as
 # released (decision F), disclosed; beam count = KITTI's published 64; final epoch read.
 # Launch: run_sourceonly_2gpu.sh <this cfg> <tag> <run> --pretrained_model <D0 ep20> --pretrained_model_teacher <D0 ep20>
@@ -56,6 +55,16 @@ SELF_TRAIN:
     TEACHER_IS_STUDENT: False
     FROZEN_TEACHER_SINGLE_PASS: True
     EPOCH_FOLLOWS: target
+    # Job 34915 (scripts/_item51_cuts_n2k.sh job:34901:20 d0), teacher D0 epoch 20, pre-declared rules, nothing chosen here:
+    #   rule B on nuScenes val, 1 sweep (source-val precision >= 0.50): Car 0.20, Pedestrian 0.31, Cyclist 0.35
+    #   rule A on KITTI train (background-plateau upper half-maximum; plateau mode 0.133 / 0.165 / 0.133):
+    #       NEG_THRESH Car 0.208, Pedestrian 0.225, Cyclist 0.234
+    # Car's rule-B cut is below its NEG_THRESH, so (plateau_neg_thresh.py step 6) it is raised to NEG_THRESH. Pedestrian
+    # and Cyclist keep their rule-B cuts and so carry an ignore band (NEG <= score < SCORE: negative class labels, which
+    # CenterHead turns into zero-weight regions; both DTS views keep them, tests/test_dts_adaptation.py).
+    # (25743's were 0.589 / 0.511 / 0.482 with plateau modes 0.407 / 0.407 / 0.349: D0's KITTI background sits lower.)
+    SCORE_THRESH: [0.208, 0.31, 0.35]
+    NEG_THRESH: [0.208, 0.225, 0.234]
     UPDATE_PSEUDO_LABEL: [0]
     UPDATE_PSEUDO_LABEL_INTERVAL: 100
     INIT_PS: None
