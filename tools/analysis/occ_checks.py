@@ -4,7 +4,8 @@
      and road), per device; doubled walls would read >= one voxel.
   5  mover traces: voxels of a vehicle or pedestrian class lying more than one voxel outside every frame-t cuboid.
   6  duplicates: in GU, vehicle voxels inside a PandarGT sibling cuboid but outside its Pandar64 sibling (where GU
-     must NOT put the object), and connected vehicle blobs against frame-t vehicle cuboids.
+     must NOT put the object), the same for pairs linked from the Pandar64 side only (vehicles and pedestrians; open
+     item g), and connected vehicle blobs against frame-t vehicle cuboids.
   7  target dump: per-class voxel counts, unknown share per range bin in the cone, BEV images with the cone drawn.
   9  share of mover points captured > 50 ms from their frame time; the trace count of check 5 with and without the
      per-point interpolation (GU rebuilt with interpolate=False on the dump frames).
@@ -164,6 +165,23 @@ def check6(sg, t, gts, cm):
         in_b = inside(to_box(w, cub.centre[r], cub.yaw[r]), cub.dims[r])
         out_a = ~inside(to_box(w, cub.centre[a], cub.yaw[a]), cub.dims[a] + 2 * sg.grid.voxel)
         doubled += int((in_b & out_a).sum())
+    # open item g (20261121_02 §6.3): pairs linked from the Pandar64 side only (the PandarGT mover names no sibling,
+    # a frame-t Pandar64 cuboid names it). GU keeps those PandarGT points in their own box; count the GU vehicle and
+    # pedestrian voxels inside the PandarGT box but outside the Pandar64 one (+ one voxel), as above.
+    movable = veh + [cm.names.index('pedestrian') + 1]
+    _, wm = voxel_centres_world(sg, t, np.isin(label, movable))
+    names_gt = {}
+    for a in np.flatnonzero((cub.frame == t) & (cub.sensor == 0) & (cub.sibling >= 0)):
+        names_gt.setdefault(int(cub.sibling[a]), a)
+    rev_pairs = rev_doubled = 0
+    for r in np.flatnonzero((cub.frame == t) & (cub.sensor == 1) & (cub.sibling < 0) & ~cub.stationary):
+        a = names_gt.get(int(cub.uid[r]))
+        if a is None:
+            continue
+        rev_pairs += 1
+        in_b = inside(to_box(wm, cub.centre[r], cub.yaw[r]), cub.dims[r])
+        out_a = ~inside(to_box(wm, cub.centre[a], cub.yaw[a]), cub.dims[a] + 2 * sg.grid.voxel)
+        rev_doubled += int((in_b & out_a).sum())
     lab, n = ndimage.label(m, structure=np.ones((3, 3, 3)))
     sizes = np.bincount(lab.ravel())[1:]
     # frame-t vehicle cuboids (Pandar64 side: sensor -1 or 0) with their centre in the grid
@@ -176,6 +194,7 @@ def check6(sg, t, gts, cm):
     in_grid = np.all((ego >= sg.grid.lo) & (ego < sg.grid.hi), axis=1)
     n_cub = int(np.sum(in_grid & np.isin(sen, [-1, 0]) & np.isin(lbl, list(vehicle_labels))))
     return {'sibling_pairs': pairs, 'gu_vehicle_voxels_in_pandargt_sibling_only': doubled,
+            'reverse_only_mover_pairs': rev_pairs, 'gu_movable_voxels_in_reverse_only_pandargt_box_only': rev_doubled,
             'gu_vehicle_blobs_ge5_voxels': int((sizes >= 5).sum()), 'vehicle_cuboids_p64_side_in_grid': n_cub}
 
 
