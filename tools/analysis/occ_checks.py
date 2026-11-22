@@ -88,7 +88,8 @@ def outside_all_cuboids(sg, t, world, pad):
     return out
 
 
-def check5(sg, t, gts, cm):
+def check5(sg, t, gts, cm, traces=None):
+    """Counts per GT; if `traces` is a dict, it receives {gt: [K, 3] voxel indices of the trace voxels} for plots."""
     veh = [cm.names.index(n) + 1 for n in ('car', 'truck', 'bus', 'other_vehicle', 'motorcycle', 'bicycle')]
     ped = [cm.names.index('pedestrian') + 1]
     res = {}
@@ -99,7 +100,12 @@ def check5(sg, t, gts, cm):
             ijk, w = voxel_centres_world(sg, t, m)
             o = outside_all_cuboids(sg, t, w, pad=sg.grid.voxel)
             r[name] = {'voxels': int(m.sum()), 'outside_every_cuboid_by_more_than_a_voxel': int(o.sum())}
+            if traces is not None:
+                traces.setdefault(g, []).append(ijk[o])
         res[g] = r
+    if traces is not None:
+        for g in list(traces):
+            traces[g] = np.concatenate(traces[g]) if traces[g] else np.zeros((0, 3), dtype=np.int64)
     return res
 
 
@@ -135,7 +141,7 @@ def check6(sg, t, gts, cm):
             'gu_vehicle_blobs_ge5_voxels': int((sizes >= 5).sum()), 'vehicle_cuboids_p64_side_in_grid': n_cub}
 
 
-def check7(sg, t, gts, cm, fig_dir, seq):
+def check7(sg, t, gts, cm, fig_dir, seq, traces=None):
     cone = cone_voxels(sg.grid)
     xs = sg.grid.lo[0] + sg.grid.voxel * (np.arange(sg.grid.shape[0]) + 0.5)
     ys = sg.grid.lo[1] + sg.grid.voxel * (np.arange(sg.grid.shape[1]) + 0.5)
@@ -165,15 +171,20 @@ def check7(sg, t, gts, cm, fig_dir, seq):
             lab = np.take_along_axis(label, np.clip(top, 0, None)[..., None], -1)[..., 0].astype(float)
             img = np.full(label.shape[:2] + (3,), 1.0)
             unk_col = unknown.all(-1)
-            img[unk_col] = 0.85
+            img[unk_col] = (1.0, 0.93, 0.75)             # pale amber: not a class colour (tab20 has greys)
             for c in range(1, cm.num_classes + 1):
                 img[(top >= 0) & (lab == c)] = cmap(c - 1)[:3]
             img[(top >= 0) & (lab == IGNORE_VOXEL)] = 0.3
             ax.imshow(np.transpose(img, (1, 0, 2))[::-1, :], extent=[sg.grid.lo[0], sg.grid.hi[0], sg.grid.lo[1],
                                                                       sg.grid.hi[1]])
+            if traces is not None and len(traces.get(g, [])):
+                tr = traces[g]
+                ax.scatter(sg.grid.lo[0] + (tr[:, 0] + 0.5) * sg.grid.voxel, sg.grid.lo[1] + (tr[:, 1] + 0.5) *
+                           sg.grid.voxel, s=1.5, c='k', marker='s', linewidths=0)
             ax.plot([0, 51.2], [0, 51.2 * np.tan(np.pi / 6)], 'k--', lw=0.8)
             ax.plot([0, 51.2], [0, -51.2 * np.tan(np.pi / 6)], 'k--', lw=0.8)
-            ax.set_title('%s %s/%02d (grey: unknown column; dark: ignore)' % (g.upper(), seq, t), fontsize=9)
+            ax.set_title('%s %s/%02d (amber: unknown column; dark grey: ignore; black: check-5 traces)'
+                         % (g.upper(), seq, t), fontsize=8)
             ax.set_xlabel('x (m)')
             ax.set_ylabel('y (m)')
         handles = [plt.Rectangle((0, 0), 1, 1, color=cmap(c)[:3]) for c in range(cm.num_classes)]
@@ -240,9 +251,10 @@ def main():
                 for g in GTS}
         per[t] = {'rebuilt_equals_stored': same,
                   'check4_pose': check4(sg, t, cm) if t + 10 < 80 else None,
-                  'check5_traces': check5(sg, t, gts, cm),
-                  'check6_duplicates': check6(sg, t, gts, cm),
-                  'check7_dump': check7(sg, t, gts, cm, out_dir, args.seq)}
+                  'check6_duplicates': check6(sg, t, gts, cm)}
+        traces = {}
+        per[t]['check5_traces'] = check5(sg, t, gts, cm, traces=traces)
+        per[t]['check7_dump'] = check7(sg, t, gts, cm, out_dir, args.seq, traces=traces)
         print('frame %d done (%.0f s)' % (t, time.time() - t0), flush=True)
     # check 9, without interpolation: GU (and the singles) rebuilt with each frame's cuboid as annotated
     sg0 = SequenceGT(ROOT, args.seq, PANDASET_GRID, cm, sensor_origins(), stale_frames(), interpolate=False)
