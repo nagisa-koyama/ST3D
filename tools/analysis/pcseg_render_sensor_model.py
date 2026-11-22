@@ -15,6 +15,8 @@ Parts (run in this order; later parts read the earlier outputs in --out):
               (each frame registered to it by a small rotation), and its repeatability on other frames.
 
 Writes <out>/sensor_model_<part>.json, <out>/sensor_models.json (both models) and <out>/pandargt_template.npz.
+sensor_models.json is frozen once written: the render caches record its sha256 and pcocc pins it (2026-11-22). The script
+refuses an --out that already holds one, so a refit always goes into a new directory, with all its parts in one run.
 
     python3 analysis/pcseg_render_sensor_model.py --parts gt_origin,p64,gt_lattice
 """
@@ -398,6 +400,10 @@ def main():
     ap.add_argument('--stationary_speed', type=float, default=0.3, help='m/s; template frames')
     ap.add_argument('--procs', type=int, default=int(os.environ.get('SLURM_CPUS_PER_TASK', 4)))
     args = ap.parse_args()
+    models_path = os.path.join(args.out, 'sensor_models.json')
+    if os.path.exists(models_path):
+        # Frozen once written (2026-11-22): the render caches and pcocc pin its sha256. A refit goes to a new --out.
+        raise SystemExit('%s exists and is frozen: write a refit into a new --out directory' % models_path)
     os.makedirs(args.out, exist_ok=True)
     seqs = split('train')
     if args.max_seqs:
@@ -405,8 +411,7 @@ def main():
     fit_frames = [(s, int(f)) for s in seqs for f in args.fit_frames.split(',')]
     check_frames = [(s, int(f)) for s in seqs for f in args.check_frames.split(',')]
     parts = args.parts.split(',')
-    models_path = os.path.join(args.out, 'sensor_models.json')
-    models = json.load(open(models_path)) if os.path.exists(models_path) else {}
+    models = {}
     t0 = time.time()
     with Pool(args.procs) as pool:
         if 'gt_origin' in parts:
