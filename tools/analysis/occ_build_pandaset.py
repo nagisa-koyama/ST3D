@@ -22,7 +22,7 @@ sys.path.insert(0, REPO)
 
 from pcseg.class_map import build_class_map                                            # noqa: E402
 from pcseg.pandaset_seg import N_FRAMES, has_semseg                                    # noqa: E402
-from pcocc.build import GTS, RANGE_CUT, SequenceGT                                     # noqa: E402
+from pcocc.build import GTS, MOVER_SHELL, RANGE_CUT, SequenceGT                        # noqa: E402
 from pcocc.grid import PANDASET_GRID                                                   # noqa: E402
 from pcocc.scans import (CENSUS, CENSUS_SHA256, SENSOR_MODELS, SENSOR_MODELS_SHA256,   # noqa: E402
                          sensor_origins, sha256, stale_frames)
@@ -53,7 +53,8 @@ def main():
         'script': os.path.relpath(os.path.abspath(__file__), REPO), 'script_sha256': sha256(os.path.abspath(__file__)),
         'git_head': head, 'git_branch': git('rev-parse', '--abbrev-ref', 'HEAD'), 'dirty_paths': dirty.splitlines(),
         'root': ROOT, 'seqs': args.seqs, 'frames': args.frames, 'grid': PANDASET_GRID.to_dict(),
-        'range_cut_m': list(RANGE_CUT), 'class_map': 'pandaset_scalr17', 'class_names': cm.names,
+        'range_cut_m': list(RANGE_CUT), 'mover_shell_m': MOVER_SHELL, 'class_map': 'pandaset_scalr17',
+        'class_names': cm.names,
         'encoding': {'empty': 0, 'class': 'index + 1', 'ignore_voxel': 255, 'unknown': 'separate bool mask'},
         'gts': {g: list(d) for g, d in GTS.items()},
         'data_files': {SENSOR_MODELS: SENSOR_MODELS_SHA256, CENSUS: CENSUS_SHA256},

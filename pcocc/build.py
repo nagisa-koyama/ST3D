@@ -25,11 +25,15 @@ from .vote import vote
 
 GTS = {'g64': (PANDAR64,), 'ggt': (PANDARGT,), 'gu': (PANDAR64, PANDARGT)}
 RANGE_CUT = (2.5, 70.0)                    # jbehley/voxelizer semantic_kitti.cfg: min range 2.5, max range 70
+# Mover shell (m), chosen 2026-11-22 by the rule declared in experiments_md 20261121_02 §6.2 before the sweep ran
+# (jobs 34959 / 34960, val 097 + 011, frames 10/30/50/70): GU vehicle traces 10,704 / 6,092 / 5,195 / 5,121 / 5,048 at
+# 0 / 0.1 / 0.2 / 0.3 / 0.5 m; 0.2 is the smallest within 10% of 0.5; stationary vehicle voxels unchanged at every s.
+MOVER_SHELL = 0.2
 
 
 class SequenceGT:
     def __init__(self, root, seq, grid, class_map, origins, stale, range_cut=RANGE_CUT, movers=True, frames=None,
-                 log=print, interpolate=True, shell=0.0):
+                 log=print, interpolate=True, shell=MOVER_SHELL):
         t0 = time.time()
         self.seq, self.grid, self.num_classes = seq, grid, class_map.num_classes
         self.scans = s = SequenceScans(root, seq, class_map, stale=stale, frames=frames)
