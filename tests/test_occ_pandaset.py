@@ -85,6 +85,48 @@ def test_pose_track_round_trip_and_frame_times():
     np.testing.assert_allclose(p[0], 2 * poses.pos[0] - poses.pos[1], atol=1e-9)
 
 
+def _reference_pose_at(poses, times):
+    """pcocc's own pose interpolation as it stood at ST3D c233e3c, before pcocc.poses became an adapter over
+    pcseg.render.PoseTrack: the reference the swap must reproduce."""
+    from scipy.spatial.transform import Rotation, Slerp
+    t = np.atleast_1d(np.asarray(times, dtype=np.float64))
+    tc = np.clip(t, poses.times[0], poses.times[-1])
+    rot = Slerp(poses.times, poses.rot)(tc)
+    pos = np.stack([np.interp(tc, poses.times, poses.pos[:, k]) for k in range(3)], axis=1)
+    quat = None
+    for m, (i, j), e in ((t < poses.times[0], (0, 1), 0), (t > poses.times[-1], (-2, -1), -1)):
+        if not m.any():
+            continue
+        s = (t[m] - poses.times[e]) / (poses.times[j] - poses.times[i])
+        pos[m] = poses.pos[e] + s[:, None] * (poses.pos[j] - poses.pos[i])
+        w = (poses.rot[i].inv() * poses.rot[j]).as_rotvec()
+        quat = rot.as_quat() if quat is None else quat
+        quat[m] = (poses.rot[e] * Rotation.from_rotvec(s[:, None] * w)).as_quat()
+    if quat is not None:
+        rot = Rotation.from_quat(quat)
+    return rot, pos
+
+
+@pytest.mark.parametrize('seq,frame', _frames())
+def test_pose_track_swap_is_identity(seq, frame):
+    """bug_prevention_checklist rule 8: the swap to PoseTrack, at every point time of the frame (both devices; frames
+    0 and 79 reach beyond the pose ends), gives the c233e3c poses bit for bit, and so the same ray origins and ego
+    coordinates."""
+    from pcocc.poses import SWAP
+    from pcseg.render import PoseTrack
+    s = SequenceScans(ROOT, seq, build_class_map('pandaset_scalr17'), frames=[frame])
+    poses = Poses(ROOT, seq)
+    assert isinstance(poses, PoseTrack)
+    rot, pos = poses.at(s.t)
+    rr, rp = _reference_pose_at(poses, s.t)
+    assert np.array_equal(pos, rp) and np.array_equal(rot.as_quat(), rr.as_quat())
+    o = sensor_origins()[PANDAR64]
+    ref_origin = rr.apply(np.broadcast_to(o[None], (len(s), 3)) @ SWAP) + rp
+    assert np.array_equal(poses.world_from_ego_at(o[None], s.t), ref_origin)
+    ref_ego = poses.rot[frame].inv().apply(s.xyz - poses.pos[frame]) @ SWAP.T
+    assert np.array_equal(poses.ego_from_world_static(s.xyz, frame), ref_ego)
+
+
 # --- the semseg session's data files ----------------------------------------------------------------------------------
 
 def test_pinned_data_files():
