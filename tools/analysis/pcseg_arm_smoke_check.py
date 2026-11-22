@@ -5,9 +5,11 @@ train_seg.py writes target_dump.json at the start of every run, in the main proc
 point and voxel counts on 4 frames per split (engine.target_dump). This script rebuilds the same datasets on CPU, with
 the arm's block and without it (the oracle's base), and checks:
 
-  A  the job's dump equals the dump recomputed here from the same config (the job ran the declared config);
-  B  the split the arm does not touch is identical to the base, key for key (no leak: a FACTOR_SWAP arm's val is the
-     unperturbed val, an EVAL_PERTURB config's train is the oracle's);
+  A  the job's dump equals the dump recomputed here from the same config (the job ran the declared config): eval rows
+     in every field, train rows in their pre-augmentation fields (DETERMINISTIC; the voxel fields follow the random
+     training augmentation);
+  B  the split the arm does not touch is identical to the base, key for key, on the same fields (no leak: a
+     FACTOR_SWAP arm's val is the unperturbed val, an EVAL_PERTURB config's train is the oracle's);
   C  the touched split differs from the base as the arm's operator says, frame by frame:
        DENSITY    fewer points, every class count <= the base's, and every frame thinned;
        CONE       points and class counts equal the base's points inside the evaluation's cone;
@@ -54,26 +56,38 @@ def arm_block(cfg):
     return ('train' if have[0] == 'FACTOR_SWAP' else 'val'), ops
 
 
-def dump_diff(a, b):
-    """Differences between two target dumps (or two row lists), as readable strings; [] if identical."""
+# A TRAINING sample is drawn after the random training augmentation (the global numpy RNG, which wandb.init and the
+# logging touch between the job's seeding and its dump), so only a train row's pre-augmentation fields are
+# deterministic. An eval row is deterministic in full (frame-keyed voxel draw). The job's own target_dump already
+# raises if a voxel carries a label its points do not.
+DETERMINISTIC = ('frame', 'points', 'ignored_points', 'point_counts')
+
+
+def dump_diff(a, b, fields=None):
+    """Differences between two target dumps (or two row lists), as readable strings; [] if identical. On whole dumps,
+    the 'train' split is compared on DETERMINISTIC fields only; `fields` restricts a row-list comparison."""
     if isinstance(a, dict):
         out = []
         for k in sorted(set(a) | set(b)):
             if k not in a or k not in b:
                 out.append('split %s only in one dump' % k)
             else:
-                out += ['%s: %s' % (k, d) for d in dump_diff(a[k], b[k])]
+                out += ['%s: %s' % (k, d) for d in dump_diff(a[k], b[k], split_fields(k))]
         return out
     if len(a) != len(b):
         return ['%d rows against %d' % (len(a), len(b))]
     out = []
     for ra, rb in zip(a, b):
-        for k in sorted(set(ra) | set(rb)):
+        for k in (sorted(set(ra) | set(rb)) if fields is None else fields):
             va, vb = ra.get(k), rb.get(k)
             same = (abs(va - vb) <= 1e-12) if isinstance(va, float) and isinstance(vb, float) else va == vb
             if not same:
                 out.append('%s %s: %s against %s' % (ra.get('frame'), k, va, vb))
     return out
+
+
+def split_fields(split):
+    return DETERMINISTIC if split == 'train' else None
 
 
 def counts(seg, names):
@@ -144,7 +158,8 @@ def main():
     res = {'cfg': args.cfg, 'dump': args.dump, 'touched_split': touched, 'ops': ops, 'checks': {}, 'frames': []}
 
     res['checks']['A_job_dump_reproduces'] = dump_diff(d_job, d_arm)
-    res['checks']['B_untouched_split_is_the_base'] = dump_diff(d_arm[untouched], d_base[untouched])
+    res['checks']['B_untouched_split_is_the_base'] = dump_diff(d_arm[untouched], d_base[untouched],
+                                                               split_fields(untouched))
     errs = []
     ds_a, ds_b = arm[touched], base[touched]
     idxs = np.linspace(0, len(ds_a) - 1, num=min(4, len(ds_a))).round().astype(int)

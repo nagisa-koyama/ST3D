@@ -161,6 +161,25 @@ def test_dump_diff_finds_a_changed_count_a_leak_and_a_missing_split():
     assert ck.dump_diff(a, {'train': a['train']})
 
 
+def test_train_rows_compare_pre_augmentation_fields_only_eval_rows_everything():
+    """The 2026-11-22 smokes 35531-35541: every check A failed on the train rows' voxel counts, which follow the random
+    training augmentation, while points and class counts matched. Fails on 4e88229, which compared every field."""
+    ck = _checker()
+    a = {'train': [_row('035/00', 10, {'road': 10})], 'val': [_row('097/00', 5, {'car': 5}, 1.0)]}
+    b = json.loads(json.dumps(a))
+    b['train'][0]['voxels'] = 9
+    b['train'][0]['ignored_voxels'] = 1
+    b['train'][0]['voxel_counts'] = {'road': 8}
+    assert ck.dump_diff(a, b) == []                                          # augmentation-dependent: not compared
+    b['train'][0]['point_counts'] = {'road': 9, 'car': 1}
+    assert ck.dump_diff(a, b)                                                # a label change is still caught
+    c = json.loads(json.dumps(a))
+    c['val'][0]['voxels'] = 4
+    assert ck.dump_diff(a, c)                                                # eval rows: every field
+    assert ck.split_fields('train') == ck.DETERMINISTIC and ck.split_fields('val') is None
+    assert ck.dump_diff(a['train'], b['train'], ck.split_fields('train'))   # row lists, restricted
+
+
 def test_check_subset_flags_no_thinning_and_a_grown_class():
     ck = _checker()
     base = _row('035/00', 10, {'road': 6, 'car': 4})
