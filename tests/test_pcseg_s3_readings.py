@@ -55,6 +55,13 @@ def test_cone16_raises_when_a_declared_class_lacks_ground_truth_or_the_shape_is_
         m.cone16(_mat(), ['road', 'car', 'truck', 'bus'])            # no barrier to drop
 
 
+def test_per_class_covers_the_declared_classes_and_averages_to_cone16():
+    m = _mod()
+    pc = m.per_class(_mat(), NAMES)
+    assert sorted(pc) == ['bus', 'car', 'road']
+    assert np.mean(list(pc.values())) == pytest.approx(m.cone16(_mat(), NAMES), abs=1e-15)
+
+
 def _shard(d, i, n, mat, ckpt='/x/run-1-abc/files/ckpt/checkpoint_epoch_391.pth'):
     os.makedirs(d, exist_ok=True)
     rec = {'cfg_file': 'cfgs/pcseg/spunet-pandasetgt.yaml', 'ckpt': ckpt, 'epoch': 390, 'shard': i, 'num_shards': n,

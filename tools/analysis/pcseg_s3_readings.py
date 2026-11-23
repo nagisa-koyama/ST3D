@@ -64,6 +64,14 @@ def cone16(mat, names, dropped=DROPPED):
     return float(np.mean(iou[keep]))
 
 
+def per_class(mat, names, dropped=DROPPED):
+    """IoU of each declared class (their mean is cone16)."""
+    mat = np.asarray(mat, dtype=np.float64)
+    tp, gt = np.diag(mat), mat.sum(1)
+    iou = tp / (mat.sum(0) + gt - tp)
+    return {n: float(iou[i]) for i, n in enumerate(names) if n not in dropped}
+
+
 def load_test_seg(d):
     """Summed cone matrix and metadata of a test_seg output directory; None if absent or incomplete."""
     files = sorted(glob.glob(os.path.join(d, 'shard_*_of_*.json')))
@@ -176,6 +184,16 @@ def main():
                  'model_gt_on_64': summary([diff(x[s][('gt', '64')], 0) for s in SEEDS])}
     res['u4'] = {'gap_64_to_gt': summary([diff(x[s][('gt', 'gt')], x[s][('64', 'gt')]) for s in SEEDS]),
                  'gap_gt_to_64': summary([diff(x[s][('64', '64')], x[s][('gt', '64')]) for s in SEEDS])}
+    # the per-class spread over seeds of the 2 x 2 (reported, not used for any choice)
+    res['per_class'] = {}
+    for m in ('64', 'gt'):
+        for v in ('64', 'gt'):
+            cells = [cache.get(cross_dir(s, m, v)) for s in SEEDS]
+            if all(c is not None for c in cells):
+                pcs = [per_class(c[0]['cone'], names) for c in cells]
+                res['per_class']['model_%s_on_%s' % (m, v)] = {
+                    n: {'values': [100 * p[n] for p in pcs], 'mean': float(np.mean([100 * p[n] for p in pcs])),
+                        'sd': float(np.std([100 * p[n] for p in pcs], ddof=1))} for n in pcs[0]}
 
     # terms, on the target's unperturbed val
     a = {(arm, s, v): score(arm_dir(arm, s, VAL[v])) for s in SEEDS
@@ -224,6 +242,13 @@ def main():
         print('==', sec)
         for k, t in res[sec].items():
             print('  %-24s %s' % (k, fmt(t)))
+    print('== per-class IoU over seeds (mean / sd)')
+    cells = sorted(res['per_class'])
+    if cells:
+        print('  %-22s %s' % ('class', '  '.join('%-18s' % c for c in cells)))
+        for n in res['per_class'][cells[0]]:
+            print('  %-22s %s' % (n, '  '.join('%6.2f / %-9.2f' % (res['per_class'][c][n]['mean'],
+                                                                   res['per_class'][c][n]['sd']) for c in cells)))
     print('== u3')
     for r in res['u3']:
         print('  ', {k: r[k] for k in r if k not in ('ckpt',)})
