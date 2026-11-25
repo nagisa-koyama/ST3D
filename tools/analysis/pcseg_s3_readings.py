@@ -15,6 +15,8 @@ shards) or that train_seg.py writes in-run (eval_epoch_391.json). Rows are groun
       source-only model there: a4 (Pandar64 trained with PandarGT's intensity response) on PandarGT val minus the Pandar64
       oracle on PandarGT val; a2 (PandarGT trained with Pandar64's response) on Pandar64 val minus the PandarGT oracle on
       Pandar64 val. Share = correction mean / gap mean of that direction (the part of the gap recovered).
+  v1, viewpoint (§8.11): term_v1 = b0 - v1 on PandarGT val (b0 is v1's identity arm), v1's correction = v1 - b0 on
+      Pandar64 val, and the reliance forms on spunet-p1-v1-viewpoint-reliance (the oracle and b0).
 
 Nothing here chooses anything: every row is ANALYSIS (target labels).
 
@@ -209,9 +211,9 @@ def main():
     # terms, on the target's unperturbed val
     a = {(arm, s, v): score(arm_dir(arm, s, VAL[v])) for s in SEEDS
          for arm, v in [('a1', 'gt'), ('a2', 'gt'), ('a3', '64'), ('a4', '64'), ('b0', 'gt'), ('b0', '64'),
-                        ('b1', 'gt'), ('b1', '64')]}
+                        ('b1', 'gt'), ('b1', '64'), ('v1', 'gt'), ('v1', '64')]}
     for s in SEEDS:
-        for arm, v in [('a1', 'gt'), ('a2', 'gt'), ('a3', '64'), ('a4', '64'), ('b0', 'gt'), ('b1', 'gt')]:
+        for arm, v in [('a1', 'gt'), ('a2', 'gt'), ('a3', '64'), ('a4', '64'), ('b0', 'gt'), ('b1', 'gt'), ('v1', 'gt')]:
             u3(arm_dir(arm, s, VAL[v]))
     og = {s: x[s][('gt', 'gt')] for s in SEEDS}
     o6 = {s: x[s][('64', '64')] for s in SEEDS}
@@ -219,7 +221,8 @@ def main():
              'term_a2': ([diff(og[s], a[('a2', s, 'gt')]) for s in SEEDS], 'gap_64_to_gt'),
              'term_a3': ([diff(o6[s], a[('a3', s, '64')]) for s in SEEDS], 'gap_gt_to_64'),
              'term_a4': ([diff(o6[s], a[('a4', s, '64')]) for s in SEEDS], 'gap_gt_to_64'),
-             'term_b1': ([diff(a[('b0', s, 'gt')], a[('b1', s, 'gt')]) for s in SEEDS], 'gap_64_to_gt')}
+             'term_b1': ([diff(a[('b0', s, 'gt')], a[('b1', s, 'gt')]) for s in SEEDS], 'gap_64_to_gt'),
+             'term_v1': ([diff(a[('b0', s, 'gt')], a[('v1', s, 'gt')]) for s in SEEDS], 'gap_64_to_gt')}
     res['terms'] = {}
     for k, (vals, gap) in terms.items():
         t = summary(vals)
@@ -229,16 +232,19 @@ def main():
             t['share'] = t['mean'] / g['mean']
         res['terms'][k] = t
     res['readings'] = {'render_cost': summary([diff(og[s], a[('b0', s, 'gt')]) for s in SEEDS]),
-                       'b2_correction': summary([diff(a[('b1', s, '64')], a[('b0', s, '64')]) for s in SEEDS])}
+                       'b2_correction': summary([diff(a[('b1', s, '64')], a[('b0', s, '64')]) for s in SEEDS]),
+                       'v1_correction': summary([diff(a[('v1', s, '64')], a[('b0', s, '64')]) for s in SEEDS])}
 
     # reliance forms: model(unperturbed) - model(on the arm's -reliance config)
     rel = {}
     for arm, model in [('a1-density', 'gt'), ('a2-intensity', 'gt'), ('a3-cone', '64'), ('a4-intensity', '64'),
-                       ('b1-lines', 'gt')]:
+                       ('b1-lines', 'gt'), ('v1-viewpoint', 'gt')]:
         cfg = 'spunet-p1-%s-reliance' % arm
         rel['oracle_' + arm] = summary([diff(x[s][(model, model)], score(reliance_dir(model, s, cfg))) for s in SEEDS])
     rel['b0_b1-lines'] = summary([diff(a[('b0', s, 'gt')], score(arm_dir('b0', s, 'spunet-p1-b1-lines-reliance')))
                                   for s in SEEDS])
+    rel['b0_v1-viewpoint'] = summary([diff(a[('b0', s, 'gt')],
+                                           score(arm_dir('b0', s, 'spunet-p1-v1-viewpoint-reliance'))) for s in SEEDS])
     res['reliance'] = rel
 
     # corrections (§8.11): an intensity arm on the other sensor's val, against the source-only model there

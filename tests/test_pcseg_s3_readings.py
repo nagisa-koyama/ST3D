@@ -133,3 +133,13 @@ def test_corrections_compare_each_intensity_arm_with_the_source_only_model_on_th
     assert m.arm_dir('a4', 667, m.VAL['gt']).endswith('s3_a4_s667/spunet-pandasetgt')
     assert m.arm_dir('a2', 668, m.VAL['64']).endswith('s3_a2_s668/spunet-pandaset64')
     assert m.cross_dir(667, '64', 'gt').endswith('p1_cross_391_s667/model_64_on_pandasetgt')
+
+
+def test_v1_layout_reads_b0_as_its_identity_arm():
+    """§8.11: term_v1 = b0 - v1 on PandarGT val, the reliance on spunet-p1-v1-viewpoint-reliance."""
+    m = _mod()
+    assert m.arm_dir('v1', 666, m.VAL['gt']).endswith('s3_v1_s666/spunet-pandasetgt')
+    assert m.arm_dir('b0', 667, 'spunet-p1-v1-viewpoint-reliance').endswith('s3_b0_s667/spunet-p1-v1-viewpoint-reliance')
+    src = open(os.path.join(REPO, 'tools', 'analysis', 'pcseg_s3_readings.py')).read()
+    assert "'term_v1': ([diff(a[('b0', s, 'gt')], a[('v1', s, 'gt')])" in src
+    assert "'v1_correction': summary([diff(a[('v1', s, '64')], a[('b0', s, '64')])" in src
