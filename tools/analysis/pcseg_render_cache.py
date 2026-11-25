@@ -9,6 +9,11 @@ Kinds (source = PandarGT, device 1, in both):
                  return of frame f. Everything about the target comes from the Pandar64 CLOUD of frame f (label-free).
   gt_on_gtrays   PandarGT frames f-K..f+K rendered onto PandarGT frame f's own return directions (the identity-render
                  arm of b1, §8.7 item 1): pcseg.render.TemplateLattice, firing time of the nearest own return.
+  gt_on_gtrays_p64pos
+                 The viewpoint arm v1 (20261116_01 §8.11): gt_on_gtrays's rays, the same directions in the ego frame,
+                 the same firing times and depth, cast from the Pandar64's fitted POSITION instead of the PandarGT's
+                 (sensor_models.json; 0.44 m behind, 0.29 m above). Only the ray origin differs from gt_on_gtrays, so
+                 b0 is its identity arm. The attitude is not changed: where the rays point is the scan pattern's.
 
 Fixed before any row (declared in 20261116_01 §8.9 before this script ran):
   - depth: K = 1 (frames f-1, f, f+1, clipped at the sequence ends), the label-free rule "smallest depth that fills
@@ -54,7 +59,8 @@ SOURCE_DEVICE = 1
 FOOTPRINT_P64_DEG = 0.167 / 2
 TOL_GT_DEG = 0.15 / 2
 KINDS = {'gt_on_p64ring': {'target': 'Pandar64 RingLattice (frame f, footprint)', 'tol': FOOTPRINT_P64_DEG},
-         'gt_on_gtrays': {'target': 'PandarGT own rays (frame f)', 'tol': TOL_GT_DEG}}
+         'gt_on_gtrays': {'target': 'PandarGT own rays (frame f)', 'tol': TOL_GT_DEG},
+         'gt_on_gtrays_p64pos': {'target': 'PandarGT own rays (frame f) cast from the Pandar64 position', 'tol': TOL_GT_DEG}}
 OFFSETS = (-1, 0, 1)
 CONE_DEG = 60.0
 
@@ -98,6 +104,13 @@ def target_model(kind, track, f, xyz, t, models, DAZ):
         az, el, _ = angles_deg(q)
         L = TemplateLattice(np.c_[az, el], TOL_GT_DEG)
         extra = {}
+        if kind == 'gt_on_gtrays_p64pos':
+            # the same rays (directions and firing times from the PandarGT origin), cast from the Pandar64's position;
+            # q (the real sensor's cells, for the fill statistics) stays the PandarGT's own
+            O = np.array(models['pandar64']['origin'])
+            extra = {'cast_origin': O.tolist()}
+        elif kind != 'gt_on_gtrays':
+            raise ValueError('unknown kind %s' % kind)
     return L, O, R, nearest_time(az, el, t), float(np.median(t)), q, extra
 
 

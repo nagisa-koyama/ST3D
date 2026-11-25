@@ -24,9 +24,11 @@ B_ARMS = {  # config: (block, cache kind)
     'spunet-p1-b0-identity': ('FACTOR_SWAP', 'gt_on_gtrays'),
     'spunet-p1-b1-lines': ('FACTOR_SWAP', 'gt_on_p64ring'),
     'spunet-p1-b1-lines-reliance': ('EVAL_PERTURB', 'gt_on_p64ring'),
+    'spunet-p1-v1-viewpoint': ('FACTOR_SWAP', 'gt_on_gtrays_p64pos'),                  # §8.11
+    'spunet-p1-v1-viewpoint-reliance': ('EVAL_PERTURB', 'gt_on_gtrays_p64pos'),
 }
 SMOKES = ['spunet-p1-a1-density', 'spunet-p1-a2-intensity', 'spunet-p1-a3-cone', 'spunet-p1-a4-intensity',
-          'spunet-p1-b0-identity', 'spunet-p1-b1-lines']
+          'spunet-p1-b0-identity', 'spunet-p1-b1-lines', 'spunet-p1-v1-viewpoint']
 SMOKE_OPT = {'BATCH_SIZE': 4, 'NUM_EPOCHS': 2, 'SAVE_EVERY': 1, 'MAX_CKPT': 2, 'LOG_EVERY': 5}
 
 

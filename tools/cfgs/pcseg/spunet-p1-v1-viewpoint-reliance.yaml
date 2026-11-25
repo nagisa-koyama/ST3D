@@ -1,0 +1,9 @@
+# Reliance form of arm v1 (experiments_md episodes/20261116_01 §8.7 item 2, §8.11): the PandarGT oracle's config with its
+# VAL set replaced by the cached render from the Pandar64's position (`gt_on_gtrays_p64pos`, the same cache as v1's
+# training set). No training: score an UNPERTURBED PandarGT-trained checkpoint (the oracle, and b0 for the like-for-like
+# render pipeline) with tools/test_seg.py on this config. The scored points are the rendered val points.
+_BASE_CONFIG_: cfgs/pcseg/spunet-pandasetgt.yaml
+
+DATA:
+  EVAL_PERTURB:
+    RENDER: {CACHE: /home/koyama/data/pcseg/render_cache/v1/gt_on_gtrays_p64pos}

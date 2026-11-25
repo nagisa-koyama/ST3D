@@ -1,0 +1,13 @@
+# pcseg S3b arm v1, viewpoint, Pandar64 -> PandarGT (experiments_md episodes/20261116_01 §8.11).
+# The PandarGT oracle's recipe with its TRAIN set replaced by PandarGT re-rendered onto its OWN rays cast from the
+# Pandar64's POSITION (0.44 m behind, 0.29 m above the PandarGT): the cached time-aware depth-3 z-buffer render
+# `gt_on_gtrays_p64pos` (tools/analysis/pcseg_render_cache.py). It differs from b0's cache `gt_on_gtrays` only in the ray
+# origin (same directions, firing times, depth, tolerance), so b0 is its identity arm:
+#   term_v1 = mIoU(b0) - mIoU(this row), both on the UNPERTURBED PandarGT val, in the cone.
+# Labels and intensities follow each rendered point's (frame, index); the cache holds no label.
+# ANALYSIS row: trained on target labels (uda_legality_rule.md, analysis exception).
+_BASE_CONFIG_: cfgs/pcseg/spunet-pandasetgt.yaml
+
+DATA:
+  FACTOR_SWAP:
+    RENDER: {CACHE: /home/koyama/data/pcseg/render_cache/v1/gt_on_gtrays_p64pos}
