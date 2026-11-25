@@ -122,3 +122,14 @@ def test_layout_matches_the_declared_output_paths():
     assert m.arm_dir('b0', 668, 'spunet-p1-b1-lines-reliance').endswith('s3_b0_s668/spunet-p1-b1-lines-reliance')
     assert m.reliance_dir('gt', 666, 'spunet-p1-a1-density-reliance').endswith(
         's3_reliance/oracle_gt_s666/spunet-p1-a1-density-reliance')
+
+
+def test_corrections_compare_each_intensity_arm_with_the_source_only_model_on_the_other_val():
+    """§8.11: a4 trains on Pandar64 with PandarGT's response, so it is scored on PandarGT val against the Pandar64 oracle
+    there, and its share is of the Pandar64 -> PandarGT gap; a2 the other way round."""
+    m = _mod()
+    assert m.CORRECTIONS == {'intensity_a4_on_gt': ('a4', 'gt', '64', 'gap_64_to_gt'),
+                             'intensity_a2_on_64': ('a2', '64', 'gt', 'gap_gt_to_64')}
+    assert m.arm_dir('a4', 667, m.VAL['gt']).endswith('s3_a4_s667/spunet-pandasetgt')
+    assert m.arm_dir('a2', 668, m.VAL['64']).endswith('s3_a2_s668/spunet-pandaset64')
+    assert m.cross_dir(667, '64', 'gt').endswith('p1_cross_391_s667/model_64_on_pandasetgt')

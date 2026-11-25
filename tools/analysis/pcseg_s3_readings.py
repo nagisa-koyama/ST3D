@@ -11,6 +11,10 @@ shards) or that train_seg.py writes in-run (eval_epoch_391.json). Rows are groun
   terms (when the arm outputs exist): term_a1 / a2 / a3 / a4, term_b1, the render cost, b2's correction, the reliance
       forms, and shares (term mean / gap mean of its direction, a ratio of means; terms are never summed).
       A term is READABLE when |mean| >= 2.0 and all three seed-paired values carry its sign.
+  corrections (user 2026-11-26, §8.11): the intensity arms' checkpoints scored on the OTHER sensor's val, against the
+      source-only model there: a4 (Pandar64 trained with PandarGT's intensity response) on PandarGT val minus the Pandar64
+      oracle on PandarGT val; a2 (PandarGT trained with Pandar64's response) on Pandar64 val minus the PandarGT oracle on
+      Pandar64 val. Share = correction mean / gap mean of that direction (the part of the gap recovered).
 
 Nothing here chooses anything: every row is ANALYSIS (target labels).
 
@@ -112,6 +116,13 @@ def arm_dir(arm, seed, cfg):
 
 def reliance_dir(model, seed, cfg):
     return os.path.join(ROOT, 's3_reliance', 'oracle_%s_s%d' % (model, seed), cfg)
+
+
+# The declared corrections (§8.11): name -> (arm, the val it is scored on, the source-only model on that val, its gap).
+# The arm trains on the SOURCE sensor's data with the target's intensity response, so it is compared with the source
+# oracle on the target val; a positive value is recovered gap.
+CORRECTIONS = {'intensity_a4_on_gt': ('a4', 'gt', '64', 'gap_64_to_gt'),
+               'intensity_a2_on_64': ('a2', '64', 'gt', 'gap_gt_to_64')}
 
 
 # --- statistics ---------------------------------------------------------------------------------------------------------
@@ -230,6 +241,27 @@ def main():
                                   for s in SEEDS])
     res['reliance'] = rel
 
+    # corrections (§8.11): an intensity arm on the other sensor's val, against the source-only model there
+    res['corrections'] = {}
+    for k, (arm, v, model, gap) in CORRECTIONS.items():
+        dirs = [arm_dir(arm, s, VAL[v]) for s in SEEDS]
+        t = summary([diff(score(d), x[s][(model, v)]) for d, s in zip(dirs, SEEDS)])
+        g = res['u4'][gap]
+        if t.get('complete') and g.get('complete'):
+            t['share_of'] = gap
+            t['share'] = t['mean'] / g['mean']
+        # same val, same cone points as the 2 x 2 cell it is compared with
+        t['points_equal_to_source_only'] = [
+            None if cache.get(d) is None or cache.get(cross_dir(s, model, v)) is None else
+            bool(int(cache[d][0]['cone'].sum()) == int(cache[cross_dir(s, model, v)][0]['cone'].sum()))
+            for d, s in zip(dirs, SEEDS)]
+        cells = [cache.get(d) for d in dirs]
+        if all(c is not None for c in cells):          # reported, not used for any choice
+            pcs = [per_class(c[0]['cone'], names) for c in cells]
+            t['per_class'] = {n: {'values': [100 * p[n] for p in pcs], 'mean': float(np.mean([100 * p[n] for p in pcs]))}
+                              for n in pcs[0]}
+        res['corrections'][k] = t
+
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, 'w') as f:
         json.dump(res, f, indent=1, default=lambda o: o.tolist() if hasattr(o, 'tolist') else str(o))
@@ -238,7 +270,7 @@ def main():
                                                      '  readable' if t.get('readable') else '',
                                                      ('  share %.3f of %s' % (t['share'], t['share_of'])
                                                       if 'share' in t else '')))
-    for sec in ('u2', 'u4', 'terms', 'readings', 'reliance'):
+    for sec in ('u2', 'u4', 'terms', 'readings', 'reliance', 'corrections'):
         print('==', sec)
         for k, t in res[sec].items():
             print('  %-24s %s' % (k, fmt(t)))
