@@ -40,7 +40,8 @@ def parse_args():
     p.add_argument('--cfg_file', required=True)
     p.add_argument('--src_cfg', required=True)
     p.add_argument('--ckpt', required=True)
-    p.add_argument('--knots', choices=['item57', 'global'], required=True)
+    p.add_argument('--knots', choices=['item57', 'item57_3d', 'global'], required=True,
+                   help='item57_3d (item 57b): the 5 knots in backbone_3d only, one knot (global AdaBN) elsewhere')
     p.add_argument('--stats_frames', type=int, default=1000)
     p.add_argument('--stats_batch', type=int, default=4)
     p.add_argument('--batch_size', type=int, default=6)
@@ -81,8 +82,10 @@ def main():
     logger = common_utils.create_logger(out_dir / f'log_rsadabn_{datetime.datetime.now():%Y%m%d-%H%M%S}.txt', rank=0)
     wandb.init(config=vars(cfg), project='st3d', name=args.run_name, notes=common_utils.wandb_notes_with_job_id(),
                tags=common_utils.wandb_tags(cfg, 'rs_adabn_eval', cfg_file=args.cfg_file))
-    knots = adabn_range.KNOTS_ITEM57 if args.knots == 'item57' else (0.0,)
-    wandb.config.update({'rs_adabn': dict(knots=list(knots), src_cfg=args.src_cfg, stats_frames=args.stats_frames, ckpt=args.ckpt)})
+    knots = adabn_range.KNOTS_ITEM57 if args.knots in ('item57', 'item57_3d') else (0.0,)
+    layers = r'^backbone_3d\.' if args.knots == 'item57_3d' else None
+    wandb.config.update({'rs_adabn': dict(knots=list(knots), layers=layers, src_cfg=args.src_cfg, stats_frames=args.stats_frames,
+                                          ckpt=args.ckpt)})
     for k, v in vars(args).items():
         logger.info(f'{k:16} {v}')
     log_config_to_file(cfg, logger=logger)
@@ -103,14 +106,14 @@ def main():
     src = rs.collect(src_loader, adabn_range.KNOTS_ITEM57, logger)
     tgt_loader = adabn_utils.train_split_stats_loader(eval_block, cfg.CLASS_NAMES, ontology, args.stats_frames,
                                                       args.stats_batch, args.workers, logger)
-    diag = rs.estimate(tgt_loader, knots, logger, diag_knots=adabn_range.KNOTS_ITEM57)
+    diag = rs.estimate(tgt_loader, knots, logger, diag_knots=adabn_range.KNOTS_ITEM57, layers=layers)
     per_layer = {n: adabn_range.mismatch(src[n], diag[n]) for n, _ in rs.layers}
     groups = group_summary(per_layer)
     for g, v in groups.items():
         logger.info('[rs-adabn] stage 0 %-12s layers=%3d share src %s tgt %s | |o_t - o_s| %s | |log r_t/r_s| %s' % (
             g, v['layers'], np.round(v['share_src'], 3).tolist(), np.round(v['share_tgt'], 3).tolist(),
             np.round(v['d_mean'], 3).tolist(), np.round(v['d_logsd'], 3).tolist()))
-    json.dump(dict(knots=list(adabn_range.KNOTS_ITEM57), arm_knots=list(knots), per_layer=per_layer, groups=groups,
+    json.dump(dict(knots=list(adabn_range.KNOTS_ITEM57), arm_knots=list(knots), layers=layers, per_layer=per_layer, groups=groups,
                    src_frames=len(src_loader.dataset), tgt_frames=len(tgt_loader.dataset)),
               open(out_dir / 'stage0.json', 'w'), indent=1)
     rs.apply()

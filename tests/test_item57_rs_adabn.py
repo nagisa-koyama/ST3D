@@ -56,3 +56,13 @@ def test_runs_and_paths():
     d = m.result_dir('item57', 666, 32283)
     assert d.parts[-4:] == ('i57_item57_s666_32283', 'eval', 'epoch_152', 'i57_item57_s666_32283')
     assert d.parts[-5] == 'centerpoint-factorswap-s2-p-pattern'
+
+
+def test_item57b_arm_reads_against_rs1():
+    rows = table([90.8, 91.7, 74.9, 55.9, 31.7])
+    for s in (666, 667):
+        rows.append(row('P_RS5_3d', s, [90.8, 91.7, 81.0, 62.0, 31.7]))
+    seeds = [m.per_seed(rows, s, 'P_RS5_3d') for s, _ in m.CKPTS]
+    assert m.reading1(seeds) == 'RS-AdaBN removes most of the far residual'
+    assert m.reading1([m.per_seed(rows, s) for s, _ in m.CKPTS]) == 'does not remove it'
+    assert [r[2] for r in m.runs(['item57_3d'])] == ['item57_3d', 'item57_3d']

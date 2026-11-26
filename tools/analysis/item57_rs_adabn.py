@@ -26,7 +26,7 @@ SRC_CFG = 'cfgs/da-ieee-access-analysis/item47/centerpoint-item47-kitti-p-on-nus
 FWD = '/home/koyama/data/item47/item48_manifest_fwd.json'
 CKPTS = [(666, 32283), (667, 32284)]
 EPOCH = 152
-ARMS = {'global': 'P_RS1', 'item57': 'P_RS5'}
+ARMS = {'global': 'P_RS1', 'item57': 'P_RS5', 'item57_3d': 'P_RS5_3d'}   # item57_3d: item 57b
 REF = {'P': 'P_ada', 'L': 'L_ada', 'O': 'O_ada'}
 FAR, NEAR = (2, 3), (0, 1)          # item 48's rings: 20-30, 30-40 | 0-10, 10-20 m
 TOL_RS1 = 0.3
@@ -41,8 +41,10 @@ def result_dir(arm, seed, job):
     return REPO / 'output' / 'da-ieee-access-analysis' / 'factorswap-s2' / Path(EVAL_CFG).stem / t / 'eval' / ('epoch_%d' % EPOCH) / t
 
 
-def runs():
-    return [(s, j, a, tag(a, s, j)) for s, j in CKPTS for a in ARMS]
+def runs(arms=None):
+    """Item 57's runs by default (global, item57); item 57b's runner asks for 'item57_3d'."""
+    arms = arms or ('global', 'item57')
+    return [(s, j, a, tag(a, s, j)) for s, j in CKPTS for a in ARMS if a in arms]
 
 
 def manifest():
@@ -72,9 +74,9 @@ def mean(xs):
     return sum(xs) / len(xs)
 
 
-def per_seed(rows, seed):
-    """None if the seed is not read; else the quantities of readings 1 and 2."""
-    p1, p5, lref, pada = (rings_of(rows, n, seed) for n in ('P_RS1', 'P_RS5', 'L_ada', 'P_ada'))
+def per_seed(rows, seed, arm='P_RS5'):
+    """None if the seed is not read; else the quantities of readings 1 and 2 for `arm` (P_RS5, or P_RS5_3d for item 57b)."""
+    p1, p5, lref, pada = (rings_of(rows, n, seed) for n in ('P_RS1', arm, 'L_ada', 'P_ada'))
     if any(x is None for x in (p1, p5, lref, pada)):
         return None
     if abs(p1['pooled']['bev'] - pada['logged_bev']) > TOL_RS1:
@@ -115,11 +117,15 @@ def cmd_read(path, stage0_dirs):
         print('%-6s s%d pooled %6.2f (3D %6.2f) logged %s | %s%s' % (
             r['row'], r['seed'], r['pooled']['bev'], r['pooled']['3d'], r['logged_bev'],
             ' '.join('%6.2f' % g['bev'] for g in r['rings']), flag))
-    seeds = [per_seed(rows, s) for s, _ in CKPTS]
-    for (s, _), d in zip(CKPTS, seeds):
-        print('\nseed %d: %s' % (s, d))
-    print('\nreading 1 (far residual): %s' % reading1(seeds))
-    print('reading 2 (near guard): %s' % reading2(seeds))
+    for arm in ('P_RS5', 'P_RS5_3d'):
+        if not any(r['row'] == arm for r in rows):
+            continue
+        seeds = [per_seed(rows, s, arm) for s, _ in CKPTS]
+        print('\n== %s against P_RS1' % arm)
+        for (s, _), d in zip(CKPTS, seeds):
+            print('seed %d: %s' % (s, d))
+        print('reading 1 (far residual): %s' % reading1(seeds))
+        print('reading 2 (near guard): %s' % reading2(seeds))
     for d in stage0_dirs:
         j = json.load(open(Path(d) / 'stage0.json'))
         print('\nstage 0 %s (arm knots %s)' % (d, j['arm_knots']))
@@ -130,8 +136,8 @@ def cmd_read(path, stage0_dirs):
 
 
 def main():
-    if len(sys.argv) == 2 and sys.argv[1] == 'runs':
-        for r in runs():
+    if len(sys.argv) >= 2 and sys.argv[1] == 'runs':
+        for r in runs(sys.argv[2:] or None):
             print(' '.join(str(x) for x in r))
         return
     if len(sys.argv) == 3 and sys.argv[1] == 'manifest':

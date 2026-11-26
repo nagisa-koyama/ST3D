@@ -175,38 +175,46 @@ class RangeStratifiedBN:
         return self.src
 
     @torch.no_grad()
-    def estimate(self, loader, knots, logger=None, diag_knots=None, to_gpu=True):
-        """Target pass (train-mode-like, per knot). With one knot: global AdaBN. `diag_knots` also records the per-knot
-        moments of every BN input during the pass (stage 0 of item 57; needs `collect` over the same knots for the
-        comparison)."""
+    def estimate(self, loader, knots, logger=None, diag_knots=None, to_gpu=True, layers=None):
+        """Target pass (train-mode-like, per knot). With one knot: global AdaBN. `layers` (a regex on the module name,
+        re.search; item 57b) gives `knots` to the matching layers only and one knot (global AdaBN) to every other layer.
+        `diag_knots` also records the per-knot moments of every BN input during the pass (stage 0 of item 57; needs
+        `collect` over the same knots for the comparison)."""
+        import re
         knots = tuple(knots)
         if len(knots) > 1 and (self.src is None or self.src_knots != knots):
             raise ValueError('collect() the source over the same knots first')
+        lk = {n: knots if layers is None or re.search(layers, n) else (0.0,) for n, _ in self.layers}
+        if layers is not None and logger is not None:
+            logger.info('[rs-adabn] %d of %d BN layers take %d knots (%s); the rest one knot'
+                        % (sum(len(v) > 1 for v in lk.values()), len(lk), len(knots), layers))
         K = len(knots)
         self.model.eval()
         st, acc = {}, {}
         for n, m in self.layers:
             C = m.num_features
             dev = m.running_mean.device
+            K = len(lk[n])
             if K == 1:
                 o, r = torch.zeros(1, C, dtype=torch.float64, device=dev), torch.ones(1, C, dtype=torch.float64, device=dev)
             else:
                 o, r = self.src[n]['o'].to(dev), self.src[n]['r'].to(dev)
             st[n] = dict(mean=torch.zeros(K, C, dtype=torch.float64, device=dev), var=torch.ones(K, C, dtype=torch.float64, device=dev),
-                         cnt=torch.zeros(K, dtype=torch.float64, device=dev), o=o, r=r)
+                         cnt=torch.zeros(K, dtype=torch.float64, device=dev), o=o, r=r, knots=lk[n])
+        K = len(knots)
 
         def make(name, bn):
             def forward(x):
                 xf, back = _flat(x)
                 rho = self.ranges(x)
-                w = knot_weights(rho, knots).to(x.device)
+                e = st[name]
+                w = knot_weights(rho, e['knots']).to(x.device)
                 s, mean, var = weighted_moments(xf, w)
                 present = s >= 2.0
                 if not bool(present.all()):                       # a knot this batch barely touches: pooled moments
                     _, pm, pv = weighted_moments(xf, torch.ones(xf.shape[0], 1, device=x.device))
                     mean = torch.where(present[:, None], mean, pm)
                     var = torch.where(present[:, None], var, pv)
-                e = st[name]
                 e['cnt'] += present.double()
                 c = e['cnt'].clamp_min(1.0)[:, None]
                 unb = var * (s / (s - 1.0).clamp_min(1e-12))[:, None]
@@ -227,7 +235,7 @@ class RangeStratifiedBN:
         self.tgt = (knots, st)
         for n, m in self.layers:                                  # pooled running statistics, as AdaBN would leave them
             e = st[n]
-            if K == 1:
+            if len(e['knots']) == 1:
                 m.running_mean.copy_(e['mean'][0].to(m.running_mean.dtype))
                 m.running_var.copy_(e['var'][0].to(m.running_var.dtype))
         diag = None
@@ -248,7 +256,7 @@ class RangeStratifiedBN:
 
             def forward(x):
                 xf, back = _flat(x)
-                w = knot_weights(self.ranges(x), knots).to(x.device)
+                w = knot_weights(self.ranges(x), e['knots']).to(x.device)
                 return back(_transform(xf, w, e['mean'], e['var'], e['o'], e['r'], bn).to(x.dtype))
             return forward
         self.model.eval()

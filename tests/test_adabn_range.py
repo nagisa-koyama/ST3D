@@ -150,3 +150,39 @@ def test_voxel_positions_from_the_last_sparse_output():
     assert abs(r[0] - np.hypot(0.05, 0.05)) < 1e-6 and abs(r[1] - np.hypot(30.05, 0.05)) < 1e-6
     with pytest.raises(RuntimeError):
         p.voxels(3)
+
+
+class TwoSparse(torch.nn.Module):
+    """Two BatchNorm1d layers on (N, 1) features: `first.bn` then `second.bn`; positions supplied by the test."""
+
+    def __init__(self):
+        super().__init__()
+        self.first, self.second = Sparse(), Sparse()
+
+    def forward(self, batch):
+        return self.second({'x': self.first(batch)})
+
+
+def test_layer_filter_gives_knots_to_matching_layers_only():
+    src, rho = two_range_batches(0, near=(0.0, 1.0), far=(2.0, 0.5))
+    tgt, _ = two_range_batches(1, near=(1.0, 2.0), far=(5.0, 3.0))
+    m = TwoSparse()
+    rs = ar.RangeStratifiedBN(m, (-80, -80, -2, 80, 80, 4))
+    rs.pos.voxels = lambda n: rho
+    rs.collect(src, (5.0, 55.0), to_gpu=False)
+    rs.estimate(tgt, (5.0, 55.0), to_gpu=False, layers=r'^first\.')
+    st = rs.tgt[1]
+    assert st['first.bn']['knots'] == (5.0, 55.0) and st['second.bn']['knots'] == (0.0,)
+    assert torch.equal(st['second.bn']['o'], torch.zeros(1, 1, dtype=torch.float64))
+    rs.apply()
+    with torch.no_grad():
+        y = torch.cat([m(b) for b in tgt]).reshape(8, 800)
+    assert abs(y.mean()) < 0.02 and abs(y.std() - 1) < 0.02             # the last layer is global AdaBN: standardized
+    # a filter matching nothing is global AdaBN everywhere
+    rs.restore()
+    a = TwoSparse()
+    ra = ar.RangeStratifiedBN(a, (-80, -80, -2, 80, 80, 4)); ra.pos.voxels = lambda n: rho
+    ra.estimate(tgt, (0.0,), to_gpu=False)
+    rs.estimate(tgt, (5.0, 55.0), to_gpu=False, layers=r'^nothing$')
+    for n in ('first.bn', 'second.bn'):
+        assert torch.allclose(rs.tgt[1][n]['mean'], ra.tgt[1][n]['mean']) and torch.allclose(rs.tgt[1][n]['var'], ra.tgt[1][n]['var'])
