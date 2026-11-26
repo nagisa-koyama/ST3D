@@ -34,6 +34,17 @@ def test_compare_passes_when_only_normalization_changed_and_fails_otherwise():
     assert m.compare(pre, post)['missing'] == ['bn1.bias']
 
 
+def test_compare_reports_the_step_counter_and_does_not_compare_it():
+    """37194 (2026-11-27) flagged Detector3DTemplate.global_step, which counts training steps, as a non-BN tensor that
+    differs, on all four rows. It must be reported, not compared; a real weight that differs must still fail."""
+    pre = dict(pre_state(), global_step=torch.tensor([94240]))
+    post = dict(pre, global_step=torch.tensor([106620]), **{'bn1.weight': torch.full((2,), 1.1)})
+    c = m.compare(pre, post)
+    assert c['non_bn_differ'] == [] and c['missing'] == [] and c['counters'] == {'global_step': [94240, 106620]}
+    post['conv.weight'] = torch.ones(2, 2) * 0.999
+    assert m.compare(pre, post)['non_bn_differ'] == ['conv.weight']
+
+
 def row(name, seed, rings):
     return dict(row=name, seed=seed, reproduced=True, rings=[{'bev': x} for x in rings])
 

@@ -26,6 +26,10 @@ PK = {666: 32283, 667: 32284}
 ARMS = {'g': 'P_BN_G', 'r': 'P_BN_R'}
 FAR = (2, 3)
 BN_BUFFERS = ('running_mean', 'running_var', 'num_batches_tracked')
+# Training counters: buffers that count steps and never enter the forward pass (Detector3DTemplate.global_step,
+# incremented by model_fn_decorator). They must change with training, so procedure check 1 reports them, never compares them
+# (fixed 2026-11-27 after 37194 flagged global_step on all four rows; tests/test_item58_bn_bound.py).
+COUNTERS = ('global_step',)
 
 
 def parse_jobs(args):
@@ -56,7 +60,8 @@ def norm_key(k):
 
 
 def compare(pre, post):
-    """(non-normalization keys that differ, BN keys that changed, modulation max |a|, |b|, keys missing on either side)."""
+    """(non-normalization keys that differ, BN keys that changed, modulation max |a|, |b|, keys missing on either side,
+    training counters as (pre, post))."""
     bn_prefixes = {k[:-len('.running_mean')] for k in pre if k.endswith('.running_mean')}
     post_n = {}
     mod = {'a': 0.0, 'b': 0.0}
@@ -67,17 +72,20 @@ def compare(pre, post):
             continue
         post_n[norm_key(k)] = v
     missing = sorted(set(pre) ^ set(post_n))
-    differ, bn_changed = [], 0
+    differ, bn_changed, counters = [], 0, {}
     import torch
     for k, v in pre.items():
         if k not in post_n:
+            continue
+        if k in COUNTERS:
+            counters[k] = [int(v.reshape(-1)[0]), int(post_n[k].reshape(-1)[0])]
             continue
         same = torch.equal(v, post_n[k])
         if k.rsplit('.', 1)[0] in bn_prefixes:
             bn_changed += 0 if same else 1
         elif not same:
             differ.append(k)
-    return dict(non_bn_differ=differ, bn_changed=bn_changed, mod_max=mod, missing=missing)
+    return dict(non_bn_differ=differ, bn_changed=bn_changed, mod_max=mod, missing=missing, counters=counters)
 
 
 def ckpt_of(job, epoch):
@@ -97,9 +105,9 @@ def cmd_check(manifest_path):
         c = compare(pre, post)
         c['ok'] = not c['non_bn_differ'] and not c['missing']
         out['%s s%d' % (r['row'], r['seed'])] = c
-        print('%s s%d: non-BN tensors differing %d, BN tensors changed %d, max |a| %.4f |b| %.4f, key mismatch %d -> %s' % (
+        print('%s s%d: non-BN tensors differing %d, BN tensors changed %d, max |a| %.4f |b| %.4f, key mismatch %d, counters %s -> %s' % (
             r['row'], r['seed'], len(c['non_bn_differ']), c['bn_changed'], c['mod_max']['a'], c['mod_max']['b'],
-            len(c['missing']), 'ok' if c['ok'] else 'NOT READ'))
+            len(c['missing']), c['counters'], 'ok' if c['ok'] else 'NOT READ'))
     return out
 
 
