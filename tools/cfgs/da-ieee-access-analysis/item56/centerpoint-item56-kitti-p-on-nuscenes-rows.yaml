@@ -1,0 +1,9 @@
+# EVAL-ONLY twin for experiments_md 20261003_05 §5 item 56 (design fixed 2026-11-27 00:02 JST, before any number): item 47's
+# KITTI P row scored on S'_rows, one half of S' (the KITTI val scan thinned to nuScenes' lattice): pattern_rows keeps the S' rings
+# with all their points (vertical step only); pattern_az keeps every ring at the S' 0.332 deg azimuth step (azimuth step only).
+# Same frame-seeded draws as S' (kitti_rings.eval_ring_thin_mask). Base: the row's item 47 config, only MODE changes.
+# ANALYSIS (target labels score only).
+_BASE_CONFIG_: cfgs/da-ieee-access-analysis/item47/centerpoint-item47-kitti-p-on-nuscenes-lattice.yaml
+DATA_CONFIG_TAR:
+    EVAL_FACTOR_SWAP:
+        RING_THIN: {MODE: pattern_rows, SPACING_DEG: 1.33, AZ_RES_DEG: 0.332}

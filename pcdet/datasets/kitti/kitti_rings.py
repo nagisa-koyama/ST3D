@@ -13,6 +13,9 @@ Rings are recovered on the scan as read from disk: before the FOV crop, SHIFT_CO
 - `azbin` / `random_azbin`: one point per ring per AZ_RES_DEG bin (the first one stored), or its count-matched draw;
 - `pattern`: render to a target's scan pattern (27807's rule) - the rings nearest a SPACING_DEG lattice and one point
   per kept ring per AZ_RES_DEG bin, phases drawn per frame.
+- `pattern_rows` / `pattern_az` (experiments_md 20261003_05 §5 item 56): the two halves of `pattern` with its own draws.
+  `pattern_rows` keeps every point of the rings `pattern` keeps (the vertical step only); `pattern_az` keeps one point per
+  AZ_RES_DEG bin on EVERY ring with `pattern`'s azimuth phase (the azimuth step only). `pattern` = their intersection.
 """
 import numpy as np
 
@@ -77,12 +80,34 @@ def eval_ring_thin_mask(points, cfg, rng):
         out = np.zeros(n, dtype=bool)
         out[rng.choice(n, int(keep.sum()), replace=False)] = True
         return out
-    if mode == 'pattern':
-        keep, _ = ring_pattern_mask(points[:, :3], ring, lev, float(cfg['SPACING_DEG']), float(cfg['AZ_RES_DEG']),
-                                    rng.random(), rng.random())
-        return keep
-    raise ValueError("EVAL_RING_THIN.MODE must be rows, random, cols, random_cols, azbin, random_azbin or pattern, "
-                     "got %r" % (mode,))
+    if mode in ('pattern', 'pattern_rows', 'pattern_az'):
+        phase_v, phase_h = rng.random(), rng.random()     # this order: `pattern` drew them as its two arguments
+        keep, kept_rings = ring_pattern_mask(points[:, :3], ring, lev, float(cfg['SPACING_DEG']),
+                                             float(cfg['AZ_RES_DEG']), phase_v, phase_h)
+        if mode == 'pattern':
+            return keep
+        if mode == 'pattern_rows':
+            return np.isin(ring, kept_rings)
+        return pattern_az_mask(points[:, :3], ring, float(cfg['AZ_RES_DEG']), phase_h)
+    raise ValueError("EVAL_RING_THIN.MODE must be rows, random, cols, random_cols, azbin, random_azbin, pattern, "
+                     "pattern_rows or pattern_az, got %r" % (mode,))
+
+
+def pattern_az_mask(xyz, ring, az_res_deg, phase_h):
+    """One point per ring per `az_res_deg` azimuth bin (offset `phase_h` of a bin) on EVERY ring, the first one stored:
+    lyft_rings.ring_pattern_mask's azimuth step without its ring selection, binned by the same formula, so that
+    ring_pattern_mask's own output is this mask restricted to the rings it keeps (item 56)."""
+    xyz = np.asarray(xyz, dtype=np.float64)
+    out = np.zeros(len(xyz), dtype=bool)
+    if len(xyz) == 0:
+        return out
+    n_bins = int(round(360.0 / az_res_deg))
+    az = np.arctan2(xyz[:, 1], xyz[:, 0])
+    b = np.floor(((az + np.pi) / (2 * np.pi) + phase_h / n_bins) * n_bins).astype(np.int64) % n_bins
+    key = np.asarray(ring).astype(np.int64) * n_bins + b
+    _, first = np.unique(key, return_index=True)
+    out[first] = True
+    return out
 
 
 def eval_ring_thin_points(points, cfg, rng):
