@@ -326,3 +326,57 @@ def mismatch(src, tgt):
     return dict(share_src=src['share'].tolist(), share_tgt=tgt['share'].tolist(),
                 d_mean=(tgt['o'] - src['o']).abs().mean(1).tolist(),
                 d_logsd=(tgt['r'].log() - src['r'].log()).abs().mean(1).tolist())
+
+
+class RangeAffine(torch.nn.Module):
+    """Per-knot, per-channel modulation parameters a, b (K, C), zero at start (item 58 arm R). A leaf module, so the family's
+    optimizer (which collects leaf modules) finds its parameters."""
+
+    def __init__(self, knots, channels, device=None):
+        super().__init__()
+        self.knots = tuple(float(k) for k in knots)
+        self.a = torch.nn.Parameter(torch.zeros(len(self.knots), channels, device=device))
+        self.b = torch.nn.Parameter(torch.zeros(len(self.knots), channels, device=device))
+
+
+class RangeAffineBN(torch.nn.Module):
+    """y' = BN(x) * (1 + w(rho) a) + w(rho) b, with w the piecewise-linear knot weights of each element's x-y range (item 58
+    arm R, ANALYSIS). Starts exactly at BN (a = b = 0)."""
+
+    def __init__(self, bn, pos, knots):
+        super().__init__()
+        self.bn = bn
+        self.mod = RangeAffine(knots, bn.num_features, device=bn.weight.device)
+        self._pos = [pos]                                    # not a submodule
+
+    def forward(self, x):
+        y = self.bn(x)
+        pos = self._pos[0]
+        if x.dim() == 4:
+            rho = pos.bev(x.shape[2], x.shape[3], x.shape[0], x.device)
+        else:
+            rho = pos.voxels(x.shape[0])
+        w = knot_weights(rho, self.mod.knots).to(device=x.device, dtype=y.dtype)
+        a, b = w @ self.mod.a, w @ self.mod.b                 # (n, C)
+        if y.dim() == 4:
+            B, C, H, W = y.shape
+            a = a.reshape(B, H, W, C).permute(0, 3, 1, 2)
+            b = b.reshape(B, H, W, C).permute(0, 3, 1, 2)
+        return y * (1.0 + a) + b
+
+
+def install_range_affine(model, knots, pc_range):
+    """Wrap every BatchNorm1d / BatchNorm2d of `model` in RangeAffineBN (in place, after the weights are loaded). Registers the
+    sparse-convolution hooks that give voxel positions. Returns the number of wrapped layers."""
+    import spconv.pytorch as spconv
+    pos = _Pos(pc_range)
+    model._range_affine_hooks = [m.register_forward_hook(pos.hook) for m in model.modules()
+                                 if isinstance(m, spconv.conv.SparseConvolution)]
+    targets = [(n, m) for n, m in model.named_modules() if isinstance(m, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d))]
+    for name, bn in targets:
+        parent = model
+        *path, leaf = name.split('.')
+        for p in path:
+            parent = getattr(parent, p)
+        setattr(parent, leaf, RangeAffineBN(bn, pos, knots))
+    return len(targets)

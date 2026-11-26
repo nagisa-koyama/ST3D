@@ -427,6 +427,23 @@ def main():
     if args.pretrained_model is not None:
         model.load_params_from_file(filename=args.pretrained_model, to_cpu=dist_train, logger=logger)
         logger.info('pretrained_model %s is loaded to model %s', args.pretrained_model, model.__class__.__name__)
+    # MODEL.RANGE_AFFINE_BN and OPTIMIZATION.TRAIN_ONLY_BN (ANALYSIS, experiments_md 20261003_05 §5 item 58; absent = unchanged):
+    # a per-range modulation after every BatchNorm, and training of the normalization layers only. Both act after the
+    # pretrained weights are loaded; the optimizer is rebuilt over the trainable modules only (pcdet/utils/bn_only.py).
+    if cfg.MODEL.get('RANGE_AFFINE_BN', None):
+        assert not dist_train, 'RANGE_AFFINE_BN: single GPU only'
+        from pcdet.utils.adabn_range import install_range_affine
+        n_wrapped = install_range_affine(model, cfg.MODEL.RANGE_AFFINE_BN.KNOTS, cfg.DATA_CONFIG.POINT_CLOUD_RANGE)
+        logger.info('RANGE_AFFINE_BN: %d BatchNorm layers wrapped with a per-range affine, knots %s',
+                    n_wrapped, list(cfg.MODEL.RANGE_AFFINE_BN.KNOTS))
+    if cfg.OPTIMIZATION.get('TRAIN_ONLY_BN', False):
+        assert args.ckpt is None, 'TRAIN_ONLY_BN: resuming with --ckpt is not supported'
+        from pcdet.utils.adabn_range import RangeAffine
+        from pcdet.utils.bn_only import freeze_all_but_bn
+        trainable, n_train, n_frozen = freeze_all_but_bn(model, keep_types=(RangeAffine,))
+        optimizer = build_optimizer(trainable, cfg.OPTIMIZATION)
+        logger.info('TRAIN_ONLY_BN: %d parameter tensors train (BatchNorm affine%s), %d frozen; optimizer rebuilt over them',
+                    n_train, ' + per-range affine' if cfg.MODEL.get('RANGE_AFFINE_BN', None) else '', n_frozen)
     if args.pretrained_model_teacher is not None and model_teacher is not None:
         model_teacher.load_params_from_file(filename=args.pretrained_model_teacher, to_cpu=dist_train, logger=logger)
         logger.info('pretrained_model_teacher %s is loaded to model_teacher %s', args.pretrained_model_teacher,

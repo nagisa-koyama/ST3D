@@ -1,0 +1,6 @@
+# experiments_md 20261003_05 §5 item 58 arm R (design fixed 2026-11-27 02:56 JST, before any number). ANALYSIS: KITTI TRAIN labels
+# train the normalization layers only. Arm G plus a per-range affine after every BatchNorm (MODEL.RANGE_AFFINE_BN, item 57's
+# knots; pcdet/utils/adabn_range.RangeAffineBN, zero at start). Single GPU. Never a method row.
+_BASE_CONFIG_: cfgs/da-ieee-access-analysis/item58/centerpoint-item58-p-bnonly-g.yaml
+MODEL:
+    RANGE_AFFINE_BN: {KNOTS: [5.0, 15.0, 25.0, 35.0, 55.0]}
