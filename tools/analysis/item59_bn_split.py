@@ -5,7 +5,7 @@ number). ANALYSIS on item 48's forward pair (P_K trained on S', scored on full K
     python3 analysis/item59_bn_split.py make [SEED...]           # hybrid checkpoints (G's gamma / beta per group) + bitwise check
     python3 analysis/item59_bn_split.py runs SEED                # "arm ckpt tag" for scripts/_item59a_bnsplit_20261127.sh
 59b, label-free counterparts of G (pseudo-labels from P_K + AdaBN on KITTI testing clouds):
-    python3 analysis/item59_bn_split.py base_config              # (re)writes cfgs/.../item59/centerpoint-item59-b-base.yaml
+    python3 analysis/item59_bn_split.py base_config [--out F]    # (re)writes cfgs/.../item59/centerpoint-item59-b-base.yaml
     python3 analysis/item59_bn_split.py cuts                     # rule A on P0's floor passes -> /home/koyama/data/item59/cuts.json
     python3 analysis/item59_bn_split.py configs                  # the four per-seed leaf configs from cuts.json
 Both:
@@ -214,8 +214,8 @@ def base_config_text():
     return head + yaml.safe_dump(body, sort_keys=False, default_flow_style=None, width=120)
 
 
-def cmd_base_config():
-    dst = TOOLS / B_BASE
+def cmd_base_config(out=None):
+    dst = Path(out) if out else TOOLS / B_BASE
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(base_config_text())
     print('wrote', dst)
@@ -361,7 +361,7 @@ def main():
             print(arm, ck, t)
         return
     if a[:1] == ['base_config']:
-        return cmd_base_config()
+        return cmd_base_config(a[2] if len(a) == 3 and a[1] == '--out' else None)
     if a[:1] == ['cuts']:
         return cmd_cuts()
     if a[:1] == ['configs']:
