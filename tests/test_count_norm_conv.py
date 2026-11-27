@@ -45,9 +45,11 @@ def test_scale_off_is_the_original_convolution_and_strided_sites_match():
     off = CountNormConv(conv, scale=False)
     assert torch.equal(off(x).features, conv(x).features)
     on = CountNormConv(conv)
-    y = on(x)                                               # raises if the twin's output sites differ
+    y = on(x)                                               # raises if the twin's output SET of sites differs
     c = on.count(x)
-    assert torch.equal(c.indices, y.indices) and (c.features >= 1).all()
+    from pcdet.models.model_utils.count_norm_conv import site_keys
+    assert torch.equal(site_keys(c.indices, c.spatial_shape).sort().values, site_keys(y.indices, y.spatial_shape).sort().values)
+    assert (c.features >= 1).all()
 
 
 def test_build_network_wraps_only_with_the_key(monkeypatch):
@@ -103,3 +105,19 @@ def test_item64_readings():
     assert m.h3(rows)[1] == 'partly'                                   # +15.2 and +7.3
     assert m.h1(rows)[1] == 'unclear'                                  # +1.2 and +0.2
     assert m.eval_dir('ada', 666).parts[-2:] == ('eval', 'ada_s666')
+
+
+def test_align_matches_sites_in_any_order_and_refuses_other_sites():
+    from pcdet.models.model_utils.count_norm_conv import align
+    dst = torch.tensor([[0, 1, 2, 3], [0, 0, 0, 1], [1, 2, 2, 2], [0, 3, 1, 0]], dtype=torch.int32)
+    perm = torch.tensor([2, 0, 3, 1])
+    src = dst[perm]
+    vals = torch.tensor([[10.0], [20.0], [30.0], [40.0]])[perm]                 # each value follows its site
+    got = align(src, vals, dst, [4, 4, 4])
+    assert got.flatten().tolist() == [10.0, 20.0, 30.0, 40.0]
+    assert align(dst, vals, dst, [4, 4, 4]) is vals                             # identical order: unchanged
+    other = dst.clone(); other[0, 3] = 0
+    with pytest.raises(RuntimeError):
+        align(other, vals, dst, [4, 4, 4])
+    with pytest.raises(RuntimeError):
+        align(dst[:3], vals[:3], dst, [4, 4, 4])

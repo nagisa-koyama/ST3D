@@ -48,10 +48,33 @@ class CountNormConv(spconv.SparseModule):
             return y
         with torch.no_grad():
             c = self.count(x)
-            if c.indices.shape != y.indices.shape or not torch.equal(c.indices, y.indices):
-                raise RuntimeError('CountNormConv: the counting twin produced other output sites than %s' % type(self.conv))
-            s = self.K / c.features.clamp_min(1.0)
+            n = align(c.indices, c.features, y.indices, y.spatial_shape)
+            s = self.K / n.clamp_min(1.0)
         return y.replace_feature(y.features * s)
+
+
+def site_keys(indices, spatial_shape):
+    """One int64 per (batch, z, y, x) site."""
+    i = indices.long()
+    z, y, x = [int(v) for v in spatial_shape]
+    return ((i[:, 0] * z + i[:, 1]) * y + i[:, 2]) * x + i[:, 3]
+
+
+def align(src_indices, src_values, dst_indices, spatial_shape):
+    """`src_values` (rows of `src_indices`) reordered to the rows of `dst_indices`. A strided spconv convolution cannot reuse
+    another's index pairs (spconv: "only support reuse subm indices"), and its output order is not reproducible, so the
+    counting twin's sites are matched by key; a different SET of sites raises."""
+    if src_indices.shape == dst_indices.shape and torch.equal(src_indices, dst_indices):
+        return src_values
+    if src_indices.shape[0] != dst_indices.shape[0]:
+        raise RuntimeError('CountNormConv: the counting twin has %d output sites, the convolution %d'
+                           % (src_indices.shape[0], dst_indices.shape[0]))
+    ks, kd = site_keys(src_indices, spatial_shape), site_keys(dst_indices, spatial_shape)
+    order = torch.argsort(ks)
+    pos = torch.searchsorted(ks[order], kd).clamp_max(ks.shape[0] - 1)
+    if not torch.equal(ks[order][pos], kd):
+        raise RuntimeError('CountNormConv: the counting twin produced other output sites than the convolution')
+    return src_values[order][pos]
 
 
 def install_count_norm(model, scale=True):
