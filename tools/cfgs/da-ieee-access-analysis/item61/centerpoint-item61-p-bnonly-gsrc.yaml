@@ -1,0 +1,9 @@
+# experiments_md 20261003_05 §5 item 61b (design fixed 2026-11-27 12:53 JST, before any number). ANALYSIS: G_src, item 58's
+# arm G on P_K's OWN data. Fine-tune of P_K (passed as --pretrained_model) on S' train (KITTI train thinned to nuScenes'
+# lattice, TRAIN_FACTOR_SWAP kept) with its labels: every BatchNorm's gamma / beta trains and its statistics update,
+# everything else is frozen (OPTIMIZATION.TRAIN_ONLY_BN), NUM_EPOCHS 20. It sees no target cloud: item 46's G term for 59b.
+# Differs from G's config (../item58/centerpoint-item58-p-bnonly-g.yaml) only by the training clouds' thinning.
+_BASE_CONFIG_: cfgs/da-ieee-access-analysis/factorswap-s2/centerpoint-factorswap-s2-p-pattern.yaml
+OPTIMIZATION:
+    NUM_EPOCHS: 20
+    TRAIN_ONLY_BN: True
