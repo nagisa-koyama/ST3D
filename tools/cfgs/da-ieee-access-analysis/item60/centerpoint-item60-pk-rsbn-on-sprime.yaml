@@ -1,0 +1,7 @@
+# EVAL-ONLY twin for experiments_md 20261003_05 §5 item 60 (`src`): the RS-BN row scored on S', KITTI val thinned to
+# nuScenes' lattice by P_K's own training cut (the same RING_THIN pattern as item 47's twin,
+# ../item47/centerpoint-item47-kitti-p-on-nuscenes-lattice.yaml), so on its own source domain. ANALYSIS.
+_BASE_CONFIG_: cfgs/da-ieee-access-analysis/item60/centerpoint-item60-pk-rsbn.yaml
+DATA_CONFIG_TAR:
+    EVAL_FACTOR_SWAP:
+        RING_THIN: {MODE: pattern, SPACING_DEG: 1.33, AZ_RES_DEG: 0.332}

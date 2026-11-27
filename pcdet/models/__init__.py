@@ -10,6 +10,13 @@ def build_network(model_cfg, num_class, dataset):
     model = build_detector(
         model_cfg=model_cfg, num_class=num_class, dataset=dataset
     )
+    # MODEL.RANGE_BN (ANALYSIS, experiments_md 20261003_05 §5 item 60; absent = unchanged): every BatchNorm normalizes with
+    # per-range statistics (pcdet/models/model_utils/range_bn.py). Installed here so training, in-run evaluation and every
+    # eval script build the same layers before a checkpoint is loaded.
+    if model_cfg.get('RANGE_BN', None):
+        from .model_utils.range_bn import install_range_bn
+        model.n_range_bn = install_range_bn(model, model_cfg.RANGE_BN.KNOTS, list(dataset.point_cloud_range),
+                                            thin=model_cfg.RANGE_BN.get('THIN', 32))
     return model
 
 

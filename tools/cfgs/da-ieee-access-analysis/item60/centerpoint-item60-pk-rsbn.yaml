@@ -1,0 +1,10 @@
+# ANALYSIS training row, experiments_md 20261003_05 §5 item 60 (design fixed 2026-11-27 12:09 JST, before any number):
+# P_K's recipe (item 37c, centerpoint-factorswap-s2-p-pattern.yaml, unchanged: KITTI TRAIN clouds thinned to nuScenes'
+# lattice, 152 epochs, batch 6, scored in-run on unperturbed KITTI val) with range-stratified BatchNorm in every BN layer
+# (pcdet/models/model_utils/range_bn.py; knots = item 57's, the centres of item 48's rings). KITTI TRAIN labels train this
+# row (labelled source); the pair is analysis. Single GPU.
+_BASE_CONFIG_: cfgs/da-ieee-access-analysis/factorswap-s2/centerpoint-factorswap-s2-p-pattern.yaml
+MODEL:
+    RANGE_BN:
+        KNOTS: [5.0, 15.0, 25.0, 35.0, 55.0]
+        THIN: 32

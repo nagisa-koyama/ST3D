@@ -397,6 +397,12 @@ def main():
             model_teacher = None
         break
 
+    if cfg.MODEL.get('RANGE_BN', None):
+        # experiments_md 20261003_05 §5 item 60 (ANALYSIS): installed by build_network; per-range batch statistics are
+        # per process, so single GPU and no SyncBN.
+        assert not dist_train and not args.sync_bn, 'RANGE_BN: single GPU, no SyncBN'
+        logger.info('RANGE_BN: %d BatchNorm layers normalize per range, knots %s, thin %s', model.n_range_bn,
+                    list(cfg.MODEL.RANGE_BN.KNOTS), cfg.MODEL.RANGE_BN.get('THIN', 32))
     if args.sync_bn:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         if model_teacher is not None:
