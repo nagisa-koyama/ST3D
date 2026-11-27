@@ -209,6 +209,23 @@ def gather_and_dump_pseudo_label_result(rank, ps_label_dir, cur_epoch):
     NEW_PSEUDO_LABELS.clear()
 
 
+def range_cuts(pred_boxes, pred_labels, by_range):
+    """Per box, the cut of its class and x-y range bin (experiments_md 20261003_05 §5 item 63). `by_range.EDGES` are the
+    bins' lower edges from 0 (the last bin is open); `by_range.CUTS[class - 1][bin]`. Labels must be 1-based positives."""
+    labels = np.asarray(pred_labels)
+    if labels.size and labels.min() < 1:
+        raise ValueError('range_cuts: labels must be positive class indices, got %s' % labels.min())
+    edges = np.asarray(by_range.EDGES, dtype=np.float64)
+    table = np.asarray(by_range.CUTS, dtype=np.float64)
+    if edges[0] != 0 or np.any(np.diff(edges) <= 0) or table.shape[1] != edges.size:
+        raise ValueError('THRESH_BY_RANGE: EDGES must rise from 0 and CUTS hold one value per class and bin')
+    if labels.size and labels.max() > table.shape[0]:
+        raise ValueError('range_cuts: label %d has no row in CUTS' % labels.max())
+    rho = np.hypot(pred_boxes[:, 0], pred_boxes[:, 1])
+    b = np.searchsorted(edges, rho, side='right') - 1
+    return table[labels - 1, b]
+
+
 def save_pseudo_label_batch(input_dict,
                             pred_dicts=None,
                             need_update=True,
@@ -275,8 +292,19 @@ def save_pseudo_label_batch(input_dict,
             if 'pred_iou_scores' in pred_dicts[b_idx]:
                 pred_iou_scores = pred_dicts[b_idx]['pred_iou_scores'].detach().cpu().numpy()
 
+            # SELF_TRAIN.THRESH_BY_RANGE (ANALYSIS, experiments_md 20261003_05 §5 item 63; absent = unchanged): one cut per
+            # class and x-y range bin of the box centre replaces NEG_THRESH and SCORE_THRESH; no ignore band.
+            by_range = cfg.SELF_TRAIN.get('THRESH_BY_RANGE', None)
+            if by_range and len(pred_labels) > 0:
+                remain_mask = pred_scores >= range_cuts(pred_boxes, pred_labels, by_range)
+                pred_labels = pred_labels[remain_mask]
+                pred_scores = pred_scores[remain_mask]
+                pred_boxes = pred_boxes[remain_mask]
+                pred_cls_scores = pred_cls_scores[remain_mask] if 'pred_cls_scores' in pred_dicts[b_idx] else pred_scores
+                pred_iou_scores = pred_iou_scores[remain_mask] if 'pred_iou_scores' in pred_dicts[b_idx] else pred_scores
+                pred_teacher_classes = pred_teacher_classes[remain_mask]
             # remove boxes under negative threshold
-            if cfg.SELF_TRAIN.get('NEG_THRESH', None) and len(pred_labels) > 0:
+            elif cfg.SELF_TRAIN.get('NEG_THRESH', None) and len(pred_labels) > 0:
                 labels_remove_scores = np.array(cfg.SELF_TRAIN.NEG_THRESH)[pred_labels - 1]
                 remain_mask = pred_scores >= labels_remove_scores
                 # print("labels_remove_scores:", labels_remove_scores)
@@ -296,7 +324,7 @@ def save_pseudo_label_batch(input_dict,
                 pred_teacher_classes = pred_teacher_classes[remain_mask]
 
 
-            if len(pred_labels) > 0:
+            if len(pred_labels) > 0 and not by_range:
                 labels_ignore_scores = np.array(cfg.SELF_TRAIN.SCORE_THRESH)[pred_labels - 1]
                 ignore_mask = pred_scores < labels_ignore_scores
                 pred_labels[ignore_mask] = -pred_labels[ignore_mask]
