@@ -45,7 +45,7 @@ def parse_args():
     p.add_argument('--stats_batch', type=int, default=4)
     p.add_argument('--batch_size', type=int, default=6)
     p.add_argument('--workers', type=int, default=4)
-    p.add_argument('--max_frames', type=int, default=0, help='smoke only: evaluate the first N frames')
+    p.add_argument('--smoke', action='store_true', help='smoke only: evaluate 16 frames (build_dataloader use_subset)')
     p.add_argument('--run_name', default=None)
     return p.parse_args()
 
@@ -76,10 +76,10 @@ def main():
     ontology = cfg.get('EVAL_ONTOLOGY', None) or cfg.get('ONTOLOGY', None)
     test_set, test_loader, _ = build_dataloader(
         dataset_cfg=eval_block, class_names=cfg.CLASS_NAMES, batch_size=args.batch_size,
-        dist=False, workers=args.workers, logger=logger, training=False, model_ontology=ontology)
-    if args.max_frames:
-        test_set.kitti_infos = test_set.kitti_infos[:args.max_frames]
-        logger.info('[rsbn] SMOKE: evaluating the first %d frames only' % args.max_frames)
+        dist=False, workers=args.workers, logger=logger, training=False, model_ontology=ontology, use_subset=args.smoke)
+    if args.smoke:                                            # the Subset holds frames 0-15; the evaluation reads GT from infos
+        test_set.kitti_infos = test_set.kitti_infos[:len(test_loader.dataset)]
+        logger.info('[rsbn] SMOKE: %d frames' % len(test_set.kitti_infos))
     model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=test_set)
     ck = torch.load(args.ckpt, map_location='cpu')
     bad = key_mismatch(model.state_dict().keys(), ck['model_state'].keys())
