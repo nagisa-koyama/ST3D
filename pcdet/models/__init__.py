@@ -17,6 +17,11 @@ def build_network(model_cfg, num_class, dataset):
         from .model_utils.range_bn import install_range_bn
         model.n_range_bn = install_range_bn(model, model_cfg.RANGE_BN.KNOTS, list(dataset.point_cloud_range),
                                             thin=model_cfg.RANGE_BN.get('THIN', 32))
+    # MODEL.COUNT_NORM_CONV (ANALYSIS, experiments_md 20261003_05 §5 item 64; absent = unchanged): every sparse convolution of
+    # the 3D backbone normalized by its window's occupied-site count (pcdet/models/model_utils/count_norm_conv.py).
+    if model_cfg.get('COUNT_NORM_CONV', None):
+        from .model_utils.count_norm_conv import install_count_norm
+        model.n_count_norm = install_count_norm(model)
     return model
 
 

@@ -1,0 +1,7 @@
+# ANALYSIS training row, experiments_md 20261003_05 §5 item 64 (design fixed 2026-11-27 13:02 JST, before any number): P_K's
+# recipe (item 37c, centerpoint-factorswap-s2-p-pattern.yaml, unchanged) with every sparse convolution of the 3D backbone
+# count-normalized (MODEL.COUNT_NORM_CONV; pcdet/models/model_utils/count_norm_conv.py; Uhrig et al. 3DV 2017's normalized
+# convolution). KITTI TRAIN labels train this row (labelled source, thinned); the pair is analysis. Single GPU.
+_BASE_CONFIG_: cfgs/da-ieee-access-analysis/factorswap-s2/centerpoint-factorswap-s2-p-pattern.yaml
+MODEL:
+    COUNT_NORM_CONV: True

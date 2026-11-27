@@ -1,0 +1,6 @@
+# EVAL-ONLY twin for experiments_md 20261003_05 §5 item 64 (`src`): the count-normalized row scored on S', KITTI val thinned
+# to nuScenes' lattice by P_K's own training cut (as item 47's and item 60's twins). ANALYSIS.
+_BASE_CONFIG_: cfgs/da-ieee-access-analysis/item64/centerpoint-item64-pk-si.yaml
+DATA_CONFIG_TAR:
+    EVAL_FACTOR_SWAP:
+        RING_THIN: {MODE: pattern, SPACING_DEG: 1.33, AZ_RES_DEG: 0.332}
