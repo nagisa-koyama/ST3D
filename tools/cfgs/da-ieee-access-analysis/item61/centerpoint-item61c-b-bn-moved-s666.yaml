@@ -1,0 +1,9 @@
+# experiments_md 20261003_05 §5 item 61c, the label-content control, seed 666 (design fixed 2026-11-27 15:47 JST, before any
+# number). ANALYSIS. 59b's b_bn exactly (its leaf below), except the pseudo-labels: 59b's own epoch-0 set of this seed with
+# every box rotated about the sensor by a random angle (analysis/item61c_moved.py build 666), served frozen through the
+# PL-MATCH file path (no teacher pass). LABEL-FREE: no target label is read in the build or in training; the PL-MATCH
+# startup warning ("target labels used") does not apply to this file.
+_BASE_CONFIG_: cfgs/da-ieee-access-analysis/item59/centerpoint-item59-b-bn-s666.yaml
+
+DATA_CONFIG_TAR:
+    ANALYSIS_TARGET_PL_MATCH_PSEUDO_LABELS: /home/koyama/data/item61/moved/plmove_59bbn_s666.pkl
