@@ -3,6 +3,8 @@ x-y range bin on 59b's P0 floor pass (label-free), and the per-seed leaf configs
 
     python3 analysis/item63_range_cuts.py cuts       # CPU job: /home/koyama/data/item63/range_cuts.json
     python3 analysis/item63_range_cuts.py configs    # cfgs/da-ieee-access-analysis/item63/centerpoint-item63-b-bn-rr-s<seed>.yaml
+    python3 analysis/item63_range_cuts.py countbal   # item 63′, CPU job: /home/koyama/data/item63/count_balance_cuts.json
+    python3 analysis/item63_range_cuts.py configs_cb # item 63′ leaves centerpoint-item63-b-bn-cb-s<seed>.yaml
 
 Bins: item 48's rings by box-centre x-y range, 0-10 / 10-20 / 20-30 / 30-40 / 40-75.2 m, inside rule A's own |x|, |y| <= 75.2
 window. A bin with fewer than MIN_BOXES floor-pass boxes of a class takes the class's global rule-A cut (59b's), flagged.
@@ -15,6 +17,7 @@ from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS)); sys.path.insert(0, str(TOOLS / 'analysis'))
+import _init_path  # noqa: F401,E402  (before any pcdet import: the repo's pcdet, never the image's stale copy)
 
 OUT = Path('/home/koyama/data/item63')
 P0 = Path('/home/koyama/data/item59')
@@ -107,12 +110,175 @@ def cmd_configs():
         print('wrote', p)
 
 
+# ---------------------------------------------------------------- item 63′: count balance by range (design 13:46 JST)
+KITTI = Path('/home/koyama/data/kitti')
+SHIFT_Z = 1.70                                   # da_kitti_dataset.yaml SHIFT_COOR [0, 0, 1.70]: the floor pass is in the loader frame
+FOV_MARGIN = 5                                   # the evaluation's (kitti_dataset.py, get_fov_flag(..., margin=5))
+FLOOR = 0.0001
+CB_DIR = CFG_DIR
+LEAF_CB = 'centerpoint-item63-b-bn-cb-s%d.yaml'
+
+
+def fov_mask(centres, calib, img_shape):
+    """The evaluation's camera-FOV test on box centres (raw LiDAR frame)."""
+    import numpy as np
+    from pcdet.datasets.kitti.kitti_dataset import KittiDataset
+    if len(centres) == 0:
+        return np.zeros(0, dtype=bool)
+    return KittiDataset.get_fov_flag(calib.lidar_to_rect(centres), img_shape, calib, margin=FOV_MARGIN)
+
+
+def calib_of(split, idx):
+    from pcdet.utils import calibration_kitti
+    return calibration_kitti.Calibration(KITTI / split / 'calib' / ('%s.txt' % idx))
+
+
+def per_frame_counts(boxes_by_frame, frames):
+    """{class: [mean boxes per frame in each bin]} from {frame: (M, >= 8) boxes with labels in column 7}."""
+    import numpy as np
+    tot = {c: np.zeros(len(EDGES)) for c in CLASSES}
+    for b in boxes_by_frame.values():
+        if len(b) == 0:
+            continue
+        rb = bins_of(np.hypot(b[:, 0], b[:, 1]))
+        for ci, c in enumerate(CLASSES, start=1):
+            sel = np.abs(b[:, 7]) == ci
+            tot[c] += np.bincount(rb[sel], minlength=len(EDGES))[:len(EDGES)]
+    return {c: (tot[c] / frames).tolist() for c in CLASSES}
+
+
+def count_cut(scores, k):
+    """The score keeping the k highest of `scores` (ties may keep a few more); every one if k exceeds them; none if k is 0."""
+    import numpy as np
+    if k <= 0:
+        return 1.01
+    if k >= len(scores):
+        return FLOOR
+    return float(np.sort(np.asarray(scores))[::-1][k - 1])
+
+
+def source_density():
+    """Mean annotated boxes per KITTI train frame, per class and bin, inside the camera FOV (the labels P_K trained with)."""
+    import pickle
+    import numpy as np
+    infos = pickle.load(open(KITTI / 'kitti_infos_train.pkl', 'rb'))
+    by = {}
+    for info in infos:
+        a = info['annos']
+        names = np.asarray(a['name'])
+        keep = np.isin(names, CLASSES)
+        g = np.asarray(a['gt_boxes_lidar']).reshape(-1, 7)
+        if len(g) != len(names):                        # gt_boxes_lidar holds no DontCare rows
+            names = names[names != 'DontCare']
+            keep = np.isin(names, CLASSES)
+        g = g[keep]
+        lab = np.array([CLASSES.index(n) + 1 for n in names[keep]], dtype=np.float64)
+        idx = info['point_cloud']['lidar_idx']
+        m = fov_mask(g[:, :3], calib_of('training', idx), info['image']['image_shape'])
+        by[idx] = np.concatenate([g[m], lab[m, None]], axis=1) if m.any() else np.zeros((0, 8))
+    return per_frame_counts(by, len(infos)), len(infos)
+
+
+def target_fov(ps, infos_test):
+    """{frame: floor-pass boxes inside the camera FOV}, raw LiDAR frame (SHIFT_COOR removed), and all boxes."""
+    import numpy as np
+    shapes = {i['point_cloud']['lidar_idx']: i['image']['image_shape'] for i in infos_test}
+    fov, allb = {}, {}
+    for fid, v in ps.items():
+        b = np.asarray(v['gt_boxes']).reshape(-1, 9).copy()
+        b[:, 2] -= SHIFT_Z
+        allb[fid] = b
+        m = fov_mask(b[:, :3], calib_of('testing', fid), shapes[fid])
+        fov[fid] = b[m]
+    return fov, allb
+
+
+def count_balance_cuts(fov, frames, density):
+    """{class: cuts per bin}: keep, in each bin, round(density x frames) FOV boxes of the class."""
+    import numpy as np
+    out = {}
+    for ci, c in enumerate(CLASSES, start=1):
+        cuts, ks, avail = [], [], []
+        sc = {k: [] for k in range(len(EDGES))}
+        for b in fov.values():
+            if len(b) == 0:
+                continue
+            sel = np.abs(b[:, 7]) == ci
+            rb = bins_of(np.hypot(b[sel, 0], b[sel, 1]))
+            for k in range(len(EDGES)):
+                sc[k].append(b[sel][rb == k, 8])
+        for k in range(len(EDGES)):
+            s = np.concatenate(sc[k]) if sc[k] else np.zeros(0)
+            n = int(round(density[c][k] * frames))
+            cuts.append(round(count_cut(s, n), 4)); ks.append(n); avail.append(int(len(s)))
+        out[c] = dict(cuts=cuts, target_boxes=ks, fov_boxes=avail)
+    return out
+
+
+def kept_per_frame(boxes_by_frame, frames, cuts):
+    import numpy as np
+    out = {c: np.zeros(len(EDGES)) for c in CLASSES}
+    for b in boxes_by_frame.values():
+        if len(b) == 0:
+            continue
+        rb = bins_of(np.hypot(b[:, 0], b[:, 1]))
+        for ci, c in enumerate(CLASSES, start=1):
+            sel = (np.abs(b[:, 7]) == ci) & (b[:, 8] >= np.asarray(cuts[c]['cuts'])[rb])
+            out[c] += np.bincount(rb[sel], minlength=len(EDGES))[:len(EDGES)]
+    return {c: (out[c] / frames).round(3).tolist() for c in CLASSES}
+
+
+def cmd_countbal():
+    import pickle
+    dens, nsrc = source_density()
+    infos_test = pickle.load(open(KITTI / 'kitti_infos_test.pkl', 'rb'))
+    res = dict(edges=list(EDGES), source_frames=nsrc, source_density=dens)
+    for seed in SEEDS:
+        ps = pickle.load(open(P0 / ('p0_s%d' % seed) / 'ps_label_e0.pkl', 'rb'))
+        fov, allb = target_fov(ps, infos_test)
+        cuts = count_balance_cuts(fov, len(ps), dens)
+        res[str(seed)] = dict(frames=len(ps), cuts=cuts, kept_fov=kept_per_frame(fov, len(ps), cuts),
+                              kept_360=kept_per_frame(allb, len(ps), cuts))
+        print(seed, json.dumps({c: cuts[c]['cuts'] for c in CLASSES}), 'kept/frame FOV', res[str(seed)]['kept_fov']['Car'],
+              '360', res[str(seed)]['kept_360']['Car'])
+    print('source density (FOV, per frame):', json.dumps(dens))
+    OUT.mkdir(parents=True, exist_ok=True)
+    json.dump(res, open(OUT / 'count_balance_cuts.json', 'w'), indent=1)
+
+
+def leaf_text_cb(seed, res):
+    cuts = [res[str(seed)]['cuts'][c]['cuts'] for c in CLASSES]
+    return ('# experiments_md 20261003_05 §5 item 63′ (design fixed 2026-11-27 13:46 JST, before any number), seed %d. ANALYSIS:\n'
+            '# 59b\'s b_bn (the base leaf, unchanged) with one cut per class and x-y range bin (item 48\'s rings) at which the\n'
+            '# teacher\'s floor-pass pseudo-labels in the camera FOV match the source labels\' density per frame (count balance\n'
+            '# by range; source labels and unlabelled target clouds only). Replaces NEG_THRESH / SCORE_THRESH (no ignore band).\n'
+            '# Written by analysis/item63_range_cuts.py configs_cb from /home/koyama/data/item63/count_balance_cuts.json.\n'
+            '_BASE_CONFIG_: %s\n'
+            'SELF_TRAIN:\n'
+            '    THRESH_BY_RANGE:\n'
+            '        EDGES: %s\n'
+            '        CUTS: %s\n') % (seed, LEAF_59B % seed, json.dumps(list(EDGES)), json.dumps(cuts))
+
+
+def cmd_configs_cb():
+    res = json.load(open(OUT / 'count_balance_cuts.json'))
+    for seed in SEEDS:
+        p = TOOLS / CB_DIR / (LEAF_CB % seed)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(leaf_text_cb(seed, res))
+        print('wrote', p)
+
+
 def main():
     a = sys.argv[1:]
     if a == ['cuts']:
         return cmd_cuts()
     if a == ['configs']:
         return cmd_configs()
+    if a == ['countbal']:
+        return cmd_countbal()
+    if a == ['configs_cb']:
+        return cmd_configs_cb()
     print(__doc__)
     sys.exit(2)
 
