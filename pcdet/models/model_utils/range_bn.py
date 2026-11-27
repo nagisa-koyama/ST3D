@@ -61,8 +61,14 @@ class RangeBN(torch.nn.Module):
 
     def weights(self, x):
         pos = self._pos[0]
-        rho = pos.bev(x.shape[2], x.shape[3], x.shape[0], x.device) if x.dim() == 4 else pos.voxels(x.shape[0])
-        return knot_weights(rho, self.knots).to(device=x.device, dtype=x.dtype)
+        if x.dim() == 4:                                      # BEV cells: fixed per map size, cached on the shared positions
+            cache = pos.__dict__.setdefault('wcache', {})
+            key = (x.shape[0], x.shape[2], x.shape[3], str(x.device), x.dtype, self.knots)
+            if key not in cache:
+                rho = pos.bev(x.shape[2], x.shape[3], x.shape[0], x.device)
+                cache[key] = knot_weights(rho, self.knots).to(device=x.device, dtype=x.dtype)
+            return cache[key]
+        return knot_weights(pos.voxels(x.shape[0]), self.knots).to(device=x.device, dtype=x.dtype)
 
     def forward(self, x):
         xf, back = _flat(x)
@@ -81,16 +87,15 @@ class RangeBN(torch.nn.Module):
             vk = torch.where(thin, pv.expand_as(vk), vk)
             mu = w @ mk + m0
             var = w @ vk
-            with torch.no_grad():
-                ok = ~thin[:, 0]
+            with torch.no_grad():                             # no host sync: every knot updated by a factor, 0 if thin
+                ok = (~thin[:, 0]).to(self.running_mean.dtype)
                 self.num_batches_tracked += 1
                 self.knot_batches += ok.long()
-                self.thin_steps += (~ok).long()
+                self.thin_steps += (1 - ok).long()
+                f = ok / self.knot_batches.clamp_min(1).to(ok.dtype) if self.momentum is None else ok * self.momentum
                 unb = vk * (s / (s - 1.0).clamp_min(1.0))[:, None]
-                for k in torch.nonzero(ok).flatten().tolist():
-                    f = (1.0 / float(self.knot_batches[k])) if self.momentum is None else self.momentum
-                    self.running_mean[k].mul_(1 - f).add_(f * (mk[k] + m0))
-                    self.running_var[k].mul_(1 - f).add_(f * unb[k])
+                self.running_mean.add_(f[:, None] * ((mk + m0).to(ok.dtype) - self.running_mean))
+                self.running_var.add_(f[:, None] * (unb.to(ok.dtype) - self.running_var))
         else:
             mu = w @ self.running_mean.to(xf.dtype)
             var = w @ self.running_var.to(xf.dtype)
