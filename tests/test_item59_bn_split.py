@@ -142,3 +142,22 @@ def test_leaf_configs_once_written():
         assert list(c.SELF_TRAIN.SCORE_THRESH) == v and list(c.SELF_TRAIN.NEG_THRESH) == v
         assert bool(c.OPTIMIZATION.get('TRAIN_ONLY_BN', False)) == (arm == 'bn')
         assert (TOOLS / m.leaf_path(arm, seed)).read_text() == m.leaf_text(arm, seed, cuts)
+
+
+def test_check_students_passes_bn_only_and_fails_a_moved_weight():
+    """59b procedure check: item 58's bitwise comparison of each student with P_K of its seed (b_bn must pass). Layer names
+    follow CenterPoint's (`conv_input.1` is a BN); a name with `.bn.` would be read as item 58's R wrapper."""
+    import torch
+    pk = {'backbone_3d.conv_input.0.weight': torch.ones(2), 'backbone_3d.conv_input.1.weight': torch.ones(2),
+          'backbone_3d.conv_input.1.bias': torch.zeros(2), 'backbone_3d.conv_input.1.running_mean': torch.zeros(2),
+          'backbone_3d.conv_input.1.running_var': torch.ones(2), 'backbone_3d.conv_input.1.num_batches_tracked': torch.tensor(5),
+          'global_step': torch.tensor([100.])}
+    bn_only = dict(pk, **{'backbone_3d.conv_input.1.weight': torch.full((2,), 1.5), 'global_step': torch.tensor([200.])})
+    moved = dict(bn_only, **{'backbone_3d.conv_input.0.weight': torch.full((2,), 1.01)})
+    states = {(m.PK[666], m.PK_EPOCH): pk, (1, m.B_EPOCH): bn_only, (2, m.B_EPOCH): moved, (3, m.B_EPOCH): moved}
+    out = m.check_students({('bn', 666): 1}, lambda j, e: states[(j, e)])
+    c = out['P_PL_BN s666']
+    assert c['ok'] is True and c['bn_changed'] == 1 and c['counters'] == {'global_step': [100, 200]}
+    assert m.check_students({('bn', 666): 2}, lambda j, e: states[(j, e)])['P_PL_BN s666']['ok'] is False
+    d = m.check_students({('all', 666): 3}, lambda j, e: states[(j, e)])['P_PL_ALL s666']
+    assert d['ok'] is None and d['non_bn_differ'] == ['backbone_3d.conv_input.0.weight']

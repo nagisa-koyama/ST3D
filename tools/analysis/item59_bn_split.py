@@ -8,6 +8,7 @@ number). ANALYSIS on item 48's forward pair (P_K trained on S', scored on full K
     python3 analysis/item59_bn_split.py base_config [--out F]    # (re)writes cfgs/.../item59/centerpoint-item59-b-base.yaml
     python3 analysis/item59_bn_split.py cuts                     # rule A on P0's floor passes -> /home/koyama/data/item59/cuts.json
     python3 analysis/item59_bn_split.py configs                  # the four per-seed leaf configs from cuts.json
+    python3 analysis/item59_bn_split.py check OUT.json --jobs bn666=J ... [--epoch=N]   # b_bn: non-BN tensors equal P_K's
 Both:
     python3 analysis/item59_bn_split.py manifest OUT.json [--jobs bn666=J bn667=J all666=J all667=J]
     python3 analysis/item38_kitti_rings.py ap OUT.json AP.json --real-kernel --workers 4
@@ -352,6 +353,30 @@ def cmd_read(path):
                 d['s_adabn'][0] - d['s_x'][0], d['s_adabn'][1] - d['s_x'][1]))
 
 
+# ---------------------------------------------------------------- 59b: procedure check on the trained students
+def check_students(jobs, load, epoch=B_EPOCH):
+    """Item 58's bitwise check on 59b's students. `load(job, epoch)` returns a model_state. `b_bn` passes when no non-BN
+    tensor differs from P_K's and no key is missing on either side; `b_all`'s counts are descriptive (ok None)."""
+    import item58_bn_bound as m58
+    out = {}
+    for (arm, seed), job in sorted(jobs.items()):
+        c = m58.compare(load(PK[seed], PK_EPOCH), load(job, epoch))
+        c['ok'] = (not c['non_bn_differ'] and not c['missing']) if arm == 'bn' else None
+        out['%s s%d' % (ROWS_B[arm], seed)] = dict(c, job=job, epoch=epoch)
+    return out
+
+
+def cmd_check(dst, jobs, epoch=B_EPOCH):
+    import torch
+    out = check_students(jobs, lambda job, ep: torch.load(ckpt_of(job, ep), map_location='cpu')['model_state'], epoch)
+    json.dump(out, open(dst, 'w'), indent=1)
+    for k, c in out.items():
+        print('%s (job %d, epoch %d): non-BN tensors differing %d, BN tensors changed %d, key mismatch %d, counters %s -> %s' % (
+            k, c['job'], c['epoch'], len(c['non_bn_differ']), c['bn_changed'], len(c['missing']), c['counters'],
+            {True: 'ok', False: 'FAILED', None: 'descriptive'}[c['ok']]))
+    sys.exit(1 if any(c['ok'] is False for c in out.values()) else 0)
+
+
 def main():
     a = sys.argv[1:]
     if a[:1] == ['make']:
@@ -374,6 +399,10 @@ def main():
         sys.exit(0 if all(r['status'] == 'ok' for r in rows) else 1)
     if a[:1] == ['read'] and len(a) == 2:
         return cmd_read(a[1])
+    if a[:1] == ['check'] and len(a) >= 4 and a[2] == '--jobs':
+        ep = [x for x in a[3:] if x.startswith('--epoch=')]
+        return cmd_check(a[1], parse_jobs([x for x in a[3:] if not x.startswith('--')]),
+                         int(ep[0].split('=')[1]) if ep else B_EPOCH)
     print(__doc__)
     sys.exit(2)
 
