@@ -15,6 +15,10 @@ if [ -z "${WANDB_NOTES//[[:space:]]/}" ]; then
   exit 2
 fi
 export WANDB_NOTES
+TOOLS=$(cd "$(dirname "$0")/.." && pwd)
+# A --wrap runs under /bin/sh (dash): refuse one that would die at its first line after queueing (top-level pipefail,
+# a dash syntax error; scripts/wrap_check.py, 2026-11-27 job 37205).
+python3 "$TOOLS/scripts/wrap_check.py" "$@" || exit 2
 # EST_H (optional): expected hours on ONE GPU, evaluation included, from the closest comparable
 # run's real elapsed time. When set, scripts/size_job.py derives --gres (2 GPUs above 24 h, else
 # 1), --cpus-per-task (loaders x workers + 2 per GPU, at most 10) and --time from it, and prints
@@ -23,7 +27,6 @@ export WANDB_NOTES
 SIZE=()
 if [ -n "${EST_H:-}" ]; then
   export EST_H
-  TOOLS=$(cd "$(dirname "$0")/.." && pwd)
   SIZE=($(cd "$TOOLS" && singularity exec /home/koyama/code/singularity/st3d_cuda12_ubuntu2404.sif \
           python3 scripts/size_job.py "$@")) || { echo "submit.sh: sizing failed" >&2; exit 2; }
   [ "${#SIZE[@]}" -gt 0 ] || { echo "submit.sh: size_job.py printed no flags" >&2; exit 2; }
