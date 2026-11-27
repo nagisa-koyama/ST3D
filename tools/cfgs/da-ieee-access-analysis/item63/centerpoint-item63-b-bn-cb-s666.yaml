@@ -1,0 +1,10 @@
+# experiments_md 20261003_05 §5 item 63′ (design fixed 2026-11-27 13:46 JST, before any number), seed 666. ANALYSIS:
+# 59b's b_bn (the base leaf, unchanged) with one cut per class and x-y range bin (item 48's rings) at which the
+# teacher's floor-pass pseudo-labels in the camera FOV match the source labels' density per frame (count balance
+# by range; source labels and unlabelled target clouds only). Replaces NEG_THRESH / SCORE_THRESH (no ignore band).
+# Written by analysis/item63_range_cuts.py configs_cb from /home/koyama/data/item63/count_balance_cuts.json.
+_BASE_CONFIG_: cfgs/da-ieee-access-analysis/item59/centerpoint-item59-b-bn-s666.yaml
+SELF_TRAIN:
+    THRESH_BY_RANGE:
+        EDGES: [0.0, 10.0, 20.0, 30.0, 40.0]
+        CUTS: [[0.0742, 0.0972, 0.1327, 0.2318, 0.244], [0.0939, 0.3086, 0.2815, 0.485, 0.4584], [0.2326, 0.1394, 0.2181, 0.3672, 0.4541]]

@@ -101,3 +101,16 @@ def test_cb_leaf_resolves_to_59b_plus_thresh_by_range():
     assert leaf.SELF_TRAIN.THRESH_BY_RANGE.CUTS == [[0.3, 0.2, 0.15, 0.1, 0.5]] * 3
     st = dict(leaf.SELF_TRAIN); st.pop('THRESH_BY_RANGE')
     assert st == dict(base.SELF_TRAIN) and leaf.OPTIMIZATION == base.OPTIMIZATION
+
+
+def test_cb_readings():
+    def row(name, seed, rings):
+        return dict(row=name, seed=seed, reproduced=True, pooled={'bev': 70.0, '3d': 50.0}, rings=[{'bev': v} for v in rings])
+    rows = []
+    for s in m.SEEDS:
+        rows += [row('L_ada', s, [95, 95, 84, 66, 35]), row('P_RS1', s, [92, 92, 74, 56, 30]),
+                 row('P_PL_BN', s, [95, 95, 83, 62, 35]), row('P_PL_BN_CB', s, [95, 95, 83.5, 64.5, 35])]
+    seeds, word, d, w2 = m.readings_cb(rows)
+    assert word == 'a normalization-level correction can close most of the far residual'
+    assert d == {666: 2.5, 667: 2.5} and w2 == 'count balance by range helps where 59b fell short'
+    assert m.parse_jobs(['s666=1', 's667=2']) == {666: 1, 667: 2}

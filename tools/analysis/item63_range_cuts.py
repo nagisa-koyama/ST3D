@@ -269,8 +269,96 @@ def cmd_configs_cb():
         print('wrote', p)
 
 
+# ---------------------------------------------------------------- item 63′: rows, check, readings
+ROW_CB = 'P_PL_BN_CB'
+PK = {666: 32283, 667: 32284}
+REF_57 = '/home/koyama/data/item57/item57b_manifest.json'
+REF_58 = '/home/koyama/data/item58/item58_manifest.json'
+REF_59B = '/home/koyama/data/item59/item59b_manifest.json'
+
+
+def parse_jobs(args):
+    return {int(x.split('=')[0].lstrip('s')): int(x.split('=')[1]) for x in args}
+
+
+def manifest_cb(jobs):
+    import item38_kitti_rings as i38
+    rows = []
+    for s_, j in sorted(jobs.items()):
+        r = i38.resolve('item63', ROW_CB, s_, j, 'epoch_10')
+        if r['status'] == 'ok' and not Path(r['result']).exists():
+            r['status'] = 'result.pkl missing'
+        rows.append(r)
+    for path, keep in ((REF_57, ('P_RS1', 'L_ada', 'O_ada')), (REF_58, ('P_BN_G',)), (REF_59B, ('P_PL_BN',))):
+        for r in json.load(open(path)):
+            if r['row'] in keep:
+                rows.append(dict(r, group='item63'))
+    return rows
+
+
+def readings_cb(rows):
+    import item58_bn_bound as m58
+    seeds = [m58.per_seed(rows, s_, ROW_CB) for s_ in SEEDS]
+    word = m58.reading(seeds)
+    d = {}
+    for s_ in SEEDS:
+        a, b = m58.rings(rows, ROW_CB, s_), m58.rings(rows, 'P_PL_BN', s_)
+        d[s_] = None if a is None or b is None else a[3] - b[3]          # 30-40 m
+    v = list(d.values())
+    if any(x is None for x in v):
+        w2 = 'not read'
+    elif all(x >= 2.0 for x in v):
+        w2 = 'count balance by range helps where 59b fell short'
+    elif all(abs(x) < 1.0 for x in v):
+        w2 = 'no difference'
+    else:
+        w2 = 'partly'
+    return seeds, word, d, w2
+
+
+def cmd_read_cb(path):
+    rows = json.load(open(path))['rows']
+    for r in rows:
+        print('%-11s s%d pooled %6.2f (3D %6.2f) logged %s | %s%s' % (
+            r['row'], r['seed'], r['pooled']['bev'], r['pooled']['3d'], r['logged_bev'],
+            ' '.join('%6.2f' % g['bev'] for g in r['rings']), '' if r.get('reproduced') else '  NOT REPRODUCED'))
+    seeds, word, d, w2 = readings_cb(rows)
+    print('\n== %s against P_RS1: %s' % (ROW_CB, word))
+    for s_, x in zip(SEEDS, seeds):
+        print('  seed %d: %s' % (s_, 'not read' if x is None else 's_x far %.2f / %.2f, delta %+.2f, R %.2f' % (
+            x['s_x'][2], x['s_x'][3], x['delta'], x['R'])))
+    print('== %s - P_PL_BN at 30-40 m: %s %s' % (ROW_CB, w2, {k: (None if v is None else round(v, 2)) for k, v in d.items()}))
+
+
+def cmd_check_cb(dst, jobs):
+    import torch
+    import item58_bn_bound as m58
+    import item59_bn_split as m59
+    out = {}
+    for s_, j in sorted(jobs.items()):
+        c = m58.compare(torch.load(m59.ckpt_of(PK[s_], 152), map_location='cpu')['model_state'],
+                        torch.load(m59.ckpt_of(j, 10), map_location='cpu')['model_state'])
+        c['ok'] = not c['non_bn_differ'] and not c['missing']
+        out['%s s%d' % (ROW_CB, s_)] = dict(c, job=j)
+        print('%s s%d (job %d): non-BN tensors differing %d, BN tensors changed %d, key mismatch %d, counters %s -> %s' % (
+            ROW_CB, s_, j, len(c['non_bn_differ']), c['bn_changed'], len(c['missing']), c['counters'],
+            'ok' if c['ok'] else 'FAILED'))
+    json.dump(out, open(dst, 'w'), indent=1)
+    sys.exit(0 if all(c['ok'] for c in out.values()) else 1)
+
+
 def main():
     a = sys.argv[1:]
+    if a[:1] == ['manifest_cb'] and len(a) >= 4 and a[2] == '--jobs':
+        rows = manifest_cb(parse_jobs(a[3:]))
+        json.dump(rows, open(a[1], 'w'), indent=1)
+        for r in rows:
+            print(r['row'], r['seed'], r.get('job'), r['status'], r.get('logged_bev'))
+        sys.exit(0 if all(r['status'] == 'ok' for r in rows) else 1)
+    if a[:1] == ['read_cb'] and len(a) == 2:
+        return cmd_read_cb(a[1])
+    if a[:1] == ['check_cb'] and len(a) >= 4 and a[2] == '--jobs':
+        return cmd_check_cb(a[1], parse_jobs(a[3:]))
     if a == ['cuts']:
         return cmd_cuts()
     if a == ['configs']:
