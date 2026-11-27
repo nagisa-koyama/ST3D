@@ -515,6 +515,11 @@ class KittiDataset(DatasetTemplate):
         # print("input_dict['gt_names'] in the second last __getitem__:", input_dict['gt_names'])
         data_dict = self.prepare_data(data_dict=input_dict)
         # print("data_dict['gt_names'] in the last __getitem__:", data_dict['gt_names'])
+        # The frozen-file keys (PL-MATCH, PL-GT) hand prepare_data a per-box count for its zero-point filter
+        # (fill_pseudo_labels); it is consumed there, has the PRE-filter length, and np.stack cannot collate it across
+        # frames. Pop it as waymo / lyft / pandaset do (experiments_md 20261003_05 §5 item 61c; no other KITTI path sets it).
+        for d in (data_dict if isinstance(data_dict, tuple) else (data_dict,)):
+            d.pop('num_points_in_gt', None)
 
         return data_dict
 

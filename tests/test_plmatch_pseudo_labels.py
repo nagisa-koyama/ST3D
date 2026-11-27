@@ -460,7 +460,9 @@ def _plain(d):
 def test_only_the_plmatch_configs_carry_the_key_raw_text():
     hits = sorted(p.relative_to(TOOLS / 'cfgs').as_posix() for p in (TOOLS / 'cfgs').rglob('*.yaml')
                   if KEY in p.read_text(encoding='utf-8', errors='ignore'))
-    assert hits == sorted('da-ieee-access/' + p.name for p in ROWS), hits
+    # item 61c's two analysis leaves (experiments_md 20261003_05 §5 item 61c) serve a label-free frozen file by this path
+    item61c = ['da-ieee-access-analysis/item61/centerpoint-item61c-b-bn-moved-s%d.yaml' % s for s in (666, 667)]
+    assert hits == sorted(['da-ieee-access/' + p.name for p in ROWS] + item61c), hits
 
 
 def _self_training_configs():
