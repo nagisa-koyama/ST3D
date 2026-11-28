@@ -197,3 +197,71 @@ def test_item60_config_is_p_k_plus_range_bn_only():
     assert pk.OPTIMIZATION.NUM_EPOCHS == 152 and pk.DATA_CONFIG.TRAIN_FACTOR_SWAP.RING_THIN.MODE == 'pattern'
     assert sp.DATA_CONFIG_TAR.EVAL_FACTOR_SWAP.RING_THIN == pk.DATA_CONFIG.TRAIN_FACTOR_SWAP.RING_THIN
     assert sp.MODEL == rs.MODEL
+
+
+# ---- item 60g (experiments_md 20261003_05 §5 item 60g, design fixed 2026-11-28 10:38 JST): pooled re-estimation ----
+
+def test_pooled_reestimation_with_one_knot_equals_reestimate_bn():
+    from pcdet.utils import adabn_utils
+    torch.manual_seed(4)
+    ref, twin = bn1d(), bn1d()
+    init_affine(ref, twin)
+    m = rb.RangeBN(twin, Pos(torch.rand(120) * 70), knots=(25.0,))
+    batches = [torch.randn(120, 4) * (1 + i) + i for i in range(4)]
+    adabn_utils.reestimate_bn(Toy(ref).eval(), batches, to_gpu=False)
+    rb.reestimate_range_bn(Toy(m).eval(), batches, to_gpu=False, pooled=True)
+    assert torch.allclose(ref.running_mean, m.running_mean[0], **TOL)
+    assert torch.allclose(ref.running_var, m.running_var[0], **TOL)
+    x = torch.randn(120, 4)
+    assert torch.allclose(ref(x), m(x), **TOL)
+
+
+def test_pooled_reestimation_gives_every_knot_the_pooled_statistics():
+    torch.manual_seed(5)
+    rho = torch.cat([torch.full((60,), 5.0), torch.full((60,), 15.0), torch.full((60,), 40.0)])
+    m = rb.RangeBN(bn1d(), Pos(rho), knots=(5.0, 15.0, 55.0))
+    with torch.no_grad():
+        m.running_mean.fill_(7.0); m.running_var.fill_(2.0)
+    m.knot_batches.fill_(9); m.thin_steps.fill_(4)
+    batches = [torch.cat([torch.randn(60, 4) + 3, torch.randn(60, 4) * 2, torch.randn(60, 4) - 4]) + i for i in range(3)]
+    never = rb.reestimate_range_bn(Toy(m).eval(), batches, to_gpu=False, pooled=True)
+    assert never == {'layer': 0} and m.pooled is False
+    want_mean = torch.stack([b.mean(0) for b in batches]).mean(0)
+    want_var = torch.stack([b.var(0, unbiased=True) for b in batches]).mean(0)
+    for k in range(3):
+        assert torch.allclose(m.running_mean[k], want_mean, atol=1e-5)
+        assert torch.allclose(m.running_var[k], want_var, atol=1e-4)
+    assert rb.knot_spread(m) == (0.0, 0.0)
+    assert m.momentum == 0.01 and m.knot_batches.tolist() == [9, 9, 9] and m.thin_steps.tolist() == [4, 4, 4]
+    plain = bn1d()                                       # evaluation equals a plain BatchNorm holding the pooled statistics
+    with torch.no_grad():
+        plain.weight.copy_(m.bn.weight); plain.bias.copy_(m.bn.bias)
+        plain.running_mean.copy_(want_mean); plain.running_var.copy_(want_var)
+    plain.eval()
+    x = torch.randn(180, 4) * 3
+    assert torch.allclose(m(x), plain(x), **TOL)
+
+
+def test_pooled_differs_from_per_knot_reestimation_and_is_off_by_default():
+    torch.manual_seed(6)
+    rho = torch.cat([torch.full((60,), 5.0), torch.full((60,), 15.0)])
+    batches = [torch.cat([torch.randn(60, 4) + 3, torch.randn(60, 4) - 3]) for _ in range(2)]
+    a = rb.RangeBN(bn1d(), Pos(rho), knots=(5.0, 15.0))
+    b = rb.RangeBN(bn1d(), Pos(rho), knots=(5.0, 15.0))
+    assert a.pooled is False and 'pooled' not in a.state_dict()
+    rb.reestimate_range_bn(Toy(a).eval(), batches, to_gpu=False)
+    rb.reestimate_range_bn(Toy(b).eval(), batches, to_gpu=False, pooled=True)
+    assert rb.knot_spread(a)[0] > 5.0 and rb.knot_spread(b) == (0.0, 0.0)
+    assert torch.allclose(a.running_mean[0], torch.full((4,), 3.0), atol=0.5)
+
+
+def test_pooled_thin_batch_updates_no_knot():
+    m = rb.RangeBN(bn1d(), Pos(torch.zeros(10)), knots=(5.0, 15.0), thin=32)
+    before = m.running_mean.clone()
+    m.pooled = True
+    m.train()
+    x = torch.randn(10, 4)
+    y = m(x)
+    pooled = (x - x.mean(0)) / torch.sqrt(x.var(0, unbiased=False) + 1e-3) * m.bn.weight + m.bn.bias
+    assert torch.allclose(y, pooled, **TOL) and torch.equal(m.running_mean, before)
+    assert m.knot_batches.tolist() == [0, 0] and m.thin_steps.tolist() == [1, 1]

@@ -16,7 +16,10 @@ a BEV cell's centre; pcdet/utils/adabn_range._Pos) gets item 57's piecewise-line
 - evaluation: the running statistics, interpolated the same way;
 - gamma / beta stay the wrapped layer's, one per channel; the wrapped layer's own running buffers are removed, so code that
   expects a plain BatchNorm's statistics fails loudly instead of re-estimating unused buffers;
-- one knot: exactly BatchNorm (tests/test_range_bn.py).
+- one knot: exactly BatchNorm (tests/test_range_bn.py);
+- `pooled` (item 60g, set only by `reestimate_range_bn(..., pooled=True)`): in training mode every element is normalized with
+  the batch's pooled moments and every knot receives the same running update, so the layer ends holding one set of
+  statistics per channel (global AdaBN on an RS-BN model). Off by default; nothing else sets it.
 
 UDA-legal: the knots are fixed a priori; `reestimate_range_bn` reads unlabelled clouds only. Single GPU (no SyncBN).
 """
@@ -43,6 +46,7 @@ class RangeBN(torch.nn.Module):
         self.thin = float(thin)
         self.eps = float(bn.eps)
         self.momentum = bn.momentum
+        self.pooled = False                                   # item 60g only; not a buffer, so state keys are unchanged
         K, C = len(self.knots), bn.num_features
         dev = bn.weight.device
         self.register_buffer('running_mean', bn.running_mean.detach().clone()[None].repeat(K, 1))
@@ -70,8 +74,30 @@ class RangeBN(torch.nn.Module):
             return cache[key]
         return knot_weights(pos.voxels(x.shape[0]), self.knots).to(device=x.device, dtype=x.dtype)
 
+    def _forward_pooled(self, xf):
+        """Training mode with `pooled`: plain BatchNorm's batch moments for every element; every knot updated with them."""
+        n = xf.shape[0]
+        mu = xf.mean(0)
+        var = xf.var(0, unbiased=False)
+        with torch.no_grad():
+            ok = 1.0 if n >= self.thin else 0.0               # n is a Python int: no host sync
+            K = self.running_mean.shape[0]
+            self.num_batches_tracked += 1
+            self.knot_batches += int(ok)
+            self.thin_steps += 1 - int(ok)
+            okv = torch.full((K,), ok, dtype=self.running_mean.dtype, device=xf.device)
+            f = okv / self.knot_batches.clamp_min(1).to(okv.dtype) if self.momentum is None else okv * self.momentum
+            unb = var * (n / max(n - 1, 1))
+            self.running_mean.add_(f[:, None] * (mu.to(okv.dtype)[None] - self.running_mean))
+            self.running_var.add_(f[:, None] * (unb.to(okv.dtype)[None] - self.running_var))
+        return mu, var
+
     def forward(self, x):
         xf, back = _flat(x)
+        if self.training and self.pooled:
+            mu, var = self._forward_pooled(xf)
+            y = (xf - mu) / torch.sqrt(var + self.eps) * self.bn.weight + self.bn.bias
+            return back(y)
         w = self.weights(x)                                   # (n, K)
         if self.training:
             m0 = xf.mean(0).detach()                          # numerics only: mu_k = w^T x / s does not depend on it
@@ -107,6 +133,13 @@ def range_bn_layers(model):
     return [(n, m) for n, m in model.named_modules() if isinstance(m, RangeBN)]
 
 
+@torch.no_grad()
+def knot_spread(m):
+    """Largest absolute difference between any knot's running statistics and knot 0's (mean, variance)."""
+    return (float((m.running_mean - m.running_mean[:1]).abs().max()),
+            float((m.running_var - m.running_var[:1]).abs().max()))
+
+
 def install_range_bn(model, knots, pc_range, thin=32.0):
     """Wrap every BatchNorm1d / BatchNorm2d of `model` in RangeBN (in place, at build time) and register the sparse-convolution
     hooks that give voxel positions. Returns the number of wrapped layers."""
@@ -125,10 +158,13 @@ def install_range_bn(model, knots, pc_range, thin=32.0):
 
 
 @torch.no_grad()
-def reestimate_range_bn(model, loader, logger=None, to_gpu=True):
+def reestimate_range_bn(model, loader, logger=None, to_gpu=True, pooled=False):
     """AdaBN for an RS-BN model: every knot's statistics re-estimated as a cumulative average of its batch statistics over
     `loader` (the rest of the model in eval mode, as adabn_utils.reestimate_bn). A knot never above the threshold keeps its
-    previous (source) statistics. Returns {layer: number of such knots}."""
+    previous (source) statistics. Returns {layer: number of such knots}.
+
+    `pooled=True` (item 60g): global AdaBN instead. During the pass each layer normalizes with the batch's pooled moments
+    and every knot receives their cumulative average, so all knots end equal (`knot_spread` 0)."""
     if to_gpu:
         from pcdet.models import load_data_to_gpu
     layers = range_bn_layers(model)
@@ -143,6 +179,7 @@ def reestimate_range_bn(model, loader, logger=None, to_gpu=True):
         m.running_var.fill_(1.0)
         m.knot_batches.zero_()
         m.momentum = None
+        m.pooled = bool(pooled)
         m.train()
     for i, batch in enumerate(loader):
         if to_gpu:
@@ -153,6 +190,7 @@ def reestimate_range_bn(model, loader, logger=None, to_gpu=True):
     never = {}
     for n, m in layers:
         mean0, var0, mom, nbt, kb, ts = saved[n]
+        m.pooled = False
         unseen = m.knot_batches == 0
         m.running_mean[unseen] = mean0[unseen]
         m.running_var[unseen] = var0[unseen]
@@ -163,6 +201,7 @@ def reestimate_range_bn(model, loader, logger=None, to_gpu=True):
         m.thin_steps.copy_(ts)
     model.train(was_training)
     if logger is not None:
-        logger.info('[range-bn adabn] %d layers re-estimated; knots never above the threshold (kept source): %d'
-                    % (len(layers), sum(never.values())))
+        logger.info('[range-bn adabn] %d layers re-estimated%s; knots never above the threshold (kept source): %d'
+                    % (len(layers), ' (pooled: one set of statistics for every knot)' if pooled else '',
+                       sum(never.values())))
     return never

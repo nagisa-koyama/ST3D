@@ -1,13 +1,15 @@
 """Evaluate a range-stratified-BN checkpoint, optionally after per-knot AdaBN (experiments_md 20261003_05 §5 item 60, design
 fixed 2026-11-27 12:09 JST, before any number).
 
-    python analysis/item60_rsbn_eval.py --cfg_file <cfg with MODEL.RANGE_BN> --ckpt <ckpt> --adapt none|ada --out_dir DIR
+    python analysis/item60_rsbn_eval.py --cfg_file <cfg with MODEL.RANGE_BN> --ckpt <ckpt> --adapt none|ada|glob --out_dir DIR
         [--stats_frames 1000] [--stats_batch 4] [--run_name ...]
 
 - `none`: the checkpoint's own per-knot statistics;
 - `ada`: every knot's statistics re-estimated on `--stats_frames` strided frames of the eval dataset's TRAIN split (eval-mode
   view, no labels; pcdet/models/model_utils/range_bn.reestimate_range_bn); a knot never above the threshold keeps its source
   statistics;
+- `glob` (item 60g, design fixed 2026-11-28 10:38 JST): the same pass with `pooled=True`, i.e. global AdaBN on the RS-BN model:
+  every element normalized with the batch's pooled moments, every knot given their cumulative average (knot spread 0, logged);
 - then evaluation on the eval block (DATA_CONFIG_TAR, else DATA_CONFIG): result.pkl and log_rsbn_*.txt in DIR, plus rsbn.json
   (per layer: training-time thin-knot fallbacks from the checkpoint; knots never seen in re-estimation).
 
@@ -39,7 +41,7 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--cfg_file', required=True)
     p.add_argument('--ckpt', required=True)
-    p.add_argument('--adapt', choices=['none', 'ada'], required=True)
+    p.add_argument('--adapt', choices=['none', 'ada', 'glob'], required=True)
     p.add_argument('--out_dir', required=True)
     p.add_argument('--stats_frames', type=int, default=1000)
     p.add_argument('--stats_batch', type=int, default=4)
@@ -89,13 +91,17 @@ def main():
     layers = range_bn.range_bn_layers(model)
     logger.info('[rsbn] %d RangeBN layers, knots %s' % (len(layers), list(cfg.MODEL.RANGE_BN.KNOTS)))
     info = {n: dict(train_thin_steps=m.thin_steps.tolist(), train_knot_batches=m.knot_batches.tolist()) for n, m in layers}
-    if args.adapt == 'ada':
+    if args.adapt in ('ada', 'glob'):
         loader = adabn_utils.train_split_stats_loader(eval_block, cfg.CLASS_NAMES, ontology, args.stats_frames,
                                                       args.stats_batch, args.workers, logger)
-        never = range_bn.reestimate_range_bn(model, loader, logger)
-        for n in info:
+        never = range_bn.reestimate_range_bn(model, loader, logger, pooled=args.adapt == 'glob')
+        for n, m in layers:
             info[n]['ada_knots_never_seen'] = never[n]
+            info[n]['knot_spread'] = range_bn.knot_spread(m)
+        spread = max(max(info[n]['knot_spread']) for n, _ in layers)
+        logger.info('[rsbn] %s: largest knot spread after re-estimation %.3g (mean or variance)' % (args.adapt, spread))
         info['_stats_frames'] = len(loader.dataset)
+        info['_max_knot_spread'] = spread
     json.dump(info, open(out_dir / 'rsbn.json', 'w'), indent=1)
     eval_utils.eval_one_epoch(cfg, model, test_loader, args.adapt, logger, dist_test=False,
                               result_dir=out_dir, save_to_file=False, args=args)
