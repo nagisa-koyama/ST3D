@@ -10,6 +10,8 @@ fixed 2026-11-27 12:09 JST, before any number).
   statistics;
 - `glob` (item 60g, design fixed 2026-11-28 10:38 JST): the same pass with `pooled=True`, i.e. global AdaBN on the RS-BN model:
   every element normalized with the batch's pooled moments, every knot given their cumulative average (knot spread 0, logged);
+- `--range_scale s` (item 60r, design fixed 2026-11-28 15:32 JST): every knot looked up at s * range, in the re-estimation
+  pass and in evaluation; 1 (the default) is unchanged;
 - then evaluation on the eval block (DATA_CONFIG_TAR, else DATA_CONFIG): result.pkl and log_rsbn_*.txt in DIR, plus rsbn.json
   (per layer: training-time thin-knot fallbacks from the checkpoint; knots never seen in re-estimation).
 
@@ -49,6 +51,8 @@ def parse_args():
     p.add_argument('--workers', type=int, default=4)
     p.add_argument('--smoke', action='store_true', help='smoke only: evaluate 16 frames (build_dataloader use_subset)')
     p.add_argument('--run_name', default=None)
+    p.add_argument('--range_scale', type=float, default=1.0,
+                   help='item 60r: knots looked up at range_scale * range (range_bn.set_range_scale); 1 = unscaled')
     return p.parse_args()
 
 
@@ -70,7 +74,7 @@ def main():
     wandb.init(config=vars(cfg), project='st3d', name=args.run_name, notes=common_utils.wandb_notes_with_job_id(),
                tags=common_utils.wandb_tags(cfg, 'item60_rsbn_eval', cfg_file=args.cfg_file))
     wandb.config.update({'item60': dict(adapt=args.adapt, ckpt=args.ckpt, stats_frames=args.stats_frames,
-                                        knots=list(cfg.MODEL.RANGE_BN.KNOTS))})
+                                        knots=list(cfg.MODEL.RANGE_BN.KNOTS), range_scale=args.range_scale)})
     for k, v in vars(args).items():
         logger.info(f'{k:16} {v}')
     log_config_to_file(cfg, logger=logger)
@@ -91,6 +95,9 @@ def main():
     layers = range_bn.range_bn_layers(model)
     logger.info('[rsbn] %d RangeBN layers, knots %s' % (len(layers), list(cfg.MODEL.RANGE_BN.KNOTS)))
     info = {n: dict(train_thin_steps=m.thin_steps.tolist(), train_knot_batches=m.knot_batches.tolist()) for n, m in layers}
+    info['_range_scale'] = range_bn.set_range_scale(model, args.range_scale)
+    logger.info('[rsbn] range scale %.4f: knots looked up at %.4f x range (re-estimation and evaluation)'
+                % (args.range_scale, args.range_scale))
     if args.adapt in ('ada', 'glob'):
         loader = adabn_utils.train_split_stats_loader(eval_block, cfg.CLASS_NAMES, ontology, args.stats_frames,
                                                       args.stats_batch, args.workers, logger)

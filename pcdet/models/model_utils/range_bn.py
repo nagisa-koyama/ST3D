@@ -17,6 +17,8 @@ a BEV cell's centre; pcdet/utils/adabn_range._Pos) gets item 57's piecewise-line
 - gamma / beta stay the wrapped layer's, one per channel; the wrapped layer's own running buffers are removed, so code that
   expects a plain BatchNorm's statistics fails loudly instead of re-estimating unused buffers;
 - one knot: exactly BatchNorm (tests/test_range_bn.py);
+- `set_range_scale` (item 60r): the knots looked up at scale * range, e.g. the target's row step mapped to the source's;
+  1 (the default) is the unscaled lookup;
 - `pooled` (item 60g, set only by `reestimate_range_bn(..., pooled=True)`): in training mode every element is normalized with
   the batch's pooled moments and every knot receives the same running update, so the layer ends holding one set of
   statistics per channel (global AdaBN on an RS-BN model). Off by default; nothing else sets it.
@@ -67,7 +69,7 @@ class RangeBN(torch.nn.Module):
         pos = self._pos[0]
         if x.dim() == 4:                                      # BEV cells: fixed per map size, cached on the shared positions
             cache = pos.__dict__.setdefault('wcache', {})
-            key = (x.shape[0], x.shape[2], x.shape[3], str(x.device), x.dtype, self.knots)
+            key = (x.shape[0], x.shape[2], x.shape[3], str(x.device), x.dtype, self.knots, getattr(pos, 'scale', 1.0))
             if key not in cache:
                 rho = pos.bev(x.shape[2], x.shape[3], x.shape[0], x.device)
                 cache[key] = knot_weights(rho, self.knots).to(device=x.device, dtype=x.dtype)
@@ -138,6 +140,20 @@ def knot_spread(m):
     """Largest absolute difference between any knot's running statistics and knot 0's (mean, variance)."""
     return (float((m.running_mean - m.running_mean[:1]).abs().max()),
             float((m.running_var - m.running_var[:1]).abs().max()))
+
+
+def set_range_scale(model, scale):
+    """Item 60r (experiments_md 20261003_05 §5 item 60r, design fixed 2026-11-28 15:32 JST): every RangeBN of `model` looks
+    its knots up at `scale` * range from now on (voxels and BEV cells; the shared positions' caches are keyed by the scale).
+    1.0 restores the unscaled lookup. Returns the scale set."""
+    layers = range_bn_layers(model)
+    if not layers:
+        raise ValueError('no RangeBN layer in the model')
+    scale = float(scale)
+    assert scale > 0, scale
+    for pos in {id(m._pos[0]): m._pos[0] for _, m in layers}.values():
+        pos.scale = scale
+    return scale
 
 
 def install_range_bn(model, knots, pc_range, thin=32.0):

@@ -72,18 +72,22 @@ class _Pos:
         self.x0, self.y0, _, self.x1, self.y1, _ = [float(v) for v in pc_range]
         self.last = None
         self.cache = {}
+        self.scale = 1.0          # item 60r: knots looked up at scale * range (range_bn.set_range_scale); 1 = unchanged
 
     def hook(self, module, inputs, output):
         self.last = (output.indices, list(output.spatial_shape))
 
     def bev(self, h, w, batch, device):
-        key = (h, w, str(device))
+        key = (h, w, str(device), self.scale)
         if key not in self.cache:
             xs = self.x0 + (torch.arange(w, dtype=torch.float64, device=device) + 0.5) * (self.x1 - self.x0) / w
             ys = self.y0 + (torch.arange(h, dtype=torch.float64, device=device) + 0.5) * (self.y1 - self.y0) / h
             yy, xx = torch.meshgrid(ys, xs, indexing='ij')
-            self.cache[key] = torch.hypot(xx, yy).reshape(-1)
+            self.cache[key] = self._scaled(torch.hypot(xx, yy).reshape(-1))
         return self.cache[key].repeat(batch)
+
+    def _scaled(self, rho):
+        return rho if self.scale == 1.0 else rho * self.scale
 
     def voxels(self, n):
         if self.last is None or self.last[0].shape[0] != n:
@@ -93,7 +97,7 @@ class _Pos:
         _, ny, nx = shape[-3:]
         x = self.x0 + (idx[:, 3].double() + 0.5) * (self.x1 - self.x0) / nx
         y = self.y0 + (idx[:, 2].double() + 0.5) * (self.y1 - self.y0) / ny
-        return torch.hypot(x, y)
+        return self._scaled(torch.hypot(x, y))
 
 
 def _flat(x):
