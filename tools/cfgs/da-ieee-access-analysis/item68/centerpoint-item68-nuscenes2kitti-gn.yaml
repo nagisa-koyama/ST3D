@@ -1,0 +1,6 @@
+# Item 68 (experiments_md 20261003_05 §5, design fixed 2026-11-28 16:42 JST): the KITTI val evaluation twin of
+# centerpoint-item68-nuscenes-gn.yaml, i.e. centerpoint-sourceonly-nuscenes2kitti.yaml (the S2 control's KITTI target block)
+# with the same normalization swap (per-frame GroupNorm, G = min(32, C)).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-nuscenes2kitti.yaml
+MODEL:
+    NORM_SWAP: {TYPE: group, MAX_GROUPS: 32}

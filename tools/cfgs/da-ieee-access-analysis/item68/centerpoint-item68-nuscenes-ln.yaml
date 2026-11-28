@@ -1,0 +1,6 @@
+# Item 68 (experiments_md 20261003_05 §5, design fixed 2026-11-28 16:42 JST, before any number), UDA-LEGAL source-only row:
+# the S2 control recipe (centerpoint-sourceonly-nuscenes.yaml, unchanged: nuScenes train, 20 epochs, total batch 6) with every
+# BatchNorm replaced by per-element LayerNorm over channels (pcdet/models/model_utils/norm_swap.py). Trained at 1 GPU, seeds 666 / 667 / 668, as item 41a.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-nuscenes.yaml
+MODEL:
+    NORM_SWAP: {TYPE: layer}

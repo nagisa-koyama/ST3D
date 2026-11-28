@@ -22,6 +22,12 @@ def build_network(model_cfg, num_class, dataset):
     if model_cfg.get('COUNT_NORM_CONV', None):
         from .model_utils.count_norm_conv import install_count_norm
         model.n_count_norm = install_count_norm(model)
+    # MODEL.NORM_SWAP (experiments_md 20261003_05 §5 item 68; absent = unchanged): every BatchNorm replaced by per-element
+    # LayerNorm or per-frame GroupNorm (pcdet/models/model_utils/norm_swap.py), before any checkpoint is loaded.
+    if model_cfg.get('NORM_SWAP', None):
+        from .model_utils.norm_swap import install_norm_swap
+        model.n_norm_swap = install_norm_swap(model, model_cfg.NORM_SWAP)
+        print('[norm_swap] %s: %d BatchNorm layers replaced' % (dict(model_cfg.NORM_SWAP), model.n_norm_swap), flush=True)
     return model
 
 
