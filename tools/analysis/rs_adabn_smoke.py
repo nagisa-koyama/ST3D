@@ -6,7 +6,9 @@ scripts/_item57_rsadabn_20261127.sh; exit 1 stops the job before the long runs.
 2. every BatchNorm1d input lines up with a recorded sparse convolution output (no RuntimeError) and RS-5 (5 knots) runs a
    source pass, a target pass and one evaluation batch with finite outputs; the per-knot element shares are printed.
 
-    python3 analysis/rs_adabn_smoke.py --ckpt <ckpt>
+    python3 analysis/rs_adabn_smoke.py --ckpt <ckpt> [--cfg_file <eval cfg> --src_cfg <cfg> --src_block DATA_CONFIG]
+
+The defaults are item 57's forward pair; item 70 passes the real pair's control config with `--src_block DATA_CONFIG`.
 """
 import argparse
 import copy
@@ -32,18 +34,23 @@ SRC_CFG = 'cfgs/da-ieee-access-analysis/item47/centerpoint-item47-kitti-p-on-nus
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--ckpt', required=True)
+    p.add_argument('--cfg_file', default=EVAL_CFG)
+    p.add_argument('--src_cfg', default=SRC_CFG)
+    p.add_argument('--src_block', choices=['DATA_CONFIG_TAR', 'DATA_CONFIG'], default='DATA_CONFIG_TAR')
     args = p.parse_args()
-    cfg_from_yaml_file(EVAL_CFG, cfg)
+    cfg_from_yaml_file(args.cfg_file, cfg)
     logger = common_utils.create_logger()
     block = cfg.DATA_CONFIG_TAR
-    src_block = cfg_from_yaml_file(SRC_CFG, EasyDict()).DATA_CONFIG_TAR
+    src_block = cfg_from_yaml_file(args.src_cfg, EasyDict())[args.src_block]
+    ontology = cfg.get('EVAL_ONTOLOGY', None) or cfg.get('ONTOLOGY', None)
+    print('smoke: eval %s, source %s %s (%s)' % (args.cfg_file, args.src_cfg, args.src_block, src_block.DATASET))
     test_set, test_loader, _ = build_dataloader(dataset_cfg=block, class_names=cfg.CLASS_NAMES, batch_size=2, dist=False,
-                                                workers=2, logger=logger, training=False)
+                                                workers=2, logger=logger, training=False, model_ontology=ontology)
     a = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=test_set)
     a.load_params_from_file(filename=args.ckpt, logger=logger, to_cpu=False)
     a.cuda()
     b = copy.deepcopy(a)
-    tgt = adabn_utils.train_split_stats_loader(block, cfg.CLASS_NAMES, None, 16, 4, 2, logger)
+    tgt = adabn_utils.train_split_stats_loader(block, cfg.CLASS_NAMES, ontology, 16, 4, 2, logger)
     adabn_utils.reestimate_bn(a, tgt, logger)
     rs = adabn_range.RangeStratifiedBN(b, list(block.POINT_CLOUD_RANGE))
     rs.estimate(tgt, (0.0,), logger)
@@ -57,7 +64,7 @@ def main():
     print('check 1: RS-1 vs reestimate_bn over %d layers, worst relative difference %.2e' % (len(rs.layers), worst))
     ok = worst <= 1e-3
     rs.restore()
-    src = adabn_utils.train_split_stats_loader(src_block, cfg.CLASS_NAMES, None, 16, 4, 2, logger)
+    src = adabn_utils.train_split_stats_loader(src_block, cfg.CLASS_NAMES, ontology, 16, 4, 2, logger)
     s = rs.collect(src, adabn_range.KNOTS_ITEM57, logger)
     rs.estimate(tgt, adabn_range.KNOTS_ITEM57, logger)
     rs.apply()

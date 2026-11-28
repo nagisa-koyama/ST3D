@@ -31,6 +31,9 @@ import torch
 from pcdet.utils import adabn_utils
 
 KNOTS_ITEM57 = (5.0, 15.0, 25.0, 35.0, 55.0)   # centres of item 48's rings 0-10 / 10-20 / 20-30 / 30-40 / 40-70.4 m
+# Which BN layers take the knots, per `rs_adabn_eval.py --knots` arm (a regex on the module name; None = all layers):
+# item57_3d = item 57b; item57_2d = item 70 (experiments_md T05 §5 item 70). The 3d and 2d arms partition CenterPoint's BN layers.
+ARM_LAYERS = {'global': None, 'item57': None, 'item57_3d': r'^backbone_3d\.', 'item57_2d': r'^(backbone_2d|dense_head)\.'}
 
 
 def knot_weights(rho, knots):

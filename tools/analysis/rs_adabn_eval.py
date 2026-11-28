@@ -40,8 +40,11 @@ def parse_args():
     p.add_argument('--cfg_file', required=True)
     p.add_argument('--src_cfg', required=True)
     p.add_argument('--ckpt', required=True)
-    p.add_argument('--knots', choices=['item57', 'item57_3d', 'global'], required=True,
-                   help='item57_3d (item 57b): the 5 knots in backbone_3d only, one knot (global AdaBN) elsewhere')
+    p.add_argument('--knots', choices=['item57', 'item57_3d', 'item57_2d', 'global'], required=True,
+                   help='item57_3d (item 57b): the 5 knots in backbone_3d only, one knot (global AdaBN) elsewhere; item57_2d '
+                        '(item 70): the 5 knots in backbone_2d + dense_head only')
+    p.add_argument('--src_block', choices=['DATA_CONFIG_TAR', 'DATA_CONFIG'], default='DATA_CONFIG_TAR',
+                   help="which block of --src_cfg is the source (item 70: DATA_CONFIG, the control's nuScenes training block)")
     p.add_argument('--stats_frames', type=int, default=1000)
     p.add_argument('--stats_batch', type=int, default=4)
     p.add_argument('--batch_size', type=int, default=6)
@@ -71,7 +74,7 @@ def main():
     np.random.seed(1024)
     src_cfg = cfg_from_yaml_file(args.src_cfg, EasyDict())
     eval_block = cfg.DATA_CONFIG_TAR if cfg.get('DATA_CONFIG_TAR', None) else cfg.DATA_CONFIG
-    src_block = src_cfg.DATA_CONFIG_TAR
+    src_block = src_cfg[args.src_block]
     pc_range = list(eval_block.POINT_CLOUD_RANGE)
     assert list(src_block.POINT_CLOUD_RANGE) == pc_range, 'source and target must share the model input range'
 
@@ -82,10 +85,11 @@ def main():
     logger = common_utils.create_logger(out_dir / f'log_rsadabn_{datetime.datetime.now():%Y%m%d-%H%M%S}.txt', rank=0)
     wandb.init(config=vars(cfg), project='st3d', name=args.run_name, notes=common_utils.wandb_notes_with_job_id(),
                tags=common_utils.wandb_tags(cfg, 'rs_adabn_eval', cfg_file=args.cfg_file))
-    knots = adabn_range.KNOTS_ITEM57 if args.knots in ('item57', 'item57_3d') else (0.0,)
-    layers = r'^backbone_3d\.' if args.knots == 'item57_3d' else None
-    wandb.config.update({'rs_adabn': dict(knots=list(knots), layers=layers, src_cfg=args.src_cfg, stats_frames=args.stats_frames,
-                                          ckpt=args.ckpt)})
+    knots = (0.0,) if args.knots == 'global' else adabn_range.KNOTS_ITEM57
+    layers = adabn_range.ARM_LAYERS[args.knots]
+    wandb.config.update({'rs_adabn': dict(knots=list(knots), layers=layers, src_cfg=args.src_cfg, src_block=args.src_block,
+                                          stats_frames=args.stats_frames, ckpt=args.ckpt)})
+    logger.info('[rs-adabn] wandb run %s' % (wandb.run.id if wandb.run is not None else None))
     for k, v in vars(args).items():
         logger.info(f'{k:16} {v}')
     log_config_to_file(cfg, logger=logger)
@@ -99,8 +103,9 @@ def main():
     model.cuda()
 
     rs = adabn_range.RangeStratifiedBN(model, pc_range)
-    logger.info('[rs-adabn] source: TRAIN split of %s (%s); target: TRAIN split of the eval dataset; knots %s; %d BN layers'
-                % (args.src_cfg, src_block.get('EVAL_FACTOR_SWAP', None), list(knots), len(rs.layers)))
+    logger.info('[rs-adabn] source: TRAIN split of %s %s (%s, %s); target: TRAIN split of the eval dataset; knots %s; %d BN layers'
+                % (args.src_cfg, args.src_block, src_block.DATASET, src_block.get('EVAL_FACTOR_SWAP', None), list(knots),
+                   len(rs.layers)))
     src_loader = adabn_utils.train_split_stats_loader(src_block, cfg.CLASS_NAMES, ontology, args.stats_frames,
                                                       args.stats_batch, args.workers, logger)
     src = rs.collect(src_loader, adabn_range.KNOTS_ITEM57, logger)
