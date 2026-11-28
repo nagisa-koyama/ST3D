@@ -5,6 +5,9 @@ this script reads KITTI val labels for evaluation only.
     python3 analysis/item68_norm_swap.py manifest KITTI.json SOURCE.json   # resolve every row from its job's log
     python3 analysis/item38_kitti_rings.py ap KITTI.json AP.json --real-kernel --workers 4
     python3 analysis/item68_norm_swap.py read AP.json SOURCE.json
+    python3 analysis/item68_norm_swap.py bn BN.json                         # 68-pre: 41a's BN rows + the S2 oracle O
+    python3 analysis/item38_kitti_rings.py ap BN.json BN_AP.json --workers 4
+    python3 analysis/item68_norm_swap.py bnread BN_AP.json
 
 Rows: LN / GN at seeds 666-668 (KITTI val epoch 20, the twin config), BN_none / BN_ada (item 41a, epoch 20, without and
 with AdaBN), and each training row's in-run nuScenes val (SOURCE.json, not ring-scored).
@@ -138,8 +141,70 @@ def cmd_read(ap_path, source_path):
     json.dump(out, open(Path(ap_path).with_name('item68_readings.json'), 'w'), indent=1, default=float)
 
 
+# 68-pre (T05 item 68, reading fixed 2026-11-28 17:44 JST): 41a's BN rows by ring against the S2 oracle O under AdaBN
+ITEM60G_MANIFEST = Path('/home/koyama/data/item60/item60g_manifest.json')
+NEAR = (0, 1)
+WORDS_PRE = ("the real pair's AdaBN residual is far, as on the synthetic pair", 'it is not far', 'mixed')
+
+
+def bn_manifest():
+    import item38_kitti_rings as m38
+    rows = [m38.resolve(*r) for r in kitti_specs() if r[1].startswith('BN')]
+    for r in rows:
+        if r['status'] == 'ok' and not Path(r['result']).exists():
+            r['status'] = 'result.pkl missing'
+    oracle = [dict(r, group='item68') for r in json.load(open(ITEM60G_MANIFEST)) if r['row'] == 'O_ada']
+    assert sorted(r['seed'] for r in oracle) == [666, 667], oracle
+    return rows + oracle
+
+
+def pre_reading(rows):
+    """Per seed: near / far gap of the S2 oracle's two-seed mean against BN_ada, and the 68-pre words."""
+    o = [r for r in rows if r['row'] == 'O_ada']
+    if len(o) != 2 or not all(r.get('reproduced') for r in rows):
+        return None, 'not read'
+    ref = [sum(r['rings'][i]['bev'] for r in o) / 2 for i in range(len(o[0]['rings']))]
+    gaps = {}
+    for r in rows:
+        if r['row'] != 'BN_ada':
+            continue
+        g = [ref[i] - r['rings'][i]['bev'] for i in range(len(ref))]
+        gaps[r['seed']] = dict(rings=g, near=sum(g[i] for i in NEAR) / 2, far=sum(g[i] for i in FAR) / 2)
+    if sorted(gaps) != list(SEEDS):
+        return gaps, 'not read'
+    if all(x['far'] >= 2 * x['near'] for x in gaps.values()):
+        return gaps, WORDS_PRE[0]
+    if all(x['far'] < x['near'] for x in gaps.values()):
+        return gaps, WORDS_PRE[1]
+    return gaps, WORDS_PRE[2]
+
+
+def cmd_bnread(ap_path):
+    rows = json.load(open(ap_path))['rows']
+    print('row      seed  pooled BEV (3D)  logged | 0-10 / 10-20 / 20-30 / 30-40 / 40-70.4 m (BEV), n_gt')
+    for r in sorted(rows, key=lambda r: (r['row'], r['seed'])):
+        print('%-8s %d  %6.2f (%6.2f)  %s | %s | %s%s' % (
+            r['row'], r['seed'], r['pooled']['bev'], r['pooled']['3d'], r['logged_bev'],
+            ' / '.join('%6.2f' % g['bev'] for g in r['rings']), ' / '.join(str(g['n_gt']) for g in r['rings']),
+            '' if r.get('reproduced') else '  NOT REPRODUCED'))
+    gaps, w = pre_reading(rows)
+    print('\n== 68-pre: %s' % w)
+    for s, x in sorted((gaps or {}).items()):
+        print('  seed %d: gap O - BN_ada by ring %s | near %.2f, far %.2f' % (
+            s, ' / '.join('%+.2f' % v for v in x['rings']), x['near'], x['far']))
+    json.dump({'gaps': gaps, 'reading': w}, open(Path(ap_path).with_name('item68_pre_reading.json'), 'w'), indent=1)
+
+
 def main():
     a = sys.argv[1:]
+    if a[:1] == ['bn'] and len(a) == 2:
+        rows = bn_manifest()
+        json.dump(rows, open(a[1], 'w'), indent=1)
+        for r in rows:
+            print(r['row'], r['seed'], r['job'], r['status'], r.get('wandb'), r.get('logged_bev'))
+        sys.exit(0 if all(r['status'] == 'ok' for r in rows) else 1)
+    if a[:1] == ['bnread'] and len(a) == 2:
+        return cmd_bnread(a[1])
     if a[:1] == ['manifest'] and len(a) == 3:
         kitti, source = manifest()
         json.dump(kitti, open(a[1], 'w'), indent=1)

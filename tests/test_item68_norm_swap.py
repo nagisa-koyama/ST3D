@@ -72,3 +72,28 @@ def test_bn_rows_resolve_from_41a_logs():
         assert r['logged_bev'] == pytest.approx(m.REF[name][m.SEEDS.index(s)], abs=0.006), (name, s, r['logged_bev'])
     src = {r[2]: m38.resolve(*r) for r in m.source_specs() if r[1] == 'BN_src'}
     assert [round(src[s]['logged_bev'], 2) for s in m.SEEDS] == [44.81, 44.84, 45.18]
+
+
+def _ring_row(name, seed, rings):
+    return dict(row=name, seed=seed, reproduced=True, rings=[{'bev': v} for v in rings])
+
+
+def test_pre_reading_words():
+    o = [_ring_row('O_ada', 666, [95, 95, 84, 70, 40]), _ring_row('O_ada', 667, [93, 93, 84, 66, 36])]   # mean 94 94 84 68 38
+    far = [_ring_row('BN_ada', s, [92, 92, 74, 58, 30]) for s in m.SEEDS]                                 # near 2, far 10
+    assert m.pre_reading(o + far)[1] == m.WORDS_PRE[0]
+    g = m.pre_reading(o + far)[0][666]
+    assert g['near'] == pytest.approx(2.0) and g['far'] == pytest.approx(10.0)
+    near = [_ring_row('BN_ada', s, [84, 84, 80, 64, 30]) for s in m.SEEDS]                                # near 10, far 4
+    assert m.pre_reading(o + near)[1] == m.WORDS_PRE[1]
+    mixed = far[:2] + [near[2]]
+    assert m.pre_reading(o + mixed)[1] == m.WORDS_PRE[2]
+    o[0]['reproduced'] = False
+    assert m.pre_reading(o + far)[1] == 'not read'
+
+
+@pytest.mark.skipif(not m.ITEM60G_MANIFEST.exists(), reason='no item 60g manifest')
+def test_bn_manifest_rows():
+    rows = m.bn_manifest()
+    assert sorted((r['row'], r['seed']) for r in rows) == sorted(
+        [('BN_ada', s) for s in m.SEEDS] + [('BN_none', s) for s in m.SEEDS] + [('O_ada', 666), ('O_ada', 667)])
