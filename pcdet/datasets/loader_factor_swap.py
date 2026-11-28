@@ -28,6 +28,10 @@ dataset-agnostic functions are reused here unchanged (imports only; the KITTI an
   REFLECTION_DROP: {MODE: threshold | random, E: {...}, T: {...}, Q: {...}}         (PandaSet only; item 35g)
       Applied in the PandaSet reader (pandaset_dataset._get_lidar_points), in ego axes about the fitted sensor origin
       before the axis swap (pcdet/datasets/reflection_drop.py); nothing to do here. Lyft has no intensity (constant 100).
+  INTENSITY_MAP: {TABLES: npz}                                                      (PandaSet only; item 72)
+      The intensity column (the reader's /255) mapped onto nuScenes' per-range-ring distribution
+      (pcdet/datasets/intensity_swap.py), here in the shifted loader frame, the frame its table was measured in. Points
+      (x, y, z), boxes, labels untouched; prepare_data's recount equals the oracle's.
 
 Neither loader stores a per-box point count: prepare_data's zero-point filter counts the points of the cloud it is
 handed. So:
@@ -50,7 +54,7 @@ import numpy as np
 from .kitti.kitti_factor_swap import ignore_labels, region_thin
 from .waymo import waymo_factor_swap as wfs
 
-ARMS = wfs.ARMS                     # ('PITCH_DEG', ..., 'REFLECTION_DROP', 'GT_IGNORE_RANDOM'): all on PandaSet
+ARMS = wfs.ARMS                     # ('PITCH_DEG', ..., 'GT_IGNORE_RANDOM', 'INTENSITY_MAP'): all on PandaSet
 LOADER_ARMS = {
     'pandaset': ARMS,
     # Lyft had no pitch row in item 34 (its sensor x points backward); item 37d adds one, with the angle's sign set by the
@@ -95,6 +99,10 @@ def apply(input_dict, cfg, class_names, map_dataset_to_model, frame_key, loader)
     """The swap on a loader's input_dict (points and gt_boxes already SHIFT_COOR-ed, gt_names in the dataset's
     vocabulary), before prepare_data. Returns input_dict."""
     arm = arm_of(cfg, loader)
+    if arm == 'INTENSITY_MAP':          # points only, with or without boxes
+        from .intensity_swap import apply_points as map_intensity
+        input_dict['points'] = map_intensity(input_dict['points'], cfg, frame_key)
+        return input_dict
     boxes = input_dict.get('gt_boxes', None)
     if boxes is None:
         return input_dict

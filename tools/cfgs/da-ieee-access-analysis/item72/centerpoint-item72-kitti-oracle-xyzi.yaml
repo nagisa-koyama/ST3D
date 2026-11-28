@@ -1,0 +1,20 @@
+# ANALYSIS oracle O^i for item 72 (experiments_md 20261003_05 §5 item 72, design fixed 2026-11-29 00:15 JST): the KITTI
+# oracle recipe of 26843 (Fig. 1's KITTI oracle, 80.33 / 70.59; 152 epochs, batch 6, 1 GPU, z-shift augmentation) with
+# KITTI's own intensity (already in [0, 1]) added to the point features on both sides, and nothing else. Its swap twin is
+# centerpoint-item72-kitti-imap.yaml. 27184 (noros-xyzi, 76.10) is not reused: it lacks 26843's z-shift augmentation.
+# Target TRAIN labels train it: labelled analysis, never a method.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-kitti2kitti-noros-zshift.yaml
+
+DATA_CONFIG:
+    POINT_FEATURE_ENCODING: {
+        encoding_type: absolute_coordinates_encoding,
+        used_feature_list: ['x', 'y', 'z', 'intensity'],
+        src_feature_list: ['x', 'y', 'z', 'intensity'],
+    }
+
+DATA_CONFIG_TAR:
+    POINT_FEATURE_ENCODING: {
+        encoding_type: absolute_coordinates_encoding,
+        used_feature_list: ['x', 'y', 'z', 'intensity'],
+        src_feature_list: ['x', 'y', 'z', 'intensity'],
+    }

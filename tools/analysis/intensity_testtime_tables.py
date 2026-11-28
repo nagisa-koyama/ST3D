@@ -65,19 +65,34 @@ def source_hist(cfg, frames, log):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--cfg', required=True)
+    ap.add_argument('--cfg', default=None, help='cross config: DATA_CONFIG(S) = source, DATA_CONFIG_TAR = target')
     ap.add_argument('--out_prefix', required=True)
     ap.add_argument('--frames', type=int, default=300)
+    # Item 72 (experiments_md 20261003_05 §5; opt-in, absent = unchanged): reuse a stored SOURCE histogram (hist_src of
+    # an earlier table), so several targets share one reference side exactly, and measure the target from a block of
+    # another config (e.g. an oracle's training DATA_CONFIG, as that row's loader sees it).
+    ap.add_argument('--source_hist_from', default=None, help='npz of this tool whose hist_src / edges are the source')
+    ap.add_argument('--target_cfg', default=None, help='config holding the target block (default: --cfg)')
+    ap.add_argument('--target_block', default='DATA_CONFIG_TAR', help='target block of --target_cfg')
     a = ap.parse_args()
     log = logging.getLogger('tables'); log.addHandler(logging.StreamHandler()); log.setLevel(logging.WARNING)
-    cfg = cfg_from_yaml_file(a.cfg, EasyDict())
-    src, edges, _ = source_hist(cfg, a.frames, log)
-    tgt, _, tgt_step = pooled_hist(cfg.DATA_CONFIG_TAR, cfg, a.frames, log)
+    assert a.cfg or (a.source_hist_from and a.target_cfg), 'give --cfg, or --source_hist_from and --target_cfg'
+    cfg = cfg_from_yaml_file(a.cfg, EasyDict()) if a.cfg else None
+    if a.source_hist_from:
+        stored = np.load(a.source_hist_from)
+        src, edges = np.asarray(stored['hist_src'], dtype=np.float64), np.asarray(stored['edges'], dtype=np.float64)
+        src_name = 'the source of %s' % os.path.basename(a.source_hist_from)
+    else:
+        src, edges, _ = source_hist(cfg, a.frames, log)
+        src_name = '+'.join(cfg.DATA_CONFIGS.keys()) if cfg.get('DATA_CONFIGS', None) else cfg.DATA_CONFIG.DATASET
+    tcfg = cfg_from_yaml_file(a.target_cfg, EasyDict()) if a.target_cfg else cfg
+    tdcfg = tcfg[a.target_block]
+    tgt, tgt_edges, tgt_step = pooled_hist(tdcfg, tcfg, a.frames, log)
+    assert np.array_equal(np.asarray(tgt_edges, dtype=np.float64), edges), 'source and target ring edges differ'
     Q = ic.quantiles
     s_all, t_all = src.sum(axis=0), tgt.sum(axis=0)
     from_q, to_q = [], []
-    src_name = '+'.join(cfg.DATA_CONFIGS.keys()) if cfg.get('DATA_CONFIGS', None) else cfg.DATA_CONFIG.DATASET
-    print('%s -> %s (map TARGET onto SOURCE), %d frames each' % (cfg.DATA_CONFIG_TAR.DATASET, src_name, a.frames))
+    print('%s -> %s (map TARGET onto SOURCE), %d frames each' % (tdcfg.DATASET, src_name, a.frames))
     for r in range(len(edges) - 1):
         own = src[r].sum() >= MIN_POINTS and tgt[r].sum() >= MIN_POINTS
         from_q.append(Q(tgt[r] if own else t_all)); to_q.append(Q(src[r] if own else s_all))

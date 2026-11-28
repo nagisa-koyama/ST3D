@@ -35,6 +35,10 @@ swapped training set is a fixed dataset, like a recorded one. Exactly one arm pe
       bin and height class that a nuScenes-like sensor would lose (pcdet/datasets/reflection_drop.py), classified about
       the TOP's position (the segment's TOP extrinsic translation) in the vehicle frame, on the stored cloud before
       SHIFT_COOR; the mask is applied in finish(), with the differential recount below.
+  INTENSITY_MAP: {TABLES: npz}                                            (item 72; PandaSet too, through ARMS)
+      Intensity arm on the stored cloud after the loader's tanh, before SHIFT_COOR: the intensity column mapped onto
+      nuScenes' per-range-ring distribution (pcdet/datasets/intensity_swap.py). Points (elongation included), boxes,
+      labels and the stored box counts are untouched.
 
 Waymo's stored num_points_in_gt (all returns, all five lidars) drives prepare_data's zero-point filter. An arm that can
 EMPTY a box gets a differential recount (recount_emptied): a box is dropped exactly when the oracle drops it (stored
@@ -49,7 +53,8 @@ import numpy as np
 
 from ..kitti.kitti_factor_swap import frame_rng, ignore_labels, pitch_of, pitch_xyz, radius_bin, region_thin  # noqa: F401
 
-ARMS = ('PITCH_DEG', 'GT_DIM_SCALE', 'GT_IGNORE_BY_RANGE', 'REGION_THIN', 'REFLECTION_DROP', 'GT_IGNORE_RANDOM')
+ARMS = ('PITCH_DEG', 'GT_DIM_SCALE', 'GT_IGNORE_BY_RANGE', 'REGION_THIN', 'REFLECTION_DROP', 'GT_IGNORE_RANDOM',
+        'INTENSITY_MAP')
 ALLOWED_KEYS = ARMS + ('PITCH_PROB', 'PIVOT', 'BOX_MARGIN')
 LABEL_ARM_CLASS = ('GT_IGNORE_BY_RANGE', 'GT_IGNORE_RANDOM')     # label arms keyed by one MODEL class (CLASS)
 # Keys that change the Waymo training cloud or labels in another way; a factor-swap row changes one factor only.
@@ -70,6 +75,9 @@ def arm_of(cfg):
     if arm == 'REFLECTION_DROP':
         from ..reflection_drop import check_cfg
         check_cfg(cfg['REFLECTION_DROP'])
+    if arm == 'INTENSITY_MAP':
+        from ..intensity_swap import check_cfg as check_intensity_cfg
+        check_intensity_cfg(cfg['INTENSITY_MAP'])
     if arm == 'GT_IGNORE_RANDOM':
         sub = cfg['GT_IGNORE_RANDOM']
         assert set(sub.keys()) == {'CLASS', 'KEEP'}, 'GT_IGNORE_RANDOM takes CLASS and KEEP only, got %s' % list(sub)
@@ -142,8 +150,13 @@ def pitch_about(xyz, deg, pivot):
 
 
 def apply_points(points, cfg, frame_id):
-    """The point half of PITCH_DEG, on the stored cloud before SHIFT_COOR. Every other arm leaves points here."""
-    if arm_of(cfg) != 'PITCH_DEG':
+    """The point half of PITCH_DEG and INTENSITY_MAP, on the stored cloud before SHIFT_COOR. Every other arm leaves
+    points here."""
+    arm = arm_of(cfg)
+    if arm == 'INTENSITY_MAP':
+        from ..intensity_swap import apply_points as map_intensity
+        return map_intensity(points, cfg, frame_id)
+    if arm != 'PITCH_DEG':
         return points
     out = np.array(points, copy=True)
     out[:, :3] = pitch_about(points[:, :3], pitch_of(cfg, frame_id), cfg['PIVOT'])

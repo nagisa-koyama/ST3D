@@ -39,6 +39,10 @@ dataset, like a recorded one, not a fresh draw per epoch. Exactly one arm per co
       the returns per range bin and height class that a nuScenes-like sensor would lose, darkest first (threshold) or
       at random (count-matched twin). pcdet/datasets/reflection_drop.py; the boxes it empties fall to prepare_data's
       recount, as for the other point arms.
+  INTENSITY_MAP: {TABLES: npz}
+      Intensity arm (item 72), on the raw scan as read: the intensity column mapped onto nuScenes' per-range-ring
+      distribution (pcdet/datasets/intensity_swap.py); points, boxes and labels untouched. Training only: it is not a
+      POINT_ARM, so EVAL_FACTOR_SWAP refuses it.
 """
 import zlib
 
@@ -47,7 +51,8 @@ import numpy as np
 from ...utils import common_utils
 
 POINT_ARMS = ('RING_THIN', 'RANGE_KEEP', 'REFLECTION_DROP')
-ARMS = POINT_ARMS + ('PITCH_DEG', 'GT_DIM_SCALE', 'GT_IGNORE_BY_RANGE', 'REGION_THIN', 'RANGE_KEEP_FG_BG')
+ARMS = POINT_ARMS + ('PITCH_DEG', 'GT_DIM_SCALE', 'GT_IGNORE_BY_RANGE', 'REGION_THIN', 'RANGE_KEEP_FG_BG',
+                     'INTENSITY_MAP')
 
 
 def arm_of(cfg):
@@ -106,6 +111,9 @@ def apply_points(points, cfg, frame_id):
     if arm == 'REFLECTION_DROP':
         from ..reflection_drop import keep_mask
         return points[keep_mask(points[:, :3], points[:, 3], cfg['REFLECTION_DROP'], frame_id)[0]]
+    if arm == 'INTENSITY_MAP':
+        from ..intensity_swap import apply_points as map_intensity
+        return map_intensity(points, cfg, frame_id)
     return points
 
 

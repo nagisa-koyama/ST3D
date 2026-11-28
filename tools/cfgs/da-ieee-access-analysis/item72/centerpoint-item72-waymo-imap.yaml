@@ -1,0 +1,17 @@
+# ANALYSIS training row, item 72 (experiments_md 20261003_05 §5, design fixed 2026-11-29 00:15 JST): the Waymo x, y, z,
+# intensity oracle O^i (cfgs/da-ieee-access/centerpoint-sourceonly-waymo2waymo-xyzi.yaml, 27245's config: the N->W
+# factor-swap oracle recipe of 31624 plus intensity) with ONE factor of its TRAINING data set to the nuScenes value:
+# intensity (the loader's tanh), mapped onto nuScenes' per-range-ring distribution with nuscenes2waymo_rings.npz
+# (Waymo onto nuScenes, 2026-10-04; the table of the evaluation-time row of 20261010_01 §3, -0.5). Elongation untouched.
+# Contribution = AP(oracle) - AP(this row) at the same seed, Car BEV R40 IoU 0.7; detected if the two-seed mean is >= 2
+# with one sign at both seeds. Target TRAIN labels train this row: labelled analysis, never a method.
+# The arm: TRAIN_FACTOR_SWAP.INTENSITY_MAP (pcdet/datasets/intensity_swap.py), training only, on DATA_CONFIG only. Each
+# training point's intensity x becomes F_nuS,r^-1(F_T,r(x)) in its horizontal-range ring r (0/10/20/30/40/50/75 m),
+# the per-ring map of the evaluation-time stage map_intensity_to_reference. It is applied in the loader before
+# augmentation, with a frame-seeded dequantization draw. x, y, z, boxes and labels are untouched. Evaluation reads
+# DATA_CONFIG_TAR, the oracle's, unperturbed.
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-waymo2waymo-xyzi.yaml
+DATA_CONFIG:
+    TRAIN_FACTOR_SWAP:
+        INTENSITY_MAP:
+            TABLES: /storage/intensity_tables/nuscenes2waymo_rings.npz
