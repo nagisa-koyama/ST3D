@@ -1,0 +1,9 @@
+# experiments_md 20261003_05 §5 item 71 (design fixed 2026-11-28 21:31 JST, before any number): items 60 / 67 on the real pair.
+# Training config: the S2 control recipe (item 41a's, 20 epochs, total batch 6, 1 GPU) with range-stratified BN in every BN layer
+# (pcdet/models/model_utils/range_bn.py; knots = item 57's). Variant 'st': statistics per range, gamma / beta one per channel.
+# UDA-legal in operation (nuScenes labels only); analysis until a pre-declared second pair (T05 item 71).
+_BASE_CONFIG_: cfgs/da-ieee-access/centerpoint-sourceonly-nuscenes.yaml
+MODEL:
+    RANGE_BN:
+        KNOTS: [5.0, 15.0, 25.0, 35.0, 55.0]
+        THIN: 32

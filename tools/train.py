@@ -401,8 +401,9 @@ def main():
         # experiments_md 20261003_05 §5 item 60 (ANALYSIS): installed by build_network; per-range batch statistics are
         # per process, so single GPU and no SyncBN.
         assert not dist_train and not args.sync_bn, 'RANGE_BN: single GPU, no SyncBN'
-        logger.info('RANGE_BN: %d BatchNorm layers normalize per range, knots %s, thin %s', model.n_range_bn,
-                    list(cfg.MODEL.RANGE_BN.KNOTS), cfg.MODEL.RANGE_BN.get('THIN', 32))
+        logger.info('RANGE_BN: %d BatchNorm layers normalize per range, knots %s, thin %s, affine per knot %s', model.n_range_bn,
+                    list(cfg.MODEL.RANGE_BN.KNOTS), cfg.MODEL.RANGE_BN.get('THIN', 32),
+                    bool(cfg.MODEL.RANGE_BN.get('AFFINE_PER_KNOT', False)))
     if args.sync_bn:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         if model_teacher is not None:
@@ -450,6 +451,13 @@ def main():
         optimizer = build_optimizer(trainable, cfg.OPTIMIZATION)
         logger.info('TRAIN_ONLY_BN: %d parameter tensors train (BatchNorm affine%s), %d frozen; optimizer rebuilt over them',
                     n_train, ' + per-range affine' if cfg.MODEL.get('RANGE_AFFINE_BN', None) else '', n_frozen)
+    if cfg.MODEL.get('RANGE_BN', None):
+        # experiments_md 20261003_05 §5 item 71: every trainable parameter, the per-knot gamma / beta included, must be in the
+        # optimizer (build_optimizer's layer groups take leaf modules only).
+        from pcdet.models.model_utils.range_bn import optimizer_coverage
+        n_opt, missing = optimizer_coverage(model, optimizer)
+        assert not missing, 'RANGE_BN: %d trainable parameters are not in the optimizer: %s' % (len(missing), missing[:4])
+        logger.info('RANGE_BN: all %d trainable parameter tensors are in the optimizer', n_opt)
     if args.pretrained_model_teacher is not None and model_teacher is not None:
         model_teacher.load_params_from_file(filename=args.pretrained_model_teacher, to_cpu=dist_train, logger=logger)
         logger.info('pretrained_model_teacher %s is loaded to model_teacher %s', args.pretrained_model_teacher,

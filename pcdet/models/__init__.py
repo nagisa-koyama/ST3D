@@ -15,8 +15,11 @@ def build_network(model_cfg, num_class, dataset):
     # eval script build the same layers before a checkpoint is loaded.
     if model_cfg.get('RANGE_BN', None):
         from .model_utils.range_bn import install_range_bn
+        # AFFINE_PER_KNOT (item 71 = item 67 on the real pair; absent = False = unchanged): gamma / beta per knot too.
+        apk = bool(model_cfg.RANGE_BN.get('AFFINE_PER_KNOT', False))
         model.n_range_bn = install_range_bn(model, model_cfg.RANGE_BN.KNOTS, list(dataset.point_cloud_range),
-                                            thin=model_cfg.RANGE_BN.get('THIN', 32))
+                                            thin=model_cfg.RANGE_BN.get('THIN', 32), affine_per_knot=apk)
+        model.range_bn_affine_per_knot = apk
     # MODEL.COUNT_NORM_CONV (ANALYSIS, experiments_md 20261003_05 §5 item 64; absent = unchanged): every sparse convolution of
     # the 3D backbone normalized by its window's occupied-site count (pcdet/models/model_utils/count_norm_conv.py).
     if model_cfg.get('COUNT_NORM_CONV', None):

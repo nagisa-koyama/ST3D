@@ -75,6 +75,7 @@ def main():
                tags=common_utils.wandb_tags(cfg, 'item60_rsbn_eval', cfg_file=args.cfg_file))
     wandb.config.update({'item60': dict(adapt=args.adapt, ckpt=args.ckpt, stats_frames=args.stats_frames,
                                         knots=list(cfg.MODEL.RANGE_BN.KNOTS), range_scale=args.range_scale)})
+    logger.info('[rsbn] wandb run %s' % (wandb.run.id if wandb.run is not None else None))
     for k, v in vars(args).items():
         logger.info(f'{k:16} {v}')
     log_config_to_file(cfg, logger=logger)

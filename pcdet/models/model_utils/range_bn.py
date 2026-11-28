@@ -22,6 +22,11 @@ a BEV cell's centre; pcdet/utils/adabn_range._Pos) gets item 57's piecewise-line
 - `pooled` (item 60g, set only by `reestimate_range_bn(..., pooled=True)`): in training mode every element is normalized with
   the batch's pooled moments and every knot receives the same running update, so the layer ends holding one set of
   statistics per channel (global AdaBN on an RS-BN model). Off by default; nothing else sets it.
+- `affine_per_knot` (item 71 = item 67 on the real pair, `MODEL.RANGE_BN.AFFINE_PER_KNOT`, absent = False = unchanged):
+  gamma / beta per knot as well, gamma_k / beta_k (K, C) initialized from the wrapped layer's (BN's 1 / 0), interpolated with
+  the same weights: y = (w gamma_k) * (x - mu) / sd + (w beta_k). They live in a leaf child module (`KnotAffine`) because the
+  optimizer (`build_optimizer`, fastai layer groups) collects parameters of LEAF modules only; the wrapped layer's own
+  weight / bias are removed. One knot: exactly BatchNorm.
 
 UDA-legal: the knots are fixed a priori; `reestimate_range_bn` reads unlabelled clouds only. Single GPU (no SyncBN).
 """
@@ -39,8 +44,21 @@ def _flat(x):
     raise ValueError('RangeBN input of shape %s' % (tuple(x.shape),))
 
 
+class KnotAffine(torch.nn.Module):
+    """Per-knot gamma / beta (K, C) of a RangeBN with `affine_per_knot` (item 71). A leaf module, so build_optimizer's
+    layer groups (leaf modules only) include it."""
+
+    def __init__(self, weight, bias, k):
+        super().__init__()
+        self.weight = torch.nn.Parameter(weight.detach().clone()[None].repeat(k, 1))
+        self.bias = torch.nn.Parameter(bias.detach().clone()[None].repeat(k, 1))
+
+    def forward(self, w):
+        return w @ self.weight, w @ self.bias
+
+
 class RangeBN(torch.nn.Module):
-    def __init__(self, bn, pos, knots, thin=32.0):
+    def __init__(self, bn, pos, knots, thin=32.0, affine_per_knot=False):
         super().__init__()
         assert isinstance(bn, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d)) and bn.affine and bn.track_running_stats
         self.bn = bn                                          # holds gamma / beta (the optimizer finds them as before)
@@ -61,9 +79,21 @@ class RangeBN(torch.nn.Module):
             bn.register_buffer(b, None)
         bn.track_running_stats = False
         self._pos = [pos]                                     # shared, not a submodule
+        self.affine_per_knot = bool(affine_per_knot)
+        if self.affine_per_knot:
+            self.affine = KnotAffine(bn.weight, bn.bias, K)
+            for b in ('weight', 'bias'):                      # removed, so nothing trains or reads an unused gamma / beta
+                delattr(bn, b)
+                bn.register_parameter(b, None)
 
     def extra_repr(self):
-        return 'knots=%s, thin=%g' % (list(self.knots), self.thin)
+        return 'knots=%s, thin=%g%s' % (list(self.knots), self.thin, ', affine_per_knot' if self.affine_per_knot else '')
+
+    def _affine(self, y, w):
+        if self.affine_per_knot:
+            g, b = self.affine(w.to(self.affine.weight.dtype))
+            return y * g.to(y.dtype) + b.to(y.dtype)
+        return y * self.bn.weight + self.bn.bias
 
     def weights(self, x):
         pos = self._pos[0]
@@ -98,7 +128,7 @@ class RangeBN(torch.nn.Module):
         xf, back = _flat(x)
         if self.training and self.pooled:
             mu, var = self._forward_pooled(xf)
-            y = (xf - mu) / torch.sqrt(var + self.eps) * self.bn.weight + self.bn.bias
+            y = self._affine((xf - mu) / torch.sqrt(var + self.eps), self.weights(x) if self.affine_per_knot else None)
             return back(y)
         w = self.weights(x)                                   # (n, K)
         if self.training:
@@ -127,12 +157,20 @@ class RangeBN(torch.nn.Module):
         else:
             mu = w @ self.running_mean.to(xf.dtype)
             var = w @ self.running_var.to(xf.dtype)
-        y = (xf - mu) / torch.sqrt(var + self.eps) * self.bn.weight + self.bn.bias
+        y = self._affine((xf - mu) / torch.sqrt(var + self.eps), w)
         return back(y)
 
 
 def range_bn_layers(model):
     return [(n, m) for n, m in model.named_modules() if isinstance(m, RangeBN)]
+
+
+def optimizer_coverage(model, optimizer):
+    """(number of parameter tensors in `optimizer`, names of `model`'s trainable parameters missing from it). Works for a
+    torch optimizer and for train_utils' OptimWrapper (`.opt`). Item 71: the per-knot gamma / beta must be in it."""
+    opt = getattr(optimizer, 'opt', optimizer)
+    ids = {id(p) for g in opt.param_groups for p in g['params']}
+    return len(ids), [n for n, p in model.named_parameters() if p.requires_grad and id(p) not in ids]
 
 
 @torch.no_grad()
@@ -156,9 +194,10 @@ def set_range_scale(model, scale):
     return scale
 
 
-def install_range_bn(model, knots, pc_range, thin=32.0):
+def install_range_bn(model, knots, pc_range, thin=32.0, affine_per_knot=False):
     """Wrap every BatchNorm1d / BatchNorm2d of `model` in RangeBN (in place, at build time) and register the sparse-convolution
-    hooks that give voxel positions. Returns the number of wrapped layers."""
+    hooks that give voxel positions. `affine_per_knot` (item 71): gamma / beta per knot too. Returns the number of wrapped
+    layers."""
     import spconv.pytorch as spconv
     pos = _Pos(pc_range)
     model._range_bn_hooks = [m.register_forward_hook(pos.hook) for m in model.modules()
@@ -169,7 +208,7 @@ def install_range_bn(model, knots, pc_range, thin=32.0):
         *path, leaf = name.split('.')
         for p in path:
             parent = getattr(parent, p)
-        setattr(parent, leaf, RangeBN(bn, pos, knots, thin))
+        setattr(parent, leaf, RangeBN(bn, pos, knots, thin, affine_per_knot=affine_per_knot))
     return len(targets)
 
 
