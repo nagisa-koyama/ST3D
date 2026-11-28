@@ -1,0 +1,50 @@
+# pcseg pair P2 (experiments_md episodes/20261128_01): the SemanticKITTI oracle O_sk, and the source-only model for
+# SemanticKITTI -> nuScenes. The SAME recipe as spunet-p2-nuscenes.yaml (model, optimiser, augmentation, grid, no shift;
+# tests/test_pcseg_p2.py checks it key by key) on SemanticKITTI's official splits (train 00-07, 09, 10: 19,130 scans;
+# val 08: 4,071), with Complete & Label's 10 classes (`semantickitti_cl10`). Length by the step budget
+# (20261116_01 §8.6): 1,594 iterations per epoch at batch 12 with drop_last, 117,200 / 1,594 = 73.5 -> 74 epochs
+# (117,956 steps); evaluation every 7 epochs (11,158 steps, nearest to the nuScenes recipe's 11,720). The LAST epoch is
+# read. ANALYSIS row as an oracle (target labels); as the source-only model it trains on source labels only.
+#   ENTRY=train_seg.py BATCH=12 EST_H=<h> WANDB_NOTES="..." scripts/submit.sh --nice=100 --job-name=<x> \
+#     scripts/run_seg.sh cfgs/pcseg/spunet-p2-semantickitti.yaml [tag] [run_name]
+PCSEG: True
+
+DATA:
+  NAME: SemanticKittiSeg
+  ROOT: /home/koyama/data/semantic_kitti/dataset/sequences      # read only (O6; scans fetched 2026-11-22)
+  SPLITS:
+    train: ['00', '01', '02', '03', '04', '05', '06', '07', '09', '10']
+    val: ['08']
+  SHIFT_COOR: [0.0, 0.0, 0.0]       # Pointcept: points in the sensor frame, unshifted
+  CLASS_MAP: semantickitti_cl10
+  GRID_SIZE: 0.05
+  EXPECT_SEQUENCES: {train: 10, val: 1}
+  AUG: {ROTATE_Z_PROB: 0.5, SCALE: [0.9, 1.1], FLIP_PROB: 0.5, JITTER: [0.005, 0.02]}
+
+MODEL:
+  NAME: SpUNet
+  IN_CHANNELS: 4                    # x, y, z, remission
+  CHANNELS: [32, 64, 128, 256, 256, 128, 96, 96]
+  LAYERS: [2, 3, 4, 6, 2, 2, 2, 2]
+
+OPTIMIZATION:
+  BATCH_SIZE: 12                    # TOTAL across ranks; --batch_size overrides
+  NUM_EPOCHS: 74
+  LR: 0.002
+  WEIGHT_DECAY: 0.005
+  PCT_START: 0.04
+  DIV_FACTOR: 10.0
+  FINAL_DIV_FACTOR: 100.0
+  AMP: True                         # training only; evaluation is fp32 (engine.evaluate)
+  SYNC_BN: True
+  GLOBAL_LOSS_MEAN: True
+  NUM_WORKERS: 8                    # per rank
+  EVAL_BATCH_PER_GPU: 4
+  SAVE_EVERY: 7
+  MAX_CKPT: 3
+  LOG_EVERY: 50
+
+EVAL:
+  EVERY: 7                          # the LAST epoch is always scored, and it is the number read (pre-declared)
+
+TARGET_DUMP_FRAMES: 4

@@ -142,10 +142,60 @@ NUSCENES_LIDARSEG16_RAW_TO_NAME = {
     31: None,                                                 # vehicle.ego
 }
 
+# --- Complete & Label 10: the nuScenes <-> SemanticKITTI common classes (pair P2, episodes/20261128_01 §3) ------------
+# Complete & Label (Yi et al., CVPR 2021), as released in SALUDA's code: github.com/valeoai/SALUDA at e4579fe
+# (2024-10-30), `class_mapping_da` of datasets/nuscenes.py (the first dict, "Official class mappings from Complet&Label")
+# and of datasets/semantic_kitti.py ("Original class mapping from Complete&Label paper"). Their train id k (1..10)
+# is our index k - 1; their 0 ('unlabeled') is IGNORE. Class names follow the 20261128_01 table. One name list serves
+# both datasets; tests/test_pcseg_semantickitti.py checks every entry against SALUDA's dicts, copied there verbatim.
+CL10_NAMES = [
+    'car', 'bicycle', 'motorcycle', 'truck', 'other_vehicle', 'pedestrian', 'driveable_surface', 'sidewalk', 'terrain',
+    'vegetation',
+]
+NUSCENES_CL10_RAW_TO_NAME = {
+    0: None, 1: None,                                         # noise, animal
+    2: 'pedestrian', 3: 'pedestrian', 4: 'pedestrian',        # human.pedestrian.adult / child / construction_worker
+    5: 'pedestrian', 6: 'pedestrian',                         # human.pedestrian.personal_mobility / police_officer
+    7: None, 8: None,                                         # human.pedestrian.stroller / wheelchair
+    9: None, 10: None, 11: None, 12: None, 13: None,          # barrier, debris, pushable_pullable, trafficcone, bicycle_rack
+    14: 'bicycle',                                            # vehicle.bicycle
+    15: 'other_vehicle', 16: 'other_vehicle',                 # vehicle.bus.bendy / rigid
+    17: 'car',                                                # vehicle.car
+    18: 'other_vehicle', 19: 'other_vehicle', 20: 'other_vehicle',   # construction, emergency.ambulance / police
+    21: 'motorcycle',                                         # vehicle.motorcycle
+    22: 'other_vehicle',                                      # vehicle.trailer
+    23: 'truck',                                              # vehicle.truck
+    24: 'driveable_surface',                                  # flat.driveable_surface
+    25: None,                                                 # flat.other
+    26: 'sidewalk', 27: 'terrain',                            # flat.sidewalk, flat.terrain
+    28: None, 29: None,                                       # static.manmade, static.other
+    30: 'vegetation',                                         # static.vegetation
+    31: None,                                                 # vehicle.ego
+}
+# SemanticKITTI raw ids: the semantic part (label & 0xFFFF) of semantic-kitti.yaml's `labels`, all 34 declared.
+SEMANTICKITTI_CL10_RAW_TO_NAME = {
+    0: None, 1: None,                                         # unlabeled, outlier
+    10: 'car', 11: 'bicycle', 13: 'other_vehicle',            # car, bicycle, bus
+    15: 'motorcycle', 16: None, 18: 'truck',                  # motorcycle, on-rails, truck
+    20: 'other_vehicle', 30: 'pedestrian',                    # other-vehicle, person
+    31: None, 32: None,                                       # bicyclist, motorcyclist
+    40: 'driveable_surface', 44: 'driveable_surface',         # road, parking
+    48: 'sidewalk', 49: None,                                 # sidewalk, other-ground
+    50: None, 51: None, 52: None,                             # building, fence, other-structure
+    60: 'driveable_surface',                                  # lane-marking
+    70: 'vegetation', 71: 'vegetation', 72: 'terrain',        # vegetation, trunk, terrain
+    80: None, 81: None, 99: None,                             # pole, traffic-sign, other-object
+    252: 'car', 253: None, 254: 'pedestrian', 255: None,      # moving-car, -bicyclist, -person, -motorcyclist
+    256: None, 257: 'other_vehicle', 258: 'truck',            # moving-on-rails, -bus, -truck
+    259: 'other_vehicle',                                     # moving-other-vehicle
+}
+
 MAPS = {
     'pandaset_scalr17': lambda: ClassMap(PANDASET_SCALR17_NAMES, PANDASET_SCALR17_RAW_TO_NAME),
     'pandaset_3dlp8': lambda: ClassMap(PANDASET_3DLP8_NAMES, PANDASET_3DLP8_RAW_TO_NAME),
     'nuscenes_lidarseg16': lambda: ClassMap(NUSCENES_LIDARSEG16_NAMES, NUSCENES_LIDARSEG16_RAW_TO_NAME),
+    'nuscenes_cl10': lambda: ClassMap(CL10_NAMES, NUSCENES_CL10_RAW_TO_NAME),
+    'semantickitti_cl10': lambda: ClassMap(CL10_NAMES, SEMANTICKITTI_CL10_RAW_TO_NAME),
 }
 
 

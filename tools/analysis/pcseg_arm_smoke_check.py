@@ -165,9 +165,9 @@ def main():
     idxs = np.linspace(0, len(ds_a) - 1, num=min(4, len(ds_a))).round().astype(int)
     spec = cfg.DATA['FACTOR_SWAP' if touched == 'train' else 'EVAL_PERTURB']
     for i, ra, rb in zip(idxs, d_arm[touched], d_base[touched]):
-        seq, frame = ds_a.frames[int(i)]
         row = {'frame': ra['frame'], 'points_arm': ra['points'], 'points_base': rb['points']}
         if ops == ['RENDER']:
+            seq, frame = ds_a.frames[int(i)]                     # PandaSet only (P2's frames are not (seq, frame))
             n, cnt, inten = render_expectation(ds_b, spec.RENDER.CACHE, seq, frame, names)
             errs += check_equal_counts(ra, n, cnt, 'the cache read independently')
             got = ds_a.load(int(i))[1][:, 0]

@@ -1,0 +1,11 @@
+# pcseg pair P2 (experiments_md episodes/20261128_01): the nuScenes oracle O_ns, and the source-only model for
+# nuScenes -> SemanticKITTI. G0's recipe (spunet-nuscenes.yaml, Pointcept's SpUNet-v1m1 nuScenes recipe as published)
+# with Complete & Label's 10 common classes (pcseg/class_map.py `nuscenes_cl10`). 50 epochs x 2,344 iterations =
+# 117,200 optimiser steps, the step budget (20261116_01 §8.6). The LAST epoch is read. ANALYSIS row as an oracle
+# (target labels); as the source-only model it trains on source labels only.
+#   ENTRY=train_seg.py BATCH=12 EST_H=<h> WANDB_NOTES="..." scripts/submit.sh --nice=100 --job-name=<x> \
+#     scripts/run_seg.sh cfgs/pcseg/spunet-p2-nuscenes.yaml [tag] [run_name]
+_BASE_CONFIG_: cfgs/pcseg/spunet-nuscenes.yaml
+
+DATA:
+  CLASS_MAP: nuscenes_cl10

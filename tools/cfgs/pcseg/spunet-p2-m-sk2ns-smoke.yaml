@@ -1,0 +1,24 @@
+# One-GPU smoke of P2 row spunet-p2-m-sk2ns (experiments_md episodes/20261128_01 §8): the row's config on train sequence 04
+# (271 scans) and every 100th scan of val sequence 08 (41 scans) for 2 epochs at the real batch 12. It checks the
+# loop and the TARGET DUMP (tools/analysis/pcseg_arm_smoke_check.py for a method row), and its log gives the step time.
+# Its numbers mean nothing. The row's iterations per epoch (1,594) come from the full train set, checked by
+# tests/test_pcseg_p2.py.
+#   ENTRY=train_seg.py BATCH=12 WANDB_NOTES="..." scripts/submit.sh --nice=100 --gres=gpu:1 --cpus-per-task=8 \
+#     --mem=64G --time=01:00:00 --job-name=pcseg_p2_smoke_m-sk2ns scripts/run_seg.sh cfgs/pcseg/spunet-p2-m-sk2ns-smoke.yaml
+_BASE_CONFIG_: cfgs/pcseg/spunet-p2-m-sk2ns.yaml
+
+DATA:
+  SPLITS:
+    train: ['04']
+    val: ['08']
+  FRAME_STEP: {train: 1, val: 100}
+  EXPECT_SEQUENCES: {train: 1, val: 1}
+
+OPTIMIZATION:
+  NUM_EPOCHS: 2
+  SAVE_EVERY: 1
+  MAX_CKPT: 2
+  LOG_EVERY: 2
+
+EVAL:
+  EVERY: 1

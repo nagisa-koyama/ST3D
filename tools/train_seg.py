@@ -74,14 +74,29 @@ def build_datasets(cfg, logger=None):
             val_cfg['FACTOR_OPS'] = dict(d.EVAL_PERTURB)
         sets = {'train': PandasetSeg(train_cfg, True, logger), 'val': PandasetSeg(val_cfg, False, logger)}
     elif d.NAME == 'NuScenesSeg':
-        if d.get('FACTOR_SWAP', None) is not None or d.get('EVAL_PERTURB', None) is not None:
-            raise ValueError('FACTOR_SWAP / EVAL_PERTURB are implemented for PandasetSeg only')
+        # Pair P2 (episodes/20261128_01): FACTOR_SWAP / EVAL_PERTURB route as for PandaSet, INTENSITY only (the
+        # dataset raises on any other operator). Absent: the dataset configs are G0's, key for key.
         from pcseg.nuscenes_seg import NuScenesSeg
         common = {k: d[k] for k in ('ROOT', 'LIDARSEG_ROOT', 'INDEX', 'SHIFT_COOR', 'CLASS_MAP', 'GRID_SIZE')}
         scenes = d.get('SCENES', None) or {}
-        sets = {'train': NuScenesSeg(dict(common, SPLIT='train', SCENES=scenes.get('train', None),
-                                          AUG=d.get('AUG', None)), True, logger),
-                'val': NuScenesSeg(dict(common, SPLIT='val', SCENES=scenes.get('val', None)), False, logger)}
+        train_cfg = dict(common, SPLIT='train', SCENES=scenes.get('train', None), AUG=d.get('AUG', None))
+        val_cfg = dict(common, SPLIT='val', SCENES=scenes.get('val', None))
+        if d.get('FACTOR_SWAP', None) is not None:
+            train_cfg['FACTOR_OPS'] = dict(d.FACTOR_SWAP)
+        if d.get('EVAL_PERTURB', None) is not None:
+            val_cfg['FACTOR_OPS'] = dict(d.EVAL_PERTURB)
+        sets = {'train': NuScenesSeg(train_cfg, True, logger), 'val': NuScenesSeg(val_cfg, False, logger)}
+    elif d.NAME == 'SemanticKittiSeg':
+        from pcseg.semantickitti_seg import SemanticKittiSeg
+        common = {k: d[k] for k in ('ROOT', 'SHIFT_COOR', 'CLASS_MAP', 'GRID_SIZE')}
+        step = d.get('FRAME_STEP', None) or {}
+        train_cfg = dict(common, SEQUENCES=d.SPLITS.train, AUG=d.get('AUG', None), FRAME_STEP=step.get('train', 1))
+        val_cfg = dict(common, SEQUENCES=d.SPLITS.val, FRAME_STEP=step.get('val', 1))
+        if d.get('FACTOR_SWAP', None) is not None:
+            train_cfg['FACTOR_OPS'] = dict(d.FACTOR_SWAP)
+        if d.get('EVAL_PERTURB', None) is not None:
+            val_cfg['FACTOR_OPS'] = dict(d.EVAL_PERTURB)
+        sets = {'train': SemanticKittiSeg(train_cfg, True, logger), 'val': SemanticKittiSeg(val_cfg, False, logger)}
     else:
         raise ValueError('unknown DATA.NAME %s' % d.NAME)
     for split, n in (d.get('EXPECT_SEQUENCES', None) or {}).items():

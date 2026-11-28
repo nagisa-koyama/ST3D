@@ -7,6 +7,8 @@ Pointcept's NuScenesDataset convention (pointcept/datasets/nuscenes.py, get_data
 - labels: lidarseg/<version>/<token>_lidarseg.bin of the separate lidarseg tree, one uint8 per point, mapped with
   the `nuscenes_lidarseg16` class map. A label count different from the point count raises.
 - frames: the index written by tools/analysis/pcseg_nuscenes_index.py (sample.json order, the devkit's split).
+- FACTOR_OPS (optional, absent by default; pair P2, episodes/20261128_01): an INTENSITY block of pcseg/factor_ops.py
+  for sensor 'nuscenes'. It transforms the intensity only, keyed by the sample token; points and labels are unchanged.
 """
 import json
 import os
@@ -16,6 +18,19 @@ import torch
 
 from .class_map import build_class_map
 from .pandaset_seg import PandasetSeg
+
+
+SENSOR = 'nuscenes'          # the factor-ops sensor name (pcseg/factor_ops.py)
+INTENSITY_STEP = 1 / 255.0    # stored integers 0..255, read as / 255
+
+
+def read_points(root, lidar_rel):
+    """The points of read_frame, label-free: [N, 4] float32 x, y, z, intensity / 255 (the lidarseg file is not read)."""
+    pts = np.fromfile(os.path.join(root, lidar_rel), dtype=np.float32)
+    if pts.size % 5:
+        raise ValueError('%s: %d floats, not a multiple of 5' % (lidar_rel, pts.size))
+    pts = pts.reshape(-1, 5)
+    return np.concatenate([pts[:, :3], pts[:, 3:4] / 255], axis=1).astype(np.float32)
 
 
 def read_frame(root, lidarseg_root, lidar_rel, label_rel):
@@ -48,6 +63,12 @@ class NuScenesSeg(torch.utils.data.Dataset):
         self.class_map = build_class_map(cfg['CLASS_MAP'])
         self.grid_size = float(cfg['GRID_SIZE'])
         self.aug = cfg.get('AUG', None) if training else None
+        ops = cfg.get('FACTOR_OPS', None)
+        if ops:
+            from .factor_ops import FactorOps
+            self.factor_ops = FactorOps(dict(ops), SENSOR, self.shift)
+        else:
+            self.factor_ops = None
         index = load_index(cfg['INDEX'])
         self.split = cfg['SPLIT']
         self.frames = index[self.split]
@@ -62,6 +83,9 @@ class NuScenesSeg(torch.utils.data.Dataset):
             logger.info('NuScenesSeg (%s, split %s): %d scenes, %d frames, index %s'
                         % ('train' if training else 'eval', self.split, len(self.sequences), len(self.frames),
                            cfg['INDEX']))
+            if self.factor_ops is not None:
+                logger.info('NuScenesSeg (%s): factor ops, a fixed frame-keyed counterfactual set: %s'
+                            % ('train' if training else 'eval', self.factor_ops.describe()))
 
     def __len__(self):
         return len(self.frames)
@@ -71,7 +95,12 @@ class NuScenesSeg(torch.utils.data.Dataset):
         token, lidar_rel, label_rel, _ = self.frames[index]
         points, raw = read_frame(self.root, self.lidarseg_root, lidar_rel, label_rel)
         coord = points[:, :3] + self.shift
-        return coord, points[:, 3:4], self.class_map(raw), token
+        if self.factor_ops is None:
+            return coord, points[:, 3:4], self.class_map(raw), token
+        idx, intensity = self.factor_ops(coord, points[:, 3], token)
+        if len(idx) != len(coord):
+            raise ValueError('%s: P2 factor ops must keep every point' % token)
+        return coord, intensity[:, None], self.class_map(raw), token
 
     # Augmentation, voxelization and the sample format are PandasetSeg's (they only use load(), training, aug and
     # grid_size), so both datasets feed the same collate, loss and evaluate().

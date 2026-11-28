@@ -28,7 +28,9 @@ frame's FULL point count, then indexed by the points still kept, so a frame gets
 worker, and one operator's draw does not depend on another's mask. The arm is a fixed counterfactual dataset, not an
 augmentation. numpy's global RNG is never used.
 
-Files carry the device they apply to; a file for the other sensor raises.
+Files carry the device they apply to; a file for the other sensor raises. PandaSet's sensors are device ints (0, 1);
+the nuScenes and SemanticKITTI loaders (pair P2, episodes/20261128_01) pass a sensor NAME instead ('nuscenes',
+'semantickitti') and accept INTENSITY only, from a table that carries `from_sensor` / `to_sensor`.
 """
 import hashlib
 import json
@@ -200,12 +202,20 @@ class _Intensity:
     def __init__(self, spec, device, shift):
         self.path = spec['TABLE']
         t = np.load(self.path)
-        if int(t['from_device']) != device:
-            raise ValueError('%s maps device %d, but the dataset reads device %d'
-                             % (self.path, int(t['from_device']), device))
+        if isinstance(device, str):                              # P2: a sensor name, and a table that names sensors
+            if 'from_sensor' not in t.files:
+                raise ValueError('%s names no from_sensor, but the dataset reads sensor %r' % (self.path, device))
+            if str(t['from_sensor']) != device:
+                raise ValueError('%s maps sensor %r, but the dataset reads sensor %r'
+                                 % (self.path, str(t['from_sensor']), device))
+            self.to_device = str(t['to_sensor'])
+        else:
+            if 'from_device' not in t.files or int(t['from_device']) != device:
+                raise ValueError('%s maps device %s, but the dataset reads device %d'
+                                 % (self.path, t['from_device'] if 'from_device' in t.files else None, device))
+            self.to_device = int(t['to_device'])
         self.tables = {k: np.asarray(t[k], dtype=np.float64) for k in ('edges', 'from_q', 'to_q')}
         self.tables['from_step'] = float(t['from_step'])
-        self.to_device = int(t['to_device'])
         self.sha = sha256_file(self.path)
         self.shift = shift
 
@@ -218,7 +228,7 @@ class _Intensity:
         return out.astype(intensity.dtype)
 
     def describe(self):
-        return 'INTENSITY %s (sha256 %s): %d rings to %g m, onto device %d, step %g' % (
+        return 'INTENSITY %s (sha256 %s): %d rings to %g m, onto device %s, step %g' % (
             self.path, self.sha[:12], len(self.tables['edges']) - 1, self.tables['edges'][-1], self.to_device,
             self.tables['from_step'])
 
@@ -235,7 +245,12 @@ class FactorOps:
         if unknown or not spec:
             raise ValueError('factor ops: unknown keys %s (known %s)' % (unknown, list(ORDER)) if unknown
                              else 'factor ops: an empty block (omit the key instead)')
-        self.device = int(device)
+        if isinstance(device, str):
+            if set(k for k in spec if spec[k] is not None) - {'INTENSITY'}:
+                raise ValueError('factor ops for sensor %r: INTENSITY only (P2), got %s' % (device, sorted(spec)))
+            self.device = device
+        else:
+            self.device = int(device)
         self.shift = np.asarray(shift, dtype=np.float32)
         self.ops = [(k, _BUILD[k](spec[k], self.device, self.shift)) for k in ORDER if spec.get(k) is not None]
         if not self.ops:

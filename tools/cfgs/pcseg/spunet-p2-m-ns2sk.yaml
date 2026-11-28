@@ -1,0 +1,10 @@
+# pcseg pair P2 method row M_ns->sk (experiments_md episodes/20261128_01 §4): nuScenes TRAIN intensities mapped to
+# SemanticKITTI's response, per range ring, x -> F_SK^-1(F_NS(x)) (pcseg/factor_ops.py INTENSITY, detection's
+# map_intensity_to_reference), from both datasets' unlabelled TRAIN clouds (tools/analysis/pcseg_p2_intensity_tables.py).
+# Every nuScenes point is mapped; points, labels and the val set are unchanged. Scored on SemanticKITTI val against
+# spunet-p2-nuscenes.yaml there. METHOD row: source labels only.
+_BASE_CONFIG_: cfgs/pcseg/spunet-p2-nuscenes.yaml
+
+DATA:
+  FACTOR_SWAP:
+    INTENSITY: {TABLE: /home/koyama/data/pcseg/factor_stats/p2_intensity_nuscenes_to_semantickitti_rings.npz}
