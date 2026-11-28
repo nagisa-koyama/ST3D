@@ -1,0 +1,6 @@
+# experiments_md 20261003_05 §5 item 69 arm G_r (design fixed 2026-11-28 17:51 JST, before any number). ANALYSIS: KITTI TRAIN
+# labels train the normalization layers only. Item 58's G recipe unchanged (O's KITTI config, TRAIN_ONLY_BN, 20 epochs), started
+# from item 41a's S2 control checkpoint (nuScenes source, epoch 20) via --pretrained_model: the control and the S2 oracle O
+# share one MODEL block, and O's KITTI data block equals the control's KITTI target block. 1 GPU, --batch_size 6. Never a
+# method row.
+_BASE_CONFIG_: cfgs/da-ieee-access-analysis/item58/centerpoint-item58-p-bnonly-g.yaml
