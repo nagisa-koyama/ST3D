@@ -405,9 +405,19 @@ def main():
                     list(cfg.MODEL.RANGE_BN.KNOTS), cfg.MODEL.RANGE_BN.get('THIN', 32),
                     bool(cfg.MODEL.RANGE_BN.get('AFFINE_PER_KNOT', False)))
     if args.sync_bn:
+        # 2-GPU rows use SyncBatchNorm (user 2026-11-28; experiments_md 20261003_14 §3). Refused where it would silently
+        # break another normalization path (pcdet/utils/norm_flags.py), e.g. DSNorm, which the elif below would skip.
+        from pcdet.utils.norm_flags import sync_bn_conflicts
+        bad = sync_bn_conflicts(cfg)
+        if bad:
+            raise ValueError('--sync_bn conflicts with: %s' % '; '.join(bad))
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         if model_teacher is not None:
             model_teacher = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model_teacher)
+        logger.info('sync_bn: %d BatchNorm layers converted to SyncBatchNorm (%d ranks)%s',
+                    sum(isinstance(m, torch.nn.SyncBatchNorm) for m in model.modules()),
+                    total_gpus if dist_train else 1,
+                    '' if dist_train else '; NOT distributed, so it acts as plain BatchNorm')
     elif cfg.get('SELF_TRAIN', None) and cfg.SELF_TRAIN.get('DSNORM', None):
         model = DSNorm.convert_dsnorm(model)
         if model_teacher is not None:
